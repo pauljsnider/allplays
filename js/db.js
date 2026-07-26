@@ -3128,9 +3128,11 @@ export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerI
     await batch.commit();
 }
 
-export async function applyRosterCsvImportOperations(teamId, operations = []) {
+export async function applyRosterCsvImportOperations(teamId, operations = [], options = {}) {
     const normalizedTeamId = String(teamId || '').trim();
     const plannedOperations = Array.isArray(operations) ? operations : [];
+    const pendingActionId = String(options?.pendingActionId || '').trim();
+    const executionUserId = String(options?.userId || '').trim();
     if (!normalizedTeamId) throw new Error('Team is required for roster import.');
     if (plannedOperations.length === 0) return [];
     // Each row uses at most two writes (player + private profile). Keep the
@@ -3143,31 +3145,45 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
     const batch = writeBatch(db);
     const savedOperations = plannedOperations.map((operation) => {
         const type = operation?.type;
-        if (type !== 'add' && type !== 'update') {
+        if (!['add', 'update', 'deactivate', 'reactivate'].includes(type)) {
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
-        if (type === 'update' && !existingPlayerId) {
-            throw new Error('Roster import update is missing a player.');
+        if (type !== 'add' && !existingPlayerId) {
+            throw new Error(`Roster import ${type} is missing a player.`);
         }
-        const playerRef = type === 'update'
-            ? doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId)
-            : doc(collection(db, `teams/${normalizedTeamId}/players`));
+        const playerRef = type === 'add'
+            ? existingPlayerId
+                ? doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId)
+                : doc(collection(db, `teams/${normalizedTeamId}/players`))
+            : doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId);
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
             batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
-        } else {
+        } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
                 active: Object.prototype.hasOwnProperty.call(payload, 'active') ? payload.active : true,
                 createdAt: Timestamp.now()
             });
+        } else if (type === 'deactivate') {
+            batch.update(playerRef, {
+                active: false,
+                deactivatedAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            });
+        } else {
+            batch.update(playerRef, {
+                active: true,
+                deactivatedAt: deleteField(),
+                updatedAt: Timestamp.now()
+            });
         }
 
-        if (operation.privateRosterFields || operation.privateFamilyContacts) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };
@@ -3186,6 +3202,15 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
         return { ...operation, playerId: playerRef.id };
     });
 
+    if (pendingActionId && executionUserId) {
+        batch.set(doc(db, `teams/${normalizedTeamId}/privateAiPendingActions`, pendingActionId), {
+            execution: {
+                rosterApplied: true,
+                rosterAppliedAt: Timestamp.now(),
+                rosterAppliedBy: executionUserId
+            }
+        }, { merge: true });
+    }
     await batch.commit();
     return savedOperations;
 }
@@ -4699,21 +4724,106 @@ export async function getTrackedCalendarEventUids(teamId, preloadedGames = null)
 }
 
 // Access Codes
-const ACCESS_CODE_MAX_ATTEMPTS = 5;
+const ACCESS_CODE_MAX_ATTEMPTS = 100;
 
 export function generateAccessCode() {
     return generateJoinCode();
 }
 
-async function createUniqueAccessCode(accessCodeData, preferredCode) {
+async function buildAccessCodeIdempotencyId(value) {
+    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
+    if (!cryptoApi?.subtle || typeof TextEncoder === 'undefined') {
+        throw new Error('Secure invite idempotency is not available in this browser.');
+    }
+    const digest = await cryptoApi.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(String(value || ''))
+    );
+    return `parent_${Array.from(new Uint8Array(digest))
+        .map(byte => byte.toString(16).padStart(2, '0'))
+        .join('')}`;
+}
+
+function matchesReusableAccessCode(existing = {}, expected = {}) {
+    return existing.type === expected.type &&
+        String(existing.teamId || '') === String(expected.teamId || '') &&
+        String(existing.playerId || '') === String(expected.playerId || '') &&
+        String(existing.email || '').trim().toLowerCase() === String(expected.email || '').trim().toLowerCase();
+}
+
+function isReusableAccessCodeEligible(existing = {}, expected = {}) {
+    const status = String(existing.status || 'active').trim().toLowerCase();
+    return matchesReusableAccessCode(existing, expected) &&
+        existing.used !== true &&
+        existing.revoked !== true &&
+        existing.autoAccepted !== true &&
+        existing.active !== false &&
+        !['removed', 'cancelled', 'revoked'].includes(status) &&
+        !isAccessCodeExpired(existing.expiresAt);
+}
+
+function isCompletedParentAccessCode(existing = {}, expected = {}) {
+    const status = String(existing.status || '').trim().toLowerCase();
+    return matchesReusableAccessCode(existing, expected) &&
+        existing.type === 'parent_invite' &&
+        existing.used === true &&
+        status === 'accepted' &&
+        Boolean(String(existing.usedBy || '').trim()) &&
+        existing.revoked !== true &&
+        existing.active !== false;
+}
+
+async function createUniqueAccessCode(accessCodeData, preferredCode, options = {}) {
+    const idempotencyKey = String(options?.idempotencyKey || '').trim();
+    const idempotencyRef = idempotencyKey && accessCodeData.type === 'parent_invite' && accessCodeData.teamId
+        ? doc(
+            db,
+            'teams',
+            String(accessCodeData.teamId),
+            'inviteIdempotency',
+            await buildAccessCodeIdempotencyId(idempotencyKey)
+        )
+        : null;
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
-        const candidateCode = normalizeJoinCode(attempt === 0 && preferredCode ? preferredCode : generateAccessCode());
+        const candidateCode = normalizeJoinCode(
+            attempt === 0 && preferredCode
+                ? preferredCode
+                : generateAccessCode()
+        );
         if (!candidateCode) {
             continue;
         }
 
         const codeRef = doc(db, "accessCodes", candidateCode);
         const created = await runTransaction(db, async (transaction) => {
+            let idempotencySnapshot = null;
+            if (idempotencyRef) {
+                idempotencySnapshot = await transaction.get(idempotencyRef);
+                if (idempotencySnapshot.exists()) {
+                    const idempotencyData = idempotencySnapshot.data() || {};
+                    const existingCode = normalizeJoinCode(idempotencyData.accessCode);
+                    if (existingCode) {
+                        const existingRef = doc(db, 'accessCodes', existingCode);
+                        const existingSnapshot = await transaction.get(existingRef);
+                        if (existingSnapshot.exists()) {
+                            const existingData = existingSnapshot.data() || {};
+                            if (
+                                isReusableAccessCodeEligible(existingData, accessCodeData) ||
+                                isCompletedParentAccessCode(existingData, accessCodeData)
+                            ) {
+                                return {
+                                    id: existingRef.id || existingCode,
+                                    code: existingCode,
+                                    reused: true,
+                                    completed: isCompletedParentAccessCode(existingData, accessCodeData),
+                                    existingData
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
             const codeSnapshot = await transaction.get(codeRef);
             if (codeSnapshot.exists()) {
                 return null;
@@ -4724,6 +4834,20 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
                 code: candidateCode
             };
             transaction.set(codeRef, payload);
+            if (idempotencyRef) {
+                const previousIdempotencyData = idempotencySnapshot?.exists()
+                    ? idempotencySnapshot.data() || {}
+                    : {};
+                transaction.set(idempotencyRef, {
+                    accessCode: candidateCode,
+                    type: accessCodeData.type,
+                    playerId: String(accessCodeData.playerId || ''),
+                    email: String(accessCodeData.email || '').trim().toLowerCase(),
+                    generatedBy: String(accessCodeData.generatedBy || ''),
+                    createdAt: previousIdempotencyData.createdAt || accessCodeData.createdAt,
+                    updatedAt: accessCodeData.createdAt
+                });
+            }
             return {
                 id: codeRef.id || candidateCode,
                 code: candidateCode
@@ -5137,7 +5261,7 @@ async function autoAcceptParentInviteForExistingUser(accessCodeId) {
     };
 }
 
-export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
+export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation, options = {}) {
     const currentUser = auth.currentUser;
     if (!currentUser) {
         throw new Error('You must be signed in to invite a parent');
@@ -5168,21 +5292,30 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         usedBy: null,
         usedAt: null
     };
-    const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
+    const {
+        id: accessCodeId,
+        code,
+        reused = false,
+        completed = false,
+        existingData = null
+    } = await createUniqueAccessCode(accessCodeData, null, {
+        idempotencyKey: String(options?.idempotencyKey || '').trim()
+    });
 
     // Let the server decide whether a user with this email already exists.
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = false;
-    let autoLinked = false;
-    if (normalizedParentEmail) {
+    let existingUser = reused && (completed || existingData?.used === true);
+    let autoLinked = existingUser;
+    if (normalizedParentEmail && !completed) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
             existingUser = autoAcceptResult.existingUser;
             autoLinked = autoAcceptResult.autoLinked;
         } catch (error) {
-            // The invite was already created and emailed; never fail it on auto-link.
+            // The invite was already created; never fail it on auto-link.
+            // The caller still queues the correct invite-or-linked email.
             console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
         }
     }
@@ -5193,7 +5326,9 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         teamName: team?.name || null,
         playerName: player?.name || null,
         existingUser,
-        autoLinked
+        autoLinked,
+        reused,
+        completed
     };
 }
 

@@ -147,14 +147,15 @@
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm font-mono"
                                     placeholder="Name,Number,Position,DOB,Parent Name,Parent Email,Grade&#10;Avery Lee,4,Forward,2014-02-03,Pat Lee,pat@example.com,6"></textarea>
                             </div>
-                            <label class="flex items-start gap-2 rounded-md border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
-                                <input id="roster-csv-send-invites" type="checkbox" class="mt-0.5 rounded border-indigo-300 text-indigo-600" checked>
-                                <span><span class="block font-semibold">Email invitations to imported family contacts</span><span class="block text-xs text-indigo-700">Contacts with email addresses receive an invite after their player row saves. Failures stay visible for retry and do not discard the roster/contact import.</span></span>
-                            </label>
+                            <div class="rounded-md border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
+                                <span class="block font-semibold">Family invitations are included</span>
+                                <span class="block text-xs text-indigo-700">Every imported family contact with an email address receives the same player invitation as a one-at-a-time invite. Failures stay visible for retry and do not discard the roster/contact import.</span>
+                            </div>
                             <div id="csv-import-preview" class="hidden space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm"></div>
                             <button id="import-csv-btn" type="button"
                                 class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Review CSV</button>
                             <div id="csv-import-status" class="hidden rounded-md border p-3 text-sm"></div>
+                            <div id="csv-invite-delivery-results" class="hidden space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"></div>
                         </div>
                     </div>
 
@@ -226,6 +227,7 @@
                                     </button>
                                 </div>
                             </div>
+                            <div id="ai-invite-delivery-results" class="hidden space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"></div>
                         </div>
                     </div>
                 </div>
@@ -554,11 +556,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=124';
-        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterProfileValues, mergeRosterParentContacts, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=8';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=125';
+        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=131';
+        import { checkAuth } from './js/auth.js?v=132';
         import { queueInviteEmail } from './js/invite-email.js?v=1';
         import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -587,6 +589,8 @@
         let registrationRosterImportPlan = null;
         let rosterCsvImportPlan = null;
         let rosterCsvImportSource = '';
+        let csvRosterInviteDeliveryResults = [];
+        let aiRosterInviteDeliveryResults = [];
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
@@ -2114,7 +2118,15 @@
 
         async function sendImportedRosterContactInvite(playerId, playerNumber, request) {
             try {
-                const result = await inviteParent(currentTeamId, playerId, playerNumber || '', request.email, request.relation || 'Parent');
+                const normalizedEmail = String(request.email || '').trim().toLowerCase();
+                const result = await inviteParent(
+                    currentTeamId,
+                    playerId,
+                    playerNumber || '',
+                    normalizedEmail,
+                    request.relation || 'Parent',
+                    { idempotencyKey: `legacy-roster-import:${currentTeamId}:${playerId}:${normalizedEmail}` }
+                );
                 let emailSent = false;
                 try {
                     await queueInviteEmail(result.code);
@@ -2122,11 +2134,139 @@
                 } catch (emailError) {
                     console.warn('Could not email imported roster contact invite:', emailError);
                 }
-                if (result.autoLinked) return { ...request, status: 'linked' };
-                return { ...request, status: emailSent ? 'sent' : 'code-created', code: result.code || '' };
+                if (result.autoLinked) {
+                    return {
+                        ...request,
+                        playerId,
+                        playerNumber: playerNumber || '',
+                        status: 'linked',
+                        emailStatus: emailSent ? 'sent' : 'retryable',
+                        code: result.code || ''
+                    };
+                }
+                return {
+                    ...request,
+                    playerId,
+                    playerNumber: playerNumber || '',
+                    status: emailSent ? 'sent' : 'code-created',
+                    emailStatus: emailSent ? 'sent' : 'retryable',
+                    code: result.code || ''
+                };
             } catch (error) {
                 console.warn('Could not create imported roster contact invite:', error);
-                return { ...request, status: 'failed', error: error?.message || 'Invite failed.' };
+                return {
+                    ...request,
+                    playerId,
+                    playerNumber: playerNumber || '',
+                    status: 'failed',
+                    emailStatus: 'failed',
+                    error: error?.message || 'Invite failed.'
+                };
+            }
+        }
+
+        function isRosterInviteDeliveryUnresolved(result) {
+            return result?.emailStatus === 'retryable' || result?.status === 'failed';
+        }
+
+        function setRosterInviteDeliveryResults(source, results) {
+            const nextResults = Array.isArray(results) ? results : [];
+            if (source === 'ai') {
+                aiRosterInviteDeliveryResults = [
+                    ...aiRosterInviteDeliveryResults.filter(isRosterInviteDeliveryUnresolved),
+                    ...nextResults
+                ];
+            } else {
+                csvRosterInviteDeliveryResults = [
+                    ...csvRosterInviteDeliveryResults.filter(isRosterInviteDeliveryUnresolved),
+                    ...nextResults
+                ];
+            }
+            renderRosterInviteDeliveryResults(source);
+        }
+
+        function renderRosterInviteDeliveryResults(source) {
+            const isAi = source === 'ai';
+            const results = isAi ? aiRosterInviteDeliveryResults : csvRosterInviteDeliveryResults;
+            const container = document.getElementById(isAi ? 'ai-invite-delivery-results' : 'csv-invite-delivery-results');
+            if (!container) return;
+            if (!results.length) {
+                container.innerHTML = '';
+                container.classList.add('hidden');
+                return;
+            }
+            const rows = results.map((result, index) => {
+                const retryable = isRosterInviteDeliveryUnresolved(result);
+                const statusLabel = result.status === 'linked'
+                    ? result.emailStatus === 'sent' ? 'Linked account · notification emailed' : 'Linked account · email needs retry'
+                    : result.emailStatus === 'sent'
+                        ? 'Invitation emailed'
+                        : result.status === 'failed'
+                            ? 'Invitation could not be created'
+                            : 'Invitation created · email needs retry';
+                return `
+                    <div class="rounded-md border ${retryable ? 'border-amber-300 bg-white' : 'border-green-200 bg-green-50'} p-3">
+                        <div class="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                                <div class="font-semibold text-gray-900">${escapeHtml(result.email || 'Contact without email')}</div>
+                                <div class="text-xs text-gray-600">${escapeHtml([result.name, result.relation].filter(Boolean).join(' · ') || 'Family contact')}</div>
+                                <div class="mt-1 text-xs ${retryable ? 'text-amber-800' : 'text-green-800'}">${escapeHtml(statusLabel)}</div>
+                                ${result.code ? `<div class="mt-1 text-xs text-gray-600">Existing invite code: <code class="font-semibold text-gray-900">${escapeHtml(result.code)}</code></div>` : ''}
+                                ${result.error ? `<div class="mt-1 text-xs text-red-700">${escapeHtml(result.error)}</div>` : ''}
+                            </div>
+                            ${retryable ? `
+                                <button type="button"
+                                    data-roster-invite-retry="${source}"
+                                    data-result-index="${index}"
+                                    class="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-200">
+                                    ${result.code ? 'Resend existing invite' : 'Retry invitation'}
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = `
+                <div class="font-semibold text-amber-950">Family invitation delivery report</div>
+                <div class="text-xs text-amber-800">Retrying an emailed invitation reuses its existing code. Saved roster players and contacts are not changed.</div>
+                ${rows.join('')}
+            `;
+            container.classList.remove('hidden');
+        }
+
+        async function retryRosterInviteDelivery(source, index, button) {
+            const results = source === 'ai' ? aiRosterInviteDeliveryResults : csvRosterInviteDeliveryResults;
+            const result = results[index];
+            if (!result || !isRosterInviteDeliveryUnresolved(result)) return;
+            const originalLabel = button?.textContent || 'Retry invitation';
+            try {
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = 'Retrying...';
+                }
+                const nextResult = result.code
+                    ? {
+                        ...result,
+                        status: result.status === 'linked' ? 'linked' : 'sent',
+                        emailStatus: 'sent',
+                        error: ''
+                    }
+                    : await sendImportedRosterContactInvite(result.playerId, result.playerNumber, result);
+                if (result.code) {
+                    await queueInviteEmail(result.code, { forceNewDelivery: true });
+                }
+                results.splice(index, 1, nextResult);
+            } catch (error) {
+                results.splice(index, 1, {
+                    ...result,
+                    error: error?.message || 'Invitation email could not be retried.'
+                });
+            } finally {
+                renderRosterInviteDeliveryResults(source);
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalLabel;
+                }
             }
         }
 
@@ -2135,10 +2275,19 @@
             const parts = [];
             if (summary.sent) parts.push(`${summary.sent} emailed`);
             if (summary.linked) parts.push(`${summary.linked} linked`);
-            if (summary.codeCreated) parts.push(`${summary.codeCreated} code${summary.codeCreated === 1 ? '' : 's'} created for retry`);
-            if (summary.failed) parts.push(`${summary.failed} failed and can be retried from the imported contact row`);
+            if (summary.retryable) parts.push(`${summary.retryable} email${summary.retryable === 1 ? '' : 's'} ready to retry`);
+            if (summary.failed) parts.push(`${summary.failed} failed and listed for retry below`);
             return parts.length ? ` Family invites: ${parts.join(', ')}.` : '';
         }
+
+        document.addEventListener('click', (event) => {
+            const button = event.target?.closest?.('[data-roster-invite-retry]');
+            if (!button) return;
+            const source = button.dataset.rosterInviteRetry === 'ai' ? 'ai' : 'csv';
+            const index = Number(button.dataset.resultIndex);
+            if (!Number.isInteger(index) || index < 0) return;
+            retryRosterInviteDelivery(source, index, button);
+        });
 
         function downloadFullRosterTemplate() {
             const csv = buildFullRosterCsvTemplate(rosterFieldDefinitions);
@@ -2187,18 +2336,16 @@
             if (!confirm(`Import ${plan.operations.length} reviewed player row${plan.operations.length === 1 ? '' : 's'}?`)) return;
 
             const inviteResults = [];
-            const sendInvites = document.getElementById('roster-csv-send-invites')?.checked === true;
             try {
                 button.disabled = true;
                 button.textContent = 'Importing...';
                 const savedOperations = await applyRosterCsvImportOperations(currentTeamId, plan.operations);
                 for (const operation of savedOperations) {
-                    if (sendInvites) {
-                        for (const request of operation.inviteRequests || []) {
-                            inviteResults.push(await sendImportedRosterContactInvite(operation.playerId, operation.payload?.number, request));
-                        }
+                    for (const request of operation.inviteRequests || []) {
+                        inviteResults.push(await sendImportedRosterContactInvite(operation.playerId, operation.payload?.number, request));
                     }
                 }
+                setRosterInviteDeliveryResults('csv', inviteResults);
                 renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.${formatRosterContactInviteSummary(inviteResults)}`, inviteResults.some((result) => result.status === 'failed') ? 'info' : 'success');
                 rosterCsvImportPlan = null;
                 rosterCsvImportSource = '';
@@ -2360,53 +2507,11 @@
         // ===== BULK AI UPDATE FUNCTIONALITY =====
 
         let proposedOperations = [];
+        let proposedAiOperations = [];
+        let proposedPlanErrors = [];
+        let bulkAiExistingPlayers = [];
         let bulkAiModulesPromise = null;
         let bulkAiModules = null;
-        const bulkAiProfileFieldAliases = {
-            preferredName: 'preferredName',
-            nickname: 'preferredName',
-            position: 'position',
-            alternateNumber: 'alternateNumber',
-            birthDate: 'birthDate',
-            dateOfBirth: 'birthDate',
-            dob: 'birthDate',
-            gender: 'gender',
-            grade: 'grade',
-            school: 'school',
-            jerseySize: 'jerseySize',
-            uniformSize: 'jerseySize',
-            memberId: 'memberId',
-            dominantHandFoot: 'dominantHandFoot',
-            dominantHand: 'dominantHandFoot',
-            dominantFoot: 'dominantHandFoot'
-        };
-        const bulkAiOptionalPlayerProperties = [
-            'number',
-            'preferredName',
-            'nickname',
-            'position',
-            'alternateNumber',
-            'birthDate',
-            'dateOfBirth',
-            'dob',
-            'gender',
-            'grade',
-            'school',
-            'jerseySize',
-            'uniformSize',
-            'memberId',
-            'dominantHandFoot',
-            'dominantHand',
-            'dominantFoot',
-            'parentName',
-            'parentRelation',
-            'parentEmail',
-            'parentPhone',
-            'guardianName',
-            'guardianRelation',
-            'guardianEmail',
-            'guardianPhone'
-        ];
 
         async function loadBulkAiModules() {
             if (bulkAiModules) return bulkAiModules;
@@ -2426,123 +2531,45 @@
         }
 
         function buildBulkAiPlayerSchema(Schema, { requireName = true } = {}) {
+            const addressProperties = {
+                address1: Schema.string(),
+                address2: Schema.string(),
+                street: Schema.string(),
+                city: Schema.string(),
+                state: Schema.string(),
+                zip: Schema.string()
+            };
+            const contactProperties = {
+                name: Schema.string(),
+                relation: Schema.string(),
+                email: Schema.string(),
+                phone: Schema.string(),
+                kind: Schema.string()
+            };
             const properties = {
                 name: Schema.string(),
                 number: Schema.string(),
-                preferredName: Schema.string(),
-                nickname: Schema.string(),
-                position: Schema.string(),
-                alternateNumber: Schema.string(),
-                birthDate: Schema.string(),
-                dateOfBirth: Schema.string(),
-                dob: Schema.string(),
-                gender: Schema.string(),
-                grade: Schema.string(),
-                school: Schema.string(),
-                jerseySize: Schema.string(),
-                uniformSize: Schema.string(),
-                memberId: Schema.string(),
-                dominantHandFoot: Schema.string(),
-                dominantHand: Schema.string(),
-                dominantFoot: Schema.string(),
-                parentName: Schema.string(),
-                parentRelation: Schema.string(),
-                parentEmail: Schema.string(),
-                parentPhone: Schema.string(),
-                guardianName: Schema.string(),
-                guardianRelation: Schema.string(),
-                guardianEmail: Schema.string(),
-                guardianPhone: Schema.string()
+                address: Schema.object({
+                    properties: addressProperties,
+                    optionalProperties: Object.keys(addressProperties)
+                }),
+                rosterStatus: Schema.string(),
+                familyContacts: Schema.array({
+                    items: Schema.object({
+                        properties: contactProperties,
+                        optionalProperties: Object.keys(contactProperties)
+                    })
+                })
             };
+            getRosterAiImportFieldCatalog(rosterFieldDefinitions).forEach((field) => {
+                if (['name', 'number', 'rosterStatus', 'familyContacts'].includes(field.key) || field.key.startsWith('address.')) return;
+                properties[field.key] = field.type === 'checkbox' ? Schema.boolean() : Schema.string();
+            });
+            const optionalProperties = Object.keys(properties).filter((key) => !requireName || key !== 'name');
             return Schema.object({
                 properties,
-                optionalProperties: requireName ? bulkAiOptionalPlayerProperties : ['name', ...bulkAiOptionalPlayerProperties]
+                optionalProperties
             });
-        }
-
-        function extractBulkAiProfileValues(draft = {}) {
-            const values = {};
-            Object.entries(bulkAiProfileFieldAliases).forEach(([draftKey, fieldKey]) => {
-                if (!Object.prototype.hasOwnProperty.call(draft || {}, draftKey)) return;
-                const value = String(draft[draftKey] ?? '').trim();
-                if (value) values[fieldKey] = value;
-            });
-            return values;
-        }
-
-        function getBulkAiFamilyContact(draft = {}) {
-            const name = String(draft.parentName || draft.guardianName || '').trim();
-            const email = String(draft.parentEmail || draft.guardianEmail || '').trim().toLowerCase();
-            const phone = String(draft.parentPhone || draft.guardianPhone || '').trim();
-            const relation = String(draft.parentRelation || draft.guardianRelation || 'Parent').trim() || 'Parent';
-            if (!name && !email && !phone) return null;
-            return {
-                name,
-                email,
-                phone,
-                relation,
-                source: 'roster-ai'
-            };
-        }
-
-        function buildBulkAiRosterSavePayload(draft = {}, existingPlayer = {}) {
-            const profileValues = extractBulkAiProfileValues(draft);
-            const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
-            if (validationErrors.length) {
-                throw new Error(validationErrors.join('\n'));
-            }
-            const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
-            const existingProfile = existingPlayer.profile || {};
-            const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});
-            const existingPrivateValues = existingPlayer.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'
-                ? existingPlayer.privateProfileRosterFields
-                : {};
-            const playerData = {};
-            if (Object.prototype.hasOwnProperty.call(draft, 'name')) playerData.name = String(draft.name || '').trim();
-            if (Object.prototype.hasOwnProperty.call(draft, 'number')) playerData.number = String(draft.number || '').trim();
-            if (Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0) {
-                playerData.profile = {
-                    ...existingPublicProfile,
-                    customFields: {
-                        ...(existingPublicProfile.customFields || {}),
-                        ...publicValues
-                    }
-                };
-                if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
-                    playerData.position = publicValues.position;
-                }
-            }
-            const familyContact = getBulkAiFamilyContact(draft);
-            return {
-                playerData,
-                privateRosterFields: { ...legacyProtectedValues, ...existingPrivateValues, ...privateValues },
-                privateFamilyContacts: familyContact ? { parents: [familyContact] } : null
-            };
-        }
-
-        function mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer = {}, privateFamilyContacts = null) {
-            if (!privateFamilyContacts) return privateFamilyContacts;
-            const mergedContacts = {};
-            if (Array.isArray(privateFamilyContacts.parents)) {
-                mergedContacts.parents = mergeRosterParentContacts(
-                    existingPlayer.privateProfileParents || [],
-                    privateFamilyContacts.parents,
-                    { defaultRelation: 'Parent' }
-                );
-            }
-            if (Array.isArray(privateFamilyContacts.contacts)) {
-                mergedContacts.contacts = mergeRosterParentContacts(
-                    existingPlayer.privateProfileContacts || [],
-                    privateFamilyContacts.contacts,
-                    { defaultRelation: 'Contact' }
-                );
-            }
-            return Object.keys(mergedContacts).length > 0 ? mergedContacts : privateFamilyContacts;
-        }
-
-        function hasBulkAiPrivateProfilePayload(payload = {}) {
-            return Object.keys(payload.privateRosterFields || {}).length > 0 ||
-                Boolean(payload.privateFamilyContacts);
         }
 
         // Tab switching
@@ -2616,7 +2643,8 @@
                 processBtn.classList.add('opacity-50');
 
                 // Get current players for context
-                const currentPlayers = await getPlayers(currentTeamId);
+                const currentPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
+                bulkAiExistingPlayers = currentPlayers;
 
                 // Build context for AI
                 const playersContext = currentPlayers.map(p => ({
@@ -2649,31 +2677,36 @@
                     }
                 });
 
+                const rosterAiFieldCatalog = getRosterAiImportFieldCatalog(rosterFieldDefinitions);
+
                 // Create AI prompt
                 let promptText = `Parse this roster/player list and extract player information.
 
 CONTEXT:
 - Current players in roster: ${playersContext.length}
 - Current player records: ${JSON.stringify(playersContext)}
+- Supported roster field contract: ${JSON.stringify(rosterAiFieldCatalog)}
 ${textInput ? `\nADDITIONAL INSTRUCTIONS:\n${textInput}\n` : ''}
 PARSING RULES:
-1. Extract ALL players ${imageFile ? 'from the image' : 'from the text'} (look for Name and Number patterns)
+1. Extract ALL players ${imageFile ? 'from the image' : 'from the text'} and use only field keys from the supported roster field contract
 2. Number formats: "#10", "10", "#10 Name", "Name - 10", "Name (10)", etc.
-3. Also extract optional player fields when visible: preferred name/nickname, position, alternate number, DOB/birth date, gender, grade, school, jersey or uniform size, member ID, dominant hand/foot
-4. Extract parent/guardian contact columns when visible: name, relation, email, and phone. Put those on parentName/parentRelation/parentEmail/parentPhone or guardianName/guardianRelation/guardianEmail/guardianPhone.
+3. Include an optional field property only when the source contains it or the instructions explicitly request changing or clearing it. Never return empty placeholder properties for fields that are not being imported.
+4. Put address parts in address and put every parent, guardian, emergency, or family contact in familyContacts with name, relation, email, phone, and kind when those values are present.
 5. Skip headers, blank lines, team names, and non-player text
-6. If no number is provided, leave it empty
+6. If no number is provided, omit number instead of returning an empty placeholder
 7. Compare each extracted player to the current player records before choosing an action
 8. Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction
 9. Use action="add" with player object only when no reasonable current player match exists
-10. Never add a second active player for a likely update to an existing player
+10. Use action="deactivate" or action="reactivate" only when the instructions ask for that roster-status change
+11. Never add a second active player for a likely update to an existing player
+12. Preserve checkbox false values and explicit clear requests because property presence represents an intentional change
 
 EXAMPLES:
 - "#10 John Smith" → if no current player matches, action: "add", player: { name: "John Smith", number: "10" }
 - "23 Jane Doe" → if current player #23 is "Jane Do", action: "update", playerId: current id, changes: { name: "Jane Doe", number: "23" }
 - "Sarah Johnson - 15" → if current player #15 is "Sarah Jones", action: "update", playerId: current id, changes: { name: "Sarah Johnson", number: "15" }
-- "Mike Wilson" → if no current player matches, action: "add", player: { name: "Mike Wilson", number: "" }
-- "Avery Lee, #4, Forward, DOB 2014-02-03, Parent Pat Lee pat@example.com" → player: { name: "Avery Lee", number: "4", position: "Forward", birthDate: "2014-02-03", parentName: "Pat Lee", parentEmail: "pat@example.com" }`;
+- "Mike Wilson" → if no current player matches, action: "add", player: { name: "Mike Wilson" }
+- "Avery Lee, #4, Forward, DOB 2014-02-03, Parent Pat Lee pat@example.com" → player: { name: "Avery Lee", number: "4", position: "Forward", birthDate: "2014-02-03", familyContacts: [{ name: "Pat Lee", relation: "Parent", email: "pat@example.com", kind: "parent" }] }`;
 
                 // Call Firebase AI with structured output
                 const firebaseApp = getApp();
@@ -2703,11 +2736,20 @@ EXAMPLES:
                     throw new Error('Invalid AI response format - missing "operations" array. Response: ' + JSON.stringify(aiResponse));
                 }
 
-                // Store operations and render preview
-                proposedOperations = aiResponse.operations;
+                // Store raw operations, then normalize them through the same
+                // public/private/contact contract used by CSV imports.
+                proposedAiOperations = aiResponse.operations;
+                const rosterAiPlan = planRosterAiImport({
+                    aiOperations: proposedAiOperations,
+                    fields: rosterFieldDefinitions,
+                    existingPlayers: bulkAiExistingPlayers,
+                    source: 'roster-ai'
+                });
+                proposedOperations = rosterAiPlan.operations;
+                proposedPlanErrors = rosterAiPlan.errors;
 
-                if (proposedOperations.length === 0) {
-                    alert('AI did not find any players to add/update/delete in the text. Please try being more specific.');
+                if (proposedOperations.length === 0 && proposedPlanErrors.length === 0) {
+                    alert('AI did not find any players to add, update, deactivate, or reactivate. Please try being more specific.');
                 }
 
                 renderProposedChanges();
@@ -2723,65 +2765,136 @@ EXAMPLES:
             }
         });
 
-        // Render proposed changes with edit/delete capabilities
+        function getBulkAiRosterFieldDefinition(key) {
+            if (key === 'rosterStatus') {
+                return {
+                    key,
+                    type: 'menu',
+                    options: [
+                        { value: 'player', label: 'Player' },
+                        { value: 'staff', label: 'Staff' },
+                        { value: 'non-player', label: 'Non-player' }
+                    ]
+                };
+            }
+            return rosterFieldDefinitions.find((field) => field.key === key) || null;
+        }
+
+        function renderBulkAiFieldControl(field, operationIndex) {
+            const definition = getBulkAiRosterFieldDefinition(field.key);
+            const inputId = `bulk-ai-${operationIndex}-${String(field.key).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+            const data = `data-operation-index="${operationIndex}" data-field-key="${escapeHtml(field.key)}"`;
+            if (field.type === 'checkbox') {
+                return `
+                    <label for="${inputId}" class="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2">
+                        <span class="text-xs font-semibold text-gray-700">${escapeHtml(field.label)}</span>
+                        <input id="${inputId}" type="checkbox" class="bulk-ai-field-input h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" ${data} ${field.value === true ? 'checked' : ''}>
+                    </label>
+                `;
+            }
+            if (definition?.type === 'menu' && Array.isArray(definition.options) && definition.options.length > 0) {
+                return `
+                    <label for="${inputId}" class="block">
+                        <span class="text-xs font-semibold text-gray-700">${escapeHtml(field.label)}</span>
+                        <select id="${inputId}" class="bulk-ai-field-input mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm" ${data}>
+                            ${definition.options.map((option) => {
+                                const optionValue = String(option.value ?? option);
+                                const optionLabel = String(option.label ?? option.value ?? option);
+                                return `<option value="${escapeHtml(optionValue)}" ${String(field.value) === optionValue ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`;
+                            }).join('')}
+                        </select>
+                    </label>
+                `;
+            }
+            return `
+                <label for="${inputId}" class="block">
+                    <span class="text-xs font-semibold text-gray-700">${escapeHtml(field.label)}</span>
+                    <input id="${inputId}" type="${field.type === 'date' ? 'date' : 'text'}" value="${escapeHtml(String(field.value ?? ''))}"
+                        class="bulk-ai-field-input mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                        ${data}>
+                </label>
+            `;
+        }
+
+        function renderBulkAiContact(contact, operationIndex, contactIndex) {
+            const label = contact.relation || (contact.bucket === 'contacts' ? 'Family contact' : 'Parent or guardian');
+            const fields = (contact.providedKeys || [])
+                .filter((key, index, keys) => keys.indexOf(key) === index)
+                .map((key) => {
+                    const value = String(contact[key] ?? '');
+                    const fieldLabel = key === 'name' ? 'Name' : key === 'email' ? 'Email' : key === 'phone' ? 'Phone' : 'Relation';
+                    const inputId = `bulk-ai-${operationIndex}-contact-${contactIndex}-${key}`;
+                    return `
+                        <label for="${inputId}" class="block">
+                            <span class="text-[11px] font-semibold text-indigo-800">${fieldLabel}</span>
+                            <input id="${inputId}" type="${key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'}" value="${escapeHtml(value)}"
+                                class="bulk-ai-contact-input mt-1 w-full rounded-md border border-indigo-200 bg-white px-2 py-1.5 text-sm"
+                                data-operation-index="${operationIndex}" data-contact-index="${contactIndex}" data-contact-key="${key}">
+                        </label>
+                    `;
+                }).join('');
+            if (!fields) return '';
+            return `
+                <fieldset class="rounded-md border border-indigo-200 bg-indigo-50 p-2">
+                    <legend class="px-1 text-xs font-bold text-indigo-900">${escapeHtml(label)}</legend>
+                    <div class="grid gap-2 sm:grid-cols-2">${fields}</div>
+                </fieldset>
+            `;
+        }
+
+        function replanBulkAiOperations() {
+            const rosterAiPlan = planRosterAiImport({
+                aiOperations: proposedAiOperations,
+                fields: rosterFieldDefinitions,
+                existingPlayers: bulkAiExistingPlayers,
+                source: 'roster-ai'
+            });
+            proposedOperations = rosterAiPlan.operations;
+            proposedPlanErrors = rosterAiPlan.errors;
+        }
+
+        function getEditableBulkAiDraft(operationIndex) {
+            const rawOperation = proposedAiOperations[operationIndex];
+            if (!rawOperation) return null;
+            const action = String(rawOperation.action || '').trim().toLowerCase();
+            const draftKey = action === 'add' ? 'player' : 'changes';
+            if (!rawOperation[draftKey] || typeof rawOperation[draftKey] !== 'object') rawOperation[draftKey] = {};
+            return rawOperation[draftKey];
+        }
+
+        function setBulkAiDraftField(draft, fieldKey, value) {
+            if (fieldKey.startsWith('address.')) {
+                if (!draft.address || typeof draft.address !== 'object') draft.address = {};
+                draft.address[fieldKey.slice('address.'.length)] = value;
+                return;
+            }
+            draft[fieldKey] = value;
+        }
+
+        // Render only properties that AI actually supplied. Explicit false and
+        // clear values remain visible because providedFields tracks presence.
         function renderProposedChanges() {
             const section = document.getElementById('proposed-changes-section');
             const list = document.getElementById('proposed-changes-list');
             const countSpan = document.getElementById('changes-count');
 
-            if (proposedOperations.length === 0) {
+            if (proposedOperations.length === 0 && proposedPlanErrors.length === 0) {
                 section.classList.add('hidden');
                 return;
             }
 
             section.classList.remove('hidden');
-            countSpan.textContent = `${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'}`;
+            countSpan.textContent = `${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'}${proposedPlanErrors.length ? ` · ${proposedPlanErrors.length} import error${proposedPlanErrors.length === 1 ? '' : 's'}` : ''}`;
 
-            list.innerHTML = proposedOperations.map((op, index) => {
-                if (op.action === 'add') {
-                    const player = op.player;
-
-                    return `
-                        <div class="border border-green-300 bg-green-50 rounded-lg p-3" data-index="${index}">
-                            <div class="flex justify-between items-start gap-2">
-                                <div class="flex-1">
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <span class="text-xs font-bold text-green-700 uppercase">➕ Add</span>
-                                    </div>
-                                    <div class="text-sm">
-                                        <input type="text" value="${escapeHtml(player.name)}"
-                                            onchange="updatePlayerOperation(${index}, 'name', this.value)"
-                                            class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1"
-                                            placeholder="Player Name">
-                                        <input type="text" value="${escapeHtml(player.number || '')}"
-                                            onchange="updatePlayerOperation(${index}, 'number', this.value)"
-                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full"
-                                            placeholder="Number (optional)">
-                                    </div>
-                                </div>
-                                <button onclick="removePlayerOperation(${index})"
-                                    class="text-red-600 hover:text-red-800 text-sm font-bold">✕</button>
-                            </div>
-                        </div>
-                    `;
-                } else if (op.action === 'update') {
-                    return `
-                        <div class="border border-blue-300 bg-blue-50 rounded-lg p-3" data-index="${index}">
-                            <div class="flex justify-between items-start gap-2">
-                                <div class="flex-1">
-                                    <div class="text-xs font-bold text-blue-700 uppercase mb-1">✏️ Update</div>
-                                    <div class="text-sm">
-                                        Player ID: ${op.playerId}<br>
-                                        Changes: ${JSON.stringify(op.changes)}<br>
-                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || '')}</span>
-                                    </div>
-                                </div>
-                                <button onclick="removePlayerOperation(${index})"
-                                    class="text-red-600 hover:text-red-800 text-sm font-bold">✕</button>
-                            </div>
-                        </div>
-                    `;
-                } else if (op.action === 'delete' || op.action === 'deactivate') {
+            const planErrors = proposedPlanErrors.length
+                ? `<div class="rounded-lg border border-red-300 bg-red-50 p-3 text-sm font-semibold text-red-800" role="alert">
+                    <div class="mb-1 font-bold">This import cannot be applied yet.</div>
+                    ${proposedPlanErrors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}
+                </div>`
+                : '';
+            list.innerHTML = planErrors + proposedOperations.map((op, index) => {
+                const action = op.action || op.type;
+                if (action === 'deactivate') {
                     return `
                         <div class="border border-red-300 bg-red-50 rounded-lg p-3" data-index="${index}">
                             <div class="flex justify-between items-start gap-2">
@@ -2797,7 +2910,7 @@ EXAMPLES:
                             </div>
                         </div>
                     `;
-                } else if (op.action === 'reactivate') {
+                } else if (action === 'reactivate') {
                     return `
                         <div class="border border-emerald-300 bg-emerald-50 rounded-lg p-3" data-index="${index}">
                             <div class="flex justify-between items-start gap-2">
@@ -2814,25 +2927,107 @@ EXAMPLES:
                         </div>
                     `;
                 }
+                const existingPlayer = bulkAiExistingPlayers.find((player) => player.id === op.playerId);
+                const playerName = op.payload?.name || existingPlayer?.name || 'Player';
+                const isAdd = action === 'add';
+                const tone = isAdd
+                    ? { border: 'border-green-300', background: 'bg-green-50', text: 'text-green-700', label: '➕ Add' }
+                    : { border: 'border-blue-300', background: 'bg-blue-50', text: 'text-blue-700', label: '✏️ Update' };
+                const fieldControls = (op.providedFields || [])
+                    .map((field) => renderBulkAiFieldControl(field, index))
+                    .join('');
+                const contactControls = (op.providedContacts || [])
+                    .map((contact, contactIndex) => renderBulkAiContact(contact, index, contactIndex))
+                    .join('');
+                const errors = (op.errors || []).length
+                    ? `<div class="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs font-semibold text-red-800" role="alert">${op.errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}</div>`
+                    : '';
+                return `
+                    <div class="rounded-lg border ${tone.border} ${tone.background} p-3" data-index="${index}">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-xs font-bold uppercase ${tone.text}">${tone.label}</span>
+                                    <span class="truncate text-sm font-bold text-gray-950">${escapeHtml(playerName)}</span>
+                                    ${(op.inviteRequests || []).length ? `<span class="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-800">${op.inviteRequests.length} invite${op.inviteRequests.length === 1 ? '' : 's'}</span>` : ''}
+                                </div>
+                                ${op.reason ? `<p class="mt-1 text-xs text-gray-600">${escapeHtml(op.reason)}</p>` : ''}
+                                ${fieldControls ? `<div class="mt-3 grid gap-2 sm:grid-cols-2">${fieldControls}</div>` : ''}
+                                ${contactControls ? `<div class="mt-3 space-y-2">${contactControls}</div>` : ''}
+                                ${errors}
+                            </div>
+                            <button type="button" onclick="removePlayerOperation(${index})"
+                                class="text-red-600 hover:text-red-800 text-sm font-bold" aria-label="Remove ${escapeHtml(playerName)} from proposed changes">✕</button>
+                        </div>
+                    </div>
+                `;
             }).join('');
+
+            list.querySelectorAll('.bulk-ai-field-input').forEach((input) => {
+                input.addEventListener('change', (event) => {
+                    const target = event.currentTarget;
+                    window.updatePlayerOperation(
+                        Number(target.dataset.operationIndex),
+                        target.dataset.fieldKey,
+                        target.type === 'checkbox' ? target.checked : target.value
+                    );
+                });
+            });
+            list.querySelectorAll('.bulk-ai-contact-input').forEach((input) => {
+                input.addEventListener('change', (event) => {
+                    const target = event.currentTarget;
+                    window.updateBulkAiContact(
+                        Number(target.dataset.operationIndex),
+                        Number(target.dataset.contactIndex),
+                        target.dataset.contactKey,
+                        target.value
+                    );
+                });
+            });
+            document.getElementById('apply-changes-btn').disabled = proposedPlanErrors.length > 0
+                || proposedOperations.some((operation) => (operation.errors || []).length > 0);
         }
 
         // Update operation when user edits
         window.updatePlayerOperation = function(index, field, value) {
-            if (proposedOperations[index].action === 'add') {
-                proposedOperations[index].player[field] = value;
-            }
+            const draft = getEditableBulkAiDraft(index);
+            if (!draft || !field) return;
+            setBulkAiDraftField(draft, field, value);
+            replanBulkAiOperations();
+            renderProposedChanges();
+        };
+
+        window.updateBulkAiContact = function(operationIndex, contactIndex, key, value) {
+            const draft = getEditableBulkAiDraft(operationIndex);
+            const plannedOperation = proposedOperations[operationIndex];
+            if (!draft || !plannedOperation || !key) return;
+            draft.familyContacts = (plannedOperation.providedContacts || []).map((contact) => {
+                const nextContact = {};
+                (contact.providedKeys || []).forEach((providedKey) => {
+                    nextContact[providedKey] = contact[providedKey] ?? '';
+                });
+                return nextContact;
+            });
+            if (!draft.familyContacts[contactIndex]) draft.familyContacts[contactIndex] = {};
+            draft.familyContacts[contactIndex][key] = value;
+            ['parents', 'guardians', 'contacts', 'parentName', 'parentRelation', 'parentEmail', 'parentPhone', 'guardianName', 'guardianRelation', 'guardianEmail', 'guardianPhone']
+                .forEach((legacyKey) => delete draft[legacyKey]);
+            replanBulkAiOperations();
+            renderProposedChanges();
         };
 
         // Remove operation from list
         window.removePlayerOperation = function(index) {
-            proposedOperations.splice(index, 1);
+            proposedAiOperations.splice(index, 1);
+            replanBulkAiOperations();
             renderProposedChanges();
         };
 
         // Cancel changes
         document.getElementById('cancel-changes-btn').addEventListener('click', () => {
             proposedOperations = [];
+            proposedAiOperations = [];
+            proposedPlanErrors = [];
             document.getElementById('proposed-changes-section').classList.add('hidden');
             resetBulkAiDraftState();
         });
@@ -2840,8 +3035,18 @@ EXAMPLES:
         // Apply changes to database
         document.getElementById('apply-changes-btn').addEventListener('click', async () => {
             if (proposedOperations.length === 0) return;
+            if (proposedPlanErrors.length > 0) {
+                alert(proposedPlanErrors.join('\n'));
+                return;
+            }
+            const invalidOperations = proposedOperations.filter((operation) => (operation.errors || []).length > 0);
+            if (invalidOperations.length > 0) {
+                alert('Fix or remove the highlighted operations before applying this import.');
+                return;
+            }
 
-            const confirmMsg = `Apply ${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'} to the roster?`;
+            const inviteCount = proposedOperations.reduce((total, operation) => total + (operation.inviteRequests || []).length, 0);
+            const confirmMsg = `Apply ${proposedOperations.length} reviewed change${proposedOperations.length === 1 ? '' : 's'} to the roster${inviteCount ? ` and email ${inviteCount} family invite${inviteCount === 1 ? '' : 's'}` : ''}?`;
             if (!confirm(confirmMsg)) return;
 
             const applyBtn = document.getElementById('apply-changes-btn');
@@ -2854,57 +3059,35 @@ EXAMPLES:
 
                 let successCount = 0;
                 let errorCount = 0;
-
-                for (const op of proposedOperations) {
+                const inviteResults = [];
+                if (proposedOperations.length > 0) {
                     try {
-                        if (op.action === 'add') {
-                            const payload = buildBulkAiRosterSavePayload(op.player || {});
-                            const playerData = {
-                                name: op.player.name,
-                                number: op.player.number || '',
-                                ...payload.playerData
-                            };
-                            const playerId = await addPlayer(currentTeamId, playerData);
-                            if (hasBulkAiPrivateProfilePayload(payload)) {
-                                await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, payload.privateRosterFields, payload.privateFamilyContacts || {});
+                        const savedOperations = await applyRosterCsvImportOperations(currentTeamId, proposedOperations);
+                        successCount += savedOperations.length;
+                        for (const operation of savedOperations.filter((item) => item.type === 'add' || item.type === 'update')) {
+                            const existingPlayer = bulkAiExistingPlayers.find((player) => player.id === operation.playerId);
+                            for (const request of operation.inviteRequests || []) {
+                                inviteResults.push(await sendImportedRosterContactInvite(
+                                    operation.playerId,
+                                    operation.payload?.number ?? existingPlayer?.number ?? '',
+                                    request
+                                ));
                             }
-                            successCount++;
-                        } else if (op.action === 'update') {
-                            const existingPlayer = latestRosterPlayers.find((player) => player.id === op.playerId) || {};
-                            const payload = buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer);
-                            const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);
-                            const playerData = { ...payload.playerData };
-                            await applyRosterCsvImportOperations(currentTeamId, [{
-                                type: 'update',
-                                playerId: op.playerId,
-                                payload: playerData,
-                                ...(hasBulkAiPrivateProfilePayload(payload) ? {
-                                    privateRosterFields: payload.privateRosterFields,
-                                    privateFamilyContacts: privateFamilyContacts || {}
-                                } : {})
-                            }]);
-                            successCount++;
-                        } else if (op.action === 'delete') {
-                            await deactivatePlayer(currentTeamId, op.playerId);
-                            successCount++;
-                        } else if (op.action === 'deactivate') {
-                            await deactivatePlayer(currentTeamId, op.playerId);
-                            successCount++;
-                        } else if (op.action === 'reactivate') {
-                            await reactivatePlayer(currentTeamId, op.playerId);
-                            successCount++;
                         }
                     } catch (error) {
-                        console.error(`Error applying operation:`, op, error);
-                        errorCount++;
+                        console.error('Error applying roster AI write batch:', error);
+                        errorCount += proposedOperations.length;
                     }
                 }
+                setRosterInviteDeliveryResults('ai', inviteResults);
 
                 // Show results
-                alert(`Applied ${successCount} change${successCount === 1 ? '' : 's'} successfully.${errorCount > 0 ? `\n${errorCount} error${errorCount === 1 ? '' : 's'} occurred.` : ''}`);
+                alert(`Applied ${successCount} change${successCount === 1 ? '' : 's'} successfully.${formatRosterContactInviteSummary(inviteResults)}${errorCount > 0 ? `\n${errorCount} roster change${errorCount === 1 ? '' : 's'} failed.` : ''}`);
 
                 // Reset and reload
                 proposedOperations = [];
+                proposedAiOperations = [];
+                proposedPlanErrors = [];
                 document.getElementById('proposed-changes-section').classList.add('hidden');
                 if (errorCount === 0) {
                     resetBulkAiDraftState();

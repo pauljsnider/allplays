@@ -3156,6 +3156,49 @@ service cloud.firestore {
                         (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable()));
       allow delete: if isVerifiedForSensitiveWrite() && isGlobalAdmin();
 
+      // Prepared AI roster payloads contain private youth/contact data and must
+      // remain behind the team's current manager authorization boundary.
+      match /privateAiPendingActions/{actionId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) &&
+                       resource.data.get('expiresAtAt', null) is timestamp &&
+                       resource.data.get('expiresAtAt', null) > request.time &&
+                       (resource.data.get('status', '') == 'pending' ||
+                        (resource.data.get('status', '') == 'executing' &&
+                         resource.data.get('userId', '') == request.auth.uid));
+        allow create: if isVerifiedForSensitiveWrite() &&
+                        isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.get('userId', '') == request.auth.uid;
+        allow update: if isVerifiedForSensitiveWrite() &&
+                        isTeamOwnerOrAdmin(teamId) &&
+                        resource.data.get('userId', '') == request.auth.uid &&
+                        request.resource.data.get('userId', '') == resource.data.get('userId', '');
+        allow delete: if isVerifiedForSensitiveWrite() &&
+                        isTeamOwnerOrAdmin(teamId) &&
+                        resource.data.get('userId', '') == request.auth.uid;
+      }
+
+      // Random invite codes remain secret while this manager-only record gives
+      // roster import retries an atomic, non-secret idempotency coordinate.
+      match /inviteIdempotency/{idempotencyId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update: if isVerifiedForSensitiveWrite() &&
+                               isTeamOwnerOrAdmin(teamId) &&
+                               request.resource.data.keys().hasOnly([
+                                 'accessCode', 'type', 'playerId', 'email',
+                                 'generatedBy', 'createdAt', 'updatedAt'
+                               ]) &&
+                               request.resource.data.accessCode is string &&
+                               request.resource.data.accessCode.size() == 8 &&
+                               request.resource.data.type == 'parent_invite' &&
+                               request.resource.data.playerId is string &&
+                               request.resource.data.playerId.size() > 0 &&
+                               request.resource.data.email is string &&
+                               request.resource.data.generatedBy == request.auth.uid &&
+                               request.resource.data.createdAt is timestamp &&
+                               request.resource.data.updatedAt is timestamp;
+        allow delete: if false;
+      }
+
 	      // Players subcollection
 	      match /players/{playerId} {
 	        // Public player doc is only safe if it contains no sensitive fields.

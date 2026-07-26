@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const viteConfigSource = readFileSync(new URL('../../apps/app/vite.config.ts', import.meta.url), 'utf8');
+const legacyUtilsSource = readFileSync(new URL('../../js/utils.js', import.meta.url), 'utf8');
 
 describe('calendar function CORS origins', () => {
   it('uses the project-scoped Firebase Hosting matcher only for the default policy', () => {
@@ -24,5 +26,19 @@ describe('calendar function CORS origins', () => {
     expect(writeCorsEnd).toBeGreaterThan(writeCorsStart);
     expect(writeCorsSource).toContain('if (origin && isAllowedOrigin(origin))');
     expect(writeCorsSource).toContain("res.set('Access-Control-Allow-Origin', origin);");
+  });
+
+  it('allows both local app and legacy development origins', () => {
+    expect(functionsSource).toContain("'http://localhost:8000'");
+    expect(functionsSource).toContain("'http://127.0.0.1:8000'");
+    expect(functionsSource).toContain("'http://localhost:5174'");
+    expect(functionsSource).toContain("'http://127.0.0.1:5174'");
+  });
+
+  it('routes local Vite calendar requests through the same-origin development proxy', () => {
+    expect(viteConfigSource).toContain("'/__allplays/calendar'");
+    expect(viteConfigSource).toContain("'/fetchCalendarIcs'");
+    expect(legacyUtilsSource).toContain("window.location.port === '5174'");
+    expect(legacyUtilsSource).toContain("return '/__allplays/calendar'");
   });
 });

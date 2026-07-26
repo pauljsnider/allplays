@@ -82,6 +82,7 @@ describe('public games calendar feed helpers', () => {
         });
 
         expect(canExposeEmptyPublicFeed({ isPublic: true, active: true })).toBe(true);
+        expect(canExposeEmptyPublicFeed({ active: true })).toBe(false);
         expect(canExposeEmptyPublicFeed({ isPublic: true, active: false })).toBe(false);
         expect(canExposeEmptyPublicFeed({ isPublic: false, active: true })).toBe(false);
         expect(ics).toContain('BEGIN:VCALENDAR');

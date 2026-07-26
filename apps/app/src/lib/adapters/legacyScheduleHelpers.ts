@@ -312,6 +312,7 @@ export function applyPracticeRecurrenceFields(payload: {
     recurrenceConfig?: Record<string, unknown>;
     startDate?: Date;
     endDate?: Date;
+    timeZone?: string;
     Timestamp: { fromDate: (date: Date) => unknown };
     deleteField: () => unknown;
     generateSeriesId?: () => string;

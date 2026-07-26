@@ -66,6 +66,14 @@ describe('Messages Sheet native back behavior', () => {
 });
 
 describe('Messages ALL PLAYS lazy loading', () => {
+  it('keeps the native speech plugin out of the eager Messages route bundle', () => {
+    const source = readFileSync(resolveAppSourcePath('src/lib/voiceService.ts'), 'utf8');
+
+    expect(source).toContain("import('@capgo/capacitor-speech-recognition')");
+    expect(source).toContain("import type {");
+    expect(source).not.toMatch(/import\s*\{\s*SpeechRecognition[\s,}]/);
+  });
+
   it('reserves enough mobile chat topbar space for both shell overlay buttons', () => {
     const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
     const source = readFileSync(sourcePath, 'utf8');

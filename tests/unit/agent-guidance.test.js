@@ -14,7 +14,7 @@ describe('agent guidance', () => {
         expect(existsSync('firebase/firebase.json')).toBe(false);
         expect(existsSync('apps/app/pnpm-lock.yaml')).toBe(false);
         expect(landing).toContain('controller ownership metadata');
-        expect(landing).toContain('does not launch, cancel, or replace CI');
+        expect(landing).toContain('do not launch, cancel, or replace CI');
         expect(landing).toContain('must not restore the label or reclaim remediation');
         expect(landing).toContain('explicit operator-requested ownership transfer');
         expect(landing).not.toContain('Removing `external-claim` triggers');

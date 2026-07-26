@@ -114,7 +114,9 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         }
         if (job.steps.some((step) => typeof step?.uses === 'string' &&
             !/^actions\/download-artifact@[0-9a-f]{40}$/.test(step.uses) &&
-            !/^google-github-actions\/auth@/.test(step.uses)
+            !/^google-github-actions\/auth@/.test(step.uses) &&
+            !/^actions\/upload-pages-artifact@[0-9a-f]{40}$/.test(step.uses) &&
+            !/^actions\/deploy-pages@[0-9a-f]{40}$/.test(step.uses)
         )) {
             throw new Error(`${label} credentialed deploy job contains an unapproved action.`);
         }
@@ -262,6 +264,7 @@ export function validateProductionDeployCommand(deployProd) {
         'Production push and manual retry triggers'
     );
     assertIncludes(deployProd, 'group: production-deploy-${{ github.ref }}', 'Production ref-scoped concurrency');
+    assertIncludes(deployProd, 'cancel-in-progress: false', 'Production release serialization without cancellation');
     assertIncludes(deployProd, 'baseline_branch="$GITHUB_REF_NAME"', 'Production push baseline branch');
     assertIncludes(deployProd, 'if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then', 'Production manual retry baseline selection');
     assertIncludes(deployProd, 'if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'Production manual retry master restriction');
@@ -298,12 +301,49 @@ export function validateProductionDeployCommand(deployProd) {
         'Refusing --force outside the reviewed retry-enabled function allowlist.',
         'Production force-deploy allowlist guard'
     );
-    assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
+    assertIncludes(deployProd, 'test_firestore_rules_api 2 20', 'Production non-persistent Firestore Rules API health preflight');
+    assertIncludes(
+        deployProd,
+        'https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test',
+        'Production Firestore projects:test health endpoint'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
+        'Production Firestore deploy gets bounded post-preflight retries'
+    );
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
     assertIncludes(deployProd, 'latest version of firestore.rules already up to date, skipping upload', 'Production Firestore current-rules verification');
     assertIncludes(deployProd, 'deployed indexes in firestore.indexes.json successfully', 'Production Firestore current-indexes verification');
+    assertIncludes(deployProd, 'verify_active_firestore_rules()', 'Production Firestore active-release verifier');
+    assertIncludes(
+        deployProd,
+        'projects/game-flow-c6311/releases/cloud.firestore',
+        'Production Firestore active release lookup'
+    );
+    assertIncludes(deployProd, '(.source.files // [])', 'Production Firestore active source lookup');
+    assertIncludes(
+        deployProd,
+        'if length == 1 and .[0].name == "firestore.rules"',
+        'Production Firestore active source must contain only firestore.rules'
+    );
+    assertIncludes(
+        deployProd,
+        'The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write.',
+        'Production Firestore exact-source write avoidance'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
+        'Production Firestore exact-source indexes-only deploy'
+    );
+    assertIncludes(
+        deployProd,
+        'The active Firestore release exactly matches this commit and indexes deployed',
+        'Production Firestore exact-source duplicate-release recovery'
+    );
     assertIncludes(deployProd, 'accepting the duplicate release 409 as success', 'Production Firestore verified duplicate-release recovery');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
     assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
@@ -352,6 +392,21 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
+    assertIncludes(
+        deployProd,
+        'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"',
+        'Production Firestore stale component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_sha="$last_success_sha"',
+        'Production Firestore complete deployment baseline reuse'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.',
+        'Production Firestore divergent baseline fail-closed fallback'
+    );
     assertIncludes(deployProd, 'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore component change detection');
     assertIncludes(deployProd, 'record_component_deployment()', 'Production component deployment recorder');
     assertIncludes(deployProd, '"production-firestore"', 'Production Firestore component marker');
@@ -369,6 +424,21 @@ export function validateProductionDeployCommand(deployProd) {
     if (unchangedBranch.includes('"firestore"')) {
         throw new Error('Production must not redeploy unchanged Firestore configuration.');
     }
+    assertIncludes(
+        changedBranch,
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
+        'Production Firestore transient deploy retries'
+    );
+    assertMatches(
+        changedBranch,
+        /if verify_active_firestore_rules; then[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20[\s\S]*else[\s\S]*test_firestore_rules_api 2 20[\s\S]*retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20[\s\S]*fi/,
+        'Production Firestore exact-source short circuit'
+    );
+    assertIncludes(
+        changedBranch,
+        'projects:test calls bounded to at most five per release run',
+        'Production Firestore retry request bound'
+    );
     const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
     const componentMarker = deployProd.indexOf('record_component_deployment', conditionalEnd);
     const applicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"', conditionalEnd);
@@ -420,6 +490,7 @@ export function validateFirebaseRulesCi() {
     const deployProd = readText('.github/workflows/deploy-prod.yml');
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
+    const prIntegration = readText('.github/workflows/pr-integration.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
     validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
@@ -498,7 +569,11 @@ export function validateFirebaseRulesCi() {
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
-    assertMatches(deployPreviewBuild, /needs:\s*\[\s*regression-guards\s*\]/, 'Preview artifact build gate');
+    assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
+    assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
+    assertIncludes(prIntegration, 'uses: ./.github/workflows/deploy-preview.yml', 'PR integration preview artifact gate');
+    assertIncludes(prIntegration, 'name: preview-smoke', 'PR integration stable preview context');
+    assertIncludes(prIntegration, 'name: mobile-build', 'PR integration stable mobile context');
     validatePreviewDeployCommand(deployPreviewTrusted);
     validateFirebaseDeployWorkloadIdentity(deployPreviewTrusted, 'Trusted preview deploy');
     assertPreviewDeploySkipHandling(deployPreviewTrusted);

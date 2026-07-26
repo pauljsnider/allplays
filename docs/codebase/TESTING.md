@@ -87,7 +87,8 @@ emulators and must never target a real Firebase project.
 
 ### Fast and focused validation
 
-`ci.yml` runs on pull requests and `master` pushes:
+`pr-fast.yml` is the single fast pull-request code-head entrypoint and calls
+the reusable `ci.yml` workflow:
 
 - `cache-bust-guard`: verifies selected legacy asset query-version updates.
 - `unit-tests`: installs root, Functions, and app packages; validates optional
@@ -96,19 +97,21 @@ emulators and must never target a real Firebase project.
 - `app-quality`: audits app production dependencies, typechecks, performs
   diff-aware lint, and runs app tests.
 
-`regression-guards.yml` runs:
+`pr-integration.yml` is the single integration code-head entrypoint. It calls
+the reusable `regression-guards.yml`, which runs:
 
 - `firebase-rules-deploy-guard`: `npm run ci:firebase-rules`.
 - `roster-chat-media-replay-smoke`: focused Playwright fallback regression.
 
 ### Expensive path-filtered integration
 
-`mobile-build.yml` classifies changes. App, native, Capacitor, root manifest,
+The same `pr-integration.yml` run calls `mobile-build.yml`, which classifies
+changes. App, native, Capacitor, root manifest,
 lockfile, or workflow changes run Android debug and iOS simulator jobs. The
 stable aggregate job named `mobile-build` passes when native work is not
 applicable and fails closed on classification or native failures.
 
-`preview-smoke.yml` classifies served-web impact. Backend, native, docs,
+It also calls `preview-smoke.yml`, which classifies served-web impact. Backend, native, docs,
 migration, root unit-test, and rule-only diffs may skip heavy work. Applicable
 changes build/stage the root plus app, start static and app servers, and run
 nonvisual and deterministic visual Playwright suites. The stable aggregate job
@@ -210,6 +213,8 @@ visual baseline generation.
 - `playwright.smoke.config.js`
 - `tests/smoke/page-registry.js`
 - `.github/workflows/ci.yml`
+- `.github/workflows/pr-fast.yml`
+- `.github/workflows/pr-integration.yml`
 - `.github/workflows/regression-guards.yml`
 - `.github/workflows/mobile-build.yml`
 - `.github/workflows/preview-smoke.yml`

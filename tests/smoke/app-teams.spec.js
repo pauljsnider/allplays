@@ -252,6 +252,19 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return { playerId: 'player-new' };
                 }
 
+                export async function loadRosterImportContextForApp() {
+                    return { fields: [], players: [] };
+                }
+
+                export async function applyRosterImportPlanForApp(teamId, user, operations) {
+                    return {
+                        savedOperations: operations,
+                        deactivatedCount: 0,
+                        reactivatedCount: 0,
+                        inviteResults: []
+                    };
+                }
+
                 export async function archiveTeamTrackingItemForApp() {}
 
                 export async function deactivateRosterPlayerForApp() {}
@@ -465,6 +478,31 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                 }
 
                 export async function reactivateRosterPlayerForApp() {}
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function createStaffRsvpReminderPreviewLoader() {
+                    return async () => ({
+                        eligibleRecipients: [],
+                        uncoveredPlayers: [],
+                        emailRecipientCount: 0,
+                        playerCount: 0
+                    });
+                }
+
+                export async function loadParentSchedule() {
+                    return { events: [] };
+                }
+
+                export async function sendStaffRsvpReminder() {
+                    return { messageId: 'message-1', emailRecipientCount: 0 };
+                }
             `
         });
     });
@@ -950,5 +988,16 @@ test.describe('desktop My Teams', () => {
         await expect(tabNav).toHaveCount(1);
         expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('static');
         await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
+
+        const rosterImportLink = page.getByRole('link', { name: 'Start roster import' });
+        await expect(page.getByText('Bulk roster import')).toBeVisible();
+        await expect(rosterImportLink).toBeVisible();
+        const launchUrl = new URL(await rosterImportLink.getAttribute('href'), page.url());
+        const launchParams = new URLSearchParams(launchUrl.hash.split('?')[1]);
+        expect(launchParams.get('newChat')).toBe('1');
+        expect(launchParams.get('intent')).toBe('roster-import');
+        expect(launchParams.get('teamId')).toBe('team-1');
+        expect(launchParams.get('teamName')).toBe('Bears');
+        expect(launchParams.get('prompt')).toContain('Import or update the Bears roster');
     });
 });

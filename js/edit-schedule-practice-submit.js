@@ -58,6 +58,7 @@ export async function savePracticeForm({
         },
         startDate,
         endDate,
+        timeZone: formState.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         Timestamp,
         deleteField,
         generateSeriesId

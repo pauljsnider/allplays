@@ -5,7 +5,7 @@ import { sendInviteEmail as legacy_sendInviteEmail } from '@legacy/auth.js';
 import { queueInviteEmail as legacy_queueInviteEmail } from '@legacy/invite-email.js';
 import { inviteExistingTeamAdmin as legacy_inviteExistingTeamAdmin } from '@legacy/edit-team-admin-invites.js';
 import * as legacyFirebase from '@legacy/firebase.js';
-import { collectRosterParentContacts as legacy_collectRosterParentContacts, mergeStandardRosterFieldDefinitions as legacy_mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions as legacy_normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility as legacy_splitRosterProfileValuesByVisibility, validateRosterProfileValues as legacy_validateRosterProfileValues } from '@legacy/roster-profile-fields.js';
+import { collectRosterParentContacts as legacy_collectRosterParentContacts, getRosterAiImportFieldCatalog as legacy_getRosterAiImportFieldCatalog, mergeStandardRosterFieldDefinitions as legacy_mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions as legacy_normalizeRosterFieldDefinitions, planRosterAiImport as legacy_planRosterAiImport, splitRosterProfileValuesByVisibility as legacy_splitRosterProfileValuesByVisibility, validateRosterProfileValues as legacy_validateRosterProfileValues } from '@legacy/roster-profile-fields.js';
 import { describeScheduleReminderWindow as legacy_describeScheduleReminderWindow, normalizeScheduleNotificationSettings as legacy_normalizeScheduleNotificationSettings } from '@legacy/schedule-notifications.js';
 import { calculateSeasonRecord as legacy_calculateSeasonRecord, getTeamScorePair as legacy_getTeamScorePair, listSeasonLabels as legacy_listSeasonLabels } from '@legacy/season-record.js';
 import { computeNativeStandings as legacy_computeNativeStandings } from '@legacy/native-standings.js';
@@ -32,6 +32,7 @@ function callLegacyFirebase(name: string, args: any[]) {
 }
 
 export const addPlayer = (...args: any[]) => callLegacyDb('addPlayer', args);
+export const applyRosterCsvImportOperations = (...args: any[]) => callLegacyDb('applyRosterCsvImportOperations', args);
 export const createConfig = (...args: any[]) => callLegacyDb('createConfig', args);
 export const getAggregatedStatsForGames = (...args: any[]) => callLegacyDb('getAggregatedStatsForGames', args);
 export const getAdSpaceSponsors = (...args: any[]) => callLegacyDb('getAdSpaceSponsors', args);
@@ -78,6 +79,8 @@ export const where = (...args: any[]) => callLegacyFirebase('where', args);
 export const normalizeRosterFieldDefinitions = legacy_normalizeRosterFieldDefinitions as (...args: any[]) => any;
 export const mergeStandardRosterFieldDefinitions = legacy_mergeStandardRosterFieldDefinitions as (...args: any[]) => any;
 export const collectRosterParentContacts = legacy_collectRosterParentContacts as (...args: any[]) => any;
+export const getRosterAiImportFieldCatalog = legacy_getRosterAiImportFieldCatalog as (...args: any[]) => any;
+export const planRosterAiImport = legacy_planRosterAiImport as (...args: any[]) => any;
 export const splitRosterProfileValuesByVisibility = legacy_splitRosterProfileValuesByVisibility as (...args: any[]) => any;
 export const validateRosterProfileValues = legacy_validateRosterProfileValues as (...args: any[]) => any;
 export const describeScheduleReminderWindow = legacy_describeScheduleReminderWindow as (...args: any[]) => any;

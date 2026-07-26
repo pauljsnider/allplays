@@ -23,7 +23,7 @@ async function openPrivateAi(page) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockPrivateAiModules(page, { firstRun = false } = {}) {
+async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent'] } = {}) {
     await page.addInitScript(() => {
         window.__privateAiCalls = [];
     });
@@ -34,11 +34,14 @@ async function mockPrivateAiModules(page, { firstRun = false } = {}) {
             contentType: 'application/javascript',
             body: `
                 export function useAuth() {
+                    const roles = ${JSON.stringify(roles)};
                     const user = {
                         uid: 'user-1',
                         email: 'parent@example.com',
                         displayName: 'Pat Parent',
-                        roles: ['parent']
+                        roles,
+                        coachOf: roles.includes('coach') ? ['team-1'] : [],
+                        parentPlayerKeys: roles.includes('parent') ? ['team-1:player-1'] : []
                     };
                     return {
                         user,
@@ -46,10 +49,10 @@ async function mockPrivateAiModules(page, { firstRun = false } = {}) {
                         loading: false,
                         error: null,
                         roles: user.roles,
-                        isParent: true,
-                        isCoach: false,
-                        isAdmin: false,
-                        isPlatformAdmin: false,
+                        isParent: roles.includes('parent'),
+                        isCoach: roles.includes('coach'),
+                        isAdmin: roles.includes('admin'),
+                        isPlatformAdmin: roles.includes('platformAdmin'),
                         refresh: async () => {},
                         signOut: async () => {}
                     };
@@ -107,6 +110,17 @@ async function mockPrivateAiModules(page, { firstRun = false } = {}) {
             body: `
                 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
                 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
+
+                export async function loadPrivateAiRoleCapabilities() {
+                    const roles = ${JSON.stringify(roles)};
+                    const isTeamManager = roles.some((role) =>
+                        ['coach', 'admin', 'platformAdmin'].includes(role)
+                    );
+                    return {
+                        isTeamManager,
+                        managedTeamCount: isTeamManager ? 1 : 0
+                    };
+                }
  
                 let conversations = ${firstRun ? '[]' : `[
                     {
@@ -147,6 +161,68 @@ async function mockPrivateAiModules(page, { firstRun = false } = {}) {
 
                 export async function loadPrivateAiMessages(user, limit, conversationId = 'default') {
                     return messages.filter((message) => (message.conversationId || 'default') === conversationId);
+                }
+
+                export async function revisePrivateAiRosterImportProposal(user, revision) {
+                    return revision.rows.reduce((summary, row) => {
+                        summary.total += 1;
+                        summary[row.action] += 1;
+                        summary.invitations += row.inviteCount || 0;
+                        summary.errors += (row.errors || []).length;
+                        return summary;
+                    }, { total: 0, add: 0, update: 0, deactivate: 0, reactivate: 0, invitations: 0, errors: 0 });
+                }
+
+                export async function revisePrivateAiScheduleImportProposal(user, revision) {
+                    return {
+                        rows: revision.rows,
+                        summary: revision.rows.reduce((summary, row) => {
+                            summary.total += 1;
+                            summary[row.normalized.eventType === 'practice' ? 'practices' : 'games'] += 1;
+                            summary.errors += (row.errors || []).length;
+                            return summary;
+                        }, { total: 0, games: 0, practices: 0, errors: 0 })
+                    };
+                }
+
+                export function getPrivateAiAttachmentValidationError() {
+                    return '';
+                }
+
+                export async function sendPrivateAiAttachmentMessage(user, input, conversationId = 'default') {
+                    window.__privateAiCalls.push({
+                        uid: user.uid,
+                        text: input.text,
+                        conversationId,
+                        fileName: input.file.name
+                    });
+                    const userMessage = {
+                        id: 'attachment-user',
+                        role: 'user',
+                        text: input.text + ' (' + input.file.name + ')',
+                        conversationId,
+                        createdAt: new Date('2026-05-21T12:01:00Z')
+                    };
+                    const assistantMessage = {
+                        id: 'attachment-assistant',
+                        role: 'assistant',
+                        text: 'I analyzed the attached file.',
+                        conversationId,
+                        createdAt: new Date('2026-05-21T12:01:02Z'),
+                        toolNames: [],
+                        artifacts: [{
+                            type: 'document-analysis',
+                            confirmationId: '',
+                            teamId: '',
+                            teamName: '',
+                            source: 'pdf',
+                            fileName: input.file.name,
+                            mimeType: input.file.type,
+                            summary: { total: 1, errors: 0 }
+                        }]
+                    };
+                    messages = [...messages, userMessage, assistantMessage];
+                    return { userMessage, assistantMessage, toolResults: [] };
                 }
 
                 export async function sendPrivateAiMessage(user, text, conversationId = 'default') {
@@ -240,6 +316,35 @@ test.describe('private AI chat', () => {
         ]);
     });
 
+    test('chat accepts a PDF and shows a private analysis artifact', async ({ page, baseURL }) => {
+        await mockPrivateAiModules(page);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+
+        await openPrivateAi(page);
+        await page.getByLabel('Attach image, CSV, or PDF').setInputFiles({
+            name: 'team-handbook.pdf',
+            mimeType: 'application/pdf',
+            buffer: Buffer.from('sample PDF')
+        });
+
+        await expect(page.getByText('team-handbook.pdf')).toBeVisible();
+        await expect(page.getByText('PDF · AI decides roster, schedule, or analysis')).toBeVisible();
+        await page.getByPlaceholder('What should AI do with this file?').fill('Summarize the action items.');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+
+        await expect(page.getByText('Attachment analyzed')).toBeVisible();
+        await expect(page.getByText('No app data was changed.')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__privateAiCalls)).toEqual([
+            {
+                uid: 'user-1',
+                text: 'Summarize the action items.',
+                conversationId: 'default',
+                fileName: 'team-handbook.pdf'
+            }
+        ]);
+    });
+
     test('mobile AI chat uses the chat layout without horizontal overflow', async ({ page, baseURL }) => {
         await mockPrivateAiModules(page);
         await page.setViewportSize({ width: 390, height: 844 });
@@ -279,5 +384,18 @@ test.describe('private AI chat', () => {
         await expect(draftChip).toBeVisible();
         await expect(draftChip).toHaveAttribute('aria-pressed', 'true');
         await expect(page.locator('.private-ai-conversation-strip')).toContainText('Recent chat');
+    });
+
+    test('desktop Schedule shows family and team-management submenus for combined roles', async ({ page, baseURL }) => {
+        await mockPrivateAiModules(page, { roles: ['parent', 'coach'] });
+        await page.goto(appUrl(baseURL, '/schedule?scope=staff'), { waitUntil: 'domcontentloaded' });
+
+        const submenu = page.getByTestId('schedule-role-submenu');
+        await expect(submenu).toBeVisible();
+        await expect(submenu.getByText('Family schedule', { exact: true })).toBeVisible();
+        await expect(submenu.getByText('Team management', { exact: true })).toBeVisible();
+        await expect(submenu.getByRole('link', { name: 'RSVP needed' })).toBeVisible();
+        await expect(submenu.getByRole('link', { name: 'Add event' })).toBeVisible();
+        await expect(submenu.getByRole('link', { name: 'Manage with AI' })).toBeVisible();
     });
 });

@@ -69,6 +69,15 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("'teamName', 'relation', 'email', 'generatedBy', 'createdAt'");
     });
 
+    it('keeps roster-invite idempotency records manager-only and separate from secret random codes', () => {
+        expect(rules).toContain('match /inviteIdempotency/{idempotencyId}');
+        expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain("request.resource.data.keys().hasOnly([\n                                 'accessCode', 'type', 'playerId', 'email'");
+        expect(rules).toContain("request.resource.data.type == 'parent_invite'");
+        expect(rules).toContain('request.resource.data.generatedBy == request.auth.uid');
+        expect(rules).toContain('allow delete: if false;');
+    });
+
     it('allows only an already-linked parent to create a schema-valid co-parent invite', () => {
         expect(rules).toContain('function isCoParentInvitePayloadValid(data)');
         expect(rules).toContain("data.type == 'coparent_invite'");

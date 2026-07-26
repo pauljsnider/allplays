@@ -6,6 +6,7 @@ const {
     CALENDAR_FEED_LOOKAHEAD_DAYS,
     CALENDAR_FEED_LOOKBACK_DAYS,
     buildCalendarFeedGamesQuery,
+    buildCalendarFeedRecurringMastersQuery,
     getCalendarFeedDateWindow
 } = require('../../functions/calendar-feed-window-core.cjs');
 
@@ -37,8 +38,21 @@ describe('calendar feed game query window', () => {
         expect(result).toBe(query);
     });
 
+    it('loads recurring masters independently of their original start date', () => {
+        const query = {
+            where: vi.fn()
+        };
+        query.where.mockReturnValue(query);
+
+        const result = buildCalendarFeedRecurringMastersQuery(query);
+
+        expect(query.where).toHaveBeenCalledWith('isSeriesMaster', '==', true);
+        expect(result).toBe(query);
+    });
+
     it('rejects invalid anchors and unqueryable collections', () => {
         expect(() => getCalendarFeedDateWindow('not-a-date')).toThrow('requires a valid date');
         expect(() => buildCalendarFeedGamesQuery(null)).toThrow('must support bounded queries');
+        expect(() => buildCalendarFeedRecurringMastersQuery(null)).toThrow('must support recurring-master queries');
     });
 });

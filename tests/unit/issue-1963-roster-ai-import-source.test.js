@@ -16,18 +16,17 @@ describe('issue 1963 roster AI import source contract', () => {
         expect(rosterAiImportSource).toContain('export function normalizeRosterAiImportResponse');
         expect(rosterAiImportSource).toContain('export function buildRosterAiImportCommitPlan');
         expect(rosterAiImportSource).toContain('export function buildRosterAiImportSchema');
-        expect(rosterAiImportSource).toContain("return { rows: [], errors: ['Paste roster text or upload a roster image before using AI import.'] };");
+        expect(rosterAiImportSource).toContain('Paste roster text, attach a CSV, or upload a roster image before using AI import.');
     });
 
-    it('keeps prompt and normalization rules for safe add-only active-player imports', () => {
+    it('keeps prompt and normalization rules for full reviewed roster operations', () => {
         expect(rosterAiImportSource).toContain('Current players in roster: ${currentPlayers.length}');
-        expect(rosterAiImportSource).toContain('Use action "add" for each extracted player row.');
-        expect(rosterAiImportSource).toContain('Do not update, delete, deactivate, or reactivate existing players.');
-        expect(rosterAiImportSource).toContain('normalizeRosterAiOperation(operation, index + 1, currentPlayers)');
-        expect(rosterAiImportSource).toContain('findExistingPlayerDuplicate(normalizedName, number, currentPlayers)');
+        expect(rosterAiImportSource).toContain('Use add for new players, update with playerId for matches, and deactivate/reactivate only when requested.');
+        expect(rosterAiImportSource).toContain('Preserve explicit false checkbox values and explicit clears');
+        expect(rosterAiImportSource).toContain('planRosterAiImport({');
+        expect(rosterAiImportSource).toContain('planRosterCsvImport({');
         expect(rosterAiImportSource).toContain('if (row.errors.length) {');
         expect(rosterAiImportTestSource).toContain('normalizes clean add operations into preview rows');
-        expect(rosterAiImportTestSource).toContain('flags likely duplicate adds and excludes errored rows from the commit plan');
     });
 
     it('keeps Firebase AI generation configured for JSON text and image roster inputs', () => {
@@ -44,16 +43,15 @@ describe('issue 1963 roster AI import source contract', () => {
         expect(editRosterSource).toContain('id="tab-bulk-ai"');
         expect(editRosterSource).toContain('id="bulk-text-input"');
         expect(editRosterSource).toContain('loadBulkAiModules');
-        expect(editRosterSource).toContain("op.action === 'delete' || op.action === 'deactivate'");
-        expect(editRosterSource).toContain("op.action === 'reactivate'");
-        expect(editRosterSource).toContain('await deactivatePlayer(currentTeamId, op.playerId);');
-        expect(editRosterSource).toContain('await reactivatePlayer(currentTeamId, op.playerId);');
+        expect(editRosterSource).toContain("action === 'deactivate'");
+        expect(editRosterSource).toContain("action === 'reactivate'");
+        expect(editRosterSource).toContain('await applyRosterCsvImportOperations(currentTeamId, proposedOperations)');
         expect(editRosterSource).toContain('buildBulkAiPlayerSchema');
-        expect(editRosterSource).toContain('parentEmail: Schema.string()');
+        expect(editRosterSource).toContain('familyContacts: Schema.array');
         expect(editRosterSource).toContain("source: 'roster-ai'");
-        expect(editRosterSource).toContain('hasBulkAiPrivateProfilePayload(payload)');
+        expect(editRosterSource).toContain('providedFields');
         expect(editRosterBulkAiReactivateTestSource).toContain('renders reactivate operations before they can be applied');
-        expect(editRosterBulkAiReactivateTestSource).toContain('renders explicit deactivate operations as the same reviewable deactivation card as delete operations');
+        expect(editRosterBulkAiReactivateTestSource).toContain('renders normalized deactivate operations as a reviewable deactivation card');
     });
 
     it('keeps roster AI import visible in capability docs and covered by legacy contract tests', () => {

@@ -307,7 +307,14 @@ test('an unmatched webhook returns 503 so Resend retries after the provider mapp
   const event = {
     type: 'email.bounced',
     created_at: '2026-07-17T12:00:01.000Z',
-    data: { email_id: 'resend-message-1' }
+    data: {
+      email_id: 'resend-message-1',
+      tags: {
+        category: 'auth',
+        auth_type: 'password_reset',
+        delivery_id: 'eventually-mapped'
+      }
+    }
   };
   const harness = createHarness({ verifiedEvent: event });
   const request = {
@@ -332,6 +339,33 @@ test('an unmatched webhook returns 503 so Resend retries after the provider mapp
   assert.equal(retryResponse.statusCode, 200);
   assert.equal(harness.db.get('authEmailDeliveries/eventually-mapped').fallbackState, 'sent');
   assert.equal(harness.db.get('resendWebhookEvents/early-webhook').status, 'processed');
+});
+
+test('an unmatched untagged SMTP webhook is acknowledged and ignored', async () => {
+  const harness = createHarness({
+    verifiedEvent: {
+      type: 'email.delivered',
+      created_at: '2026-07-17T12:00:01.000Z',
+      data: { email_id: 'smtp-invitation-message' }
+    }
+  });
+  const response = createResponse();
+
+  await harness.service.handleWebhook({
+    method: 'POST',
+    rawBody: Buffer.from('{"event":"smtp"}'),
+    headers: {
+      'svix-id': 'smtp-webhook',
+      'svix-timestamp': 'timestamp',
+      'svix-signature': 'signature'
+    }
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(harness.db.get('resendWebhookEvents/smtp-webhook').status, 'ignored');
+  assert.equal(harness.db.get('resendWebhookEvents/smtp-webhook').ignoreReason, 'untracked_email');
+  assert.equal(harness.warnings.length, 0);
+  assert.equal(harness.errors.length, 0);
 });
 
 test('invalid webhook signature is rejected without changing delivery state', async () => {

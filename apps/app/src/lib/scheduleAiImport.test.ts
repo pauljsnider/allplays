@@ -45,7 +45,7 @@ describe('scheduleAiImport', () => {
     });
 
     expect(prompt).toContain('Team: U10 Bears');
-    expect(prompt).toContain('Current games in DB: 1');
+    expect(prompt).toContain('Current games and practices in DB: 1');
     expect(prompt).toContain('Rockets');
     expect(prompt).toContain('schedule is attached as an image');
     expect(prompt).toContain('only home games');
@@ -80,6 +80,33 @@ describe('scheduleAiImport', () => {
       arrivalTime: '2026-06-05T18:00'
     });
     expect(result.rows[0].normalized.notes).toContain('snack: Lee family');
+    expect(result.rows[0].errors).toEqual([]);
+  });
+
+  it('normalizes practice events from schedule images and PDFs', () => {
+    const result = normalizeScheduleAiImportResponse({
+      operations: [{
+        action: 'add',
+        event: {
+          eventType: 'practice',
+          startsAt: '2026-06-07T17:30:00',
+          endsAt: '2026-06-07T19:00:00',
+          title: 'Team practice',
+          location: 'West Gym',
+          notes: 'Bring water'
+        }
+      }]
+    }, { teamName: 'Bears' });
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0].normalized).toMatchObject({
+      eventType: 'practice',
+      startsAt: '2026-06-07T17:30',
+      endsAt: '2026-06-07T19:00',
+      title: 'Team practice',
+      opponent: null,
+      location: 'West Gym'
+    });
     expect(result.rows[0].errors).toEqual([]);
   });
 

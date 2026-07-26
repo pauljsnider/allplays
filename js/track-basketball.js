@@ -2,7 +2,7 @@
 import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=124';
 import { db } from './firebase.js?v=22';
 import { getUrlParams, escapeHtml } from './utils.js?v=18';
-import { checkAuth } from './auth.js?v=131';
+import { checkAuth } from './auth.js?v=132';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=22';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -138,6 +138,7 @@ function setTab(tab) {
   els.panelFin.classList.toggle('hidden', tab !== 'finish');
 
   if (tab === 'finish') {
+    pauseTimer();
     renderFinish();
   }
 }
@@ -818,13 +819,17 @@ function isPointsColumn(colOrKey) {
   return u === 'PTS' || u === 'POINTS' || u === 'GOALS';
 }
 
+function pauseTimer() {
+  state.running = false;
+  els.startStop.textContent = 'Start';
+  els.startStop.classList.remove('bg-red-600', 'border-red-700');
+  els.startStop.classList.add('bg-emerald-600', 'border-emerald-700');
+  clearInterval(state.tick);
+}
+
 async function startStop() {
   if (state.running) {
-    state.running = false;
-    els.startStop.textContent = 'Start';
-    els.startStop.classList.remove('bg-red-600', 'border-red-700');
-    els.startStop.classList.add('bg-emerald-600', 'border-emerald-700');
-    clearInterval(state.tick);
+    pauseTimer();
   } else {
     // If no local activity yet, check for existing tracked data and offer to clear
     const hasLocalActivity = state.clock > 0 || state.home > 0 || state.away > 0 || (state.log && state.log.length > 0);

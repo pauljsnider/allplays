@@ -26,44 +26,52 @@ describe('edit roster Bulk AI proposed changes preview', () => {
     it('renders reactivate operations before they can be applied', () => {
         const renderSource = getRenderProposedChangesSource();
 
-        expect(renderSource).toContain("op.action === 'reactivate'");
+        expect(renderSource).toContain("action === 'reactivate'");
         expect(renderSource).toContain('▶️ Reactivate');
         expect(renderSource).toContain('Reactivate to active roster');
         expect(renderSource).toContain('border-emerald-300 bg-emerald-50');
         expect(renderSource).toContain('removePlayerOperation(${index})');
     });
 
-    it('renders explicit deactivate operations as the same reviewable deactivation card as delete operations', () => {
+    it('renders normalized deactivate operations as a reviewable deactivation card', () => {
         const renderSource = getRenderProposedChangesSource();
 
-        expect(renderSource).toContain("op.action === 'delete' || op.action === 'deactivate'");
+        expect(renderSource).toContain("action === 'deactivate'");
         expect(renderSource).toContain('⏸️ Deactivate');
     });
 
-    it('merges private family contacts before saving Bulk AI updates', () => {
+    it('uses the shared planner to merge private contacts before an atomic Bulk AI save', () => {
         const source = readEditRoster();
         const applySource = getApplyChangesSource();
 
-        expect(source).toContain('mergeRosterParentContacts');
-        expect(source).toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
-        expect(source).toContain('existingPlayer.privateProfileParents || []');
-        expect(applySource).toContain('const privateFamilyContacts = mergeBulkAiPrivateFamilyContactsForUpdate(existingPlayer, payload.privateFamilyContacts);');
-        expect(applySource).toContain("await applyRosterCsvImportOperations(currentTeamId, [{");
-        expect(applySource).toContain("type: 'update'");
-        expect(applySource).toContain('privateRosterFields: payload.privateRosterFields');
-        expect(applySource).toContain('privateFamilyContacts: privateFamilyContacts || {}');
+        expect(source).toContain('planRosterAiImport({');
+        expect(source).toContain('existingPlayers: bulkAiExistingPlayers');
+        expect(source).toContain('providedContacts');
+        expect(applySource).toContain('await applyRosterCsvImportOperations(currentTeamId, proposedOperations)');
+        expect(applySource).toContain('sendImportedRosterContactInvite');
         expect(applySource).not.toContain('await updatePlayer(currentTeamId, op.playerId, playerData);');
     });
 
     it('migrates legacy protected profile values during Bulk AI saves', () => {
         const source = readEditRoster();
 
-        expect(source).toContain('function buildBulkAiRosterSavePayload(draft = {}, existingPlayer = {})');
-        expect(source).toContain('const existingProfile = existingPlayer.profile || {};');
-        expect(source).toContain('const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(existingProfile || {});');
-        expect(source).toContain("const existingPrivateValues = existingPlayer.privateProfileRosterFields && typeof existingPlayer.privateProfileRosterFields === 'object'");
-        expect(source).toContain('Object.keys(publicValues).length > 0 || Object.keys(legacyProtectedValues).length > 0');
-        expect(source).toContain('privateRosterFields: { ...legacyProtectedValues, ...existingPrivateValues, ...privateValues }');
-        expect(source).toContain('buildBulkAiRosterSavePayload(op.changes || {}, existingPlayer)');
+        expect(source).toContain('getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true })');
+        expect(source).toContain('planRosterAiImport({');
+        expect(source).toContain('existingPlayers: bulkAiExistingPlayers');
+        expect(source).toContain("source: 'roster-ai'");
+        expect(source).not.toContain('function mergeBulkAiPrivateFamilyContactsForUpdate');
+    });
+
+    it('retains and renders plan-level errors and blocks oversized AI imports', () => {
+        const source = readEditRoster();
+        const renderSource = getRenderProposedChangesSource();
+        const applySource = getApplyChangesSource();
+
+        expect(source).toContain('let proposedPlanErrors = [];');
+        expect(source).toContain('proposedPlanErrors = rosterAiPlan.errors;');
+        expect(renderSource).toContain('This import cannot be applied yet.');
+        expect(renderSource).toContain('proposedPlanErrors.length > 0');
+        expect(applySource).toContain("alert(proposedPlanErrors.join('\\n'))");
+        expect(applySource).toContain('if (proposedPlanErrors.length > 0)');
     });
 });

@@ -39,6 +39,7 @@ const parentToolsMocks = vi.hoisted(() => ({
 }));
 const scheduleServiceMocks = vi.hoisted(() => ({
     createStaffRsvpReminderPreviewLoader: vi.fn(),
+    loadParentSchedule: vi.fn(),
     loadPreview: vi.fn(),
     sendStaffRsvpReminder: vi.fn()
 }));
@@ -70,6 +71,7 @@ vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     createStaffRsvpReminderPreviewLoader: scheduleServiceMocks.createStaffRsvpReminderPreviewLoader,
+    loadParentSchedule: scheduleServiceMocks.loadParentSchedule,
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
 }));
 
@@ -284,6 +286,11 @@ beforeEach(() => {
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
     parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+        children: [],
+        events: [],
+        staffTeams: []
+    });
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,

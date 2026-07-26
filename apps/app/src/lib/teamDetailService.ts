@@ -1,6 +1,7 @@
 import {
   addPlayer,
   addTeamAdminEmail,
+  applyRosterCsvImportOperations,
   buildPlayerLeaderboardSnapshot,
   buildTeamStaffPermissionsViewModel,
   buildTrackingStatusPayload,
@@ -133,6 +134,60 @@ export type CreateRosterPlayerForAppInput = {
   number?: string;
   photoFile?: File | null;
   rosterFieldValues?: Record<string, unknown>;
+};
+
+export type RosterImportPlannedOperationForApp = {
+  type: 'add' | 'update' | 'deactivate' | 'reactivate';
+  action?: 'add' | 'update' | 'deactivate' | 'reactivate';
+  playerId?: string;
+  payload?: Record<string, any>;
+  privateRosterFields?: Record<string, any> | null;
+  privateFamilyContacts?: {
+    parents?: Array<Record<string, any>>;
+    contacts?: Array<Record<string, any>>;
+  } | null;
+  familyContacts?: Array<Record<string, any>>;
+  inviteRequests?: Array<{
+    email: string;
+    displayName?: string;
+    relation?: string;
+    phone?: string;
+  }>;
+  providedFields?: Array<Record<string, any>>;
+  providedContacts?: Array<Record<string, any>>;
+  reason?: string;
+  errors?: string[];
+  precondition?: {
+    playerId?: string;
+    playerFingerprint?: string;
+  };
+};
+
+export type RosterImportApplyResultForApp = {
+  savedOperations: RosterImportPlannedOperationForApp[];
+  deactivatedCount: number;
+  reactivatedCount: number;
+  invitationSummary: {
+    linked: number;
+    emailed: number;
+    retryable: number;
+    failed: number;
+    retryableRecipients: string[];
+    failedRecipients: string[];
+  };
+  inviteResults: Array<{
+    playerId: string;
+    email: string;
+    status: 'linked' | 'emailed' | 'code-created' | 'failed';
+    emailStatus: 'emailed' | 'retryable' | 'failed';
+    code?: string;
+    error?: string;
+  }>;
+};
+
+export type RosterImportContextForApp = {
+  fields: TeamRosterFieldDefinition[];
+  players: Array<Record<string, any>>;
 };
 
 export type TeamDetailEvent = {
@@ -272,9 +327,21 @@ export type CreateRosterParentInviteForAppResult = {
   inviteUrl: string;
   status: 'pending' | 'accepted';
   email: string | null;
+  emailQueued: boolean;
+  emailDeduplicated: boolean;
   emailSent: boolean;
+  emailError: string | null;
   existingUser: boolean;
   autoLinked: boolean;
+  teamName: string | null;
+  playerName: string | null;
+};
+
+export type RetryRosterParentInviteEmailForAppResult = {
+  code: string;
+  email: string;
+  emailQueued: true;
+  emailDeduplicated: boolean;
   teamName: string | null;
   playerName: string | null;
 };
@@ -824,16 +891,30 @@ function isPendingParentInvite(invite: any) {
   return expiresAtMs == null || Date.now() < expiresAtMs;
 }
 
-async function loadPendingParentInvites(teamId: string) {
+function isRetryableParentInviteEmail(invite: any) {
+  if (invite?.type !== 'parent_invite') return false;
+  if (invite.revoked === true || invite.active === false) return false;
+  const status = cleanString(invite.status).toLowerCase();
+  if (['removed', 'cancelled', 'revoked'].includes(status)) return false;
+  if (invite.used === true || status === 'accepted') return true;
+  const expiresAtMs = getExpirationTime(invite.expiresAt);
+  return expiresAtMs == null || Date.now() < expiresAtMs;
+}
+
+async function loadParentInvites(teamId: string) {
   return readWithNativeFallback(
-    `pending parent invites ${teamId}`,
+    `parent invites ${teamId}`,
     async () => {
       const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('teamId', '==', teamId)));
       return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
     },
     async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
-  ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
-    .filter(isPendingParentInvite));
+  ).then((invites: any[]) => (Array.isArray(invites) ? invites : []));
+}
+
+async function loadPendingParentInvites(teamId: string) {
+  return loadParentInvites(teamId)
+    .then((invites: any[]) => invites.filter(isPendingParentInvite));
 }
 
 async function loadUserById(userId: string) {
@@ -1123,7 +1204,8 @@ export async function createRosterParentInviteForApp(
   teamId: string,
   user: AuthUser | null,
   player: Pick<TeamDetailPlayer, 'id' | 'number'>,
-  invite: { email?: string; relation?: string } = {}
+  invite: { email?: string; relation?: string } = {},
+  options: { idempotencyKey?: string } = {}
 ): Promise<CreateRosterParentInviteForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedPlayerId = cleanString(player?.id);
@@ -1140,15 +1222,35 @@ export async function createRosterParentInviteForApp(
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), normalizedEmail, relation);
+  const idempotencyKey = cleanString(options.idempotencyKey);
+  const inviteResult = idempotencyKey
+    ? await inviteParent(
+        normalizedTeamId,
+        normalizedPlayerId,
+        cleanString(player?.number),
+        normalizedEmail,
+        relation,
+        { idempotencyKey }
+      )
+    : await inviteParent(
+        normalizedTeamId,
+        normalizedPlayerId,
+        cleanString(player?.number),
+        normalizedEmail,
+        relation
+      );
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
-  let emailSent = false;
+  let emailQueued = false;
+  let emailDeduplicated = false;
+  let emailError: string | null = null;
   if (normalizedEmail) {
     try {
-      await queueInviteEmail(code);
-      emailSent = true;
-    } catch (error) {
+      const queueResult = await queueInviteEmail(code);
+      emailQueued = true;
+      emailDeduplicated = queueResult?.deduplicated === true;
+    } catch (error: any) {
+      emailError = cleanString(error?.message) || 'Invite email could not be queued.';
       logger.warn('Parent invite was created, but its email could not be queued.', { error });
     }
   }
@@ -1159,11 +1261,57 @@ export async function createRosterParentInviteForApp(
     inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
     email: normalizedEmail || null,
-    emailSent,
+    emailQueued,
+    emailDeduplicated,
+    emailSent: emailQueued,
+    emailError,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
     teamName: inviteResult?.teamName || null,
     playerName: inviteResult?.playerName || null
+  };
+}
+
+export async function retryRosterParentInviteEmailForApp(
+  teamId: string,
+  user: AuthUser | null,
+  player: Pick<TeamDetailPlayer, 'id' | 'name'>,
+  email: string
+): Promise<RetryRosterParentInviteEmailForAppResult> {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedPlayerId = cleanString(player?.id);
+  const normalizedEmail = cleanString(email).toLowerCase();
+  if (!normalizedTeamId || !normalizedPlayerId || !normalizedEmail) {
+    throw new Error('Team, player, and parent email are required to retry an invitation email.');
+  }
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to resend parent invitations for this team.');
+  }
+  const invite = (await loadParentInvites(normalizedTeamId))
+    .filter((candidate: any) => (
+      isRetryableParentInviteEmail(candidate)
+      &&
+      cleanString(candidate.playerId) === normalizedPlayerId
+      && cleanString(candidate.email).toLowerCase() === normalizedEmail
+    ))
+    .sort((left: any, right: any) => (
+      (getExpirationTime(right.createdAt) || 0) - (getExpirationTime(left.createdAt) || 0)
+    ))[0];
+  const code = cleanString(invite?.code).toUpperCase();
+  if (!code) {
+    throw new Error('No retryable invitation matched that player and email. Create a new parent invitation instead.');
+  }
+
+  const queueResult = await queueInviteEmail(code, { forceNewDelivery: true });
+  return {
+    code,
+    email: normalizedEmail,
+    emailQueued: true,
+    emailDeduplicated: queueResult?.deduplicated === true,
+    teamName: cleanString(invite.teamName || team.name) || null,
+    playerName: cleanString(invite.playerName || player.name) || null
   };
 }
 
@@ -1177,6 +1325,35 @@ export async function loadRosterFieldDefinitionsForApp(teamId: string, user: Aut
   }
 
   return mergeStandardRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
+}
+
+export async function loadRosterImportContextForApp(
+  teamId: string,
+  user: AuthUser | null,
+  options: { fresh?: boolean } = {}
+): Promise<RosterImportContextForApp> {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  if (options.fresh === true) {
+    invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  }
+  const snapshot = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!snapshot.team || !hasFullTeamAccess(user, snapshot.team)) {
+    throw new Error('You do not have permission to manage roster players for this team.');
+  }
+
+  const [fields, players] = await Promise.all([
+    loadRosterFieldDefinitionsForApp(normalizedTeamId, user),
+    getPlayersWithPrivateRosterContacts(normalizedTeamId, {
+      includeInactive: true,
+      players: snapshot.players || []
+    })
+  ]);
+  return {
+    fields,
+    players: Array.isArray(players) ? players : []
+  };
 }
 
 export async function addRosterPlayerForApp(teamId: string, user: AuthUser | null, input: CreateRosterPlayerForAppInput) {
@@ -1223,6 +1400,119 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   return {
     playerId,
     player
+  };
+}
+
+export async function applyRosterImportPlanForApp(
+  teamId: string,
+  user: AuthUser | null,
+  operations: RosterImportPlannedOperationForApp[] = [],
+  options: {
+    pendingActionId?: string;
+    rosterAlreadyApplied?: boolean;
+  } = {}
+): Promise<RosterImportApplyResultForApp> {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error('Review at least one roster operation before importing.');
+  }
+  if (operations.length > 200) throw new Error('Import at most 200 roster rows at a time.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to manage roster players for this team.');
+  }
+  const invalidOperation = operations.find((operation) => !['add', 'update', 'deactivate', 'reactivate'].includes(operation.type));
+  if (invalidOperation) throw new Error('Roster import contains an unsupported operation.');
+  const validationErrors = operations.flatMap((operation) => operation.errors || []);
+  if (validationErrors.length > 0) throw new Error(validationErrors.join('\n'));
+
+  const pendingActionId = cleanString(options.pendingActionId);
+  const executionOperations = operations.map((operation, index) => ({
+    ...operation,
+    ...(operation.type === 'add' && pendingActionId && !cleanString(operation.playerId)
+      ? { playerId: `${pendingActionId}_player_${index + 1}` }
+      : {})
+  }));
+  const savedOperations = options.rosterAlreadyApplied === true
+    ? executionOperations
+    : pendingActionId
+      ? await applyRosterCsvImportOperations(normalizedTeamId, executionOperations, {
+          pendingActionId,
+          userId: cleanString(user?.uid)
+        })
+      : await applyRosterCsvImportOperations(normalizedTeamId, executionOperations);
+  const deactivatedCount = operations.filter((operation) => operation.type === 'deactivate').length;
+  const reactivatedCount = operations.filter((operation) => operation.type === 'reactivate').length;
+
+  const inviteResults: RosterImportApplyResultForApp['inviteResults'] = [];
+  for (const operation of (savedOperations as RosterImportPlannedOperationForApp[]).filter((item) => item.type === 'add' || item.type === 'update')) {
+    const playerId = cleanString(operation.playerId);
+    const number = cleanString(operation.payload?.number);
+    for (const request of operation.inviteRequests || []) {
+      try {
+        const result = await createRosterParentInviteForApp(
+          normalizedTeamId,
+          user,
+          { id: playerId, number } as Pick<TeamDetailPlayer, 'id' | 'number'>,
+          { email: request.email, relation: request.relation || 'Parent' },
+          pendingActionId
+            ? { idempotencyKey: `${pendingActionId}:invite:${playerId}:${cleanString(request.email).toLowerCase()}` }
+            : {}
+        );
+        inviteResults.push({
+          playerId,
+          email: request.email,
+          status: result.autoLinked ? 'linked' : result.emailSent ? 'emailed' : 'code-created',
+          emailStatus: result.emailSent ? 'emailed' : 'retryable',
+          ...(result.emailError ? { error: result.emailError } : {}),
+          ...(result.code ? { code: result.code } : {})
+        });
+      } catch (error: any) {
+        logger.warn('Roster import saved a family contact, but its invite could not be created.', {
+          error,
+          teamId: normalizedTeamId,
+          playerId
+        });
+        inviteResults.push({
+          playerId,
+          email: request.email,
+          status: 'failed',
+          emailStatus: 'failed',
+          error: error?.message || 'Invite failed.'
+        });
+      }
+    }
+  }
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  const invitationSummary = inviteResults.reduce<RosterImportApplyResultForApp['invitationSummary']>((summary, invite) => {
+    if (invite.status === 'linked') summary.linked += 1;
+    if (invite.emailStatus === 'emailed') summary.emailed += 1;
+    if (invite.emailStatus === 'retryable') {
+      summary.retryable += 1;
+      summary.retryableRecipients.push(invite.email);
+    }
+    if (invite.status === 'failed') {
+      summary.failed += 1;
+      summary.failedRecipients.push(invite.email);
+    }
+    return summary;
+  }, {
+    linked: 0,
+    emailed: 0,
+    retryable: 0,
+    failed: 0,
+    retryableRecipients: [],
+    failedRecipients: []
+  });
+  return {
+    savedOperations,
+    deactivatedCount,
+    reactivatedCount,
+    invitationSummary,
+    inviteResults
   };
 }
 

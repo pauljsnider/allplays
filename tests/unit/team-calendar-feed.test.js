@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const {
     buildTeamCalendarIcs,
+    expandRecurringCalendarEvent,
     formatRsvpSummary,
     hashCalendarToken,
     normalizeCalendarRequest
@@ -81,6 +82,379 @@ describe('team calendar subscription feed', () => {
         expect(updated).toContain('STATUS:CANCELLED');
     });
 
+    it('emits bounded future occurrences for old recurring practice masters', () => {
+        const master = {
+            id: 'practice-series',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            title: 'Weekly Skills',
+            location: 'North Field',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            },
+            exDates: ['2026-07-27'],
+            overrides: {
+                '2026-08-03': {
+                    title: 'Indoor Skills',
+                    location: 'Fieldhouse',
+                    startTime: '19:00',
+                    endTime: '20:00'
+                }
+            }
+        };
+
+        const occurrences = expandRecurringCalendarEvent(master, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const ics = buildTeamCalendarIcs({
+            teamId: 'team-1',
+            team: { name: 'Sharks', timeZone: 'UTC' },
+            events: [master],
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            id: 'practice-series__2026-07-27',
+            status: 'cancelled'
+        });
+        expect(ics).toContain('UID:team-1-practice-series__2026-07-27@allplays.ai');
+        expect(ics).toContain('DTSTART:20260727T180000Z');
+        expect(ics).toContain('STATUS:CANCELLED');
+        expect(ics).toContain('UID:team-1-practice-series__2026-08-03@allplays.ai');
+        expect(ics).toContain('DTSTART:20260803T190000Z');
+        expect(ics).toContain('DTEND:20260803T200000Z');
+        expect(ics).toContain('SUMMARY:Indoor Skills');
+        expect(ics).toContain('LOCATION:Fieldhouse');
+        expect(ics).not.toContain('UID:team-1-practice-series@allplays.ai');
+    });
+
+    it('preserves the stored local weekday when the practice starts on the next UTC day', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'monday-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '19:00',
+            endTime: '20:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/New_York'
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T23:00:00Z'),
+            end: new Date('2026-07-28T00:30:00Z')
+        });
+    });
+
+    it('preserves legacy Chicago wall-clock times across DST without a stored timezone', () => {
+        const chicagoOccurrences = expandRecurringCalendarEvent({
+            id: 'chicago-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        expect(chicagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T23:00:00Z'),
+            end: new Date('2026-07-28T00:30:00Z')
+        });
+    });
+
+    it('uses the configured team timezone for legacy US series across DST', () => {
+        const newYorkOccurrences = expandRecurringCalendarEvent({
+            id: 'new-york-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T23:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/New_York'
+        });
+        const losAngelesOccurrences = expandRecurringCalendarEvent({
+            id: 'los-angeles-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T02:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/Los_Angeles'
+        });
+
+        expect(newYorkOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T22:00:00Z'),
+            end: new Date('2026-07-27T23:30:00Z')
+        });
+        expect(losAngelesOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T01:00:00Z'),
+            end: new Date('2026-07-28T02:30:00Z')
+        });
+    });
+
+    it('uses configured Arizona and European timezones instead of guessing from a winter offset', () => {
+        const legacyMaster = {
+            type: 'practice',
+            isSeriesMaster: true,
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        };
+        const phoenixOccurrences = expandRecurringCalendarEvent({
+            ...legacyMaster,
+            id: 'phoenix-evening',
+            date: new Date('2025-01-07T01:00:00Z')
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/Phoenix'
+        });
+        const londonOccurrences = expandRecurringCalendarEvent({
+            ...legacyMaster,
+            id: 'london-evening',
+            date: new Date('2025-01-06T18:00:00Z')
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Europe/London'
+        });
+
+        expect(phoenixOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T01:00:00Z'),
+            end: new Date('2026-07-28T02:30:00Z')
+        });
+        expect(londonOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T17:00:00Z'),
+            end: new Date('2026-07-27T18:30:00Z')
+        });
+    });
+
+    it('uses the configured team timezone for legacy negative-antimeridian series', () => {
+        const honoluluOccurrences = expandRecurringCalendarEvent({
+            id: 'honolulu-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T04:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Honolulu'
+        });
+        const pagoPagoOccurrences = expandRecurringCalendarEvent({
+            id: 'pago-pago-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T05:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Pago_Pago'
+        });
+
+        expect(honoluluOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T04:00:00Z'),
+            end: new Date('2026-07-28T05:30:00Z')
+        });
+        expect(pagoPagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T05:00:00Z'),
+            end: new Date('2026-07-28T06:30:00Z')
+        });
+    });
+
+    it('preserves explicit timezones and configured legacy zones above UTC+12', () => {
+        const karachiOccurrences = expandRecurringCalendarEvent({
+            id: 'karachi-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T13:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            timeZone: 'Asia/Karachi',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const kiritimatiOccurrences = expandRecurringCalendarEvent({
+            id: 'kiritimati-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T04:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Kiritimati'
+        });
+
+        expect(karachiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T13:00:00Z'),
+            end: new Date('2026-07-27T14:30:00Z')
+        });
+        expect(kiritimatiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T04:00:00Z'),
+            end: new Date('2026-07-27T05:30:00Z')
+        });
+    });
+
+    it('infers an overnight day offset for legacy occurrence overrides', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'overnight-override',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T00:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            endDayOffset: 0,
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            },
+            overrides: {
+                '2026-07-27': {
+                    startTime: '23:30',
+                    endTime: '01:00'
+                }
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T04:30:00Z'),
+            end: new Date('2026-07-28T06:00:00Z')
+        });
+    });
+
+    it('honors daily occurrence counts when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'daily-counted',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2026-04-20T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'daily',
+                interval: 1,
+                count: 10
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-04-28',
+            '2026-04-29'
+        ]);
+    });
+
+    it('honors daily end-date boundaries when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'daily-until',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2026-04-20T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'daily',
+                interval: 1,
+                until: '2026-04-28'
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-04-28'
+        ]);
+    });
+
+    it('honors multi-week intervals when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'biweekly',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'weekly',
+                interval: 2,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.slice(0, 3).map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-05-11',
+            '2026-05-25'
+        ]);
+        expect(occurrences.some((occurrence) => occurrence.instanceDate === '2026-05-04')).toBe(false);
+    });
+
     it('builds feeds from game-level fields without depending on attendee RSVP arrays', () => {
         const baseEvent = {
             id: 'game-2',
@@ -150,6 +524,8 @@ describe('team calendar subscription feed', () => {
         const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
 
         expect(teamCalendarFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('getCalendarFeedRecurringMastersQuery(teamId).get()');
+        expect(teamCalendarFeedSource).toContain('[...eventsSnap.docs, ...recurringPracticeDocs]');
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).get()");
         expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
         expect(teamCalendarFeedSource).toContain('const game = { id: docSnap.id, ...(docSnap.data() || {}) }');

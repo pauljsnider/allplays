@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=131');
+      const { logout } = await import('./auth.js?v=132');
       await logout();
       window.location.href = 'index.html';
     });
@@ -464,6 +464,13 @@ async function fetchAndParseCalendarOnce(normalizedUrl, options = {}) {
     const configuredBaseUrl = globalConfig?.functionsBaseUrl || globalConfig?.functions?.baseUrl;
     if (typeof configuredBaseUrl === 'string' && configuredBaseUrl.trim()) {
       return `${configuredBaseUrl.trim().replace(/\/$/, '')}/fetchCalendarIcs`;
+    }
+    if (
+      window.location?.protocol === 'http:'
+      && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+      && window.location.port === '5174'
+    ) {
+      return '/__allplays/calendar';
     }
     return DEFAULT_CALENDAR_FETCH_FUNCTION_URL;
   }

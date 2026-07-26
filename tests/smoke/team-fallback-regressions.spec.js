@@ -128,6 +128,9 @@ export function collectRosterParentContacts() {
 export function getRosterProfileValues() {
     return {};
 }
+export function getRosterAiImportFieldCatalog() {
+    return [];
+}
 export function mergeRosterParentContacts(existing = [], incoming = []) {
     return [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])];
 }
@@ -138,6 +141,9 @@ export function normalizeRosterFieldDefinitions(fields = []) {
     return Array.isArray(fields) ? fields : [];
 }
 export function planRosterCsvImport() {
+    return { operations: [], errors: [] };
+}
+export function planRosterAiImport() {
     return { operations: [], errors: [] };
 }
 export function renderRosterProfileFields(container) {

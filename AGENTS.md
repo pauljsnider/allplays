@@ -149,19 +149,21 @@ curated feature map and add focused regressions for changed behavior.
 PR validation is intentionally split. Diagnose the failing stage instead of
 restarting every run:
 
-1. `ci.yml`: cache-bust guard, root/rules/function tests, app audit, typecheck,
-   diff-aware lint, and app tests.
-2. `regression-guards.yml`: Firebase deploy/rules guard and focused
-   roster/chat/media/replay Playwright smoke.
-3. `mobile-build.yml`: path-filtered Android and iOS builds, summarized by the
-   stable fail-closed `mobile-build` context.
-4. `preview-smoke.yml`: path-filtered staged web/app smoke and visual tests,
-   summarized by the stable fail-closed `preview-smoke` context.
-5. `deploy-preview.yml` creates an untrusted, credential-free PR artifact.
-   `deploy-preview-trusted.yml` verifies the run, PR, artifact, and current head
-   from trusted default-branch code before OIDC and Firebase preview deployment.
-6. `app-github-pages.yml` validates the staged web bundle on PRs; deployment is
-   disabled unless the repository variable or manual input explicitly enables it.
+1. `pr-fast.yml` is the single fast code-head entrypoint. It calls `ci.yml` and
+   preserves the stable `unit-tests`, `cache-bust-guard`, and `app-quality`
+   contexts.
+2. `pr-integration.yml` is the single integration code-head entrypoint. It
+   calls `regression-guards.yml`, `mobile-build.yml`, `preview-smoke.yml`, and
+   the untrusted `deploy-preview.yml` artifact builder.
+3. `mobile-build.yml` and `preview-smoke.yml` remain path-filtered reusable
+   workflows with stable fail-closed `mobile-build` and `preview-smoke`
+   aggregates.
+4. A successful same-repository `pr-integration` run triggers
+   `deploy-preview-trusted.yml`, which re-verifies the run, PR, artifact, and
+   current head from trusted default-branch code before OIDC and Firebase
+   preview deployment.
+5. `app-github-pages.yml` is manual validation only. GitHub Pages publication
+   is serialized behind the exact-SHA production release in `deploy-prod.yml`.
 
 After merge, `deploy-prod.yml` retests and builds a commit-bound artifact, then
 obtains production credentials only in the protected deploy job. It deploys

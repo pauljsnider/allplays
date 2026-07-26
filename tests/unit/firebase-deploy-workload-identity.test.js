@@ -32,7 +32,7 @@ function expectPinnedActions(workflow) {
 
 describe('Firebase deploy Workload Identity boundary', () => {
     it('uses only pinned keyless authentication in all credentialed deployers', () => {
-        for (const workflow of [production, preview, candidate]) {
+        for (const workflow of [production, preview]) {
             expectPinnedActions(workflow);
             expect(workflow).toContain('id-token: write');
             expect(workflow).toMatch(/google-github-actions\/auth@[0-9a-f]{40}/);
@@ -47,7 +47,9 @@ describe('Firebase deploy Workload Identity boundary', () => {
         }
         expect(production.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(2);
         expect(preview.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
-        expect(candidate.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
+        expect(candidate).not.toContain('google-github-actions/auth');
+        expect(candidate).not.toContain('id-token: write');
+        expect(candidate).not.toContain('project_id: game-flow-c6311');
     });
 
     it('keeps raw preview input and dependency preparation in a separate no-OIDC job', () => {
@@ -116,27 +118,26 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
         expect(production.slice(productionDeploy)).toContain('timeout-minutes: 20');
         const oidcJobs = workflowJobs(production).filter((job) => job.permissions?.['id-token'] === 'write');
-        expect(oidcJobs).toHaveLength(1);
-        expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
-        expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        expect(oidcJobs).toHaveLength(2);
+        for (const oidcJob of oidcJobs) {
+            expect(JSON.stringify(oidcJob)).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
+            expect(JSON.stringify(oidcJob)).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        }
+        expect(production).toMatch(/actions\/deploy-pages@[0-9a-f]{40}/);
         expect(production).toMatch(/name: Upload trusted production deploy handoff[\s\S]*retention-days: 30/);
         expect(production).toContain('functions-runtime.tar');
         expect(production).toContain('cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"');
         expect(production).not.toContain('cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"');
     });
 
-    it('keeps candidate build and dependency work outside the minimal OIDC deploy job', () => {
-        const install = candidate.indexOf('firebase-tools@15.24.0');
-        const handoff = candidate.indexOf('name: Upload trusted candidate deploy handoff');
-        const authentication = candidate.indexOf('name: Authenticate candidate Hosting deploy through OIDC');
-
-        expect(install).toBeGreaterThan(-1);
-        expect(handoff).toBeGreaterThan(install);
-        expect(authentication).toBeGreaterThan(handoff);
+    it('keeps candidate validation outside every credential boundary', () => {
         const oidcJobs = workflowJobs(candidate).filter((job) => job.permissions?.['id-token'] === 'write');
-        expect(oidcJobs).toHaveLength(1);
-        expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
-        expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        expect(oidcJobs).toHaveLength(0);
+        expect(candidate).toContain('npm run app:build');
+        expect(candidate).toContain('scripts/stage-pages-bundle.mjs');
+        expect(candidate).toContain('scripts/write-firebase-hosting-config.mjs');
+        expect(candidate).not.toContain('firebase-tools@');
+        expect(candidate).not.toContain('actions/upload-artifact');
     });
 
     it('keeps rule-changing releases rules-first and skips unchanged rule writes', () => {
@@ -155,6 +156,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production).toContain('deployments: read');
         expect(production).toContain('deployments: write');
         expect(production).toContain('firestore_success_sha="$deployment_sha"');
+        expect(production).toContain(
+            'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"'
+        );
+        expect(production).toContain('firestore_success_sha="$last_success_sha"');
+        expect(production).toContain(
+            'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.'
+        );
         expect(componentMarker).toBeGreaterThan(end);
         expect(componentMarker).toBeLessThan(retryEnabledDeploy);
         expect(retryEnabledDeploy).toBeGreaterThan(end);

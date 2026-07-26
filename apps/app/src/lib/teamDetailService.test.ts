@@ -81,8 +81,10 @@ vi.mock('../../../../js/roster-profile-fields.js', () => ({
     ];
     return contacts.filter((contact: any) => options.includeImported !== false || contact?.source !== 'roster-csv');
   }),
+  getRosterAiImportFieldCatalog: vi.fn(() => []),
   mergeStandardRosterFieldDefinitions: vi.fn((value) => value),
   normalizeRosterFieldDefinitions: vi.fn((value) => value),
+  planRosterAiImport: vi.fn(() => ({ operations: [], errors: [] })),
   splitRosterProfileValuesByVisibility: vi.fn(() => ({ publicValues: {}, privateValues: {} })),
   validateRosterProfileValues: vi.fn(() => [])
 }));

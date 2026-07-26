@@ -80,7 +80,18 @@ const {
   normalizePublicRegistrationSecurityMode
 } = require('./public-registration-abuse-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
-const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
+const {
+  buildPublicGamesResponse,
+  buildPublicRosterResponse,
+  isStrictPublicTeam,
+  normalizeTeamId,
+  parsePublicGamesQuery,
+  serializePublicGame
+} = require('./public-team-api-core.cjs');
+const {
+  buildCalendarFeedGamesQuery,
+  buildCalendarFeedRecurringMastersQuery
+} = require('./calendar-feed-window-core.cjs');
 const {
   buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryJobPlan,
@@ -118,8 +129,10 @@ const {
 const {
   buildParentInviteEmailMessage,
   isValidInviteRecipientEmail,
-  normalizeInviteEmailType
+  normalizeInviteEmailType,
+  shouldQueueInviteEmailOnCreate
 } = require('./invite-email-core.cjs');
+const { createInviteEmailOnCreateHandler } = require('./invite-email-trigger-core.cjs');
 const {
   AUTH_EMAIL_TYPES,
   buildAuthEmailMailDocId,
@@ -132,10 +145,16 @@ const {
 } = require('./auth-email-core.cjs');
 const { createAuthEmailCallableHandlers } = require('./auth-email-callables.cjs');
 const { createAuthEmailDeliveryStore } = require('./auth-email-delivery-store.cjs');
+const { buildInviteMailDocId } = require('./invite-email-queue-core.cjs');
 const { createResendAuthEmailDelivery } = require('./resend-auth-email-delivery.cjs');
 const { createPasswordResetEmailWorker } = require('./auth-email-password-reset-worker.cjs');
 const { createPasswordResetEmailSweeper } = require('./auth-email-password-reset-sweeper.cjs');
-const { findOwnedInviteCode: findOwnedAuthEmailInviteCode } = require('./auth-email-invite-store.cjs');
+const {
+  canQueueInviteEmailForCaller,
+  findInviteCode: findAuthEmailInviteCode,
+  findOwnedInviteCode: findOwnedAuthEmailInviteCode,
+  isInviteEmailDeliveryEligible
+} = require('./auth-email-invite-store.cjs');
 const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
@@ -352,6 +371,11 @@ const checkPasswordResetEmailRateLimit = createInMemoryRateLimiter({
   maxKeys: 10_000
 });
 const checkCalendarFetchRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 5_000
+});
+const checkPublicTeamApiRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
   maxKeys: 5_000
@@ -2454,25 +2478,35 @@ const releaseAuthEmailDelivery = authEmailDeliveryStore.release;
 const queueAuthEmailDelivery = authEmailDeliveryStore.queue;
 const enqueuePasswordResetRequest = authEmailDeliveryStore.enqueuePasswordResetRequest;
 
-function buildInviteMailDocId(codeId) {
-  const safeCodeId = String(codeId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
-  return `invite_${safeCodeId}`;
-}
-
 function isAlreadyExistsError(error) {
   return error?.code === 6 || error?.code === '6' || error?.code === 'already-exists';
 }
 
-async function queueInviteEmailForCode(codeId, codeData = {}) {
+async function queueInviteEmailForCode(codeId, codeData = {}, options = {}) {
   const type = String(codeData.type || '').trim().toLowerCase();
   const email = normalizeParentInviteEmail(codeData.email);
   const code = String(codeData.code || '').trim().toUpperCase();
-  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !isValidInviteRecipientEmail(email) || !code) {
+  if (!INVITE_EMAIL_TYPES.has(type) ||
+      !normalizeInviteEmailType(type) ||
+      !isValidInviteRecipientEmail(email) ||
+      !code ||
+      !isInviteEmailDeliveryEligible(codeData)) {
     return { queued: false, reason: 'not_email_eligible' };
   }
 
   const message = buildParentInviteEmailMessage({ ...codeData, type, code });
-  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId));
+  const forceNewDelivery = options.forceNewDelivery === true;
+  const deliveryId = String(options.deliveryId || '').trim();
+  const resendRateLimitType = 'invite_resend';
+  const resendRateLimitScope = String(codeId || '').trim();
+  if (forceNewDelivery) {
+    const reserved = await reserveAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
+    if (!reserved) return { queued: false, reason: 'cooldown' };
+  }
+  const mailRef = firestore.collection('mail').doc(buildInviteMailDocId(codeId, {
+    forceNewDelivery,
+    deliveryId
+  }));
   try {
     await mailRef.create({
       to: [email],
@@ -2488,13 +2522,19 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
         accessCodeId: String(codeId || '').trim(),
         teamId: String(codeData.teamId || '').trim() || null,
         playerId: String(codeData.playerId || '').trim() || null,
-        generatedBy: String(codeData.generatedBy || '').trim() || null
+        generatedBy: String(codeData.generatedBy || '').trim() || null,
+        deliveryId: forceNewDelivery ? deliveryId : null,
+        isResend: forceNewDelivery,
+        messageKind: message.messageKind
       }
     });
     return { queued: true, deduplicated: false, signupUrl: message.signupUrl };
   } catch (error) {
     if (isAlreadyExistsError(error)) {
       return { queued: true, deduplicated: true, signupUrl: message.signupUrl };
+    }
+    if (forceNewDelivery) {
+      await releaseAuthEmailDelivery(resendRateLimitType, email, resendRateLimitScope);
     }
     throw error;
   }
@@ -2597,32 +2637,87 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'A valid eight-character invite code is required.');
   }
 
-  const invite = await findOwnedInviteCode(code, uid);
+  const invite = await findAuthEmailInviteCode({
+    firestore,
+    code,
+    allowedTypes: INVITE_EMAIL_TYPES
+  });
   if (!invite) {
+    throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
+  }
+  if (!isInviteEmailDeliveryEligible(invite.data)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite is no longer eligible for email delivery.');
+  }
+  const inviteType = String(invite.data.type || '').trim().toLowerCase();
+  let team = null;
+  let user = {};
+  if (inviteType === 'parent_invite') {
+    const teamId = String(invite.data.teamId || '').trim();
+    if (teamId) {
+      const [teamSnap, userSnap] = await Promise.all([
+        firestore.doc(`teams/${teamId}`).get(),
+        firestore.doc(`users/${uid}`).get()
+      ]);
+      team = teamSnap.exists ? teamSnap.data() || {} : null;
+      user = userSnap.exists ? userSnap.data() || {} : {};
+    }
+  }
+  const canQueue = canQueueInviteEmailForCaller({
+    invite: invite.data,
+    team,
+    user,
+    uid,
+    email: context.auth.token?.email
+  });
+  if (!canQueue) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }
   if (!isValidInviteRecipientEmail(invite.data.email)) {
     throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a valid recipient email.');
   }
 
-  const result = await queueInviteEmailForCode(invite.id, invite.data);
+  const forceNewDelivery = data?.forceNewDelivery === true;
+  const deliveryId = String(data?.deliveryId || '').trim();
+  if (forceNewDelivery && !/^[A-Za-z0-9_.-]{8,80}$/.test(deliveryId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid delivery ID is required to resend an invite email.');
+  }
+  const result = await queueInviteEmailForCode(invite.id, invite.data, {
+    forceNewDelivery,
+    deliveryId
+  });
   if (!result.queued) {
     throw new functions.https.HttpsError('failed-precondition', 'Invite is not eligible for email delivery.');
   }
   return result;
 });
 
-exports.queueParentInviteEmail = functions.firestore
+const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  normalizeFirestoreId,
+  validateCode: validateAutoAcceptParentInviteCode
+});
+
+const inviteEmailOnCreateHandler = createInviteEmailOnCreateHandler({
+  shouldQueueInviteEmail: shouldQueueInviteEmailOnCreate,
+  autoLinkParentInvite: (codeId, generatedBy) => autoAcceptParentInviteHandler(
+    { codeId },
+    { auth: { uid: generatedBy, token: {} } }
+  ),
+  loadLatestInvite: async (snapshot) => {
+    const latestSnapshot = await snapshot.ref.get();
+    return latestSnapshot.exists ? latestSnapshot.data() || {} : snapshot.data() || {};
+  },
+  queueInviteEmail: queueInviteEmailForCode,
+  logger: functions.logger
+});
+
+exports.queueParentInviteEmail = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('accessCodes/{codeId}')
-  .onCreate(async (snap, context) => {
-    const codeData = snap.data() || {};
-    if (!INVITE_EMAIL_TYPES.has(String(codeData.type || '').trim().toLowerCase()) ||
-        !isValidInviteRecipientEmail(codeData.email)) {
-      return null;
-    }
-    await queueInviteEmailForCode(context.params.codeId, codeData);
-    return null;
-  });
+  .onCreate(inviteEmailOnCreateHandler);
 
 exports.cleanupFailedInviteSignup = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -3165,13 +3260,7 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
   return { merged: true, idempotent: false, requestId: requestRef.id, affectedCollections: [...affectedCollections] };
 });
 
-exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(createAutoAcceptParentInviteHandler({
-  firestore,
-  Timestamp: admin.firestore.Timestamp,
-  HttpsError: functions.https.HttpsError,
-  normalizeFirestoreId,
-  validateCode: validateAutoAcceptParentInviteCode
-}));
+exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
 
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
@@ -5234,7 +5323,9 @@ function getAllowedOriginPolicy() {
       'https://allplays.ai',
       'https://www.allplays.ai',
       'http://localhost:8000',
-      'http://127.0.0.1:8000'
+      'http://127.0.0.1:8000',
+      'http://localhost:5174',
+      'http://127.0.0.1:5174'
     ],
     allowFirebaseHosting: true
   };
@@ -5812,6 +5903,188 @@ function getCalendarFeedGamesQuery(teamId) {
   return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
 }
 
+function getCalendarFeedRecurringMastersQuery(teamId) {
+  return buildCalendarFeedRecurringMastersQuery(firestore.collection(`teams/${teamId}/games`));
+}
+
+const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300';
+const PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS = 1000;
+const PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS = 5000;
+
+function setPublicTeamApiCorsHeaders(res) {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+  res.set('Vary', 'Accept-Encoding');
+}
+
+function sendPublicTeamApiError(res, status, code, message) {
+  res.set('Cache-Control', 'no-store');
+  res.status(status).json({ error: { code, message } });
+}
+
+function beginPublicTeamApiRequest(req, res) {
+  setPublicTeamApiCorsHeaders(res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return { complete: true };
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendPublicTeamApiError(res, 405, 'method_not_allowed', 'Use GET or HEAD for this endpoint.');
+    return { complete: true };
+  }
+
+  const rateLimit = checkPublicTeamApiRateLimit(req);
+  res.set('X-RateLimit-Remaining', String(rateLimit.remaining));
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    sendPublicTeamApiError(res, 429, 'rate_limited', 'Too many requests. Please try again shortly.');
+    return { complete: true };
+  }
+
+  const teamId = normalizeTeamId(req.query.teamId);
+  if (!teamId) {
+    sendPublicTeamApiError(res, 400, 'invalid_team_id', 'A valid teamId query parameter is required.');
+    return { complete: true };
+  }
+  return { complete: false, teamId };
+}
+
+async function getStrictPublicTeam(teamId) {
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return null;
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  return isStrictPublicTeam(team) ? team : null;
+}
+
+async function getPublicTeamPlayers(teamId) {
+  const playersSnap = await firestore.collection(`teams/${teamId}/players`)
+    .limit(PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS + 1)
+    .get();
+  if (playersSnap.size > PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS) {
+    throw new Error('Public roster scan limit exceeded.');
+  }
+
+  const players = [];
+  playersSnap.forEach((docSnap) => players.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  return players;
+}
+
+async function getPublicTeamGames(teamId, range) {
+  const games = [];
+  const batchSize = Math.min(range.limit + 1, 500);
+  let lastDoc = null;
+  let scannedDocuments = 0;
+
+  while (games.length <= range.limit && scannedDocuments < PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+    const currentBatchSize = Math.min(
+      batchSize,
+      PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS - scannedDocuments
+    );
+    let query = firestore.collection(`teams/${teamId}/games`)
+      .where('date', '>=', range.fromDate)
+      .where('date', '<=', range.toDate)
+      .orderBy('date');
+    if (lastDoc) query = query.startAfter(lastDoc);
+
+    const gamesSnap = await query.limit(currentBatchSize).get();
+    if (gamesSnap.empty) break;
+
+    gamesSnap.forEach((docSnap) => {
+      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
+      if (serializePublicGame(game)) games.push(game);
+    });
+    scannedDocuments += gamesSnap.size;
+    lastDoc = gamesSnap.docs[gamesSnap.docs.length - 1];
+    if (gamesSnap.size < currentBatchSize) break;
+  }
+
+  if (games.length <= range.limit && scannedDocuments >= PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+    throw new Error('Public games scan limit exceeded.');
+  }
+  return games;
+}
+
+function sendPublicTeamApiSuccess(req, res, body) {
+  res.set('Cache-Control', PUBLIC_TEAM_API_CACHE_CONTROL);
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  if (req.method === 'HEAD') {
+    res.status(200).end();
+    return;
+  }
+  res.status(200).json(body);
+}
+
+exports.publicTeamRosterV1 = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    const request = beginPublicTeamApiRequest(req, res);
+    if (request.complete) return;
+
+    try {
+      const team = await getStrictPublicTeam(request.teamId);
+      if (!team) {
+        sendPublicTeamApiError(res, 404, 'not_found', 'Public team not found.');
+        return;
+      }
+
+      const players = await getPublicTeamPlayers(request.teamId);
+      const body = buildPublicRosterResponse({
+        teamId: request.teamId,
+        team,
+        players
+      });
+      sendPublicTeamApiSuccess(req, res, body);
+    } catch (error) {
+      functions.logger.error('Failed to build public team roster response.', {
+        teamId: request.teamId,
+        error: error?.message || String(error)
+      });
+      sendPublicTeamApiError(res, 500, 'unavailable', 'Public roster is temporarily unavailable.');
+    }
+  });
+
+exports.publicTeamGamesV1 = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    const request = beginPublicTeamApiRequest(req, res);
+    if (request.complete) return;
+
+    const range = parsePublicGamesQuery(req.query || {});
+    if (range.error) {
+      sendPublicTeamApiError(res, 400, 'invalid_query', range.error);
+      return;
+    }
+
+    try {
+      const team = await getStrictPublicTeam(request.teamId);
+      if (!team) {
+        sendPublicTeamApiError(res, 404, 'not_found', 'Public team not found.');
+        return;
+      }
+
+      const games = await getPublicTeamGames(request.teamId, range);
+      const body = buildPublicGamesResponse({
+        teamId: request.teamId,
+        team,
+        games,
+        from: range.from,
+        to: range.to,
+        limit: range.limit
+      });
+      sendPublicTeamApiSuccess(req, res, body);
+    } catch (error) {
+      functions.logger.error('Failed to build public team games response.', {
+        teamId: request.teamId,
+        error: error?.message || String(error)
+      });
+      sendPublicTeamApiError(res, 500, 'unavailable', 'Public games are temporarily unavailable.');
+    }
+  });
+
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
@@ -5928,8 +6201,18 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const eventsSnap = await getCalendarFeedGamesQuery(teamId).get();
-    const events = eventsSnap.docs.map((docSnap) => {
+    const [eventsSnap, recurringMastersSnap] = await Promise.all([
+      getCalendarFeedGamesQuery(teamId).get(),
+      getCalendarFeedRecurringMastersQuery(teamId).get()
+    ]);
+    const recurringPracticeDocs = recurringMastersSnap.docs.filter((docSnap) => {
+      const event = docSnap.data() || {};
+      return event.type === 'practice' && event.isSeriesMaster === true && Boolean(event.recurrence);
+    });
+    const eventDocs = new Map(
+      [...eventsSnap.docs, ...recurringPracticeDocs].map((docSnap) => [docSnap.id, docSnap])
+    );
+    const events = [...eventDocs.values()].map((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
       game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
       return game;

@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 
 const workflow = readFileSync(new URL('../../.github/workflows/mobile-build.yml', import.meta.url), 'utf8');
+const integrationWorkflow = readFileSync(
+    new URL('../../.github/workflows/pr-integration.yml', import.meta.url),
+    'utf8'
+);
 
 describe('mobile-build CI workflow', () => {
-    it('always triggers on every pull request and master push (no path filter that could skip the required check)', () => {
-        // A `paths:` filter directly under `pull_request:`/`push:` would mean the
-        // workflow — and therefore the `mobile-build` required status check —
-        // never runs for PRs that don't touch those paths, permanently blocking
-        // merge (GitHub required checks that never post a status block forever).
+    it('is reusable without opening a duplicate pull-request run', () => {
         const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
         expect(triggerSection).not.toContain('paths:');
-        expect(triggerSection).toContain('pull_request:');
-        expect(triggerSection).toContain('push:');
+        expect(triggerSection).toContain('workflow_call:');
         expect(triggerSection).toContain('workflow_dispatch:');
+        expect(triggerSection).not.toContain('pull_request:');
+        expect(triggerSection).not.toContain('push:');
     });
 
     it('gates the expensive android/ios build jobs on a path-detection job instead of removing path awareness entirely', () => {
@@ -28,14 +29,19 @@ describe('mobile-build CI workflow', () => {
         expect(workflow).toContain('capacitor\\.config\\.json');
     });
 
-    it('runs for code changes without creating duplicate runs for label churn', () => {
-        const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
+    it('is called by the consolidated code-head workflow without label-churn runs', () => {
+        const triggerSection = integrationWorkflow.slice(
+            integrationWorkflow.indexOf('\non:'),
+            integrationWorkflow.indexOf('\npermissions:')
+        );
         const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  android-debug:'));
         const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
 
         expect(triggerSection).toContain('      - synchronize');
         expect(triggerSection).not.toContain('      - unlabeled');
         expect(triggerSection).not.toContain('      - labeled');
+        expect(integrationWorkflow).toContain('uses: ./.github/workflows/mobile-build.yml');
+        expect(integrationWorkflow).toContain('name: mobile-build');
         expect(workflow).toContain('group: mobile-build-${{ github.workflow }}-${{ github.ref }}');
         expect(changesSection).not.toContain('external-claim');
         expect(changesSection).not.toContain('LABEL_NAME');

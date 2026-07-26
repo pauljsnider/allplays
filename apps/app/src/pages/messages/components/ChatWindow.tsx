@@ -1418,27 +1418,28 @@ export function ChatWindow({
     setShowJumpToLatest(!isPinned);
   };
 
-  const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(event.target.files || []);
+  const addMediaFiles = (selectedFiles: File[]) => {
     if (!selectedFiles.length) return;
     const invalidType = selectedFiles.find((file) => !file.type.startsWith('image/') && !file.type.startsWith('video/'));
     if (invalidType) {
       setStatus({ tone: 'error', message: 'Choose image or video files only.' });
-      event.target.value = '';
       return;
     }
     const oversized = selectedFiles.find((file) => file.size > MAX_CHAT_MEDIA_SIZE);
     if (oversized) {
       setStatus({ tone: 'error', message: 'Photos and videos must be 5MB or smaller each.' });
-      event.target.value = '';
       return;
     }
     setFilePreviews((current) => [
       ...current,
       ...selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) }))
     ]);
-    event.target.value = '';
     closeAttachSheet();
+  };
+
+  const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    addMediaFiles(Array.from(event.target.files || []));
+    event.target.value = '';
   };
 
   const removeFile = (index: number) => {
@@ -2049,6 +2050,7 @@ export function ChatWindow({
         onTextChange={setText}
         onSubmit={handleSend}
         onAttach={openAttachSheet}
+        onPasteImages={addMediaFiles}
         onRemoveFile={removeFile}
         onVoice={toggleVoiceCapture}
         onAudience={() => {

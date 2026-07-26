@@ -1744,6 +1744,7 @@ export type ScheduleImportNormalizedRow = {
     rowNumber: number;
     importedAt?: string | null;
     importedBy?: string | null;
+    actionId?: string | null;
   } | null;
 };
 
@@ -1807,12 +1808,14 @@ function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['import
   if (!batchId || totalCount <= 0 || rowNumber <= 0) {
     return null;
   }
+  const actionId = compactString(input?.actionId);
   return {
     batchId,
     totalCount,
     rowNumber,
     importedAt: compactString(input?.importedAt) || new Date().toISOString(),
-    importedBy: compactString(input?.importedBy) || null
+    importedBy: compactString(input?.importedBy) || null,
+    ...(actionId ? { actionId } : {})
   };
 }
 
@@ -1982,6 +1985,7 @@ export type SchedulePracticeFormInput = {
   title: string;
   startDate: Date;
   endDate: Date;
+  timeZone?: string | null;
   location?: string | null;
   notes?: string | null;
   scheduleNotifications?: Record<string, unknown> | null;
@@ -2216,6 +2220,7 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
     recurrenceConfig: recurrence,
     startDate,
     endDate,
+    timeZone: compactString(input.timeZone) || Intl.DateTimeFormat().resolvedOptions().timeZone,
     Timestamp,
     deleteField,
     generateSeriesId
@@ -2243,10 +2248,15 @@ function buildOccurrenceOverridePayload(input: SchedulePracticeFormInput) {
   if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
   if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
   if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  const startDay = new Date(startDate);
+  const endDay = new Date(endDate);
+  startDay.setHours(0, 0, 0, 0);
+  endDay.setHours(0, 0, 0, 0);
   return {
     title,
     startTime: startDate.toTimeString().slice(0, 5),
     endTime: endDate.toTimeString().slice(0, 5),
+    endDayOffset: Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000)),
     location: compactString(input.location),
     notes: compactString(input.notes)
   };
@@ -2399,6 +2409,17 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
   await requireScheduleImportStaff(normalizedTeamId, user);
   const payload = buildScheduleImportGamePayload(row, user as AuthUser);
   if (!payload.opponent) throw new Error('Game rows require an opponent.');
+  const actionId = compactString(payload.importBatch?.actionId);
+  if (actionId) {
+    const createdId = await createIdempotentScheduleImportEvent(
+      normalizedTeamId,
+      `${actionId}_event_${payload.importBatch?.rowNumber || 0}`,
+      payload,
+      actionId
+    );
+    invalidateParentScheduleCaches(user);
+    return createdId;
+  }
 
   try {
     const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
@@ -2440,6 +2461,17 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
   if (!normalizedTeamId) throw new Error('Team is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
   const payload = buildScheduleImportPracticePayload(row, user as AuthUser);
+  const actionId = compactString(payload.importBatch?.actionId);
+  if (actionId) {
+    const createdId = await createIdempotentScheduleImportEvent(
+      normalizedTeamId,
+      `${actionId}_event_${payload.importBatch?.rowNumber || 0}`,
+      payload,
+      actionId
+    );
+    invalidateParentScheduleCaches(user);
+    return createdId;
+  }
 
   try {
     const createdId = await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
@@ -2455,6 +2487,51 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
     invalidateParentScheduleCaches(user);
     return doc?.id || '';
   }
+}
+
+async function createIdempotentScheduleImportEvent(
+  teamId: string,
+  eventId: string,
+  payload: Record<string, any>,
+  actionId: string
+) {
+  const path = `teams/${teamId}/games/${eventId}`;
+  const assertReusable = (existing: Record<string, any> | null | undefined) => {
+    if (!existing) return;
+    if (
+      compactString(existing.importBatch?.actionId) !== actionId
+      || Number(existing.importBatch?.rowNumber || 0) !== Number(payload.importBatch?.rowNumber || 0)
+    ) {
+      throw new Error('The deterministic schedule import row ID is already in use.');
+    }
+  };
+
+  if (isNativeRuntime()) {
+    const existing = await nativeGetDocument(path);
+    if (existing) {
+      assertReusable(existing);
+      return eventId;
+    }
+    await nativePatchDocument(path, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return eventId;
+  }
+
+  await withTimeout(runTransaction(db, async (transaction: any) => {
+    const eventRef = doc(db, path);
+    const snapshot = await transaction.get(eventRef);
+    if (snapshot?.exists?.()) {
+      assertReusable(typeof snapshot.data === 'function' ? snapshot.data() : null);
+      return;
+    }
+    transaction.set(eventRef, {
+      ...payload,
+      createdAt: serverTimestamp()
+    });
+  }), 'Schedule import idempotent event create');
+  return eventId;
 }
 
 export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {

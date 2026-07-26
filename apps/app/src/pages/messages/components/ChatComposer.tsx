@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Loader2, Mail, Mic, MoreHorizontal, Paperclip, Send, Users, X } from 'lucide-react';
 import { getChatMentionInsertion, hasAllPlaysMention, type ChatMentionSuggestion } from '../../../lib/chatLogic';
+import { getPastedImageFiles } from '../../../lib/clipboardFiles';
 
 type FilePreview = {
     file: File;
@@ -27,6 +28,7 @@ export function Composer({
     onTextChange,
     onSubmit,
     onAttach,
+    onPasteImages,
     onRemoveFile,
     onVoice,
     onAudience,
@@ -53,6 +55,7 @@ export function Composer({
     onTextChange: (value: string) => void;
     onSubmit: (event?: FormEvent) => void;
     onAttach: () => void;
+    onPasteImages: (files: File[]) => void;
     onRemoveFile: (index: number) => void;
     onVoice: () => void;
     onAudience: () => void;
@@ -74,7 +77,7 @@ export function Composer({
     const attachmentSummary = filePreviews.length
         ? `${filePreviews.length} attachment${filePreviews.length === 1 ? '' : 's'} ready`
         : '';
-    const notice = composerNotice || attachmentSummary;
+    const notice = composerNotice || attachmentSummary || 'Paste an image here or add an attachment';
 
     useEffect(() => {
         setActiveSuggestionIndex((current) => {
@@ -199,6 +202,13 @@ export function Composer({
                         if (disabled) return;
                         onTextChange(event.target.value);
                         onCursorChange(event.target.selectionStart ?? event.target.value.length);
+                    }}
+                    onPaste={(event) => {
+                        if (disabled) return;
+                        const pastedImages = getPastedImageFiles(event.clipboardData);
+                        if (!pastedImages.length) return;
+                        event.preventDefault();
+                        onPasteImages(pastedImages);
                     }}
                     onClick={(event) => {
                         if (!disabled) syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);

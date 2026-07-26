@@ -1375,7 +1375,7 @@
 
 .private-ai-message-text {
   font-size: 0.8125rem;
-  font-weight: 575;
+  font-weight: 400;
   line-height: 1.38;
 }
 
@@ -1550,7 +1550,7 @@
   padding: 11px 54px 10px 12px;
   color: #111827;
   font-size: 1rem;
-  font-weight: 650;
+  font-weight: 400;
   line-height: 1.35;
   outline: none;
 }
