@@ -3808,38 +3808,139 @@ describe('private AI service', () => {
                 title: 'Practice'
             }
         ];
-        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const {
+            loadPrivateAiMessages,
+            runPrivateAiTool,
+            sendPrivateAiMessage
+        } = await import('../../apps/app/src/lib/privateAiService.ts');
 
         scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice save failed'));
         const partial = await runPrivateAiTool(coachUser, {
             name: 'apply_schedule_import',
             args: { teamId: 'team-1', __preparedScheduleRows: rows }
         }, { conversationId: 'partial-schedule' });
-        mockTeamScopedPendingActionPersistence({
+        const partialWrites = mockTeamScopedPendingActionPersistence({
             confirmationId: partial.confirmationId,
             args: { teamId: 'team-1', rows },
             conversationId: 'partial-schedule',
             summary: 'Schedule import',
             toolName: 'apply_schedule_import'
         });
-        const partialResult = await generatePrivateAiAnswer(
+        const partialResult = await sendPrivateAiMessage(
             coachUser,
             `confirm ${partial.confirmationId}`,
-            [],
-            { conversationId: 'partial-schedule' }
+            'partial-schedule'
         );
 
-        expect(partialResult.answer).toContain('partially completed');
-        expect(partialResult.answer).toContain('1 imported and 1 failed');
-        expect(partialResult.answer).toContain('rows 2');
+        expect(partialResult.assistantMessage.text).toContain('partially completed');
+        expect(partialResult.assistantMessage.text).toContain('1 imported and 1 failed');
+        expect(partialResult.assistantMessage.text).toContain('rows 2');
+        expect(partialResult.assistantMessage.text).toContain('remain in an editable review');
+        expect(partialResult.assistantMessage.pendingActionIds).toEqual([partial.confirmationId]);
+        expect(partialResult.assistantMessage.artifacts).toEqual([
+            expect.objectContaining({
+                type: 'schedule-import',
+                confirmationId: partial.confirmationId,
+                summary: { total: 1, games: 0, practices: 1, errors: 0 },
+                previewRows: [
+                    expect.objectContaining({
+                        rowNumber: 2,
+                        normalized: expect.objectContaining({ eventType: 'practice', title: 'Practice' })
+                    })
+                ]
+            })
+        ]);
         expect(partialResult.toolResults[0]).toMatchObject({
             ok: true,
+            requiresConfirmation: true,
+            confirmationId: partial.confirmationId,
             data: {
                 importedCount: 1,
                 failedCount: 1,
-                failures: [{ rowNumber: 2, error: 'Practice save failed' }]
+                failures: [{ rowNumber: 2, error: 'Practice save failed' }],
+                retryReady: true
             }
         });
+        expect(partialWrites).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', partial.confirmationId] }),
+            expect.objectContaining({
+                status: 'pending',
+                args: {
+                    teamId: 'team-1',
+                    rows: [expect.objectContaining({ rowNumber: 2, eventType: 'practice' })],
+                    source: 'ai'
+                },
+                artifact: expect.objectContaining({
+                    type: 'schedule-import',
+                    confirmationId: partial.confirmationId,
+                    previewRows: [
+                        expect.objectContaining({
+                            rowNumber: 2,
+                            normalized: expect.objectContaining({ eventType: 'practice' })
+                        })
+                    ]
+                })
+            }),
+            { merge: true }
+        );
+
+        const savedRetryMessage = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload?.role === 'assistant'
+                && payload?.pendingActionIds?.includes(partial.confirmationId));
+        const savedRetryPayload = partialWrites.mock.calls
+            .map((call) => ({ path: call[0]?.path?.join('/'), value: call[1] }))
+            .find((write) => write.path === `teams/team-1/privateAiPendingActions/${partial.confirmationId}`
+                && write.value?.status === 'pending'
+                && write.value?.artifact);
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{ id: 'assistant-partial-retry', data: () => savedRetryMessage }]
+        });
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => ({
+                userId: 'user-1',
+                teamId: 'team-1',
+                toolName: 'apply_schedule_import',
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                ...savedRetryPayload.value
+            })
+        });
+
+        const reloadedMessages = await loadPrivateAiMessages(coachUser, 80, 'partial-schedule');
+
+        expect(reloadedMessages[0].artifacts[0]).toMatchObject({
+            confirmationId: partial.confirmationId,
+            summary: { total: 1, games: 0, practices: 1, errors: 0 },
+            previewRows: [
+                expect.objectContaining({
+                    rowNumber: 2,
+                    normalized: expect.objectContaining({ eventType: 'practice', title: 'Practice' })
+                })
+            ]
+        });
+
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: partial.confirmationId,
+            args: { teamId: 'team-1', rows: [rows[1]], source: 'ai' },
+            conversationId: 'partial-schedule',
+            summary: 'Schedule retry',
+            toolName: 'apply_schedule_import'
+        });
+        const retriedResult = await sendPrivateAiMessage(
+            coachUser,
+            `confirm ${partial.confirmationId}`,
+            'partial-schedule'
+        );
+
+        expect(retriedResult.assistantMessage.text).toContain('Schedule imported: 1 row saved');
+        expect(retriedResult.toolResults[0]).toMatchObject({
+            ok: true,
+            confirmationId: partial.confirmationId,
+            data: { importedCount: 1, failedCount: 0 }
+        });
+        expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledTimes(1);
+        expect(scheduleMocks.createScheduleImportPractice).toHaveBeenCalledTimes(2);
 
         scheduleMocks.createScheduleImportGame.mockRejectedValueOnce(new Error('Game save failed'));
         scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice save failed'));
@@ -3854,17 +3955,28 @@ describe('private AI service', () => {
             summary: 'Schedule import',
             toolName: 'apply_schedule_import'
         });
-        const failedResult = await generatePrivateAiAnswer(
+        const failedResult = await sendPrivateAiMessage(
             coachUser,
             `confirm ${failed.confirmationId}`,
-            [],
-            { conversationId: 'failed-schedule' }
+            'failed-schedule'
         );
 
-        expect(failedResult.answer).toContain('could not complete');
-        expect(failedResult.answer).toContain('no rows were saved');
-        expect(failedResult.answer).toContain('Failed rows: 1, 2');
-        expect(failedResult.toolResults[0]).toMatchObject({ ok: false });
+        expect(failedResult.assistantMessage.text).toContain('No schedule rows were saved');
+        expect(failedResult.assistantMessage.text).toContain('rows 1, 2');
+        expect(failedResult.assistantMessage.text).toContain('remain in an editable review');
+        expect(failedResult.toolResults[0]).toMatchObject({
+            ok: true,
+            requiresConfirmation: true,
+            confirmationId: failed.confirmationId,
+            data: {
+                importedCount: 0,
+                failedCount: 2,
+                retryReady: true,
+                retryArtifact: expect.objectContaining({
+                    summary: { total: 2, games: 1, practices: 1, errors: 0 }
+                })
+            }
+        });
     });
 
     it('rejects unknown attendance players and ignores AI-supplied session metadata', async () => {

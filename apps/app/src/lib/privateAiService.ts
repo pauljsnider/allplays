@@ -500,7 +500,8 @@ export async function sendPrivateAiMessage(
       pendingActionIds: aiResult.toolResults
         .filter((result) => result.ok && result.requiresConfirmation === true)
         .map((result) => compactText(result.confirmationId))
-        .filter(Boolean)
+        .filter(Boolean),
+      artifacts: collectPrivateAiRetryArtifacts(aiResult.toolResults)
     });
     await touchPrivateAiConversation(user, activeConversationId, {
       title: buildConversationTitle(question),
@@ -2214,6 +2215,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       const importedAt = new Date().toISOString();
       const createdIds: string[] = [];
       const failures: Array<{ rowNumber: number; error: string }> = [];
+      const retryRows: ScheduleCsvImportPreviewRow['normalized'][] = [];
       for (const [index, row] of rows.entries()) {
         const normalizedRow = {
           ...row,
@@ -2231,6 +2233,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
             : await createScheduleImportGame(teamId, normalizedRow, user);
           if (createdId) createdIds.push(createdId);
         } catch (error: any) {
+          retryRows.push(row);
           failures.push({
             rowNumber: row.rowNumber || index + 1,
             error: error?.message || 'Schedule row import failed.'
@@ -2240,15 +2243,12 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       if (rows.length > 3 && createdIds.length) {
         await finalizeScheduleImportBatch(teamId, batchId, createdIds.length, user).catch(() => {});
       }
-      if (!createdIds.length && failures.length) {
-        const failedRows = failures.map((failure) => failure.rowNumber).join(', ');
-        throw new Error(`Schedule import failed: no rows were saved. Failed row${failures.length === 1 ? '' : 's'}: ${failedRows}.`);
-      }
       return {
         teamId,
         importedCount: createdIds.length,
         failedCount: failures.length,
-        failures
+        failures,
+        retryRows
       };
     }
   },
@@ -3464,6 +3464,34 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
   }, {
     confirmedWriteToken: confirmedWriteExecutionToken
   });
+  if (
+    result.ok
+    && result.name === 'apply_schedule_import'
+    && isPlainObject(result.data)
+    && Number(result.data.failedCount || 0) > 0
+    && Array.isArray(result.data.retryRows)
+  ) {
+    try {
+      const retryArtifact = await restorePartialSchedulePendingAction(
+        user,
+        claimedPending,
+        result.data.retryRows as ScheduleCsvImportPreviewRow['normalized'][]
+      );
+      const retryData = { ...result.data };
+      delete retryData.retryRows;
+      retryData.retryReady = true;
+      retryData.retryArtifact = retryArtifact;
+      return {
+        ...result,
+        data: retryData,
+        requiresConfirmation: true,
+        confirmationId: id
+      };
+    } catch (error: any) {
+      result.ok = false;
+      result.error = `Some schedule rows may already be saved, but the failed rows could not be preserved for retry: ${error?.message || 'proposal update failed.'}`;
+    }
+  }
   if (result.ok) {
     claimedPending.status = 'completed';
     pendingActionMemory.set(`${user.uid}:${id}`, claimedPending);
@@ -3487,6 +3515,114 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
     ...result,
     confirmationId: id
   };
+}
+
+async function restorePartialSchedulePendingAction(
+  user: AuthUser,
+  pending: PrivateAiPendingAction,
+  retryRows: ScheduleCsvImportPreviewRow['normalized'][]
+): Promise<PrivateAiScheduleArtifactReference> {
+  if (
+    pending.payloadScope !== 'team'
+    || pending.toolName !== 'apply_schedule_import'
+    || !pending.teamId
+    || !retryRows.length
+  ) {
+    throw new Error('No failed schedule rows were available to retry.');
+  }
+  const teamId = pending.teamId;
+  const rows = retryRows.slice(0, 200).map((row, index) => ({
+    rowNumber: Number(row.rowNumber) || index + 1,
+    draft: {},
+    normalized: {
+      ...row,
+      rowNumber: Number(row.rowNumber) || index + 1
+    },
+    errors: []
+  })) as ScheduleCsvImportPreviewRow[];
+  const summary = {
+    ...summarizeSchedulePreview(rows),
+    errors: 0
+  };
+  const nextArgs = {
+    teamId,
+    rows: rows.map((row) => row.normalized),
+    source: compactText(pending.args.source) || 'ai'
+  };
+  const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pending.id);
+  const teamPayloadRef = doc(
+    db,
+    'teams',
+    teamId,
+    teamPrivateAiPendingActionCollectionName,
+    pending.id
+  );
+  const restoredArtifact = await runTransaction(db, async (transaction: any) => {
+    const [pendingSnapshot, teamPayloadSnapshot] = await Promise.all([
+      transaction.get(pendingRef),
+      transaction.get(teamPayloadRef)
+    ]);
+    const pendingData = typeof pendingSnapshot?.data === 'function' ? pendingSnapshot.data() : null;
+    const teamPayload = typeof teamPayloadSnapshot?.data === 'function'
+      ? teamPayloadSnapshot.data()
+      : null;
+    if (
+      !pendingSnapshot?.exists?.()
+      || !isPlainObject(pendingData)
+      || !['pending', 'executing'].includes(compactText(pendingData.status))
+      || compactText(pendingData.userId) !== user.uid
+      || compactText(pendingData.toolName) !== 'apply_schedule_import'
+      || compactText(pendingData.teamId || (isPlainObject(pendingData.args) ? pendingData.args.teamId : '')) !== teamId
+      || Date.parse(compactText(pendingData.expiresAt)) <= Date.now()
+      || !teamPayloadSnapshot?.exists?.()
+      || !isPlainObject(teamPayload)
+      || !['pending', 'executing'].includes(compactText(teamPayload.status))
+      || compactText(teamPayload.userId) !== user.uid
+      || compactText(teamPayload.toolName) !== 'apply_schedule_import'
+      || compactText(teamPayload.teamId) !== teamId
+    ) {
+      return null;
+    }
+    const previousArtifact = normalizePrivateAiArtifact(teamPayload.artifact);
+    const nextArtifact = stripPrivateAiArtifactForTeamStorage({
+      type: 'schedule-import',
+      confirmationId: pending.id,
+      revision: Math.max(0, Number(teamPayload.revision) || 0) + 1,
+      teamId,
+      teamName: previousArtifact?.type === 'schedule-import'
+        ? previousArtifact.teamName
+        : 'Team',
+      source: normalizePrivateAiImportSource(pending.args.source),
+      summary,
+      previewRows: rows
+    });
+    assertPrivateAiPendingPayloadFitsFirestore('schedule', nextArgs, nextArtifact);
+    transaction.set(pendingRef, {
+      status: 'pending',
+      args: sanitizePendingActionArgsForUserStorage('apply_schedule_import', nextArgs),
+      summary: `Schedule retry | Team: ${teamId} | ${summary.total} failed row${summary.total === 1 ? '' : 's'}`,
+      previewSummary: summary,
+      retryPreparedAt: serverTimestamp(),
+      retryPreparedBy: user.uid
+    }, { merge: true });
+    transaction.set(teamPayloadRef, {
+      status: 'pending',
+      revision: Math.max(0, Number(teamPayload.revision) || 0) + 1,
+      args: nextArgs,
+      artifact: nextArtifact,
+      retryPreparedAt: serverTimestamp(),
+      retryPreparedBy: user.uid
+    }, { merge: true });
+    return normalizePrivateAiArtifact(nextArtifact);
+  });
+  if (!restoredArtifact || restoredArtifact.type !== 'schedule-import') {
+    throw new Error('The schedule proposal changed before failed rows could be staged.');
+  }
+  pending.status = 'pending';
+  pending.args = nextArgs;
+  pending.previewSummary = summary;
+  pendingActionMemory.set(`${user.uid}:${pending.id}`, pending);
+  return restoredArtifact;
 }
 
 async function clearTeamScopedPrivateAiPayload(
@@ -3782,7 +3918,13 @@ function summarizeExecutedAction(result: PrivateAiToolResult) {
           .map((failure) => isPlainObject(failure) ? Number(failure.rowNumber || 0) : 0)
           .filter(Boolean)
         : [];
-      return `Schedule import partially completed: ${importedCount} imported and ${failedCount} failed${failedRows.length ? ` (rows ${failedRows.join(', ')})` : ''}. Correct and retry only the failed rows.`;
+      const resultLabel = importedCount > 0
+        ? `Schedule import partially completed: ${importedCount} imported and ${failedCount} failed`
+        : `No schedule rows were saved: ${failedCount} failed`;
+      const retryMessage = data.retryReady === true
+        ? 'The failed rows remain in an editable review. Correct them if needed, then reply yes to retry only those rows.'
+        : 'Prepare only the failed rows again.';
+      return `${resultLabel}${failedRows.length ? ` (rows ${failedRows.join(', ')})` : ''}. ${retryMessage}`;
     }
     return `Schedule imported: ${importedCount} row${importedCount === 1 ? '' : 's'} saved.`;
   }
@@ -3855,6 +3997,13 @@ function summarizeRosterInvitationResults(value: unknown) {
 
 function summarizeExecutedActions(results: PrivateAiToolResult[]) {
   return results.map(summarizeExecutedAction).join(' ');
+}
+
+function collectPrivateAiRetryArtifacts(results: PrivateAiToolResult[]) {
+  return results.map((result) => {
+    const data = isPlainObject(result.data) ? result.data : {};
+    return normalizePrivateAiArtifact(data.retryArtifact);
+  }).filter((artifact): artifact is PrivateAiArtifactReference => Boolean(artifact));
 }
 
 function summarizeAuditResult(result: unknown) {
@@ -4051,6 +4200,9 @@ async function hydratePrivateAiTeamArtifactPreviews(
       if (!secureArtifact || secureArtifact.type === 'document-analysis') return summaryArtifact;
       return {
         ...summaryArtifact,
+        revision: secureArtifact.revision,
+        source: secureArtifact.source,
+        summary: secureArtifact.summary,
         previewRows: secureArtifact.previewRows
       } as PrivateAiArtifactReference;
     }));
