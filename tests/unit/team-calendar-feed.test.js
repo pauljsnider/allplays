@@ -113,7 +113,7 @@ describe('team calendar subscription feed', () => {
         });
         const ics = buildTeamCalendarIcs({
             teamId: 'team-1',
-            team: { name: 'Sharks' },
+            team: { name: 'Sharks', timeZone: 'UTC' },
             events: [master],
             now: new Date('2026-07-25T12:00:00Z')
         });
@@ -147,7 +147,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/New_York'
         });
 
         expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
@@ -178,7 +179,7 @@ describe('team calendar subscription feed', () => {
         });
     });
 
-    it('infers legacy US timezones so wall-clock times remain stable across DST', () => {
+    it('uses the configured team timezone for legacy US series across DST', () => {
         const newYorkOccurrences = expandRecurringCalendarEvent({
             id: 'new-york-evening',
             type: 'practice',
@@ -192,7 +193,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/New_York'
         });
         const losAngelesOccurrences = expandRecurringCalendarEvent({
             id: 'los-angeles-evening',
@@ -207,7 +209,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/Los_Angeles'
         });
 
         expect(newYorkOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
@@ -220,7 +223,46 @@ describe('team calendar subscription feed', () => {
         });
     });
 
-    it('uses recurrence weekdays to disambiguate legacy negative-antimeridian offsets', () => {
+    it('uses configured Arizona and European timezones instead of guessing from a winter offset', () => {
+        const legacyMaster = {
+            type: 'practice',
+            isSeriesMaster: true,
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        };
+        const phoenixOccurrences = expandRecurringCalendarEvent({
+            ...legacyMaster,
+            id: 'phoenix-evening',
+            date: new Date('2025-01-07T01:00:00Z')
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'America/Phoenix'
+        });
+        const londonOccurrences = expandRecurringCalendarEvent({
+            ...legacyMaster,
+            id: 'london-evening',
+            date: new Date('2025-01-06T18:00:00Z')
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Europe/London'
+        });
+
+        expect(phoenixOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T01:00:00Z'),
+            end: new Date('2026-07-28T02:30:00Z')
+        });
+        expect(londonOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T17:00:00Z'),
+            end: new Date('2026-07-27T18:30:00Z')
+        });
+    });
+
+    it('uses the configured team timezone for legacy negative-antimeridian series', () => {
         const honoluluOccurrences = expandRecurringCalendarEvent({
             id: 'honolulu-evening',
             type: 'practice',
@@ -234,7 +276,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Honolulu'
         });
         const pagoPagoOccurrences = expandRecurringCalendarEvent({
             id: 'pago-pago-evening',
@@ -249,7 +292,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Pago_Pago'
         });
 
         expect(honoluluOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
@@ -262,7 +306,7 @@ describe('team calendar subscription feed', () => {
         });
     });
 
-    it('preserves explicit timezones and legacy offsets above UTC+12', () => {
+    it('preserves explicit timezones and configured legacy zones above UTC+12', () => {
         const karachiOccurrences = expandRecurringCalendarEvent({
             id: 'karachi-evening',
             type: 'practice',
@@ -292,7 +336,8 @@ describe('team calendar subscription feed', () => {
                 byDays: ['MO']
             }
         }, {
-            now: new Date('2026-07-25T12:00:00Z')
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'Pacific/Kiritimati'
         });
 
         expect(karachiOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
@@ -333,6 +378,81 @@ describe('team calendar subscription feed', () => {
             date: new Date('2026-07-28T04:30:00Z'),
             end: new Date('2026-07-28T06:00:00Z')
         });
+    });
+
+    it('honors daily occurrence counts when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'daily-counted',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2026-04-20T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'daily',
+                interval: 1,
+                count: 10
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-04-28',
+            '2026-04-29'
+        ]);
+    });
+
+    it('honors daily end-date boundaries when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'daily-until',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2026-04-20T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'daily',
+                interval: 1,
+                until: '2026-04-28'
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-04-28'
+        ]);
+    });
+
+    it('honors multi-week intervals when the master predates the feed window', () => {
+        const occurrences = expandRecurringCalendarEvent({
+            id: 'biweekly',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T18:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:00',
+            recurrence: {
+                freq: 'weekly',
+                interval: 2,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z'),
+            fallbackTimeZone: 'UTC'
+        });
+
+        expect(occurrences.slice(0, 3).map((occurrence) => occurrence.instanceDate)).toEqual([
+            '2026-04-27',
+            '2026-05-11',
+            '2026-05-25'
+        ]);
+        expect(occurrences.some((occurrence) => occurrence.instanceDate === '2026-05-04')).toBe(false);
     });
 
     it('builds feeds from game-level fields without depending on attendee RSVP arrays', () => {

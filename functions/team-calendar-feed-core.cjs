@@ -8,16 +8,6 @@ const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
 const DEFAULT_RECURRENCE_TIME_ZONE = 'America/Chicago';
 const MILLIS_PER_DAY = 24 * 60 * 60 * 1000;
 const RECURRENCE_DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-const LEGACY_RECURRENCE_TIME_ZONES = [
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
-  'America/Los_Angeles',
-  'America/Anchorage',
-  'Pacific/Honolulu',
-  'Pacific/Pago_Pago',
-  'Pacific/Kiritimati'
-];
 
 function hashCalendarToken(token) {
   const normalized = String(token || '').trim();
@@ -244,27 +234,8 @@ function getRecurrenceTimeZone(master, fallbackTimeZone = DEFAULT_RECURRENCE_TIM
   const explicitTimeZone = String(master.timeZone || master.timezone || '').trim();
   if (explicitTimeZone) return explicitTimeZone;
 
-  const masterStart = toDate(master.date);
-  const startTime = String(master.startTime || '').trim();
   const fallback = String(fallbackTimeZone || '').trim();
-  if (!masterStart || !/^\d{2}:\d{2}$/.test(startTime)) return '';
-
-  const [hours, minutes] = startTime.split(':').map(Number);
-  const recurrenceDays = new Set(
-    (Array.isArray(master.recurrence?.byDays) ? master.recurrence.byDays : [])
-      .map((day) => String(day || '').toUpperCase())
-      .filter((day) => RECURRENCE_DAY_CODES.includes(day))
-  );
-  const candidates = [fallback, ...LEGACY_RECURRENCE_TIME_ZONES]
-    .filter((timeZone, index, all) => timeZone && all.indexOf(timeZone) === index);
-
-  return candidates.find((timeZone) => {
-    const wallClock = getWallClockParts(masterStart, timeZone);
-    if (!wallClock || wallClock.hour !== hours || wallClock.minute !== minutes) return false;
-    if (recurrenceDays.size === 0) return true;
-    const wallClockDay = new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day)).getUTCDay();
-    return recurrenceDays.has(RECURRENCE_DAY_CODES[wallClockDay]);
-  }) || '';
+  return fallback && getWallClockParts(new Date(0), fallback) ? fallback : '';
 }
 
 function buildRecurringOccurrence(
