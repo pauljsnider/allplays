@@ -285,6 +285,9 @@ jobs:
             local current_pr_json="$RUNNER_TEMP/firebase-preview-pre-deploy-pr.json"
             local recheck_output="$RUNNER_TEMP/firebase-preview-pre-deploy.outputs"
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$current_pr_json"
+            if jq -e '.state == "closed"' "$current_pr_json" >/dev/null; then
+              skip_preview "The pull request closed before the trusted preview write, so no preview channel is needed."
+            fi
             node "$verifier" \
               --event "$bundle/context/event.json" \
               --run "$bundle/context/run.json" \
