@@ -96,6 +96,17 @@ function normalizeResendResult(result) {
   return providerMessageId;
 }
 
+function getResendEventTag(tags, name) {
+  if (Array.isArray(tags)) {
+    const tag = tags.find((entry) => String(entry?.name || '').trim() === name);
+    return String(tag?.value || '').trim();
+  }
+  if (tags && typeof tags === 'object') {
+    return String(tags[name] || '').trim();
+  }
+  return '';
+}
+
 function createResendAuthEmailDelivery({
   firestore,
   FieldValue,
@@ -297,6 +308,15 @@ function createResendAuthEmailDelivery({
 
     const deliveryId = await findDeliveryId(providerMessageId);
     if (!deliveryId) {
+      const category = getResendEventTag(event?.data?.tags, 'category').toLowerCase();
+      if (category !== 'auth') {
+        await webhookRef.set({
+          status: 'ignored',
+          ignoreReason: 'untracked_email',
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        return { ignored: true };
+      }
       await webhookRef.set({ status: 'pending_mapping', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       logger.warn('Resend webhook did not match an ALL PLAYS authentication delivery.', {
         eventType,
