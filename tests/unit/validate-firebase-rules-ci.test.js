@@ -133,6 +133,9 @@ concurrency:
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
           firestore_success_sha="$deployment_sha"
+          git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
+          firestore_success_sha="$last_success_sha"
+          echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Deploy Firebase Storage rules when available

@@ -365,6 +365,21 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
+    assertIncludes(
+        deployProd,
+        'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"',
+        'Production Firestore stale component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_sha="$last_success_sha"',
+        'Production Firestore complete deployment baseline reuse'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.',
+        'Production Firestore divergent baseline fail-closed fallback'
+    );
     assertIncludes(deployProd, 'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore component change detection');
     assertIncludes(deployProd, 'record_component_deployment()', 'Production component deployment recorder');
     assertIncludes(deployProd, '"production-firestore"', 'Production Firestore component marker');
@@ -433,6 +448,7 @@ export function validateFirebaseRulesCi() {
     const deployProd = readText('.github/workflows/deploy-prod.yml');
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
+    const prIntegration = readText('.github/workflows/pr-integration.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
     validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
@@ -511,7 +527,11 @@ export function validateFirebaseRulesCi() {
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
-    assertMatches(deployPreviewBuild, /needs:\s*\[\s*regression-guards\s*\]/, 'Preview artifact build gate');
+    assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
+    assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
+    assertIncludes(prIntegration, 'uses: ./.github/workflows/deploy-preview.yml', 'PR integration preview artifact gate');
+    assertIncludes(prIntegration, 'name: preview-smoke', 'PR integration stable preview context');
+    assertIncludes(prIntegration, 'name: mobile-build', 'PR integration stable mobile context');
     validatePreviewDeployCommand(deployPreviewTrusted);
     validateFirebaseDeployWorkloadIdentity(deployPreviewTrusted, 'Trusted preview deploy');
     assertPreviewDeploySkipHandling(deployPreviewTrusted);
