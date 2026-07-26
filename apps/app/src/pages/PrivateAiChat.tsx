@@ -1702,7 +1702,7 @@ function getScheduleArtifactDraft(row: ScheduleCsvImportPreviewRow): Record<Sche
     startsAt: row.draft?.startsAt || row.normalized.startsAt || '',
     endsAt: row.draft?.endsAt || row.normalized.endsAt || '',
     opponent: row.draft?.opponent ?? row.normalized.opponent ?? '',
-    title: row.draft?.title ?? row.normalized.title ?? '',
+    title: row.draft?.title || row.normalized.title || '',
     location: row.draft?.location ?? row.normalized.location ?? '',
     arrivalTime: row.draft?.arrivalTime || row.normalized.arrivalTime || '',
     isHome: row.draft?.isHome || (row.normalized.isHome === null ? '' : row.normalized.isHome ? 'home' : 'away'),

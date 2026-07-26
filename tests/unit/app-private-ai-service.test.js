@@ -2184,6 +2184,7 @@ describe('private AI service', () => {
         };
         homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
         const {
+            generatePrivateAiAnswer,
             revisePrivateAiScheduleImportProposal,
             runPrivateAiTool
         } = await import('../../apps/app/src/lib/privateAiService.ts');
@@ -2311,6 +2312,43 @@ describe('private AI service', () => {
             }),
             { merge: true }
         );
+
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({
+                    status: 'pending',
+                    userId: 'user-1',
+                    toolName: 'apply_schedule_import',
+                    teamId: 'team-1',
+                    payloadScope: 'user',
+                    args: {
+                        teamId: 'team-1',
+                        rows: revised.rows.map((row) => row.normalized),
+                        source: 'csv',
+                        __scheduleValidationErrors: ['Game rows require an opponent.']
+                    },
+                    summary: 'Schedule import with one error',
+                    conversationId: 'schedule-chat',
+                    confirmationGroupId: 'schedule-group',
+                    expiresAt
+                })
+            })),
+            set: vi.fn()
+        }));
+        const confirmation = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${staged.confirmationId}`,
+            [],
+            { conversationId: 'schedule-chat' }
+        );
+        expect(confirmation.toolResults[0]).toMatchObject({
+            name: 'apply_schedule_import',
+            ok: false,
+            error: expect.stringContaining('Fix the schedule review errors before confirming.')
+        });
+        expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
+        expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
     });
 
     it('stores private roster payloads at team scope and reports invitation delivery outcomes', async () => {
