@@ -4724,7 +4724,7 @@ export async function getTrackedCalendarEventUids(teamId, preloadedGames = null)
 }
 
 // Access Codes
-const ACCESS_CODE_MAX_ATTEMPTS = 5;
+const ACCESS_CODE_MAX_ATTEMPTS = 100;
 
 export function generateAccessCode() {
     return generateJoinCode();
@@ -4752,6 +4752,17 @@ function matchesReusableAccessCode(existing = {}, expected = {}) {
         String(existing.generatedBy || '') === String(expected.generatedBy || '');
 }
 
+function isReusableAccessCodeEligible(existing = {}, expected = {}) {
+    const status = String(existing.status || 'active').trim().toLowerCase();
+    return matchesReusableAccessCode(existing, expected) &&
+        existing.used !== true &&
+        existing.revoked !== true &&
+        existing.autoAccepted !== true &&
+        existing.active !== false &&
+        !['removed', 'cancelled', 'revoked'].includes(status) &&
+        !isAccessCodeExpired(existing.expiresAt);
+}
+
 async function createUniqueAccessCode(accessCodeData, preferredCode, options = {}) {
     const idempotencyKey = String(options?.idempotencyKey || '').trim();
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
@@ -4770,7 +4781,7 @@ async function createUniqueAccessCode(accessCodeData, preferredCode, options = {
         const created = await runTransaction(db, async (transaction) => {
             const codeSnapshot = await transaction.get(codeRef);
             if (codeSnapshot.exists()) {
-                if (idempotencyKey && matchesReusableAccessCode(codeSnapshot.data() || {}, accessCodeData)) {
+                if (idempotencyKey && isReusableAccessCodeEligible(codeSnapshot.data() || {}, accessCodeData)) {
                     return {
                         id: codeRef.id || candidateCode,
                         code: candidateCode,

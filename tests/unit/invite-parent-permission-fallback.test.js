@@ -202,6 +202,59 @@ describe('inviteParent permission fallback (issue #3844)', () => {
         expect(transactionSet).toHaveBeenCalledTimes(1);
         expect(callableMock).toHaveBeenCalledTimes(2);
     });
+
+    it.each([
+        ['used', { used: true, usedBy: 'parent-1' }],
+        ['expired', { expiresAt: { toMillis: () => Date.now() - 1 } }],
+        ['revoked', { revoked: true }],
+        ['auto-accepted', { autoAccepted: true }],
+        ['inactive', { active: false }],
+        ['removed', { status: 'removed' }],
+        ['cancelled', { status: 'cancelled' }],
+        ['revoked status', { status: 'revoked' }]
+    ])('creates a fresh deterministic attempt instead of reusing a %s parent invite', async (_label, invalidState) => {
+        const { inviteParent } = await import('../../js/db.js');
+        const storedAccessCodes = new Map();
+        const transactionSet = vi.fn((reference, value) => {
+            storedAccessCodes.set(reference.id, { id: reference.id, ...value });
+        });
+        runTransactionMock.mockImplementation(async (database, updateFn) => updateFn({
+            get: vi.fn(async (reference) => ({
+                exists: () => storedAccessCodes.has(reference.id),
+                data: () => storedAccessCodes.get(reference.id)
+            })),
+            set: transactionSet
+        }));
+        callableMock.mockResolvedValue({
+            data: { autoLinked: false, existingUser: false, reason: 'no-existing-user' }
+        });
+        const options = { idempotencyKey: 'legacy-roster-import:team-1:player-1:dad@allplays.ai' };
+
+        const first = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+        storedAccessCodes.set(first.code, {
+            ...storedAccessCodes.get(first.code),
+            ...invalidState
+        });
+        const retried = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+
+        expect(retried.code).not.toBe(first.code);
+        expect(transactionSet).toHaveBeenCalledTimes(2);
+        expect(callableMock).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('inviteAdmin permission fallback (issue #3844)', () => {
