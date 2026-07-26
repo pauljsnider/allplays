@@ -110,6 +110,17 @@ async function mockPrivateAiModules(page, { firstRun = false, roles = ['parent']
             body: `
                 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
                 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
+
+                export async function loadPrivateAiRoleCapabilities() {
+                    const roles = ${JSON.stringify(roles)};
+                    const isTeamManager = roles.some((role) =>
+                        ['coach', 'admin', 'platformAdmin'].includes(role)
+                    );
+                    return {
+                        isTeamManager,
+                        managedTeamCount: isTeamManager ? 1 : 0
+                    };
+                }
  
                 let conversations = ${firstRun ? '[]' : `[
                     {
