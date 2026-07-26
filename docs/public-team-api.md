@@ -92,8 +92,8 @@ projected.
 
 - Methods: `GET`, `HEAD`, and `OPTIONS`
 - CORS: public read access (`Access-Control-Allow-Origin: *`), no credentials
-- Cache: one minute in a browser, five minutes in a shared cache, stale serving
-  permitted for one day
+- Cache: one minute in a browser and five minutes in a shared cache, with no
+  stale serving after expiration
 - Rate limit: 120 requests per minute per observed client IP and function
   instance
 - Errors: `{ "error": { "code": "...", "message": "..." } }`

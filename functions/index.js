@@ -5900,7 +5900,8 @@ function getCalendarFeedGamesQuery(teamId) {
   return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
 }
 
-const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=86400';
+const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300';
+const PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS = 1000;
 const PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS = 5000;
 
 function setPublicTeamApiCorsHeaders(res) {
@@ -5948,6 +5949,19 @@ async function getStrictPublicTeam(teamId) {
   if (!teamSnap.exists) return null;
   const team = { id: teamId, ...(teamSnap.data() || {}) };
   return isStrictPublicTeam(team) ? team : null;
+}
+
+async function getPublicTeamPlayers(teamId) {
+  const playersSnap = await firestore.collection(`teams/${teamId}/players`)
+    .limit(PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS + 1)
+    .get();
+  if (playersSnap.size > PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS) {
+    throw new Error('Public roster scan limit exceeded.');
+  }
+
+  const players = [];
+  playersSnap.forEach((docSnap) => players.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  return players;
 }
 
 async function getPublicTeamGames(teamId, range) {
@@ -6009,9 +6023,7 @@ exports.publicTeamRosterV1 = functions
         return;
       }
 
-      const playersSnap = await firestore.collection(`teams/${request.teamId}/players`).get();
-      const players = [];
-      playersSnap.forEach((docSnap) => players.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+      const players = await getPublicTeamPlayers(request.teamId);
       const body = buildPublicRosterResponse({
         teamId: request.teamId,
         team,

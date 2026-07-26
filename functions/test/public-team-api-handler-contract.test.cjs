@@ -28,8 +28,21 @@ test('public team handlers use bounded games reads and field-whitelisting serial
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
 });
 
+test('public roster handler bounds its player scan before filtering sensitive documents', () => {
+  const start = source.indexOf('async function getPublicTeamPlayers');
+  const end = source.indexOf('async function getPublicTeamGames', start);
+  const rosterSource = source.slice(start, end);
+
+  assert.match(source, /const PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS = 1000/);
+  assert.match(rosterSource, /\.limit\(PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS \+ 1\)/);
+  assert.match(rosterSource, /playersSnap\.size > PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS/);
+  assert.doesNotMatch(rosterSource, /collection\(`teams\/\$\{teamId\}\/players`\)\.get\(\)/);
+  assert.match(source, /const players = await getPublicTeamPlayers\(request\.teamId\)/);
+});
+
 test('public team handlers define public cache, CORS, method, and rate-limit behavior', () => {
-  assert.match(source, /public, max-age=60, s-maxage=300, stale-while-revalidate=86400/);
+  assert.match(source, /public, max-age=60, s-maxage=300'/);
+  assert.doesNotMatch(source, /stale-while-revalidate/);
   assert.match(source, /Access-Control-Allow-Origin', '\*'/);
   assert.match(source, /Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS'/);
   assert.match(source, /req\.method !== 'GET' && req\.method !== 'HEAD'/);
