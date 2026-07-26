@@ -95,7 +95,7 @@ on:
 
 concurrency:
   group: production-deploy-\${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
       - name: Checkout
         uses: actions/checkout@v5
@@ -177,8 +177,12 @@ concurrency:
             echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
           } >> "$GITHUB_STEP_SUMMARY"
           fi
+          test_firestore_rules_api() {
+            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
+          }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
+            test_firestore_rules_api 2 20
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0
           else
             :
           fi
@@ -278,16 +282,16 @@ concurrency:
             'docs/observability-runbook.md'
         ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`,
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0`,
             `retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0`
         ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
           fi`,
             `else
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0
           fi`
         ))).toThrow('Production must not redeploy unchanged Firestore configuration');
     });
