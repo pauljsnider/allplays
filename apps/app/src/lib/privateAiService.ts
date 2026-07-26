@@ -216,6 +216,7 @@ export type PrivateAiAttachmentInput = {
   teamName?: string;
   text?: string;
   file: File;
+  launchIntent?: Exclude<PrivateAiAttachmentIntent, 'general-analysis'>;
 };
 
 export type PrivateAiConversation = {
@@ -266,6 +267,10 @@ const confirmedWriteExecutionToken = Symbol('confirmed-private-ai-write');
 
 let aiModelCache: any = null;
 const pendingActionMemory = new Map<string, PrivateAiPendingAction>();
+const recoverablePrivateAiExecutionTools = new Set([
+  'apply_roster_import',
+  'apply_schedule_import'
+]);
 
 type PrivateAiToolMode = 'read' | 'write';
 
@@ -288,6 +293,7 @@ type PrivateAiPendingAction = {
     rosterApplied?: boolean;
   };
   recoveringExecution?: boolean;
+  recoveryBlocked?: boolean;
 };
 
 type PrivateAiToolDefinition = {
@@ -606,7 +612,7 @@ export async function sendPrivateAiAttachmentMessage(
   const isCsv = isPrivateAiCsvFile(input.file);
   const csvText = isCsv ? await input.file.text() : '';
   const attachment = buildPrivateAiAttachmentReceipt(input.file);
-  const intent = await classifyPrivateAiAttachment({
+  const intent = input.launchIntent || await classifyPrivateAiAttachment({
     text: input.text,
     file: input.file,
     csvText
@@ -624,7 +630,10 @@ export async function sendPrivateAiAttachmentMessage(
     }, conversationId);
   }
   if (intent === 'schedule-import') {
-    if (isPrivateAiScheduleAttachmentMutationRequest(input.text)) {
+    if (
+      input.launchIntent !== 'schedule-import'
+      && isPrivateAiScheduleAttachmentMutationRequest(input.text)
+    ) {
       return sendPrivateAiScheduleManagementAttachmentMessage(user, {
         teamId: input.teamId,
         teamName: input.teamName,
@@ -3627,6 +3636,7 @@ async function claimPrivateAiPendingAction(
     && memoryPending.status !== 'pending'
     && !(
       memoryPending.status === 'executing'
+      && recoverablePrivateAiExecutionTools.has(memoryPending.toolName)
       && Date.parse(compactText(memoryPending.executionLeaseExpiresAt)) <= Date.now()
     )
   ) return null;
@@ -3644,7 +3654,9 @@ async function claimPrivateAiPendingAction(
       const snapshot = await transaction.get(pendingRef);
       const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
       const expiresAt = compactText(data?.expiresAt);
+      const toolName = compactText(data?.toolName);
       const recoveringExecution = data?.status === 'executing'
+        && recoverablePrivateAiExecutionTools.has(toolName)
         && Date.parse(compactText(data?.executionLeaseExpiresAt)) <= Date.now();
       if (
         !snapshot?.exists?.()
@@ -3655,7 +3667,6 @@ async function claimPrivateAiPendingAction(
         || Date.parse(expiresAt) <= Date.now()
       ) return null;
 
-      const toolName = compactText(data.toolName);
       const teamId = compactText(data.teamId);
       const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
       let args = isPlainObject(data.args) ? data.args : {};
@@ -3679,6 +3690,7 @@ async function claimPrivateAiPendingAction(
             payload.status !== 'pending'
             && !(
               payload.status === 'executing'
+              && recoverablePrivateAiExecutionTools.has(toolName)
               && Date.parse(compactText(payload.executionLeaseExpiresAt)) <= Date.now()
             )
           )
@@ -3741,6 +3753,13 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
   const pending = await loadPrivateAiPendingAction(user, id);
   if (!pending) {
     return { name: 'confirm_action', ok: false, error: 'No pending AI action matched that confirmation code.' };
+  }
+  if (pending.recoveryBlocked) {
+    return {
+      name: pending.toolName || 'confirm_action',
+      ok: false,
+      error: 'This action may already have completed, so AI will not run it again and risk a duplicate. Check the app, then prepare a new change only if it is still needed.'
+    };
   }
   const definition = getPrivateAiToolDefinition(pending.toolName);
   if (!definition || definition.mode !== 'write') {
@@ -3966,21 +3985,35 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
 
   const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
-  if (
-    !snapshot?.exists?.()
-    || !isPlainObject(data)
-    || (
-      data.status !== 'pending'
-      && !(
-        data.status === 'executing'
-        && Date.parse(compactText(data.executionLeaseExpiresAt)) <= Date.now()
-      )
-    )
-  ) return null;
+  if (!snapshot?.exists?.() || !isPlainObject(data)) return null;
   if (compactText(data.userId) !== user.uid) return null;
   const toolName = compactText(data.toolName);
+  const recoveringExecution = data.status === 'executing'
+    && Date.parse(compactText(data.executionLeaseExpiresAt)) <= Date.now();
+  if (data.status !== 'pending' && !recoveringExecution) return null;
   const teamId = compactText(data.teamId);
   const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
+  if (recoveringExecution && !recoverablePrivateAiExecutionTools.has(toolName)) {
+    return {
+      id: confirmationId,
+      userId: user.uid,
+      toolName,
+      args: {},
+      summary: compactText(data.summary),
+      createdAt: normalizeScheduleDate(data.createdAt)?.toISOString()
+        || compactText(data.clientCreatedAt)
+        || new Date().toISOString(),
+      conversationId: normalizeConversationId(data.conversationId),
+      confirmationGroupId: compactText(data.confirmationGroupId),
+      previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
+      teamId: teamId || undefined,
+      payloadScope,
+      expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
+      status: 'executing',
+      executionLeaseExpiresAt: compactText(data.executionLeaseExpiresAt) || undefined,
+      recoveryBlocked: true
+    };
+  }
   let args = isPlainObject(data.args) ? data.args : {};
   let execution: PrivateAiPendingAction['execution'] = isPlainObject(data.execution)
     ? { rosterApplied: data.execution.rosterApplied === true }
@@ -4004,6 +4037,7 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
         payload.status !== 'pending'
         && !(
           payload.status === 'executing'
+          && recoverablePrivateAiExecutionTools.has(toolName)
           && Date.parse(compactText(payload.executionLeaseExpiresAt)) <= Date.now()
         )
       )

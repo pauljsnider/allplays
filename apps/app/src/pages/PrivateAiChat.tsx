@@ -148,6 +148,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
   const preserveMessagesForConversationRef = useRef<string | null>(null);
   const appliedLaunchSearchRef = useRef('');
+  const pendingLaunchIntentRef = useRef<PrivateAiLaunchContext['intent']>(launchContext.intent || '');
   const rosterEditContextRef = useRef(new Map<string, Awaited<ReturnType<typeof loadRosterImportContextForApp>>>());
   const managedTeamContext = activeLaunchContext?.teamId || '';
   const hasDeclaredTeamManagerAccess = Boolean(
@@ -183,6 +184,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     if (appliedLaunchSearchRef.current === location.search) return;
     appliedLaunchSearchRef.current = location.search;
     setActiveLaunchContext(launchContext.teamId ? launchContext : null);
+    pendingLaunchIntentRef.current = launchContext.intent || '';
     if (launchContext.newChat) {
       setActiveConversationId(DRAFT_PRIVATE_AI_CONVERSATION_ID);
       setMessages([]);
@@ -384,6 +386,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     if (!auth.user || sending || (!trimmedText && !attachment)) return;
     const sentAttachment = attachment;
     const attachmentReceipt = sentAttachment ? buildAttachmentReceipt(sentAttachment) : undefined;
+    const sentLaunchIntent = pendingLaunchIntentRef.current;
 
     setDraft('');
     setAttachment(null);
@@ -404,13 +407,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
         ? await sendPrivateAiAttachmentMessage(auth.user, {
             teamId: managedTeamContext,
             text: trimmedText,
-            file: sentAttachment
+            file: sentAttachment,
+            launchIntent: sentLaunchIntent || undefined
           }, activeConversationId)
         : managedTeamContext
           ? await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId, {
               teamId: managedTeamContext
             })
           : await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
+      pendingLaunchIntentRef.current = '';
       const nextConversationId = result.userMessage.conversationId || activeConversationId;
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),

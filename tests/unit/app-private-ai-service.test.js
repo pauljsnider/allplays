@@ -1751,6 +1751,46 @@ describe('private AI service', () => {
         expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
     });
 
+    it('keeps a pre-scoped schedule launcher attachment on the import path even when its prompt mentions updates and cancellations', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event Type,Date,Start Time,End Time,Opponent,Location,Notes',
+            'game,2026-07-30,6:00 PM,7:30 PM,Rockets,Field 1,Wear white'
+        ].join('\n');
+        const csv = new File([csvText], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: 'Manage the Bears schedule. I can add or update games, cancel events, or attach this CSV for bulk schedule changes.',
+            file: csv,
+            launchIntent: 'schedule-import'
+        }, 'schedule-launch-import');
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'apply_schedule_import',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(result.assistantMessage.artifacts).toEqual([
+            expect.objectContaining({
+                type: 'schedule-import',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                source: 'csv'
+            })
+        ]);
+        expect(aiMocks.model.generateContent).not.toHaveBeenCalled();
+    });
+
     it('stores a private attachment receipt without persisting the raw roster file', async () => {
         const coachUser = {
             ...authUser,
@@ -4010,6 +4050,56 @@ describe('private AI service', () => {
             }),
             { merge: true }
         );
+    });
+
+    it.each([
+        ['parent invitation', 'invite_roster_parent'],
+        ['parent invitation resend', 'resend_roster_parent_invite'],
+        ['ride offer', 'create_ride_offer'],
+        ['team chat delivery', 'send_team_message'],
+        ['household invitation', 'create_household_invite'],
+        ['family share link', 'create_family_share_link'],
+        ['access request', 'submit_access_request'],
+        ['incentive rule', 'save_player_incentive_rule'],
+        ['team admin invitation', 'invite_team_admin'],
+        ['tracking item', 'save_team_tracking_item'],
+        ['stat configuration', 'save_stat_configuration'],
+        ['schedule event', 'create_schedule_event'],
+        ['RSVP reminder', 'send_rsvp_reminder'],
+        ['schedule assignment', 'manage_schedule_assignment'],
+        ['team email', 'send_team_email'],
+        ['team fee', 'create_team_fee']
+    ])('does not replay an expired %s execution when its completion marker may have failed', async (_label, toolName) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const confirmationId = `ai_noreplay${String(toolName.length).padStart(2, '0')}${toolName.replace(/[^a-z]/g, '').slice(0, 8)}`;
+        firebaseMocks.getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({
+                status: 'executing',
+                userId: 'user-1',
+                toolName,
+                teamId: 'team-1',
+                payloadScope: 'user',
+                args: { teamId: 'team-1' },
+                executionLeaseExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+                expiresAt: new Date(Date.now() + 60_000).toISOString()
+            })
+        });
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const confirmed = await generatePrivateAiAnswer(coachUser, `confirm ${confirmationId}`);
+
+        expect(confirmed.toolResults[0]).toMatchObject({
+            name: toolName,
+            ok: false,
+            error: expect.stringContaining('will not run it again')
+        });
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it('rejects oversized roster and schedule proposals before Firestore persistence', async () => {
