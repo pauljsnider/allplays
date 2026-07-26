@@ -148,6 +148,10 @@ export async function processBackfillUsers(userDocs, processUser, logger = conso
     return failed;
 }
 
+export function resolveBackfillExitCode(result = {}) {
+    return Number(result.failed || 0) > 0 ? 1 : 0;
+}
+
 export async function backfillPublicUserProfiles() {
     assertSafeArguments();
     initializeAdmin();
@@ -227,9 +231,11 @@ export async function backfillPublicUserProfiles() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     backfillPublicUserProfiles()
-        .then(() => process.exit(0))
+        .then((result) => {
+            process.exitCode = resolveBackfillExitCode(result);
+        })
         .catch((error) => {
             console.error('Backfill failed:', error?.message || error);
-            process.exit(1);
+            process.exitCode = 1;
         });
 }

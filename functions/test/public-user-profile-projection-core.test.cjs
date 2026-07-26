@@ -8,16 +8,18 @@ const {
   buildTeamStaffMembershipKey,
   derivePublicProfileTeamIds,
   hashPublicProfileEmail,
-  isValidPublicProfileTeamId
+  isValidPublicProfileTeamId,
+  isPublicProfileAuthUserNotFound
 } = require('../public-user-profile-projection-core.cjs');
 
-test('combines parent and server-resolved staff teams without duplicates', () => {
+test('combines parent, coach, and server-resolved staff teams without duplicates', () => {
   assert.deepEqual(
     derivePublicProfileTeamIds({
       parentOf: [{ teamId: 'team-parent' }, { teamId: 'team-shared' }],
-      parentTeamIds: ['team-shared']
+      parentTeamIds: ['team-shared'],
+      coachOf: ['team-coach-of', 'team-shared']
     }, ['team-coach', 'team-parent']),
-    ['team-parent', 'team-shared', 'team-coach']
+    ['team-parent', 'team-shared', 'team-coach-of', 'team-coach']
   );
 });
 
@@ -37,6 +39,13 @@ test('keeps valid legacy team ids while rejecting invalid Firestore document ids
   );
   assert.equal(isValidPublicProfileTeamId('a'.repeat(1500)), true);
   assert.equal(isValidPublicProfileTeamId('é'.repeat(751)), false);
+});
+
+test('distinguishes missing Auth users from retryable Auth failures', () => {
+  assert.equal(isPublicProfileAuthUserNotFound({ code: 'auth/user-not-found' }), true);
+  assert.equal(isPublicProfileAuthUserNotFound({ code: 'user-not-found' }), true);
+  assert.equal(isPublicProfileAuthUserNotFound({ code: 'auth/internal-error' }), false);
+  assert.equal(isPublicProfileAuthUserNotFound(new Error('network unavailable')), false);
 });
 
 test('uses Firebase Auth identity when a legacy user profile has only an email', () => {

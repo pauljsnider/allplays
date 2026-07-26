@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     buildStaffTeamIndexes,
     processBackfillUsers,
+    resolveBackfillExitCode,
     resolveProjectId,
     resolveUserDocs,
     resolveProjectionTeamIds
@@ -22,6 +23,12 @@ describe('public user profile backfill', () => {
             ['node', 'script'],
             { FIREBASE_PROJECT_ID: 'project-from-env' }
         )).toBe('project-from-env');
+    });
+
+    it('returns a failing process status when any user could not be backfilled', () => {
+        expect(resolveBackfillExitCode({ failed: 0 })).toBe(0);
+        expect(resolveBackfillExitCode({ failed: 1 })).toBe(1);
+        expect(resolveBackfillExitCode({ failed: 20 })).toBe(1);
     });
 
     it('indexes team owners and case-insensitive admin emails', () => {

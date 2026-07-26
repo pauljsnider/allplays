@@ -1542,9 +1542,14 @@ service cloud.firestore {
 
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isSignedIn() && exists(userPath)
+      let publicProfilePath = /databases/$(database)/documents/publicUserProfiles/$(request.auth.uid);
+      let privateParentTeamIds = isSignedIn() && exists(userPath)
         ? get(userPath).data.get('parentTeamIds', [])
         : [];
+      let projectedTeamIds = isSignedIn() && exists(publicProfilePath)
+        ? get(publicProfilePath).data.get('discoveryTeamIds', [])
+        : [];
+      return projectedTeamIds.concat(privateParentTeamIds);
     }
 
     function canReadPublicUserProfile(userId, data) {

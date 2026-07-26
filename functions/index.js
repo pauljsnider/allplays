@@ -2780,11 +2780,17 @@ async function loadPublicUserProfileAuthIdentity(userId) {
       emailVerified: authRecord.emailVerified === true
     };
   } catch (error) {
-    functions.logger.warn('Unable to load Auth identity for public profile projection.', {
+    if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error)) {
+      functions.logger.info('Auth user is missing for public profile projection.', {
+        userId
+      });
+      return { userMissing: true };
+    }
+    functions.logger.error('Unable to load Auth identity for public profile projection.', {
       userId,
       error: error?.message || String(error)
     });
-    return {};
+    throw error;
   }
 }
 
@@ -2801,6 +2807,10 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 
   const userData = userSnap.data() || {};
   const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
+  if (authIdentity.userMissing === true) {
+    await publicProfileRef.delete();
+    return null;
+  }
   if (authIdentity.emailVerified !== true) {
     functions.logger.info('Public profile projection deferred until email verification.', {
       userId: normalizedUserId

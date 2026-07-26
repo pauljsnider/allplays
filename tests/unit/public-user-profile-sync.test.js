@@ -149,6 +149,9 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain(
             'await syncPublicUserProfilesForTeamChange(context.params.teamId, before, after);'
         );
+        expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
+        expect(functionsSource).toContain('throw error;');
+        expect(functionsSource).toContain('if (authIdentity.userMissing === true)');
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {

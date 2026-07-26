@@ -22,6 +22,10 @@ function isValidPublicProfileTeamId(value) {
     && Buffer.byteLength(teamId, 'utf8') <= 1500;
 }
 
+function isPublicProfileAuthUserNotFound(error) {
+  return error?.code === 'auth/user-not-found' || error?.code === 'user-not-found';
+}
+
 function derivePublicProfileTeamIds(userData = {}, extraTeamIds = []) {
   const parentOfTeamIds = Array.isArray(userData.parentOf)
     ? userData.parentOf.map((link) => link?.teamId)
@@ -29,9 +33,13 @@ function derivePublicProfileTeamIds(userData = {}, extraTeamIds = []) {
   const parentTeamIds = Array.isArray(userData.parentTeamIds)
     ? userData.parentTeamIds
     : [];
+  const coachTeamIds = Array.isArray(userData.coachOf)
+    ? userData.coachOf
+    : [];
   return uniquePublicProfileStrings([
     ...parentOfTeamIds,
     ...parentTeamIds,
+    ...coachTeamIds,
     ...(Array.isArray(extraTeamIds) ? extraTeamIds : [])
   ]).filter(isValidPublicProfileTeamId);
 }
@@ -90,5 +98,6 @@ module.exports = {
   derivePublicProfileTeamIds,
   hashPublicProfileEmail,
   isValidPublicProfileTeamId,
+  isPublicProfileAuthUserNotFound,
   uniquePublicProfileStrings
 };
