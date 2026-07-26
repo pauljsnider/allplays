@@ -108,7 +108,8 @@ const rosterAiMocks = vi.hoisted(() => ({
     buildRosterAiImportCommitPlan: vi.fn(),
     extractPastedRosterCsv: vi.fn(),
     generateRosterAiImportRows: vi.fn(),
-    normalizeRosterAiImportResponse: vi.fn()
+    normalizeRosterAiImportResponse: vi.fn(),
+    replanRosterAiImportOperations: vi.fn()
 }));
 
 const playerMocks = vi.hoisted(() => {
@@ -255,12 +256,36 @@ function mockTeamScopedPendingActionPersistence({
     summary = 'Roster import',
     toolName = 'apply_roster_import'
 }) {
+    const persistedOperations = [...firebaseMocks.setDoc.mock.calls]
+        .reverse()
+        .find((call) => (
+            call[0]?.path?.join('/') === `teams/${teamId}/privateAiPendingActions/${confirmationId}`
+            && Array.isArray(call[1]?.args?.operations)
+        ))?.[1]?.args?.operations || [];
+    const currentArgs = toolName === 'apply_roster_import' && Array.isArray(args.operations)
+        ? {
+            ...args,
+            operations: args.operations.map((operation, index) => {
+                if (operation.precondition) return operation;
+                const persisted = persistedOperations[index];
+                if (
+                    persisted?.precondition
+                    && JSON.stringify(persisted.payload || {}) === JSON.stringify(operation.payload || {})
+                ) {
+                    return persisted;
+                }
+                return operation.type === 'add'
+                    ? { ...operation, precondition: {} }
+                    : operation;
+            })
+        }
+        : args;
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
     const userData = {
         status: 'pending',
         userId: 'user-1',
         toolName,
-        args: { teamId, operationSummary: { total: args.operations?.length || 0 } },
+        args: { teamId, operationSummary: { total: currentArgs.operations?.length || 0 } },
         payloadScope: 'team',
         teamId,
         conversationId,
@@ -272,7 +297,7 @@ function mockTeamScopedPendingActionPersistence({
         userId: 'user-1',
         toolName,
         teamId,
-        args,
+        args: currentArgs,
         expiresAt
     };
     const snapshotFor = (reference) => {
@@ -332,6 +357,7 @@ beforeEach(async () => {
         source: 'ai-text'
     });
     rosterAiMocks.normalizeRosterAiImportResponse.mockReturnValue({ rows: [], errors: [] });
+    rosterAiMocks.replanRosterAiImportOperations.mockImplementation((operations = []) => operations);
     firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
     firebaseMocks.getDoc.mockResolvedValue({ exists: () => false, data: () => null });
     firebaseMocks.setDoc.mockResolvedValue();
@@ -2960,7 +2986,7 @@ describe('private AI service', () => {
                 revision: 1,
                 args: {
                     teamId: 'team-1',
-                    operations: [revisedOperation]
+                    operations: [{ ...revisedOperation, precondition: {} }]
                 },
                 artifact: expect.objectContaining({
                     type: 'roster-import',
@@ -3045,7 +3071,15 @@ describe('private AI service', () => {
             conversationId: 'roster-chat'
         });
         await generatePrivateAiAnswer(coachUser, `confirm ${staged.confirmationId}`, [], { conversationId: 'roster-chat' });
-        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [revisedOperation]);
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith(
+            'team-1',
+            coachUser,
+            [{ ...revisedOperation, precondition: {} }],
+            {
+                pendingActionId: staged.confirmationId,
+                rosterAlreadyApplied: false
+            }
+        );
     });
 
     it('rejects a stale roster edit instead of overwriting a newer revision', async () => {
@@ -3612,6 +3646,7 @@ describe('private AI service', () => {
                         toolName: 'apply_roster_import',
                         teamId: 'team-1',
                         args: { teamId: 'team-1', operations: [latestOperation] },
+                        execution: { rosterApplied: true },
                         expiresAt
                     })
                 };
@@ -3621,7 +3656,15 @@ describe('private AI service', () => {
 
         const confirmed = await generatePrivateAiAnswer(coachUser, 'confirm ai_reload1');
 
-        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [latestOperation]);
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith(
+            'team-1',
+            coachUser,
+            [latestOperation],
+            {
+                pendingActionId: 'ai_reload1',
+                rosterAlreadyApplied: true
+            }
+        );
         expect(teamMocks.applyRosterImportPlanForApp).not.toHaveBeenCalledWith('team-1', coachUser, [staleOperation]);
         expect(confirmed.toolResults[0]).toMatchObject({ ok: true, confirmationId: 'ai_reload1' });
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
@@ -3635,6 +3678,191 @@ describe('private AI service', () => {
         expect(transactionSet).toHaveBeenCalledWith(
             expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', 'ai_reload1'] }),
             expect.objectContaining({ status: 'executing', executionStartedBy: 'user-1' }),
+            { merge: true }
+        );
+    });
+
+    it('rejects a roster confirmation when the target player changed after preview', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const operation = {
+            type: 'update',
+            playerId: 'player-1',
+            payload: { name: 'Avery', number: '10' },
+            errors: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [operation]
+            }
+        }, { conversationId: 'stale-roster-confirmation' });
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', operations: [operation] },
+            conversationId: 'stale-roster-confirmation'
+        });
+        teamMocks.loadRosterImportContextForApp.mockResolvedValue({
+            fields: [],
+            players: [{ id: 'player-1', name: 'Avery', number: '55', active: true }]
+        });
+
+        const confirmed = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${staged.confirmationId}`,
+            [],
+            { conversationId: 'stale-roster-confirmation' }
+        );
+
+        expect(confirmed.answer).toContain('roster changed after this preview');
+        expect(teamMocks.applyRosterImportPlanForApp).not.toHaveBeenCalled();
+    });
+
+    it('rejects a schedule confirmation when a conflicting event was added after preview', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const row = {
+            rowNumber: 1,
+            eventType: 'game',
+            startsAt: '2026-08-01T18:00:00.000Z',
+            endsAt: null,
+            opponent: 'Hawks',
+            title: null,
+            location: 'Field 1',
+            arrivalTime: null,
+            isHome: true,
+            notes: null
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(coachUser, {
+            name: 'apply_schedule_import',
+            args: {
+                teamId: 'team-1',
+                __preparedScheduleRows: [row]
+            }
+        }, { conversationId: 'stale-schedule-confirmation' });
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', rows: [row] },
+            conversationId: 'stale-schedule-confirmation',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            events: [futureEvent({
+                id: 'new-game',
+                eventKey: 'team-1:new-game:player-1',
+                date: new Date('2026-08-01T18:00:00.000Z'),
+                opponent: 'Hawks'
+            })],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        });
+
+        const confirmed = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${staged.confirmationId}`,
+            [],
+            { conversationId: 'stale-schedule-confirmation' }
+        );
+
+        expect(confirmed.answer).toContain('schedule changed after this preview');
+        expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
+    });
+
+    it('reclaims an expired execution lease and resumes after roster writes already committed', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const operation = {
+            type: 'add',
+            playerId: 'ai_recover_player_1',
+            payload: { name: 'Recovered Player', number: '14' },
+            inviteRequests: [{ email: 'family@allplays.ai', relation: 'Parent' }],
+            errors: []
+        };
+        const expiresAt = new Date(Date.now() + 60_000).toISOString();
+        const expiredLease = new Date(Date.now() - 1_000).toISOString();
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            const path = reference?.path?.join('/');
+            const isTeamPayload = path === 'teams/team-1/privateAiPendingActions/ai_recover1';
+            return {
+                exists: () => true,
+                data: () => ({
+                    status: 'executing',
+                    userId: 'user-1',
+                    toolName: 'apply_roster_import',
+                    teamId: 'team-1',
+                    payloadScope: 'team',
+                    args: isTeamPayload
+                        ? { teamId: 'team-1', operations: [operation] }
+                        : { teamId: 'team-1', operationSummary: { total: 1, add: 1 } },
+                    ...(isTeamPayload ? { execution: { rosterApplied: true } } : {}),
+                    executionLeaseExpiresAt: expiredLease,
+                    expiresAt
+                })
+            };
+        });
+        const transactionSet = vi.fn();
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                const isTeamPayload = path === 'teams/team-1/privateAiPendingActions/ai_recover1';
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        status: 'executing',
+                        userId: 'user-1',
+                        toolName: 'apply_roster_import',
+                        teamId: 'team-1',
+                        payloadScope: 'team',
+                        args: isTeamPayload
+                            ? { teamId: 'team-1', operations: [operation] }
+                            : { teamId: 'team-1', operationSummary: { total: 1, add: 1 } },
+                        ...(isTeamPayload ? { execution: { rosterApplied: true } } : {}),
+                        executionLeaseExpiresAt: expiredLease,
+                        expiresAt
+                    })
+                };
+            }),
+            set: transactionSet
+        }));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const confirmed = await generatePrivateAiAnswer(coachUser, 'confirm ai_recover1');
+
+        expect(confirmed.toolResults[0]).toMatchObject({ ok: true, confirmationId: 'ai_recover1' });
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith(
+            'team-1',
+            coachUser,
+            [operation],
+            {
+                pendingActionId: 'ai_recover1',
+                rosterAlreadyApplied: true
+            }
+        );
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', 'ai_recover1'] }),
+            expect.objectContaining({
+                status: 'executing',
+                executionLeaseExpiresAt: expect.any(String)
+            }),
             { merge: true }
         );
     });

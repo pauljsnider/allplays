@@ -96,6 +96,7 @@ import {
   extractPastedRosterCsv,
   generateRosterAiImportRows,
   normalizeRosterAiImportResponse,
+  replanRosterAiImportOperations,
   type RosterAiImportPreviewRow
 } from './rosterAiImport';
 import {
@@ -282,6 +283,11 @@ type PrivateAiPendingAction = {
   payloadScope?: 'user' | 'team';
   expiresAt: string;
   status: 'pending' | 'executing' | 'completed' | 'failed' | 'superseded';
+  executionLeaseExpiresAt?: string;
+  execution?: {
+    rosterApplied?: boolean;
+  };
+  recoveringExecution?: boolean;
 };
 
 type PrivateAiToolDefinition = {
@@ -311,6 +317,7 @@ type InternalPrivateAiToolContext = PrivateAiToolContext & {
 };
 
 const pendingActionLifetimeMs = 30 * 60 * 1000;
+const pendingActionExecutionLeaseMs = 90 * 1000;
 
 export function resetPrivateAiModel() {
   aiModelCache = null;
@@ -1320,6 +1327,14 @@ export async function revisePrivateAiRosterImportProposal(
   if (rows.length > 200) throw new Error('Import at most 200 roster rows at a time.');
   const plan = buildRosterAiImportCommitPlan(rows);
   const validationErrors = rows.flatMap((row) => row.errors || []);
+  const currentContext = await loadRosterImportContextForApp(teamId, user, { fresh: true });
+  const revisedOperations = attachRosterImportPreconditions(
+    assertRosterImportIdentityUnchanged(
+      plan.operations,
+      replanRosterAiImportOperations(plan.operations, currentContext.players, currentContext.fields)
+    ),
+    currentContext.players
+  );
   const rosterSummary = summarizeRosterPreview(rows);
   const artifactSummary = {
     ...rosterSummary,
@@ -1327,7 +1342,7 @@ export async function revisePrivateAiRosterImportProposal(
   };
   const nextArgs = {
     teamId,
-    operations: plan.operations,
+    operations: revisedOperations,
     ...(validationErrors.length ? { __rosterValidationErrors: validationErrors } : {})
   };
   const nextArtifact = stripPrivateAiArtifactForTeamStorage({
@@ -2141,6 +2156,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       if (operations.length > 200) throw new Error('Import at most 200 roster rows at a time.');
       const invalid = operations.flatMap((operation) => operation.errors || []);
       if (invalid.length) throw new Error(invalid.join(' '));
+      operations = attachRosterImportPreconditions(operations, context.players);
       const summary = summarizeRosterOperations(operations);
       return {
         args: {
@@ -2162,7 +2178,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       }
       const operations = Array.isArray(args.operations) ? args.operations as RosterImportPlannedOperationForApp[] : [];
       if (!operations.length) throw new Error('No valid roster operations remain to import.');
-      return applyRosterImportPlanForApp(teamId, user, operations);
+      const pendingActionId = compactText(args.__pendingActionId);
+      const rosterAlreadyApplied = args.__rosterAlreadyApplied === true;
+      const executionOperations = rosterAlreadyApplied
+        ? operations
+        : await revalidateRosterImportOperationsForConfirmation(teamId, user, operations);
+      return applyRosterImportPlanForApp(teamId, user, executionOperations, {
+        pendingActionId,
+        rosterAlreadyApplied
+      });
     }
   },
   {
@@ -2211,7 +2235,28 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
       }
       const rows = Array.isArray(args.rows) ? args.rows as ScheduleCsvImportPreviewRow['normalized'][] : [];
       if (!rows.length) throw new Error('No valid schedule rows remain to import.');
-      const batchId = `ai-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const pendingActionId = compactText(args.__pendingActionId);
+      if (!pendingActionId) throw new Error('This schedule proposal is missing its durable action identifier. Prepare it again.');
+      if (args.__recoveringExecution !== true) {
+        const schedule = await loadParentSchedule(user, { includePastGames: true });
+        if (schedule.isPartial === true) {
+          throw new Error('The existing schedule could not be loaded completely. Retry before confirming so duplicate games and practices are not missed.');
+        }
+        const conflicts = appendScheduleImportConflictErrors(
+          rows.map((row, index) => ({
+            rowNumber: Number(row.rowNumber) || index + 1,
+            draft: {},
+            normalized: row,
+            errors: []
+          })),
+          getCurrentScheduleImportEvents(schedule.events || [], teamId)
+            .filter((event) => !compactText(event.id).startsWith(`${pendingActionId}_event_`))
+        ).flatMap((row) => row.errors || []);
+        if (conflicts.length) {
+          throw new Error(`The schedule changed after this preview. Review it again before importing. ${conflicts.join(' ')}`);
+        }
+      }
+      const batchId = `ai-schedule-import-${pendingActionId}`;
       const importedAt = new Date().toISOString();
       const createdIds: string[] = [];
       const failures: Array<{ rowNumber: number; error: string }> = [];
@@ -2224,7 +2269,8 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
             totalCount: rows.length,
             rowNumber: row.rowNumber || index + 1,
             importedAt,
-            importedBy: user.uid
+            importedBy: user.uid,
+            actionId: pendingActionId
           }
         };
         try {
@@ -3351,11 +3397,19 @@ async function claimPrivateAiPendingAction(
 ): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${pending.id}`;
   const memoryPending = pendingActionMemory.get(memoryKey);
-  if (memoryPending && memoryPending.status !== 'pending') return null;
+  if (
+    memoryPending
+    && memoryPending.status !== 'pending'
+    && !(
+      memoryPending.status === 'executing'
+      && Date.parse(compactText(memoryPending.executionLeaseExpiresAt)) <= Date.now()
+    )
+  ) return null;
 
   if (typeof runTransaction !== 'function') {
     if (!memoryPending || pending.payloadScope === 'team') return null;
     memoryPending.status = 'executing';
+    memoryPending.executionLeaseExpiresAt = new Date(Date.now() + pendingActionExecutionLeaseMs).toISOString();
     pendingActionMemory.set(memoryKey, memoryPending);
     return memoryPending;
   }
@@ -3365,10 +3419,12 @@ async function claimPrivateAiPendingAction(
       const snapshot = await transaction.get(pendingRef);
       const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
       const expiresAt = compactText(data?.expiresAt);
+      const recoveringExecution = data?.status === 'executing'
+        && Date.parse(compactText(data?.executionLeaseExpiresAt)) <= Date.now();
       if (
         !snapshot?.exists?.()
         || !isPlainObject(data)
-        || data.status !== 'pending'
+        || (data.status !== 'pending' && !recoveringExecution)
         || compactText(data.userId) !== user.uid
         || !expiresAt
         || Date.parse(expiresAt) <= Date.now()
@@ -3379,6 +3435,7 @@ async function claimPrivateAiPendingAction(
       const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
       let args = isPlainObject(data.args) ? data.args : {};
       let teamPayloadRef: ReturnType<typeof doc> | null = null;
+      let execution: PrivateAiPendingAction['execution'] = undefined;
       if (payloadScope === 'team') {
         if (!teamId) return null;
         teamPayloadRef = doc(
@@ -3393,7 +3450,13 @@ async function claimPrivateAiPendingAction(
         if (
           !payloadSnapshot?.exists?.()
           || !isPlainObject(payload)
-          || payload.status !== 'pending'
+          || (
+            payload.status !== 'pending'
+            && !(
+              payload.status === 'executing'
+              && Date.parse(compactText(payload.executionLeaseExpiresAt)) <= Date.now()
+            )
+          )
           || compactText(payload.userId) !== user.uid
           || compactText(payload.toolName) !== toolName
           || compactText(payload.teamId || (isPlainObject(payload.args) ? payload.args.teamId : '')) !== teamId
@@ -3401,12 +3464,17 @@ async function claimPrivateAiPendingAction(
           || (compactText(payload.expiresAt) && Date.parse(compactText(payload.expiresAt)) <= Date.now())
         ) return null;
         args = payload.args;
+        execution = isPlainObject(payload.execution)
+          ? { rosterApplied: payload.execution.rosterApplied === true }
+          : undefined;
       }
 
+      const executionLeaseExpiresAt = new Date(Date.now() + pendingActionExecutionLeaseMs).toISOString();
       const executionState = {
         status: 'executing',
         executionStartedAt: serverTimestamp(),
-        executionStartedBy: user.uid
+        executionStartedBy: user.uid,
+        executionLeaseExpiresAt
       };
       transaction.set(pendingRef, {
         ...executionState
@@ -3429,7 +3497,10 @@ async function claimPrivateAiPendingAction(
         teamId: teamId || undefined,
         payloadScope,
         expiresAt,
-        status: 'executing'
+        status: 'executing',
+        executionLeaseExpiresAt,
+        execution,
+        recoveringExecution
       };
     });
     if (claimed) pendingActionMemory.set(memoryKey, claimed);
@@ -3460,7 +3531,18 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
 
   const result = await runPrivateAiToolInternal(user, {
     name: definition.name,
-    args: claimedPending.args
+    args: {
+      ...claimedPending.args,
+      ...(isTeamScopedPrivateAiPayload(definition.name)
+        ? {
+            __pendingActionId: id,
+            __recoveringExecution: claimedPending.recoveringExecution === true,
+            ...(definition.name === 'apply_roster_import'
+              ? { __rosterAlreadyApplied: claimedPending.execution?.rosterApplied === true }
+              : {})
+          }
+        : {})
+    }
   }, {
     confirmedWriteToken: confirmedWriteExecutionToken
   });
@@ -3659,12 +3741,25 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
 
   const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
-  if (!snapshot?.exists?.() || !isPlainObject(data) || data.status !== 'pending') return null;
+  if (
+    !snapshot?.exists?.()
+    || !isPlainObject(data)
+    || (
+      data.status !== 'pending'
+      && !(
+        data.status === 'executing'
+        && Date.parse(compactText(data.executionLeaseExpiresAt)) <= Date.now()
+      )
+    )
+  ) return null;
   if (compactText(data.userId) !== user.uid) return null;
   const toolName = compactText(data.toolName);
   const teamId = compactText(data.teamId);
   const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
   let args = isPlainObject(data.args) ? data.args : {};
+  let execution: PrivateAiPendingAction['execution'] = isPlainObject(data.execution)
+    ? { rosterApplied: data.execution.rosterApplied === true }
+    : undefined;
   if (payloadScope === 'team') {
     if (!teamId) return null;
     const detail = await loadParentTeamDetail(teamId, user).catch(() => null);
@@ -3680,12 +3775,21 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
     if (
       !payloadSnapshot?.exists?.()
       || !isPlainObject(payload)
-      || payload.status !== 'pending'
+      || (
+        payload.status !== 'pending'
+        && !(
+          payload.status === 'executing'
+          && Date.parse(compactText(payload.executionLeaseExpiresAt)) <= Date.now()
+        )
+      )
       || compactText(payload.userId) !== user.uid
       || compactText(payload.toolName) !== toolName
       || !isPlainObject(payload.args)
     ) return null;
     args = payload.args;
+    execution = isPlainObject(payload.execution)
+      ? { rosterApplied: payload.execution.rosterApplied === true }
+      : undefined;
   }
   return {
     id: confirmationId,
@@ -3700,7 +3804,9 @@ async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string
     teamId: teamId || undefined,
     payloadScope,
     expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
-    status: 'pending'
+    status: data.status === 'executing' ? 'executing' : 'pending',
+    executionLeaseExpiresAt: compactText(data.executionLeaseExpiresAt) || undefined,
+    execution
   };
 }
 
@@ -3734,7 +3840,17 @@ async function resolvePendingActionIdsForNaturalConfirmation(
   )).catch(() => null);
   const pendingActions = (snapshot?.docs || []).map((candidate: any) => {
     const data = typeof candidate?.data === 'function' ? candidate.data() : null;
-    if (!isPlainObject(data) || data.status !== 'pending' || compactText(data.userId) !== user.uid) return null;
+    if (
+      !isPlainObject(data)
+      || (
+        data.status !== 'pending'
+        && !(
+          data.status === 'executing'
+          && Date.parse(compactText(data.executionLeaseExpiresAt)) <= Date.now()
+        )
+      )
+      || compactText(data.userId) !== user.uid
+    ) return null;
     if (normalizeConversationId(data.conversationId) !== conversationId) return null;
     return {
       id: compactText(candidate?.id),
@@ -3747,7 +3863,8 @@ async function resolvePendingActionIdsForNaturalConfirmation(
       confirmationGroupId: compactText(data.confirmationGroupId),
       previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
       expiresAt: compactText(data.expiresAt) || new Date(Date.now() + pendingActionLifetimeMs).toISOString(),
-      status: 'pending' as const
+      status: data.status === 'executing' ? 'executing' as const : 'pending' as const,
+      executionLeaseExpiresAt: compactText(data.executionLeaseExpiresAt) || undefined
     };
   }).filter((pending: PrivateAiPendingAction | null): pending is PrivateAiPendingAction => Boolean(pending?.id));
   return selectPendingActionsForNaturalConfirmation(pendingActions).map((pending) => pending.id);
@@ -3792,7 +3909,17 @@ function createConfirmationGroupId() {
 
 function selectPendingActionsForNaturalConfirmation(actions: PrivateAiPendingAction[]) {
   const sorted = actions
-    .filter((pending) => pending.id && pending.status === 'pending' && Date.parse(pending.expiresAt) > Date.now())
+    .filter((pending) => (
+      pending.id
+      && (
+        pending.status === 'pending'
+        || (
+          pending.status === 'executing'
+          && Date.parse(compactText(pending.executionLeaseExpiresAt)) <= Date.now()
+        )
+      )
+      && Date.parse(pending.expiresAt) > Date.now()
+    ))
     .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
   const latest = sorted[0];
   if (!latest) return [];
@@ -4041,6 +4168,120 @@ function summarizeRosterOperations(operations: RosterImportPlannedOperationForAp
     reactivate: 0,
     invitations: 0
   });
+}
+
+function normalizeRosterFingerprintValue(value: unknown): unknown {
+  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (typeof (value as any)?.toDate === 'function') {
+    return (value as any).toDate().toISOString();
+  }
+  if (Array.isArray(value)) return value.map(normalizeRosterFingerprintValue);
+  if (typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((result, key) => {
+        const normalized = normalizeRosterFingerprintValue((value as Record<string, unknown>)[key]);
+        if (normalized !== undefined) result[key] = normalized;
+        return result;
+      }, {});
+  }
+  return undefined;
+}
+
+function hashRosterFingerprint(value: unknown) {
+  const source = JSON.stringify(normalizeRosterFingerprintValue(value));
+  let first = 2166136261;
+  let second = 2246822519;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = Math.imul(second ^ code, 3266489917) >>> 0;
+  }
+  return `v1_${first.toString(36)}${second.toString(36)}`;
+}
+
+function getRosterPlayerFingerprint(player: Record<string, any> | undefined) {
+  if (!player) return '';
+  return hashRosterFingerprint(player);
+}
+
+function attachRosterImportPreconditions(
+  operations: RosterImportPlannedOperationForApp[],
+  currentPlayers: Array<Record<string, any>>
+) {
+  return operations.map((operation) => {
+    if (operation.type === 'add') {
+      return {
+        ...operation,
+        precondition: {}
+      };
+    }
+    const playerId = compactText(operation.playerId);
+    const player = currentPlayers.find((candidate) => compactText(candidate.id) === playerId);
+    return {
+      ...operation,
+      precondition: {
+        playerId,
+        playerFingerprint: getRosterPlayerFingerprint(player)
+      }
+    };
+  });
+}
+
+function assertRosterImportIdentityUnchanged(
+  original: RosterImportPlannedOperationForApp[],
+  current: RosterImportPlannedOperationForApp[]
+) {
+  if (original.length !== current.length) {
+    throw new Error('The roster changed after this preview. Review the import again before confirming.');
+  }
+  current.forEach((operation, index) => {
+    const prior = original[index];
+    const errors = operation.errors || [];
+    if (
+      errors.length
+      || operation.type !== prior.type
+      || (operation.type !== 'add' && compactText(operation.playerId) !== compactText(prior.playerId))
+    ) {
+      throw new Error(
+        `The roster changed after this preview. Review the import again before confirming.${errors.length ? ` ${errors.join(' ')}` : ''}`
+      );
+    }
+  });
+  return current;
+}
+
+async function revalidateRosterImportOperationsForConfirmation(
+  teamId: string,
+  user: AuthUser,
+  operations: RosterImportPlannedOperationForApp[]
+) {
+  const currentContext = await loadRosterImportContextForApp(teamId, user, { fresh: true });
+  operations.forEach((operation) => {
+    if (!operation.precondition) {
+      throw new Error('This roster preview predates current-state validation. Prepare it again before confirming.');
+    }
+    if (operation.type === 'add') return;
+    const playerId = compactText(operation.playerId);
+    const currentPlayer = currentContext.players.find((candidate) => compactText(candidate.id) === playerId);
+    if (
+      compactText(operation.precondition.playerId) !== playerId
+      || compactText(operation.precondition.playerFingerprint) !== getRosterPlayerFingerprint(currentPlayer)
+    ) {
+      throw new Error('The roster changed after this preview. Review the import again before confirming.');
+    }
+  });
+  const rebased = assertRosterImportIdentityUnchanged(
+    operations,
+    replanRosterAiImportOperations(operations, currentContext.players, currentContext.fields)
+  );
+  return rebased.map((operation, index) => ({
+    ...operation,
+    precondition: operations[index].precondition
+  }));
 }
 
 function summarizeSchedulePreview(rows: ScheduleCsvImportPreviewRow[]) {

@@ -162,6 +162,46 @@ describe('inviteParent permission fallback (issue #3844)', () => {
         expect(result.existingUser).toBe(false);
         expect(result.autoLinked).toBe(false);
     });
+
+    it('reuses the same player-scoped invite code after an interrupted retry', async () => {
+        const { inviteParent } = await import('../../js/db.js');
+        let storedAccessCode = null;
+        const transactionSet = vi.fn((reference, value) => {
+            storedAccessCode = { id: reference.id, ...value };
+        });
+        runTransactionMock.mockImplementation(async (database, updateFn) => updateFn({
+            get: vi.fn(async () => ({
+                exists: () => Boolean(storedAccessCode),
+                data: () => storedAccessCode
+            })),
+            set: transactionSet
+        }));
+        callableMock.mockResolvedValue({
+            data: { autoLinked: false, existingUser: false, reason: 'no-existing-user' }
+        });
+        const options = { idempotencyKey: 'ai_retry1:invite:player-1:dad@allplays.ai' };
+
+        const first = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+        const retried = await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            options
+        );
+
+        expect(retried.code).toBe(first.code);
+        expect(transactionSet).toHaveBeenCalledTimes(1);
+        expect(callableMock).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('inviteAdmin permission fallback (issue #3844)', () => {

@@ -34,6 +34,7 @@ import {
   extractPastedRosterCsv,
   generateRosterAiImportRows,
   normalizeRosterAiImportResponse,
+  replanRosterAiImportOperations,
   removeRosterAiImportPreviewRow,
   updateRosterAiImportPreviewField,
   updateRosterAiImportPreviewRow
@@ -132,6 +133,30 @@ describe('rosterAiImport', () => {
     expect(plan.operations.map((operation) => operation.type)).toEqual(['update', 'add']);
     expect(plan.addPlayers).toEqual([{ name: 'Riley Runner', number: '12' }]);
     expect(plan.skippedRows.map((row) => row.rowNumber)).toEqual([2]);
+  });
+
+  it('replans a sparse prepared operation against the current roster before confirmation', () => {
+    const operations = normalizeRosterAiImportResponse({
+      operations: [
+        { action: 'add', player: { name: 'Jordan New', number: '23' } }
+      ]
+    }).rows.map((row) => row.operation);
+
+    const replanned = replanRosterAiImportOperations(
+      operations,
+      [{ id: 'player-concurrent', name: 'Jordan New', number: '23', active: true }]
+    );
+
+    expect(replanned).toEqual([
+      expect.objectContaining({
+        type: 'update',
+        playerId: 'player-concurrent',
+        providedFields: [
+          expect.objectContaining({ key: 'name', value: 'Jordan New' }),
+          expect.objectContaining({ key: 'number', value: '23' })
+        ]
+      })
+    ]);
   });
 
   it('updates and removes preview rows before building a commit plan', () => {

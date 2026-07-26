@@ -157,6 +157,10 @@ export type RosterImportPlannedOperationForApp = {
   providedContacts?: Array<Record<string, any>>;
   reason?: string;
   errors?: string[];
+  precondition?: {
+    playerId?: string;
+    playerFingerprint?: string;
+  };
 };
 
 export type RosterImportApplyResultForApp = {
@@ -1200,7 +1204,8 @@ export async function createRosterParentInviteForApp(
   teamId: string,
   user: AuthUser | null,
   player: Pick<TeamDetailPlayer, 'id' | 'number'>,
-  invite: { email?: string; relation?: string } = {}
+  invite: { email?: string; relation?: string } = {},
+  options: { idempotencyKey?: string } = {}
 ): Promise<CreateRosterParentInviteForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedPlayerId = cleanString(player?.id);
@@ -1217,7 +1222,23 @@ export async function createRosterParentInviteForApp(
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), normalizedEmail, relation);
+  const idempotencyKey = cleanString(options.idempotencyKey);
+  const inviteResult = idempotencyKey
+    ? await inviteParent(
+        normalizedTeamId,
+        normalizedPlayerId,
+        cleanString(player?.number),
+        normalizedEmail,
+        relation,
+        { idempotencyKey }
+      )
+    : await inviteParent(
+        normalizedTeamId,
+        normalizedPlayerId,
+        cleanString(player?.number),
+        normalizedEmail,
+        relation
+      );
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
   let emailQueued = false;
@@ -1306,10 +1327,17 @@ export async function loadRosterFieldDefinitionsForApp(teamId: string, user: Aut
   return mergeStandardRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
 }
 
-export async function loadRosterImportContextForApp(teamId: string, user: AuthUser | null): Promise<RosterImportContextForApp> {
+export async function loadRosterImportContextForApp(
+  teamId: string,
+  user: AuthUser | null,
+  options: { fresh?: boolean } = {}
+): Promise<RosterImportContextForApp> {
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
 
+  if (options.fresh === true) {
+    invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  }
   const snapshot = await loadTeamDetailBaseSnapshot(normalizedTeamId);
   if (!snapshot.team || !hasFullTeamAccess(user, snapshot.team)) {
     throw new Error('You do not have permission to manage roster players for this team.');
@@ -1378,7 +1406,11 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
 export async function applyRosterImportPlanForApp(
   teamId: string,
   user: AuthUser | null,
-  operations: RosterImportPlannedOperationForApp[] = []
+  operations: RosterImportPlannedOperationForApp[] = [],
+  options: {
+    pendingActionId?: string;
+    rosterAlreadyApplied?: boolean;
+  } = {}
 ): Promise<RosterImportApplyResultForApp> {
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
@@ -1396,7 +1428,21 @@ export async function applyRosterImportPlanForApp(
   const validationErrors = operations.flatMap((operation) => operation.errors || []);
   if (validationErrors.length > 0) throw new Error(validationErrors.join('\n'));
 
-  const savedOperations = await applyRosterCsvImportOperations(normalizedTeamId, operations);
+  const pendingActionId = cleanString(options.pendingActionId);
+  const executionOperations = operations.map((operation, index) => ({
+    ...operation,
+    ...(operation.type === 'add' && pendingActionId && !cleanString(operation.playerId)
+      ? { playerId: `${pendingActionId}_player_${index + 1}` }
+      : {})
+  }));
+  const savedOperations = options.rosterAlreadyApplied === true
+    ? executionOperations
+    : pendingActionId
+      ? await applyRosterCsvImportOperations(normalizedTeamId, executionOperations, {
+          pendingActionId,
+          userId: cleanString(user?.uid)
+        })
+      : await applyRosterCsvImportOperations(normalizedTeamId, executionOperations);
   const deactivatedCount = operations.filter((operation) => operation.type === 'deactivate').length;
   const reactivatedCount = operations.filter((operation) => operation.type === 'reactivate').length;
 
@@ -1410,7 +1456,10 @@ export async function applyRosterImportPlanForApp(
           normalizedTeamId,
           user,
           { id: playerId, number } as Pick<TeamDetailPlayer, 'id' | 'number'>,
-          { email: request.email, relation: request.relation || 'Parent' }
+          { email: request.email, relation: request.relation || 'Parent' },
+          pendingActionId
+            ? { idempotencyKey: `${pendingActionId}:invite:${playerId}:${cleanString(request.email).toLowerCase()}` }
+            : {}
         );
         inviteResults.push({
           playerId,

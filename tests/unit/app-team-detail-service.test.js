@@ -434,6 +434,62 @@ describe('React app team detail model', () => {
         });
     });
 
+    it('resumes AI roster invitations without repeating an already committed roster batch', async () => {
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
+        const operation = {
+            type: 'add',
+            payload: { name: 'Retry Player', number: '14' },
+            inviteRequests: [{ email: 'family@allplays.ai', relation: 'Parent' }],
+            errors: []
+        };
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        applyRosterCsvImportOperations.mockImplementation(async (teamId, operations) => operations);
+        inviteParent.mockResolvedValue({
+            code: 'RETRY123',
+            autoLinked: false,
+            existingUser: false,
+            teamName: 'Bears',
+            playerName: 'Retry Player'
+        });
+        queueInviteEmail.mockResolvedValue({ queued: true });
+
+        await applyRosterImportPlanForApp('team-1', coachUser, [operation], {
+            pendingActionId: 'ai_retry1'
+        });
+        await applyRosterImportPlanForApp('team-1', coachUser, [operation], {
+            pendingActionId: 'ai_retry1',
+            rosterAlreadyApplied: true
+        });
+
+        expect(applyRosterCsvImportOperations).toHaveBeenCalledTimes(1);
+        expect(applyRosterCsvImportOperations).toHaveBeenCalledWith(
+            'team-1',
+            [expect.objectContaining({
+                type: 'add',
+                playerId: 'ai_retry1_player_1'
+            })],
+            {
+                pendingActionId: 'ai_retry1',
+                userId: 'coach-1'
+            }
+        );
+        expect(inviteParent).toHaveBeenCalledTimes(2);
+        expect(inviteParent).toHaveBeenNthCalledWith(
+            2,
+            'team-1',
+            'ai_retry1_player_1',
+            '14',
+            'family@allplays.ai',
+            'Parent',
+            {
+                idempotencyKey: 'ai_retry1:invite:ai_retry1_player_1:family@allplays.ai'
+            }
+        );
+    });
+
     it('lets another current manager retry an accepted auto-linked invite without creating a second invite', async () => {
         const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] };
         getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });

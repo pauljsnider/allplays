@@ -1132,6 +1132,59 @@ describe('React app schedule service contract integration', () => {
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
     });
 
+    it('reuses the same durable schedule row after an interrupted confirmation retry', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+        let storedEvent = null;
+        const transactionSet = vi.fn((reference, value) => {
+            storedEvent = value;
+        });
+        firebaseMocks.runTransaction.mockImplementation(async (database, callback) => callback({
+            get: vi.fn(async () => ({
+                exists: () => Boolean(storedEvent),
+                data: () => storedEvent
+            })),
+            set: transactionSet
+        }));
+        const row = {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            importBatch: {
+                batchId: 'ai-schedule-import-ai_retry1',
+                totalCount: 1,
+                rowNumber: 1,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1',
+                actionId: 'ai_retry1'
+            }
+        };
+
+        await expect(createScheduleImportGame('team-1', row, coach))
+            .resolves.toBe('ai_retry1_event_1');
+        await expect(createScheduleImportGame('team-1', row, coach))
+            .resolves.toBe('ai_retry1_event_1');
+
+        expect(transactionSet).toHaveBeenCalledTimes(1);
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/games/ai_retry1_event_1' }),
+            expect.objectContaining({
+                opponent: 'Tigers',
+                importBatch: expect.objectContaining({
+                    actionId: 'ai_retry1',
+                    rowNumber: 1
+                })
+            })
+        );
+        expect(dbMocks.addGame).not.toHaveBeenCalled();
+    });
+
     it('creates and updates one native app game without resetting existing score data', async () => {
         dbMocks.getTeam.mockResolvedValue({
             id: 'team-1',

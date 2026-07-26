@@ -5,7 +5,9 @@ import { buildFullRosterCsvTemplate, mergeStandardRosterFieldDefinitions, planRo
 function extractFunction(source, signature) {
     const start = source.indexOf(signature);
     expect(start).toBeGreaterThanOrEqual(0);
-    const braceStart = source.indexOf('{', start);
+    const bodyMarker = source.indexOf(') {', start);
+    expect(bodyMarker).toBeGreaterThanOrEqual(0);
+    const braceStart = bodyMarker + 2;
     let depth = 1;
     for (let index = braceStart + 1; index < source.length; index += 1) {
         if (source[index] === '{') depth += 1;
@@ -722,6 +724,38 @@ describe('roster CSV import planning', () => {
                 rosterFields: {
                     birthDate: '2014-02-03',
                     address: { street: '123 Main' }
+                }
+            },
+            { merge: true }
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('atomically records durable AI progress with deterministic added-player IDs', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+
+        const saved = await applyRosterCsvImportOperations('team-1', [{
+            type: 'add',
+            playerId: 'ai_retry1_player_1',
+            payload: { name: 'Retry Safe', number: '14' },
+            privateRosterFields: { school: 'Lincoln' }
+        }], {
+            pendingActionId: 'ai_retry1',
+            userId: 'coach-1'
+        });
+
+        expect(saved[0].playerId).toBe('ai_retry1_player_1');
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/ai_retry1_player_1' }),
+            expect.objectContaining({ name: 'Retry Safe', number: '14' })
+        );
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/privateAiPendingActions/ai_retry1' }),
+            {
+                execution: {
+                    rosterApplied: true,
+                    rosterAppliedAt: 'now',
+                    rosterAppliedBy: 'coach-1'
                 }
             },
             { merge: true }

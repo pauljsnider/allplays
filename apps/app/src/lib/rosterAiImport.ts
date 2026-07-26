@@ -506,6 +506,42 @@ export function buildRosterAiImportCommitPlan(
   };
 }
 
+export function replanRosterAiImportOperations(
+  operations: RosterImportPlannedOperationForApp[] = [],
+  currentPlayers: RosterAiImportCurrentPlayer[] = [],
+  rosterFields: TeamRosterFieldDefinition[] = []
+): RosterImportPlannedOperationForApp[] {
+  const rawOperations = operations.map((operation, index) => cloneRawOperation({
+    rowNumber: index + 1,
+    action: normalizeAction(operation.type || operation.action),
+    playerId: compactText(operation.playerId),
+    name: compactText(operation.payload?.name),
+    number: normalizeJerseyNumber(operation.payload?.number),
+    reason: compactText(operation.reason),
+    fields: Array.isArray(operation.providedFields)
+      ? operation.providedFields as RosterAiImportPreviewField[]
+      : deriveProvidedFields(operation),
+    contacts: Array.isArray(operation.providedContacts)
+      ? operation.providedContacts as RosterAiImportPreviewContact[]
+      : [],
+    inviteCount: operation.inviteRequests?.length || 0,
+    duplicatePlayerId: '',
+    duplicatePlayerName: '',
+    errors: [],
+    operation
+  }));
+  const plan = planRosterAiImport({
+    aiOperations: rawOperations,
+    fields: rosterFields,
+    existingPlayers: currentPlayers,
+    source: 'roster-ai-confirmation'
+  });
+  if (plan.errors?.length) {
+    throw new Error(plan.errors.join(' '));
+  }
+  return (plan.operations || []) as RosterImportPlannedOperationForApp[];
+}
+
 export function updateRosterAiImportPreviewRow(
   rows: RosterAiImportPreviewRow[] = [],
   rowNumber: number,

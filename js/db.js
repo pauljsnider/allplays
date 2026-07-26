@@ -3128,9 +3128,11 @@ export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerI
     await batch.commit();
 }
 
-export async function applyRosterCsvImportOperations(teamId, operations = []) {
+export async function applyRosterCsvImportOperations(teamId, operations = [], options = {}) {
     const normalizedTeamId = String(teamId || '').trim();
     const plannedOperations = Array.isArray(operations) ? operations : [];
+    const pendingActionId = String(options?.pendingActionId || '').trim();
+    const executionUserId = String(options?.userId || '').trim();
     if (!normalizedTeamId) throw new Error('Team is required for roster import.');
     if (plannedOperations.length === 0) return [];
     // Each row uses at most two writes (player + private profile). Keep the
@@ -3153,7 +3155,9 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
             throw new Error(`Roster import ${type} is missing a player.`);
         }
         const playerRef = type === 'add'
-            ? doc(collection(db, `teams/${normalizedTeamId}/players`))
+            ? existingPlayerId
+                ? doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId)
+                : doc(collection(db, `teams/${normalizedTeamId}/players`))
             : doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId);
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
@@ -3198,6 +3202,15 @@ export async function applyRosterCsvImportOperations(teamId, operations = []) {
         return { ...operation, playerId: playerRef.id };
     });
 
+    if (pendingActionId && executionUserId) {
+        batch.set(doc(db, `teams/${normalizedTeamId}/privateAiPendingActions`, pendingActionId), {
+            execution: {
+                rosterApplied: true,
+                rosterAppliedAt: Timestamp.now(),
+                rosterAppliedBy: executionUserId
+            }
+        }, { merge: true });
+    }
     await batch.commit();
     return savedOperations;
 }
@@ -4717,9 +4730,38 @@ export function generateAccessCode() {
     return generateJoinCode();
 }
 
-async function createUniqueAccessCode(accessCodeData, preferredCode) {
+function deterministicAccessCode(value, attempt = 0) {
+    const source = `${String(value || '')}:${attempt}`;
+    let first = 2166136261;
+    let second = 2246822519;
+    for (let index = 0; index < source.length; index += 1) {
+        const code = source.charCodeAt(index);
+        first = Math.imul(first ^ code, 16777619) >>> 0;
+        second = Math.imul(second ^ code, 3266489917) >>> 0;
+    }
+    return `${first.toString(36).padStart(7, '0')}${second.toString(36).padStart(7, '0')}`
+        .slice(0, 8)
+        .toUpperCase();
+}
+
+function matchesReusableAccessCode(existing = {}, expected = {}) {
+    return existing.type === expected.type &&
+        String(existing.teamId || '') === String(expected.teamId || '') &&
+        String(existing.playerId || '') === String(expected.playerId || '') &&
+        String(existing.email || '').trim().toLowerCase() === String(expected.email || '').trim().toLowerCase() &&
+        String(existing.generatedBy || '') === String(expected.generatedBy || '');
+}
+
+async function createUniqueAccessCode(accessCodeData, preferredCode, options = {}) {
+    const idempotencyKey = String(options?.idempotencyKey || '').trim();
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
-        const candidateCode = normalizeJoinCode(attempt === 0 && preferredCode ? preferredCode : generateAccessCode());
+        const candidateCode = normalizeJoinCode(
+            idempotencyKey
+                ? deterministicAccessCode(idempotencyKey, attempt)
+                : attempt === 0 && preferredCode
+                    ? preferredCode
+                    : generateAccessCode()
+        );
         if (!candidateCode) {
             continue;
         }
@@ -4728,6 +4770,14 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
         const created = await runTransaction(db, async (transaction) => {
             const codeSnapshot = await transaction.get(codeRef);
             if (codeSnapshot.exists()) {
+                if (idempotencyKey && matchesReusableAccessCode(codeSnapshot.data() || {}, accessCodeData)) {
+                    return {
+                        id: codeRef.id || candidateCode,
+                        code: candidateCode,
+                        reused: true,
+                        existingData: codeSnapshot.data() || {}
+                    };
+                }
                 return null;
             }
 
@@ -5149,7 +5199,7 @@ async function autoAcceptParentInviteForExistingUser(accessCodeId) {
     };
 }
 
-export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
+export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation, options = {}) {
     const currentUser = auth.currentUser;
     if (!currentUser) {
         throw new Error('You must be signed in to invite a parent');
@@ -5180,14 +5230,21 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         usedBy: null,
         usedAt: null
     };
-    const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
+    const {
+        id: accessCodeId,
+        code,
+        reused = false,
+        existingData = null
+    } = await createUniqueAccessCode(accessCodeData, null, {
+        idempotencyKey: String(options?.idempotencyKey || '').trim()
+    });
 
     // Let the server decide whether a user with this email already exists.
     // Non-global-admin team owners/admins cannot query /users from the client,
     // so a client-side lookup would throw permission-denied here even though
     // the invite code was already created and the invite email already queued.
-    let existingUser = false;
-    let autoLinked = false;
+    let existingUser = reused && existingData?.used === true;
+    let autoLinked = existingUser;
     if (normalizedParentEmail) {
         try {
             const autoAcceptResult = await autoAcceptParentInviteForExistingUser(accessCodeId);
