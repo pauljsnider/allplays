@@ -204,6 +204,9 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('      - pr-integration');
         expect(trustedWorkflow).toContain('classify-trigger:');
         expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
+        expect(trustedWorkflow).toContain('pull-requests: read');
+        expect(trustedWorkflow).toContain('Fork pull request — no trusted preview deploy is required.');
+        expect(trustedWorkflow).toContain('echo "preview_ready=false" >> "$GITHUB_OUTPUT"');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
         expect(trustedWorkflow).toContain(

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: preview-smoke-${{ github.event.pull_request.number }}
+  group: preview-smoke-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   changes:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       web: ${{ steps.filter.outputs.web }}
@@ -60,7 +62,10 @@ jobs:
 
   preview-smoke-run:
     needs: changes
-    if: github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.web == 'true'
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -232,7 +237,7 @@ jobs:
       - name: Report preview-smoke result
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          IS_SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          IS_ELIGIBLE_EVENT: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
           RUN_RESULT: ${{ needs.preview-smoke-run.result }}
           SHOULD_RUN: ${{ needs.changes.outputs.web }}
         run: |
@@ -240,7 +245,7 @@ jobs:
           echo "changes result: $CHANGES_RESULT"
           echo "preview-smoke-run result: $RUN_RESULT"
 
-          if [ "$IS_SAME_REPOSITORY" != "true" ]; then
+          if [ "$IS_ELIGIBLE_EVENT" != "true" ]; then
             echo "Fork PR — preview-smoke is not eligible to run."
             exit 0
           fi

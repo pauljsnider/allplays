@@ -31,7 +31,12 @@ describe('preview-smoke CI workflow', () => {
         expect(triggerSection).not.toContain('      - labeled');
         expect(integrationWorkflow).toContain('uses: ./.github/workflows/preview-smoke.yml');
         expect(integrationWorkflow).toContain('name: preview-smoke');
-        expect(workflow).toContain('group: preview-smoke-${{ github.event.pull_request.number }}');
+        expect(workflow).toContain(
+            'group: preview-smoke-${{ github.event.pull_request.number || github.run_id }}'
+        );
+        expect(changesSection).toContain("github.event_name == 'workflow_dispatch'");
+        expect(workflow.slice(workflow.indexOf('  preview-smoke-run:'), workflow.indexOf('  preview-smoke:')))
+            .toContain("github.event_name == 'workflow_dispatch'");
         expect(changesSection).not.toContain('external-claim');
         expect(changesSection).not.toContain('LABEL_NAME');
         expect(gateSection).toContain('name: preview-smoke');
@@ -59,7 +64,10 @@ describe('preview-smoke CI workflow', () => {
             '[ "$SHOULD_RUN" = "false" ] && [ "$RUN_RESULT" = "skipped" ]'
         );
 
-        expect(gate).toContain('[ "$IS_SAME_REPOSITORY" != "true" ]');
+        expect(gate).toContain(
+            "IS_ELIGIBLE_EVENT: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}"
+        );
+        expect(gate).toContain('[ "$IS_ELIGIBLE_EVENT" != "true" ]');
         expect(changesResultCheck).toBeGreaterThan(-1);
         expect(intentionalSkipCheck).toBeGreaterThan(changesResultCheck);
         expect(gate).not.toContain('success|skipped');
