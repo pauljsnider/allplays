@@ -78,6 +78,7 @@ const scheduleMocks = vi.hoisted(() => ({
     finalizeScheduleImportBatch: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
+    loadParentScheduleScope: vi.fn(),
     loadParentScheduleAssignments: vi.fn(),
     loadParentScheduleEventDetail: vi.fn(),
     loadParentScheduleRideOffers: vi.fn(),
@@ -359,6 +360,11 @@ beforeEach(async () => {
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
         events: [futureEvent()]
+    });
+    scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+        profile: {},
+        children: [],
+        staffTeams: []
     });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-imported');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-imported');
@@ -1116,6 +1122,32 @@ describe('private AI service', () => {
         expect(platformAdminPrompt).toContain('list_managed_teams');
         expect(platformAdminPrompt).toContain('apply_roster_import');
         expect(platformAdminPrompt).toContain('apply_schedule_import');
+    });
+
+    it('exposes manager tools to an email-only team admin discovered through authoritative team access', async () => {
+        const emailOnlyAdmin = {
+            ...authUser,
+            roles: ['parent'],
+            coachOf: [],
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+        });
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({ answer: 'Ready.' })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await generatePrivateAiAnswer(emailOnlyAdmin, 'What team operations can you handle?');
+
+        expect(scheduleMocks.loadParentScheduleScope).toHaveBeenCalledWith(emailOnlyAdmin);
+        const plannerPrompt = aiMocks.model.generateContent.mock.calls[0][0];
+        expect(plannerPrompt).toContain('list_managed_teams');
+        expect(plannerPrompt).toContain('apply_roster_import');
+        expect(plannerPrompt).toContain('apply_schedule_import');
+        expect(plannerPrompt).toContain('"managedTeamCount":1');
     });
 
     it('validates supported AI chat files and infers roster, schedule, or general analysis intent', async () => {

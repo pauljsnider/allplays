@@ -22,6 +22,7 @@ import {
   DRAFT_PRIVATE_AI_CONVERSATION_ID,
   loadPrivateAiConversations,
   loadPrivateAiMessages,
+  loadPrivateAiRoleCapabilities,
   getPrivateAiAttachmentValidationError,
   revisePrivateAiRosterImportProposal,
   revisePrivateAiScheduleImportProposal,
@@ -149,7 +150,34 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const appliedLaunchSearchRef = useRef('');
   const rosterEditContextRef = useRef(new Map<string, Awaited<ReturnType<typeof loadRosterImportContextForApp>>>());
   const managedTeamContext = activeLaunchContext?.teamId || '';
-  const isTeamManager = Boolean(auth.user?.coachOf?.length || auth.isCoach || auth.isAdmin);
+  const hasDeclaredTeamManagerAccess = Boolean(
+    auth.user?.coachOf?.length
+    || auth.user?.isAdmin
+    || auth.user?.isPlatformAdmin
+    || auth.isCoach
+    || auth.isAdmin
+    || auth.isPlatformAdmin
+  );
+  const [isTeamManager, setIsTeamManager] = useState(hasDeclaredTeamManagerAccess);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsTeamManager(hasDeclaredTeamManagerAccess);
+    if (!auth.user || hasDeclaredTeamManagerAccess) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void loadPrivateAiRoleCapabilities(auth.user).then((capabilities) => {
+      if (!cancelled) setIsTeamManager(capabilities.isTeamManager);
+    }).catch(() => {
+      if (!cancelled) setIsTeamManager(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, hasDeclaredTeamManagerAccess]);
 
   useEffect(() => {
     if (appliedLaunchSearchRef.current === location.search) return;

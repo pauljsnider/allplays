@@ -68,6 +68,7 @@ import {
   createParentScheduleRideOffer,
   loadParentPracticePacket,
   loadParentSchedule,
+  loadParentScheduleScope,
   loadParentScheduleAssignments,
   loadParentScheduleEventDetail,
   loadParentScheduleRideOffers,
@@ -1492,6 +1493,7 @@ export async function generatePrivateAiAnswer(
   }
 
   const model = await getPrivateAiModel();
+  const roleCapabilities = await loadPrivateAiRoleCapabilities(user);
   const history = summarizeChatHistory(priorMessages);
   const toolResults: PrivateAiToolResult[] = [];
   const confirmationGroupId = createConfirmationGroupId();
@@ -1514,7 +1516,7 @@ export async function generatePrivateAiAnswer(
       args: {}
     }, toolContext));
   }
-  let plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
+  let plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
 
   for (let round = 0; round < maxToolRounds; round += 1) {
     const plannerText = await generateModelText(model, plannerInput);
@@ -1544,7 +1546,7 @@ export async function generatePrivateAiAnswer(
     }));
     if (!calls.length) {
       if (blockedCalls.length) {
-        plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
+        plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
         continue;
       }
       return {
@@ -1555,10 +1557,10 @@ export async function generatePrivateAiAnswer(
 
     const roundResults = await Promise.all(calls.map((call) => runPrivateAiTool(user, call, toolContext)));
     toolResults.push(...roundResults);
-    plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
+    plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
   }
 
-  const finalPrompt = buildFinalAnswerPrompt({ user, question, history, toolResults });
+  const finalPrompt = buildFinalAnswerPrompt({ user, question, history, toolResults, roleCapabilities });
   const finalText = await generateModelText(model, finalPrompt);
   const parsed = parsePrivateAiPlannerResponse(finalText);
   return {
@@ -4062,12 +4064,14 @@ function buildPlannerPrompt({
   user,
   question,
   history,
-  toolResults
+  toolResults,
+  roleCapabilities
 }: {
   user: AuthUser;
   question: string;
   history: unknown;
   toolResults: PrivateAiToolResult[];
+  roleCapabilities: PrivateAiRoleCapabilities;
 }) {
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
@@ -4080,10 +4084,10 @@ function buildPlannerPrompt({
     `If the user asks to retry a failed parent invitation email, call resend_roster_parent_invite with the player name and email from the recent chat.\n` +
     `If you have enough information, return {"answer":"..."}.\n\n` +
     `AVAILABLE ROLE-AUTHORIZED TOOLS (family/player and coach/admin capabilities are combined):\n` +
-    getRoleAuthorizedPrivateAiToolDefinitions(user).map((definition) => (
+    getRoleAuthorizedPrivateAiToolDefinitions(user, roleCapabilities).map((definition) => (
       `- [${definition.domain || inferPrivateAiToolDomain(definition.name)}] ${definition.name} (${definition.mode}): ${definition.description}`
     )).join('\n') + `\n\n` +
-    `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
+    `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
     `TOOL RESULTS SO FAR:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
@@ -4093,12 +4097,14 @@ function buildFinalAnswerPrompt({
   user,
   question,
   history,
-  toolResults
+  toolResults,
+  roleCapabilities
 }: {
   user: AuthUser;
   question: string;
   history: unknown;
   toolResults: PrivateAiToolResult[];
+  roleCapabilities: PrivateAiRoleCapabilities;
 }) {
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
@@ -4107,7 +4113,7 @@ function buildFinalAnswerPrompt({
     `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
-    `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
+    `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
     `TOOL RESULTS:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
@@ -4132,25 +4138,70 @@ function inferPrivateAiToolDomain(name: string) {
   return 'account-authorized-operations';
 }
 
-function getRoleAuthorizedPrivateAiToolDefinitions(user: AuthUser) {
+export type PrivateAiRoleCapabilities = {
+  isTeamManager: boolean;
+  managedTeamCount: number;
+};
+
+function hasDeclaredPrivateAiManagerRole(user: AuthUser) {
   const roles = new Set((user.roles || []).map((role) => compactText(role).toLowerCase()));
-  const hasManagerRole = Boolean(
+  return Boolean(
     user.isAdmin
     || user.isPlatformAdmin
     || user.coachOf?.length
     || ['coach', 'admin', 'administrator', 'platformadmin', 'platform-admin', 'platform_admin', 'team-admin', 'team_admin', 'staff', 'manager'].some((role) => roles.has(role))
   );
+}
+
+export async function loadPrivateAiRoleCapabilities(user: AuthUser): Promise<PrivateAiRoleCapabilities> {
+  const declaredManagedTeamCount = new Set((user.coachOf || []).map(compactText).filter(Boolean)).size;
+  if (hasDeclaredPrivateAiManagerRole(user)) {
+    return {
+      isTeamManager: true,
+      managedTeamCount: declaredManagedTeamCount
+    };
+  }
+
+  try {
+    const scope = await loadParentScheduleScope(user);
+    const managedTeamIds = new Set(
+      (scope.staffTeams || []).map((team) => compactText(team.teamId)).filter(Boolean)
+    );
+    return {
+      isTeamManager: managedTeamIds.size > 0,
+      managedTeamCount: managedTeamIds.size
+    };
+  } catch (error) {
+    logger.warn('Unable to discover private AI manager capabilities.', { error });
+    return {
+      isTeamManager: false,
+      managedTeamCount: 0
+    };
+  }
+}
+
+function getRoleAuthorizedPrivateAiToolDefinitions(
+  user: AuthUser,
+  roleCapabilities: PrivateAiRoleCapabilities
+) {
+  const hasManagerRole = roleCapabilities.isTeamManager || hasDeclaredPrivateAiManagerRole(user);
   return privateAiToolDefinitions.filter((definition) => definition.audience !== 'manager' || hasManagerRole);
 }
 
-function summarizeSignedInUser(user: AuthUser) {
+function summarizeSignedInUser(
+  user: AuthUser,
+  roleCapabilities: PrivateAiRoleCapabilities = {
+    isTeamManager: hasDeclaredPrivateAiManagerRole(user),
+    managedTeamCount: user.coachOf?.length || 0
+  }
+) {
   return {
     uid: user.uid,
     email: user.email,
     displayName: user.displayName,
     roles: user.roles || [],
     linkedPlayerCount: user.parentPlayerKeys?.length || user.parentOf?.length || 0,
-    managedTeamCount: user.coachOf?.length || 0,
+    managedTeamCount: roleCapabilities.managedTeamCount,
     emailVerified: user.emailVerified === true
   };
 }

@@ -9,6 +9,7 @@ import type { AuthState } from '../lib/types';
 const privateAiServiceMocks = vi.hoisted(() => ({
     loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
+    loadPrivateAiRoleCapabilities: vi.fn(),
     revisePrivateAiRosterImportProposal: vi.fn(),
     revisePrivateAiScheduleImportProposal: vi.fn(),
     sendPrivateAiAttachmentMessage: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('../lib/privateAiService', () => ({
     DRAFT_PRIVATE_AI_CONVERSATION_ID: '__draft__',
     loadPrivateAiConversations: privateAiServiceMocks.loadPrivateAiConversations,
     loadPrivateAiMessages: privateAiServiceMocks.loadPrivateAiMessages,
+    loadPrivateAiRoleCapabilities: privateAiServiceMocks.loadPrivateAiRoleCapabilities,
     getPrivateAiAttachmentValidationError: privateAiServiceMocks.getPrivateAiAttachmentValidationError,
     revisePrivateAiRosterImportProposal: privateAiServiceMocks.revisePrivateAiRosterImportProposal,
     revisePrivateAiScheduleImportProposal: privateAiServiceMocks.revisePrivateAiScheduleImportProposal,
@@ -93,10 +95,10 @@ const auth: AuthState = {
     signOut: vi.fn()
 };
 
-function renderChat(initialEntry = '/ai') {
+function renderChat(initialEntry = '/ai', authState = auth) {
     return render(
         <MemoryRouter initialEntries={[initialEntry]}>
-            <PrivateAiChat auth={auth} />
+            <PrivateAiChat auth={authState} />
         </MemoryRouter>
     );
 }
@@ -114,6 +116,10 @@ describe('PrivateAiChat', () => {
         });
         privateAiServiceMocks.loadPrivateAiConversations.mockResolvedValue([]);
         privateAiServiceMocks.loadPrivateAiMessages.mockResolvedValue([]);
+        privateAiServiceMocks.loadPrivateAiRoleCapabilities.mockResolvedValue({
+            isTeamManager: false,
+            managedTeamCount: 0
+        });
         privateAiServiceMocks.revisePrivateAiRosterImportProposal.mockResolvedValue({
             total: 1,
             add: 1,
@@ -175,6 +181,36 @@ describe('PrivateAiChat', () => {
         expect(await within(welcome).findByRole('button', { name: 'Who still needs an RSVP?' })).toBeTruthy();
         expect(within(welcome).getByRole('button', { name: 'What is my next game?' })).toBeTruthy();
         expect(within(welcome).getByRole('button', { name: 'Show unread team messages' })).toBeTruthy();
+    });
+
+    it('shows manager starter actions for an email-only team admin discovered from authoritative access', async () => {
+        const emailOnlyAdminAuth: AuthState = {
+            ...auth,
+            user: {
+                ...auth.user!,
+                email: 'admin@example.com',
+                roles: ['parent'],
+                coachOf: [],
+                isAdmin: false,
+                isPlatformAdmin: false
+            },
+            roles: ['parent'],
+            isParent: true,
+            isCoach: false,
+            isAdmin: false,
+            isPlatformAdmin: false
+        };
+        privateAiServiceMocks.loadPrivateAiRoleCapabilities.mockResolvedValueOnce({
+            isTeamManager: true,
+            managedTeamCount: 1
+        });
+
+        renderChat('/ai', emailOnlyAdminAuth);
+
+        expect(await screen.findByText('Manage a team with AI')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Show managed teams' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Bulk roster import' })).toBeTruthy();
+        expect(privateAiServiceMocks.loadPrivateAiRoleCapabilities).toHaveBeenCalledWith(emailOnlyAdminAuth.user);
     });
 
     it('opens a team-scoped import launcher as a new unsent chat draft', async () => {

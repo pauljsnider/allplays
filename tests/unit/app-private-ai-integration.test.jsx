@@ -10,6 +10,7 @@ const privateAiMocks = vi.hoisted(() => ({
     createPrivateAiConversation: vi.fn(),
     loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
+    loadPrivateAiRoleCapabilities: vi.fn(),
     sendPrivateAiMessage: vi.fn()
 }));
 
@@ -110,6 +111,10 @@ beforeEach(() => {
             toolNames: []
         }
     ]);
+    privateAiMocks.loadPrivateAiRoleCapabilities.mockResolvedValue({
+        isTeamManager: false,
+        managedTeamCount: 0
+    });
     privateAiMocks.sendPrivateAiMessage.mockResolvedValue({
         userMessage: {
             id: 'msg-2',
