@@ -22,11 +22,12 @@ the `firebase-admin` SDK against production using Application Default Credential
 
 Rebuilds the `publicUserProfiles/{uid}` Friends-discovery projection for
 verified accounts from private user membership, Firebase Auth identity, and
-team owner/admin links. Every run requires an explicit `--project` (or
-`FIREBASE_PROJECT_ID`). It is dry-run-only unless `--apply` and an exact
-`--confirm-project` are both provided. Apply mode also removes stale
-projections for unverified users and user records whose Firebase Auth account
-no longer exists.
+team owner/admin links. It also reconciles the server-owned normalized staff
+membership index used by runtime synchronization. Every run requires an
+explicit `--project` (or `FIREBASE_PROJECT_ID`). It is dry-run-only unless
+`--apply` and an exact `--confirm-project` are both provided. Apply mode also
+removes stale projections for unverified users, deleted Firebase Auth accounts,
+and public profiles whose private user record no longer exists.
 
 ```bash
 node _migration/backfill-public-user-profiles.js --email parent@example.com \

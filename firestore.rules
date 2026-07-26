@@ -2752,6 +2752,10 @@ service cloud.firestore {
       allow delete: if isVerifiedForSensitiveWrite() && (isGlobalAdmin() || isOwner(userId));
     }
 
+    match /publicProfileStaffMemberships/{membershipId} {
+      allow read, write: if false;
+    }
+
     // Users collection - users should only write their own profile.
     // Global admin status is privileged state: owners may not self-grant,
     // modify, or remove isAdmin. Firestore rules, not dashboard client state,

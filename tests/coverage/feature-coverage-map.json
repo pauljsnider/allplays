@@ -232,11 +232,13 @@
                 "apps/app/src/pages/Teams.tsx"
             ],
             "cloudFunctions": [
+                "cleanupPublicUserProfileOnAuthDelete",
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
                 "notifyParentMembershipRequestUpdated",
                 "queueInviteEmail",
                 "queueParentInviteEmail",
+                "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
                 "syncPublicUserProfileOnUserWrite",
                 "syncPublicUserProfileProjection",

@@ -26,6 +26,7 @@ import { getAuth } from 'firebase-admin/auth';
 
 const require = createRequire(import.meta.url);
 const {
+    buildPublicProfileStaffMembershipId,
     buildPublicUserProfileProjection,
     compactPublicProfileString,
     derivePublicProfileTeamIds,
@@ -99,8 +100,15 @@ export function buildStaffTeamIndexes(teamDocs = []) {
 }
 
 export function resolveProjectionTeamIds(userId, userData, authRecord, staffIndexes) {
+    return derivePublicProfileTeamIds(
+        userData,
+        resolveProjectionStaffTeamIds(userId, userData, authRecord, staffIndexes)
+    );
+}
+
+export function resolveProjectionStaffTeamIds(userId, userData, authRecord, staffIndexes) {
     const email = compactPublicProfileString(authRecord?.email || userData?.email).toLowerCase();
-    return derivePublicProfileTeamIds(userData, [
+    return derivePublicProfileTeamIds({}, [
         ...(staffIndexes.ownerTeamIds.get(userId) || []),
         ...(staffIndexes.adminTeamIds.get(email) || [])
     ]);
@@ -134,6 +142,31 @@ export async function resolveUserDocs(db, auth) {
             cause: error
         });
     }
+}
+
+export async function resolveOrphanPublicProfileDocs(
+    db,
+    auth,
+    userDocs,
+    options = {}
+) {
+    const userIds = new Set(userDocs.map((entry) => entry.id));
+    let profileDocs = [];
+    if (options.all === true) {
+        const profileSnap = await db.collection('publicUserProfiles').get();
+        profileDocs = profileSnap.docs;
+    } else {
+        let targetUid = compactPublicProfileString(options.targetUid);
+        const targetEmail = compactPublicProfileString(options.targetEmail).toLowerCase();
+        if (!targetUid && targetEmail) {
+            targetUid = compactPublicProfileString((await auth.getUserByEmail(targetEmail)).uid);
+        }
+        if (targetUid) {
+            const profileSnap = await db.doc(`publicUserProfiles/${targetUid}`).get();
+            if (profileSnap.exists) profileDocs = [profileSnap];
+        }
+    }
+    return profileDocs.filter((entry) => !userIds.has(entry.id));
 }
 
 export async function processBackfillUsers(userDocs, processUser, logger = console) {
@@ -189,6 +222,51 @@ export async function loadEligibleBackfillAuthRecord(
     return { authRecord, status: 'eligible' };
 }
 
+export async function reconcileBackfillStaffMemberships(
+    db,
+    userId,
+    staffTeamIds,
+    options = {}
+) {
+    const apply = options.apply === true;
+    const logger = options.logger || console;
+    const existingSnap = await db.collection('publicProfileStaffMemberships')
+        .where('userId', '==', userId)
+        .get();
+    const desiredById = new Map(
+        derivePublicProfileTeamIds({}, staffTeamIds).map((teamId) => [
+            buildPublicProfileStaffMembershipId(teamId, userId),
+            { teamId, userId }
+        ])
+    );
+    let changed = 0;
+
+    for (const existingDoc of existingSnap.docs || []) {
+        const desired = desiredById.get(existingDoc.id);
+        const current = existingDoc.data() || {};
+        if (desired && current.teamId === desired.teamId && current.userId === userId) {
+            desiredById.delete(existingDoc.id);
+            continue;
+        }
+        logger.warn(`${apply ? 'DELETE' : 'WOULD DELETE'} ${existingDoc.ref.path}`);
+        if (apply) await existingDoc.ref.delete();
+        changed++;
+    }
+
+    for (const [membershipId, membership] of desiredById) {
+        const membershipRef = db.doc(`publicProfileStaffMemberships/${membershipId}`);
+        logger.log(`${apply ? 'WRITE' : 'WOULD WRITE'} ${membershipRef.path}`, membership);
+        if (apply) {
+            const writePayload = { ...membership };
+            if (options.updatedAt !== undefined) writePayload.updatedAt = options.updatedAt;
+            await membershipRef.set(writePayload);
+        }
+        changed++;
+    }
+
+    return changed;
+}
+
 export function resolveBackfillExitCode(result = {}) {
     return Number(result.failed || 0) > 0 ? 1 : 0;
 }
@@ -202,17 +280,24 @@ export async function backfillPublicUserProfiles() {
         db.collection('teams').get(),
         resolveUserDocs(db, auth)
     ]);
+    const orphanProfileDocs = await resolveOrphanPublicProfileDocs(db, auth, userDocs, {
+        all: ALL,
+        targetEmail: TARGET_EMAIL,
+        targetUid: TARGET_UID
+    });
     const staffIndexes = buildStaffTeamIndexes(teamSnap.docs);
     let changed = 0;
     let unchanged = 0;
+    let staffMembershipsChanged = 0;
     let missingAuth = 0;
     let unverified = 0;
+    let orphaned = 0;
 
     console.log(`Project: ${PROJECT_ID}`);
     console.log(`Mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
     console.log(`Users: ${userDocs.length}`);
 
-    const failed = await processBackfillUsers(userDocs, async (userDoc) => {
+    let failed = await processBackfillUsers(userDocs, async (userDoc) => {
         const userData = userDoc.data() || {};
         const publicProfileRef = db.doc(`publicUserProfiles/${userDoc.id}`);
         const authResolution = await loadEligibleBackfillAuthRecord(
@@ -222,21 +307,40 @@ export async function backfillPublicUserProfiles() {
             { apply: APPLY }
         );
         if (authResolution.status === 'missing-auth') {
+            staffMembershipsChanged += await reconcileBackfillStaffMemberships(
+                db,
+                userDoc.id,
+                [],
+                { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+            );
             missingAuth++;
             return;
         }
         if (authResolution.status === 'unverified') {
+            staffMembershipsChanged += await reconcileBackfillStaffMemberships(
+                db,
+                userDoc.id,
+                [],
+                { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+            );
             unverified++;
             return;
         }
         const { authRecord } = authResolution;
 
-        const discoveryTeamIds = resolveProjectionTeamIds(
+        const staffTeamIds = resolveProjectionStaffTeamIds(
             userDoc.id,
             userData,
             authRecord,
             staffIndexes
         );
+        staffMembershipsChanged += await reconcileBackfillStaffMemberships(
+            db,
+            userDoc.id,
+            staffTeamIds,
+            { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+        );
+        const discoveryTeamIds = derivePublicProfileTeamIds(userData, staffTeamIds);
         const projection = buildPublicUserProfileProjection(userData, {
             trustedEmail: authRecord.email || userData.email || null,
             trustedDisplayName: authRecord.displayName || null,
@@ -264,12 +368,36 @@ export async function backfillPublicUserProfiles() {
         changed++;
     });
 
+    failed += await processBackfillUsers(orphanProfileDocs, async (profileDoc) => {
+        await cleanupIneligiblePublicProfile(profileDoc.ref, {
+            apply: APPLY,
+            reason: 'private user profile not found.'
+        });
+        staffMembershipsChanged += await reconcileBackfillStaffMemberships(
+            db,
+            profileDoc.id,
+            [],
+            { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
+        );
+        orphaned++;
+    });
+
     console.log(`Changed: ${changed}`);
     console.log(`Unchanged: ${unchanged}`);
+    console.log(`Staff memberships changed: ${staffMembershipsChanged}`);
     console.log(`Missing Auth users: ${missingAuth}`);
     console.log(`Unverified users: ${unverified}`);
+    console.log(`Orphaned public profiles: ${orphaned}`);
     console.log(`Failed users: ${failed}`);
-    return { changed, unchanged, missingAuth, unverified, failed };
+    return {
+        changed,
+        unchanged,
+        staffMembershipsChanged,
+        missingAuth,
+        unverified,
+        orphaned,
+        failed
+    };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -4,7 +4,9 @@ import {
     cleanupIneligiblePublicProfile,
     loadEligibleBackfillAuthRecord,
     processBackfillUsers,
+    reconcileBackfillStaffMemberships,
     resolveBackfillExitCode,
+    resolveOrphanPublicProfileDocs,
     resolveProjectId,
     resolveUserDocs,
     resolveProjectionTeamIds
@@ -45,16 +47,16 @@ describe('public user profile backfill', () => {
         expect([...indexes.adminTeamIds.get('tim@example.com')]).toEqual(['team-1']);
     });
 
-    it('combines parent, owner, and coach memberships for an existing user', () => {
+    it('combines parent, owner, and mixed-case coach memberships for an existing user', () => {
         const indexes = buildStaffTeamIndexes([
-            team('team-coach', { adminEmails: ['tim@example.com'] }),
+            team('team-coach', { adminEmails: ['Tim@Example.com'] }),
             team('team-owned', { ownerId: 'user-1' })
         ]);
 
         expect(resolveProjectionTeamIds(
             'user-1',
             { parentTeamIds: ['team-parent'], email: 'old@example.com' },
-            { email: 'Tim@Example.com' },
+            { email: 'tim@example.com' },
             indexes
         )).toEqual(['team-parent', 'team-owned', 'team-coach']);
     });
@@ -179,5 +181,97 @@ describe('public user profile backfill', () => {
             { apply: true, logger: { warn: vi.fn() } }
         )).rejects.toBe(authError);
         expect(publicProfileRef.delete).not.toHaveBeenCalled();
+    });
+
+    it('finds orphaned public profiles that no longer have private user records', async () => {
+        const activeProfile = { id: 'active-user' };
+        const orphanedProfile = { id: 'orphaned-user' };
+        const db = {
+            collection: (collectionName) => {
+                expect(collectionName).toBe('publicUserProfiles');
+                return {
+                    get: vi.fn().mockResolvedValue({
+                        docs: [activeProfile, orphanedProfile]
+                    })
+                };
+            }
+        };
+
+        await expect(resolveOrphanPublicProfileDocs(
+            db,
+            {},
+            [{ id: 'active-user' }],
+            { all: true }
+        )).resolves.toEqual([orphanedProfile]);
+    });
+
+    it('finds a targeted orphaned public profile by uid', async () => {
+        const orphanedProfile = { id: 'orphaned-user', exists: true };
+        const db = {
+            doc: vi.fn().mockReturnValue({
+                get: vi.fn().mockResolvedValue(orphanedProfile)
+            })
+        };
+
+        await expect(resolveOrphanPublicProfileDocs(
+            db,
+            {},
+            [],
+            { targetUid: 'orphaned-user' }
+        )).resolves.toEqual([orphanedProfile]);
+        expect(db.doc).toHaveBeenCalledWith('publicUserProfiles/orphaned-user');
+    });
+
+    it('reconciles normalized staff memberships by uid instead of email casing', async () => {
+        const staleDelete = vi.fn().mockResolvedValue(undefined);
+        const membershipSet = vi.fn().mockResolvedValue(undefined);
+        const logger = { log: vi.fn(), warn: vi.fn() };
+        const db = {
+            collection: (collectionName) => {
+                expect(collectionName).toBe('publicProfileStaffMemberships');
+                return {
+                    where: (field, operator, userId) => {
+                        expect([field, operator, userId]).toEqual([
+                            'userId',
+                            '==',
+                            'coach-user'
+                        ]);
+                        return {
+                            get: vi.fn().mockResolvedValue({
+                                docs: [{
+                                    id: 'stale-membership',
+                                    data: () => ({
+                                        userId: 'coach-user',
+                                        teamId: 'old-team'
+                                    }),
+                                    ref: {
+                                        path: 'publicProfileStaffMemberships/stale-membership',
+                                        delete: staleDelete
+                                    }
+                                }]
+                            })
+                        };
+                    }
+                };
+            },
+            doc: vi.fn().mockReturnValue({
+                path: 'publicProfileStaffMemberships/normalized-membership',
+                set: membershipSet
+            })
+        };
+
+        await expect(reconcileBackfillStaffMemberships(
+            db,
+            'coach-user',
+            ['mixed-case-admin-team'],
+            { apply: true, logger, updatedAt: 'timestamp' }
+        )).resolves.toBe(2);
+
+        expect(staleDelete).toHaveBeenCalledOnce();
+        expect(membershipSet).toHaveBeenCalledWith({
+            teamId: 'mixed-case-admin-team',
+            userId: 'coach-user',
+            updatedAt: 'timestamp'
+        });
     });
 });

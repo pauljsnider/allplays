@@ -408,6 +408,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("get(friendshipPath).data.get('status', '') == 'accepted'");
         expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
         expect(source).toContain("!data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys'])");
+        expect(source).toContain('match /publicProfileStaffMemberships/{membershipId}');
+        expect(source).toContain('allow read, write: if false;');
         expect(source).toContain("function userMembershipFields()");
         expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
         expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");

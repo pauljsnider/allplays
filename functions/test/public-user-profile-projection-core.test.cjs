@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  buildPublicProfileStaffMembershipId,
   buildPublicProfileUserSourceKey,
   buildPublicUserProfileProjection,
   buildTeamStaffMembershipKey,
@@ -11,6 +12,19 @@ const {
   isValidPublicProfileTeamId,
   isPublicProfileAuthUserNotFound
 } = require('../public-user-profile-projection-core.cjs');
+
+test('builds stable opaque staff membership ids from normalized team and user identity', () => {
+  const membershipId = buildPublicProfileStaffMembershipId(' team-1 ', ' user-1 ');
+  assert.match(membershipId, /^[a-f0-9]{64}$/);
+  assert.equal(
+    membershipId,
+    buildPublicProfileStaffMembershipId('team-1', 'user-1')
+  );
+  assert.notEqual(
+    membershipId,
+    buildPublicProfileStaffMembershipId('team-2', 'user-1')
+  );
+});
 
 test('combines parent, coach, and server-resolved staff teams without duplicates', () => {
   assert.deepEqual(

@@ -4,6 +4,13 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
+const {
+  createPublicProfileAuthDeleteHandler,
+  createPublicProfileEligibilitySweepHandler,
+  loadPublicProfileStaffTeamIds,
+  resolvePublicProfileStaffUserIds,
+  removePublicProfileForIneligibleAuth
+} = require('./public-user-profile-lifecycle-core.cjs');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   DEFAULT_MAX_ICS_BYTES,
@@ -2741,6 +2748,26 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   return null;
 });
 
+exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
+  .user()
+  .onDelete(createPublicProfileAuthDeleteHandler({ firestore }));
+
+exports.sweepIneligiblePublicUserProfiles = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB', failurePolicy: true })
+  .pubsub
+  .schedule('every 24 hours')
+  .onRun(async () => {
+    const publicProfileEligibilitySweepHandler = createPublicProfileEligibilitySweepHandler({
+      firestore,
+      auth: admin.auth(),
+      documentIdField: admin.firestore.FieldPath.documentId(),
+      isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound
+    });
+    const result = await publicProfileEligibilitySweepHandler();
+    functions.logger.info('Completed public profile eligibility sweep.', result);
+    return null;
+  });
+
 function validateAutoAcceptParentInviteCode(data = {}) {
   if (!data || data.type !== 'parent_invite') {
     throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
@@ -2807,14 +2834,14 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 
   const userData = userSnap.data() || {};
   const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
-  if (authIdentity.userMissing === true) {
-    await publicProfileRef.delete();
-    return null;
-  }
-  if (authIdentity.emailVerified !== true) {
-    await publicProfileRef.delete();
-    functions.logger.info('Public profile projection removed until email verification.', {
-      userId: normalizedUserId
+  const removedForIneligibleAuth = await removePublicProfileForIneligibleAuth(
+    publicProfileRef,
+    authIdentity
+  );
+  if (removedForIneligibleAuth) {
+    functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
+      userId: normalizedUserId,
+      reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
     });
     return null;
   }
@@ -2839,13 +2866,28 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 }
 
 async function getPublicProfileStaffUserIdsForTeam(team = null) {
-  if (!team) return [];
-  const userIds = new Set();
-  const ownerId = String(team.ownerId || '').trim();
-  if (ownerId) userIds.add(ownerId);
-  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
-  adminUserIds.forEach((userId) => userIds.add(userId));
-  return Array.from(userIds);
+  return resolvePublicProfileStaffUserIds(team, {
+    getUserByEmail: (email) => admin.auth().getUserByEmail(email),
+    isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound
+  });
+}
+
+async function syncPublicProfileStaffMembershipIndex(teamId, userId, isCurrentStaff) {
+  const membershipId = publicUserProfileProjection.buildPublicProfileStaffMembershipId(
+    teamId,
+    userId
+  );
+  if (!membershipId) return;
+  const membershipRef = firestore.doc(`publicProfileStaffMemberships/${membershipId}`);
+  if (!isCurrentStaff) {
+    await membershipRef.delete();
+    return;
+  }
+  await membershipRef.set({
+    teamId,
+    userId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
 }
 
 async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam) {
@@ -2860,11 +2902,14 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
   const currentStaffUserIds = new Set(afterUserIds);
   const candidateUserIds = new Set([...beforeUserIds, ...afterUserIds]);
   await Promise.all(
-    Array.from(candidateUserIds).map((candidateUserId) => (
-      syncPublicUserProfileProjectionForUser(candidateUserId, {
-        extraTeamIds: currentStaffUserIds.has(candidateUserId) ? [teamId] : []
-      })
-    ))
+    Array.from(candidateUserIds).map(async (candidateUserId) => {
+      await syncPublicProfileStaffMembershipIndex(
+        teamId,
+        candidateUserId,
+        currentStaffUserIds.has(candidateUserId)
+      );
+      await syncPublicUserProfileProjectionForUser(candidateUserId);
+    })
   );
 }
 
@@ -3206,6 +3251,16 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   if (userId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
   }
+  const callableAuthIdentity = {
+    email: context.auth.token?.email || null,
+    displayName: context.auth.token?.name || null,
+    photoUrl: context.auth.token?.picture || null,
+    emailVerified: context.auth.token?.email_verified === true
+  };
+  await removePublicProfileForIneligibleAuth(
+    firestore.doc(`publicUserProfiles/${userId}`),
+    callableAuthIdentity
+  );
   await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');
 
   const userSnap = await firestore.doc(`users/${userId}`).get();
@@ -3215,12 +3270,7 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
 
   await syncPublicUserProfileProjectionForUser(userId, {
     userSnap,
-    authIdentity: {
-      email: context.auth.token?.email || null,
-      displayName: context.auth.token?.name || null,
-      photoUrl: context.auth.token?.picture || null,
-      emailVerified: context.auth.token?.email_verified === true
-    }
+    authIdentity: callableAuthIdentity
   });
 
   return { success: true };
@@ -7181,10 +7231,14 @@ async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = 
     queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
   });
 
-  const querySnaps = await Promise.all(queries);
+  const [querySnaps, indexedStaffTeamIds] = await Promise.all([
+    Promise.all(queries),
+    loadPublicProfileStaffTeamIds(firestore, normalizedUid)
+  ]);
   querySnaps.forEach((snap) => {
     (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
   });
+  indexedStaffTeamIds.forEach((teamId) => teamIds.add(teamId));
 
   return Array.from(teamIds).filter(Boolean);
 }
@@ -7284,12 +7338,22 @@ exports.syncPublicUserProfileOnUserWrite = functions
     const after = change.after.data() || {};
     const sourceChanged = publicUserProfileProjection.buildPublicProfileUserSourceKey(before)
       !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
+    let authIdentity;
     if (!sourceChanged) {
-      const publicProfileSnap = await publicProfileRef.get();
-      if (publicProfileSnap.exists) return null;
+      const [publicProfileSnap, loadedAuthIdentity] = await Promise.all([
+        publicProfileRef.get(),
+        loadPublicUserProfileAuthIdentity(context.params.uid)
+      ]);
+      authIdentity = loadedAuthIdentity;
+      if (
+        publicProfileSnap.exists &&
+        authIdentity.userMissing !== true &&
+        authIdentity.emailVerified === true
+      ) return null;
     }
     await syncPublicUserProfileProjectionForUser(context.params.uid, {
-      userSnap: change.after
+      userSnap: change.after,
+      ...(authIdentity ? { authIdentity } : {})
     });
     return null;
   });

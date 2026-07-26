@@ -110,6 +110,9 @@ describe('public user profile sync', () => {
         const callableSource = functionsSource.slice(callableStart, callableEnd);
         const authCheck = callableSource.indexOf('if (!context.auth?.uid)');
         const ownershipCheck = callableSource.indexOf('if (userId !== context.auth.uid)');
+        const ineligibleCleanup = callableSource.indexOf(
+            'await removePublicProfileForIneligibleAuth('
+        );
         const verificationGuard = callableSource.indexOf(
             "await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');"
         );
@@ -120,7 +123,8 @@ describe('public user profile sync', () => {
         expect(callableEnd).toBeGreaterThan(callableStart);
         expect(authCheck).toBeGreaterThanOrEqual(0);
         expect(ownershipCheck).toBeGreaterThan(authCheck);
-        expect(verificationGuard).toBeGreaterThan(ownershipCheck);
+        expect(ineligibleCleanup).toBeGreaterThan(ownershipCheck);
+        expect(verificationGuard).toBeGreaterThan(ineligibleCleanup);
         expect(privateProfileRead).toBeGreaterThan(verificationGuard);
         expect(projectionSync).toBeGreaterThan(privateProfileRead);
     });
@@ -134,10 +138,10 @@ describe('public user profile sync', () => {
             /exports\.syncPublicUserProfileOnUserWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
         );
         expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(context.params.uid, {');
-        expect(functionsSource).toContain('if (authIdentity.emailVerified !== true)');
+        expect(functionsSource).toContain('await removePublicProfileForIneligibleAuth(');
     });
 
-    it('removes stale discovery projections for unverified Auth identities', () => {
+    it('removes stale discovery projections for unverified and deleted Auth identities', () => {
         const syncStart = functionsSource.indexOf(
             'async function syncPublicUserProfileProjectionForUser'
         );
@@ -146,25 +150,30 @@ describe('public user profile sync', () => {
             syncStart
         );
         const syncSource = functionsSource.slice(syncStart, syncEnd);
-        const verificationGuard = syncSource.indexOf('if (authIdentity.emailVerified !== true)');
-        const guardEnd = syncSource.indexOf('\n  }', verificationGuard);
-        const verificationGuardSource = syncSource.slice(verificationGuard, guardEnd);
+        const eligibilityCleanup = syncSource.indexOf('await removePublicProfileForIneligibleAuth(');
 
         expect(syncStart).toBeGreaterThanOrEqual(0);
         expect(syncEnd).toBeGreaterThan(syncStart);
-        expect(verificationGuard).toBeGreaterThanOrEqual(0);
-        expect(verificationGuardSource).toContain('await publicProfileRef.delete();');
-        expect(verificationGuardSource).toContain(
-            'Public profile projection removed until email verification.'
+        expect(eligibilityCleanup).toBeGreaterThanOrEqual(0);
+        expect(functionsSource).toMatch(
+            /exports\.cleanupPublicUserProfileOnAuthDelete = functions\.auth\s+\.user\(\)\s+\.onDelete/
         );
+        expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({ firestore })');
+        expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
+        expect(functionsSource).toContain("schedule('every 24 hours')");
+        expect(functionsSource).toContain('loadPublicUserProfileAuthIdentity(context.params.uid)');
+        expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
     });
 
-    it('refreshes coach and owner discovery membership when team staff changes', () => {
+    it('keeps mixed-case coach and owner discovery membership in a normalized uid index', () => {
         expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
-        expect(functionsSource).toContain("const ownerId = String(team.ownerId || '').trim();");
-        expect(functionsSource).toContain('const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);');
+        expect(functionsSource).toContain('return resolvePublicProfileStaffUserIds(team, {');
+        expect(functionsSource).toContain('getUserByEmail: (email) => admin.auth().getUserByEmail(email)');
         expect(functionsSource).toContain('const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);');
-        expect(functionsSource).toContain('extraTeamIds: currentStaffUserIds.has(candidateUserId) ? [teamId] : []');
+        expect(functionsSource).toContain('async function syncPublicProfileStaffMembershipIndex');
+        expect(functionsSource).toContain('publicProfileStaffMemberships/${membershipId}');
+        expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');
+        expect(functionsSource).toContain('await syncPublicProfileStaffMembershipIndex(');
         expect(functionsSource).toMatch(
             /exports\.syncPublicUserProfilesOnTeamWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
         );
@@ -173,7 +182,7 @@ describe('public user profile sync', () => {
         );
         expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
         expect(functionsSource).toContain('throw error;');
-        expect(functionsSource).toContain('if (authIdentity.userMissing === true)');
+        expect(functionsSource).toContain("reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'");
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {

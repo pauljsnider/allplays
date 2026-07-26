@@ -49,6 +49,16 @@ function hashPublicProfileEmail(email) {
   return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : null;
 }
 
+function buildPublicProfileStaffMembershipId(teamId, userId) {
+  const normalizedTeamId = compactPublicProfileString(teamId);
+  const normalizedUserId = compactPublicProfileString(userId);
+  if (!isValidPublicProfileTeamId(normalizedTeamId) || !normalizedUserId) return null;
+  return crypto
+    .createHash('sha256')
+    .update(`${normalizedTeamId}\0${normalizedUserId}`)
+    .digest('hex');
+}
+
 function buildPublicUserProfileProjection(userData = {}, options = {}) {
   const trustedDisplayName = compactPublicProfileString(options.trustedDisplayName);
   const fullName = compactPublicProfileString(
@@ -91,6 +101,7 @@ function buildPublicProfileUserSourceKey(userData = null) {
 }
 
 module.exports = {
+  buildPublicProfileStaffMembershipId,
   buildPublicProfileUserSourceKey,
   buildPublicUserProfileProjection,
   buildTeamStaffMembershipKey,
