@@ -1,9 +1,11 @@
-# AllPlays landing process
+# ALL PLAYS landing process
 
-AllPlays supports concurrent work by humans, Codex sessions, and PaulBot while
+ALL PLAYS supports concurrent work by humans, Codex sessions, and PaulBot while
 serializing the expensive final integration step.
 
 ## Ownership
+
+`external-claim` is controller ownership metadata.
 
 1. Add `external-claim` to an issue and its pull request before working from a
    machine or agent session outside PaulBot.
@@ -14,21 +16,28 @@ serializing the expensive final integration step.
    checks, and merges it.
 
 Do not push additional commits after handing a pull request to the landing
-worker. If more development is necessary, restore `external-claim` first.
+worker. Before handoff, the current producer may restore `external-claim` when
+more development is necessary. After handoff, a Codex, Claude, Q, or human
+coding session must not restore the label or reclaim remediation in response to
+a PaulBot finding. Only an explicit operator-requested ownership transfer may
+return the pull request to an external producer; otherwise PaulBot remains the
+sole writer through review, remediation, checks, and merge.
 
 ## CI stages
 
 - Fast PR checks (`unit-tests`, `cache-bust-guard`, `app-quality`, and focused
-  regression guards) provide feedback while development is active.
+  regression guards) run for applicable code-head events.
 - Native Android/iOS builds, full preview smoke, and preview artifact creation
-  are deferred while `external-claim` is present.
-- Removing `external-claim` triggers the full applicable integration checks.
+  also run when the changed paths require them, regardless of ownership label.
+- Adding or removing `external-claim` does not launch, cancel, or replace CI.
 - Production deployment remains a post-merge `master` workflow.
 
-The stable aggregate contexts `mobile-build` and `preview-smoke` report a
-successful deferral while a claim is active. They rerun the real integration
-work on the same head when the claim is removed; `paulbot-review-gate` and the
-PaulBot mutation gate prevent a claimed PR from entering automated landing.
+The stable aggregate contexts `mobile-build` and `preview-smoke` preserve
+branch-protection signals across path-filtered jobs. When `external-claim` is
+removed, PaulBot consumes the existing results for the frozen exact head. If an
+applicable current-head check is missing or canceled, the controller narrowly
+wakes or reruns that check. `paulbot-review-gate` and the PaulBot mutation gate
+prevent a claimed PR from entering automated landing.
 
 ## Pull request sizing
 
