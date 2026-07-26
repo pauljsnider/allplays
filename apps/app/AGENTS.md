@@ -12,7 +12,15 @@
 - `npm run mobile:build:ios` and `npm run mobile:build:android` run local native build checks.
 
 ## Testing
-- Put app unit tests in root `tests/unit/`, importing app helpers from `apps/app/src/`.
+- Keep React component and app unit tests colocated under `apps/app/src/`.
+- Run app tests with the app package's Vitest configuration: use
+  `npm run test:app -- src/path/to/file.test.tsx` from the repository root, or
+  `npm test -- --run src/path/to/file.test.tsx` from `apps/app/`.
+- Keep `@testing-library/jest-dom/vitest` in `src/setupTests.ts` so focused
+  Vitest runs register DOM matchers. Do not rely on the root unit-test setup.
+- Keep legacy static-site contract tests in root `tests/unit/`; those tests may
+  import pure app helpers when they are intentionally validating a legacy/app
+  boundary.
 - Put app Playwright flows in root `tests/smoke/app-*.spec.js`.
 - For user-facing app changes, run the targeted unit tests, `npm run app:build`, and the relevant app smoke spec with `SMOKE_APP_BASE_URL`.
 - Production boot coverage for `https://allplays.ai/app/` lives in `tests/smoke/app-production-bootstrap.spec.js`.
