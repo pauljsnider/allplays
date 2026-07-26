@@ -45,6 +45,12 @@ describe('pull request CI consolidation', () => {
         }
     });
 
+    it('does not expose repository secrets to PR-controlled reusable workflows', () => {
+        const integration = workflow('pr-integration.yml');
+
+        expect(integration).not.toContain('secrets: inherit');
+    });
+
     it('binds trusted preview deployment to the consolidated source run', () => {
         const trusted = workflow('deploy-preview-trusted.yml');
         const verifier = fs.readFileSync(

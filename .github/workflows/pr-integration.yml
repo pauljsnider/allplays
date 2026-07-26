@@ -23,7 +23,6 @@ jobs:
 
   preview-integration:
     uses: ./.github/workflows/preview-smoke.yml
-    secrets: inherit
 
   preview-artifact:
     uses: ./.github/workflows/deploy-preview.yml
