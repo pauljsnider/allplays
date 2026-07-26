@@ -64,6 +64,7 @@ serviceAccountKey*.json
 # Migration and admin utility scripts
 _migration/*
 !_migration/
+!_migration/backfill-public-user-profiles.js
 !_migration/migrate-player-private-profile.js
 !_migration/fix-orphaned-invite-redemptions.js
 !_migration/MIGRATION-README.md

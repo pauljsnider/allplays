@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
+const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   DEFAULT_MAX_ICS_BYTES,
@@ -2743,36 +2744,97 @@ function uniqueNonEmptyStrings(values = []) {
 }
 
 function compactPublicProfileString(value) {
-  return String(value || '').trim();
-}
-
-function derivePublicProfileTeamIds(userData = {}) {
-  const parentOfTeamIds = Array.isArray(userData.parentOf)
-    ? userData.parentOf.map((link) => link?.teamId)
-    : [];
-  const parentTeamIds = Array.isArray(userData.parentTeamIds)
-    ? userData.parentTeamIds
-    : [];
-  return uniqueNonEmptyStrings([...parentOfTeamIds, ...parentTeamIds]);
-}
-
-function hashPublicProfileEmail(email) {
-  const normalized = compactPublicProfileString(email).toLowerCase();
-  return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : null;
+  return publicUserProfileProjection.compactPublicProfileString(value);
 }
 
 function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
-  const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
-  const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
-  const trustedEmail = options.trustedEmail ?? userData.email;
   return {
-    displayName: displayName || null,
-    fullName: fullName || null,
-    photoUrl: compactPublicProfileString(userData.photoUrl) || null,
-    discoveryTeamIds: derivePublicProfileTeamIds(userData),
-    emailHash: hashPublicProfileEmail(trustedEmail),
+    ...publicUserProfileProjection.buildPublicUserProfileProjection(userData, options),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   };
+}
+
+async function loadPublicUserProfileAuthIdentity(userId) {
+  try {
+    const authRecord = await admin.auth().getUser(userId);
+    return {
+      email: authRecord.email || null,
+      displayName: authRecord.displayName || null,
+      photoUrl: authRecord.photoURL || null,
+      emailVerified: authRecord.emailVerified === true
+    };
+  } catch (error) {
+    functions.logger.warn('Unable to load Auth identity for public profile projection.', {
+      userId,
+      error: error?.message || String(error)
+    });
+    return {};
+  }
+}
+
+async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return null;
+
+  const userSnap = options.userSnap || await firestore.doc(`users/${normalizedUserId}`).get();
+  const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
+  if (!userSnap.exists) {
+    await publicProfileRef.delete();
+    return null;
+  }
+
+  const userData = userSnap.data() || {};
+  const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
+  if (authIdentity.emailVerified !== true) {
+    functions.logger.info('Public profile projection deferred until email verification.', {
+      userId: normalizedUserId
+    });
+    return null;
+  }
+
+  const membershipUserData = {
+    ...userData,
+    email: authIdentity.email || userData.email || null
+  };
+  const discoveryTeamIds = await getNotificationRecipientTeamIdsForUser(
+    membershipUserData,
+    normalizedUserId
+  );
+  const payload = buildTrustedPublicUserProfileProjectionPayload(userData, {
+    trustedEmail: authIdentity.email || userData.email || null,
+    trustedDisplayName: authIdentity.displayName || null,
+    trustedPhotoUrl: authIdentity.photoUrl || null,
+    discoveryTeamIds
+  });
+  await publicProfileRef.set(payload, { merge: true });
+  return payload;
+}
+
+async function getPublicProfileStaffUserIdsForTeam(team = null) {
+  if (!team) return [];
+  const userIds = new Set();
+  const ownerId = String(team.ownerId || '').trim();
+  if (ownerId) userIds.add(ownerId);
+  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
+  adminUserIds.forEach((userId) => userIds.add(userId));
+  return Array.from(userIds);
+}
+
+async function syncPublicUserProfilesForTeamChange(beforeTeam, afterTeam) {
+  const beforeKey = publicUserProfileProjection.buildTeamStaffMembershipKey(beforeTeam);
+  const afterKey = publicUserProfileProjection.buildTeamStaffMembershipKey(afterTeam);
+  if (beforeKey === afterKey) return;
+
+  const [beforeUserIds, afterUserIds] = await Promise.all([
+    getPublicProfileStaffUserIdsForTeam(beforeTeam),
+    getPublicProfileStaffUserIdsForTeam(afterTeam)
+  ]);
+  const candidateUserIds = new Set([...beforeUserIds, ...afterUserIds]);
+  await Promise.all(
+    Array.from(candidateUserIds).map((candidateUserId) => (
+      syncPublicUserProfileProjectionForUser(candidateUserId)
+    ))
+  );
 }
 
 function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
@@ -3120,12 +3182,15 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
     throw new functions.https.HttpsError('not-found', 'User profile not found.');
   }
 
-  await firestore.doc(`publicUserProfiles/${userId}`).set(
-    buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {}, {
-      trustedEmail: context.auth.token?.email || null
-    }),
-    { merge: true }
-  );
+  await syncPublicUserProfileProjectionForUser(userId, {
+    userSnap,
+    authIdentity: {
+      email: context.auth.token?.email || null,
+      displayName: context.auth.token?.name || null,
+      photoUrl: context.auth.token?.picture || null,
+      emailVerified: context.auth.token?.email_verified === true
+    }
+  });
 
   return { success: true };
 });
@@ -6981,6 +7046,28 @@ exports.syncTeamNotificationRecipientsOnUserWrite = functions.firestore
     return null;
   });
 
+exports.syncPublicUserProfileOnUserWrite = functions.firestore
+  .document('users/{uid}')
+  .onWrite(async (change, context) => {
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${context.params.uid}`);
+    if (!change.after.exists) {
+      await publicProfileRef.delete();
+      return null;
+    }
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.data() || {};
+    const sourceChanged = publicUserProfileProjection.buildPublicProfileUserSourceKey(before)
+      !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
+    if (!sourceChanged) {
+      const publicProfileSnap = await publicProfileRef.get();
+      if (publicProfileSnap.exists) return null;
+    }
+    await syncPublicUserProfileProjectionForUser(context.params.uid, {
+      userSnap: change.after
+    });
+    return null;
+  });
+
 exports.syncAdminUserSearchIndexOnUserWrite = functions.firestore
   .document('users/{uid}')
   .onWrite(async (change, context) => {
@@ -7008,6 +7095,15 @@ exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
     const before = change.before.exists ? (change.before.data() || {}) : null;
     const after = change.after.exists ? (change.after.data() || {}) : null;
     await syncNotificationRecipientsForTeamChange(context.params.teamId, before, after);
+    return null;
+  });
+
+exports.syncPublicUserProfilesOnTeamWrite = functions.firestore
+  .document('teams/{teamId}')
+  .onWrite(async (change) => {
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    await syncPublicUserProfilesForTeamChange(before, after);
     return null;
   });
 

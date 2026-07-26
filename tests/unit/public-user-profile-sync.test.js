@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const legacyAuthSource = readFileSync(new URL('../../js/auth.js', import.meta.url), 'utf8');
+const appAuthSource = readFileSync(new URL('../../apps/app/src/lib/authService.ts', import.meta.url), 'utf8');
 
 function loadPublicUserProfileSyncHarness(overrides = {}) {
     const start = source.indexOf('function compactPublicProfileString(value)');
@@ -72,20 +74,20 @@ describe('public user profile sync', () => {
         expect(source).toContain("async function buildPublicUserProfilePresentationPayload(userData = {})");
         expect(source).toContain("const payload = await buildPublicUserProfilePresentationPayload(nextUserData);");
         expect(source).toContain("await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });");
-        expect(source).toContain('await syncTrustedPublicUserProfileProjection(userId, nextUserData);');
+        expect(source).toContain('await requestTrustedPublicUserProfileProjectionSync(userId);');
         expect(source).toContain("httpsCallable(functions, 'syncPublicUserProfileProjection')");
         expect(source).toContain('await syncPublicUserProfile(userId);');
     });
 
-    it('keeps discovery projection fields derived from private user data only', () => {
-        expect(source).toContain("async function buildTrustedPublicUserProfileProjectionPayload(userData = {})");
-        expect(source).toContain("async function syncTrustedPublicUserProfileProjection(userId, userData = null)");
-        expect(source).toContain("discoveryTeamIds: derivePublicProfileTeamIds(userData)");
-        expect(source).toContain("emailHash: await hashPublicProfileEmail(userData.email)");
-        expect(source).toContain('const parentOfTeamIds = Array.isArray(userData.parentOf)');
-        expect(source).toContain('const parentTeamIds = Array.isArray(userData.parentTeamIds)');
-        expect(source).not.toContain('publicProfileInput.discoveryTeamIds');
-        expect(source).not.toContain('publicProfileInput.emailHash');
+    it('does not let clients derive or write trusted discovery fields', () => {
+        const presentationStart = source.indexOf('async function buildPublicUserProfilePresentationPayload');
+        const presentationEnd = source.indexOf('async function requestTrustedPublicUserProfileProjectionSync', presentationStart);
+        const presentationSource = source.slice(presentationStart, presentationEnd);
+
+        expect(presentationSource).not.toContain('discoveryTeamIds');
+        expect(presentationSource).not.toContain('emailHash');
+        expect(source).not.toContain('buildTrustedPublicUserProfileProjectionPayload');
+        expect(source).not.toContain('syncTrustedPublicUserProfileProjection');
     });
 
     it('refreshes the public presentation projection when parent-team links change', () => {
@@ -97,12 +99,12 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('exports.syncPublicUserProfileProjection = functions.https.onCall');
         expect(functionsSource).toContain("const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');");
         expect(functionsSource).toContain("if (userId !== context.auth.uid)");
-        expect(functionsSource).toContain('trustedEmail: context.auth.token?.email || null');
-        expect(functionsSource).toContain('discoveryTeamIds: derivePublicProfileTeamIds(userData)');
-        expect(functionsSource).toContain('emailHash: hashPublicProfileEmail(trustedEmail)');
+        expect(functionsSource).toContain('email: context.auth.token?.email || null');
+        expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(userId, {');
+        expect(functionsSource).toContain('emailVerified: context.auth.token?.email_verified === true');
     });
 
-    it('enforces verified-email policy before the callable reads or projects private profile data', () => {
+    it('enforces verified-email policy before the callable reads private profile data', () => {
         const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
         const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
         const callableSource = functionsSource.slice(callableStart, callableEnd);
@@ -112,7 +114,7 @@ describe('public user profile sync', () => {
             "await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');"
         );
         const privateProfileRead = callableSource.indexOf('const userSnap = await firestore.doc(`users/${userId}`).get();');
-        const publicProfileWrite = callableSource.indexOf('await firestore.doc(`publicUserProfiles/${userId}`).set(');
+        const projectionSync = callableSource.indexOf('await syncPublicUserProfileProjectionForUser(userId, {');
 
         expect(callableStart).toBeGreaterThanOrEqual(0);
         expect(callableEnd).toBeGreaterThan(callableStart);
@@ -120,7 +122,25 @@ describe('public user profile sync', () => {
         expect(ownershipCheck).toBeGreaterThan(authCheck);
         expect(verificationGuard).toBeGreaterThan(ownershipCheck);
         expect(privateProfileRead).toBeGreaterThan(verificationGuard);
-        expect(publicProfileWrite).toBeGreaterThan(privateProfileRead);
+        expect(projectionSync).toBeGreaterThan(privateProfileRead);
+    });
+
+    it('converges legacy and app signup paths on the same server-owned projection', () => {
+        expect(legacyAuthSource).toContain('return executeEmailPasswordSignup({');
+        expect(legacyAuthSource).toContain('updateUserProfile,');
+        expect(appAuthSource).toContain('return executeEmailPasswordSignup({');
+        expect(appAuthSource).toContain('updateUserProfile: dbModule.updateUserProfile');
+        expect(functionsSource).toContain('exports.syncPublicUserProfileOnUserWrite = functions.firestore');
+        expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(context.params.uid, {');
+        expect(functionsSource).toContain('if (authIdentity.emailVerified !== true)');
+    });
+
+    it('refreshes coach and owner discovery membership when team staff changes', () => {
+        expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
+        expect(functionsSource).toContain("const ownerId = String(team.ownerId || '').trim();");
+        expect(functionsSource).toContain('const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);');
+        expect(functionsSource).toContain('exports.syncPublicUserProfilesOnTeamWrite = functions.firestore');
+        expect(functionsSource).toContain('await syncPublicUserProfilesForTeamChange(before, after);');
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {
@@ -145,11 +165,8 @@ describe('public user profile sync', () => {
         expect(callableSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
     });
 
-    it('falls back to the callable when an owner presentation sync cannot directly write trusted fields', async () => {
-        const directProjectionError = new Error('Missing or insufficient permissions.');
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(directProjectionError);
+    it('uses the callable for trusted owner projection after writing presentation fields', async () => {
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const harness = loadPublicUserProfileSyncHarness({
             setDoc,
             auth: { currentUser: { uid: 'owner-1' } }
@@ -172,15 +189,7 @@ describe('public user profile sync', () => {
             }),
             { merge: true }
         );
-        expect(setDoc).toHaveBeenNthCalledWith(
-            2,
-            expect.objectContaining({ path: 'publicUserProfiles/owner-1' }),
-            expect.objectContaining({
-                discoveryTeamIds: ['team-1'],
-                emailHash: expect.any(String)
-            }),
-            { merge: true }
-        );
+        expect(setDoc).toHaveBeenCalledTimes(1);
         expect(harness.httpsCallable).toHaveBeenCalledWith(
             expect.anything(),
             'syncPublicUserProfileProjection'
@@ -224,11 +233,8 @@ describe('public user profile sync', () => {
     });
 
     it('does not reject a bootstrap caller when the verified-email guard also defers callable projection', async () => {
-        const directProjectionError = new Error('Missing or insufficient permissions.');
         const callableProjectionError = new Error('Email verification is required.');
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(directProjectionError);
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const callable = vi.fn().mockRejectedValue(callableProjectionError);
         const harness = loadPublicUserProfileSyncHarness({ setDoc, callable });
 
@@ -243,12 +249,11 @@ describe('public user profile sync', () => {
             '[public-user-profile] Trusted projection sync deferred:',
             callableProjectionError
         );
+        expect(setDoc).toHaveBeenCalledTimes(1);
     });
 
-    it('does not invoke the trusted projection callable for non-owner profile sync failures', async () => {
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(new Error('Missing or insufficient permissions.'));
+    it('defers trusted non-owner projection to the server', async () => {
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const harness = loadPublicUserProfileSyncHarness({
             setDoc,
             auth: { currentUser: { uid: 'viewer-1' } }
@@ -260,12 +265,11 @@ describe('public user profile sync', () => {
             email: 'owner@example.com'
         })).resolves.toBeUndefined();
 
-        expect(setDoc).toHaveBeenCalledTimes(2);
+        expect(setDoc).toHaveBeenCalledTimes(1);
         expect(harness.httpsCallable).not.toHaveBeenCalled();
         expect(harness.callable).not.toHaveBeenCalled();
         expect(harness.warn).toHaveBeenCalledWith(
-            '[public-user-profile] Trusted projection sync skipped for non-owner profile:',
-            expect.any(Error)
+            '[public-user-profile] Trusted projection sync deferred to the server for non-owner profile.'
         );
     });
 });
