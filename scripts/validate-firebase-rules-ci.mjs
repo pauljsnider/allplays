@@ -317,6 +317,18 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
     assertIncludes(deployProd, 'latest version of firestore.rules already up to date, skipping upload', 'Production Firestore current-rules verification');
     assertIncludes(deployProd, 'deployed indexes in firestore.indexes.json successfully', 'Production Firestore current-indexes verification');
+    assertIncludes(deployProd, 'verify_active_firestore_rules()', 'Production Firestore active-release verifier');
+    assertIncludes(
+        deployProd,
+        'projects/game-flow-c6311/releases/cloud.firestore',
+        'Production Firestore active release lookup'
+    );
+    assertIncludes(deployProd, '.source.files[]? | select(.name == "firestore.rules")', 'Production Firestore active source lookup');
+    assertIncludes(
+        deployProd,
+        'The active Firestore release exactly matches this commit and indexes deployed',
+        'Production Firestore exact-source duplicate-release recovery'
+    );
     assertIncludes(deployProd, 'accepting the duplicate release 409 as success', 'Production Firestore verified duplicate-release recovery');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
     assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
