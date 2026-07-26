@@ -32,6 +32,7 @@ function hashPublicProfileEmail(email) {
 }
 
 function buildPublicUserProfileProjection(userData = {}, options = {}) {
+  const profileName = compactPublicProfileString(userData.profileName);
   const trustedDisplayName = compactPublicProfileString(options.trustedDisplayName);
   const fullName = compactPublicProfileString(
     userData.fullName || userData.displayName || userData.name || trustedDisplayName
@@ -45,6 +46,7 @@ function buildPublicUserProfileProjection(userData = {}, options = {}) {
   return {
     displayName: displayName || null,
     fullName: fullName || null,
+    profileName: profileName || null,
     photoUrl: photoUrl || null,
     discoveryTeamIds: derivePublicProfileTeamIds(userData, options.discoveryTeamIds),
     emailHash: hashPublicProfileEmail(trustedEmail)
@@ -65,6 +67,7 @@ function buildPublicProfileUserSourceKey(userData = null) {
   return JSON.stringify({
     displayName: compactPublicProfileString(userData.displayName),
     fullName: compactPublicProfileString(userData.fullName),
+    profileName: compactPublicProfileString(userData.profileName),
     name: compactPublicProfileString(userData.name),
     photoUrl: compactPublicProfileString(userData.photoUrl),
     email: compactPublicProfileString(userData.email).toLowerCase(),

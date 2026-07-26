@@ -16,10 +16,9 @@
  * an exact --confirm-project match.
  */
 
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 
@@ -48,7 +47,6 @@ const TARGET_EMAIL = compactPublicProfileString(readArg('email')).toLowerCase();
 const TARGET_UID = compactPublicProfileString(readArg('uid'));
 const PROJECT_ID = compactPublicProfileString(readArg('project') || process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311');
 const CONFIRMED_PROJECT_ID = compactPublicProfileString(readArg('confirm-project'));
-const SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT || './_migration/serviceAccountKey.json';
 
 function assertSafeArguments() {
     const targetCount = Number(ALL) + Number(Boolean(TARGET_EMAIL)) + Number(Boolean(TARGET_UID));
@@ -62,12 +60,10 @@ function assertSafeArguments() {
 
 function initializeAdmin() {
     if (getApps().length) return;
-    try {
-        const serviceAccount = JSON.parse(readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
-        initializeApp({ credential: cert(serviceAccount), projectId: PROJECT_ID });
-    } catch {
-        initializeApp({ projectId: PROJECT_ID });
-    }
+    initializeApp({
+        credential: applicationDefault(),
+        projectId: PROJECT_ID
+    });
 }
 
 function addTeamId(map, key, teamId) {
@@ -104,13 +100,14 @@ function comparableProjection(profile = {}) {
     return {
         displayName: profile.displayName || null,
         fullName: profile.fullName || null,
+        profileName: profile.profileName || null,
         photoUrl: profile.photoUrl || null,
         discoveryTeamIds: Array.isArray(profile.discoveryTeamIds) ? profile.discoveryTeamIds : [],
         emailHash: profile.emailHash || null
     };
 }
 
-async function resolveUserDocs(db, auth) {
+export async function resolveUserDocs(db, auth) {
     if (TARGET_UID) {
         const snap = await db.doc(`users/${TARGET_UID}`).get();
         return snap.exists ? [snap] : [];
@@ -120,8 +117,27 @@ async function resolveUserDocs(db, auth) {
         const snap = await db.doc(`users/${authRecord.uid}`).get();
         return snap.exists ? [snap] : [];
     }
-    const snap = await db.collection('users').get();
-    return snap.docs;
+    try {
+        const snap = await db.collection('users').get();
+        return snap.docs;
+    } catch (error) {
+        throw new Error(`Unable to query users collection: ${error?.message || error}`, {
+            cause: error
+        });
+    }
+}
+
+export async function processBackfillUsers(userDocs, processUser, logger = console) {
+    let failed = 0;
+    for (const userDoc of userDocs) {
+        try {
+            await processUser(userDoc);
+        } catch (error) {
+            failed++;
+            logger.error(`FAILED ${userDoc.id}:`, error?.message || error);
+        }
+    }
+    return failed;
 }
 
 export async function backfillPublicUserProfiles() {
@@ -143,7 +159,7 @@ export async function backfillPublicUserProfiles() {
     console.log(`Mode: ${APPLY ? 'APPLY' : 'DRY RUN'}`);
     console.log(`Users: ${userDocs.length}`);
 
-    for (const userDoc of userDocs) {
+    const failed = await processBackfillUsers(userDocs, async (userDoc) => {
         const userData = userDoc.data() || {};
         let authRecord;
         try {
@@ -151,12 +167,12 @@ export async function backfillPublicUserProfiles() {
         } catch {
             missingAuth++;
             console.warn(`SKIP ${userDoc.id}: Firebase Auth user not found.`);
-            continue;
+            return;
         }
         if (authRecord.emailVerified !== true) {
             unverified++;
             console.warn(`SKIP ${userDoc.id}: email is not verified.`);
-            continue;
+            return;
         }
 
         const discoveryTeamIds = resolveProjectionTeamIds(
@@ -177,7 +193,7 @@ export async function backfillPublicUserProfiles() {
         const next = comparableProjection(projection);
         if (current && JSON.stringify(current) === JSON.stringify(next)) {
             unchanged++;
-            continue;
+            return;
         }
 
         changed++;
@@ -191,13 +207,14 @@ export async function backfillPublicUserProfiles() {
                 updatedAt: FieldValue.serverTimestamp()
             }, { merge: true });
         }
-    }
+    });
 
     console.log(`Changed: ${changed}`);
     console.log(`Unchanged: ${unchanged}`);
     console.log(`Missing Auth users: ${missingAuth}`);
     console.log(`Unverified users: ${unverified}`);
-    return { changed, unchanged, missingAuth, unverified };
+    console.log(`Failed users: ${failed}`);
+    return { changed, unchanged, missingAuth, unverified, failed };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

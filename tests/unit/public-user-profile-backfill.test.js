@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     buildStaffTeamIndexes,
+    processBackfillUsers,
+    resolveUserDocs,
     resolveProjectionTeamIds
 } from '../../_migration/backfill-public-user-profiles.js';
 
@@ -33,5 +35,36 @@ describe('public user profile backfill', () => {
             { email: 'Tim@Example.com' },
             indexes
         )).toEqual(['team-parent', 'team-owned', 'team-coach']);
+    });
+
+    it('reports a failed users collection query with actionable context', async () => {
+        const queryError = new Error('permission denied');
+        const db = {
+            collection: () => ({
+                get: () => Promise.reject(queryError)
+            })
+        };
+
+        await expect(resolveUserDocs(db, {})).rejects.toThrow(
+            'Unable to query users collection: permission denied'
+        );
+    });
+
+    it('continues processing users after an individual profile update fails', async () => {
+        const processed = [];
+        const logger = { error: vi.fn() };
+        const failed = await processBackfillUsers([
+            { id: 'user-1' },
+            { id: 'user-2' }
+        ], async (userDoc) => {
+            processed.push(userDoc.id);
+            if (userDoc.id === 'user-1') {
+                throw new Error('write failed');
+            }
+        }, logger);
+
+        expect(processed).toEqual(['user-1', 'user-2']);
+        expect(failed).toBe(1);
+        expect(logger.error).toHaveBeenCalledWith('FAILED user-1:', 'write failed');
     });
 });

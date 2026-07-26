@@ -1,13 +1,14 @@
 # Migration Scripts
 
 One-off Node.js scripts for Firestore data fixes and migrations. They run with
-the `firebase-admin` SDK against production using a service account key.
+the `firebase-admin` SDK against production using Application Default Credentials.
 
 ## Requirements
 
 - Node.js 18+
-- `./serviceAccountKey.json` in this directory (service account for
-  `game-flow-c6311`). Never commit this file.
+- Application Default Credentials for `game-flow-c6311`, such as a
+  `GOOGLE_APPLICATION_CREDENTIALS` path to a service account file outside the
+  repository or credentials provided by the Google Cloud runtime.
 
 ## Conventions
 

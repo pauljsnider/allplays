@@ -33,10 +33,28 @@ test('uses Firebase Auth identity when a legacy user profile has only an email',
   assert.deepEqual(projection, {
     displayName: 'Tim Coach',
     fullName: 'Tim Coach',
+    profileName: null,
     photoUrl: 'https://example.com/tim.jpg',
     discoveryTeamIds: ['team-coach'],
     emailHash: hashPublicProfileEmail('tim@example.com')
   });
+});
+
+test('projects profileName and refreshes when it changes', () => {
+  const before = {
+    email: 'parent@example.com',
+    profileName: 'Parent One'
+  };
+  const after = {
+    ...before,
+    profileName: 'Parent Two'
+  };
+
+  assert.equal(buildPublicUserProfileProjection(after).profileName, 'Parent Two');
+  assert.notEqual(
+    buildPublicProfileUserSourceKey(before),
+    buildPublicProfileUserSourceKey(after)
+  );
 });
 
 test('prefers private presentation fields over Auth fallbacks', () => {
