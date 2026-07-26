@@ -6,6 +6,7 @@ const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   loadPublicProfileStaffTeamIds,
+  reconcilePublicProfileStaffMembershipsForTeam,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 } = require('../public-user-profile-lifecycle-core.cjs');
@@ -159,5 +160,61 @@ test('runtime profile resync reads normalized staff teams by uid without email m
   assert.deepEqual(
     await loadPublicProfileStaffTeamIds(firestore, 'coach-user'),
     ['mixed-case-admin-team']
+  );
+});
+
+test('team reconciliation removes a former admin after their Auth email changes', async () => {
+  const memberships = new Map([
+    ['former-membership', {
+      teamId: 'team-1',
+      userId: 'former-admin'
+    }]
+  ]);
+  const firestore = {
+    collection: (collectionName) => {
+      assert.equal(collectionName, 'publicProfileStaffMemberships');
+      return {
+        where: (field, operator, value) => {
+          assert.equal(operator, '==');
+          return {
+            get: async () => ({
+              docs: [...memberships]
+                .filter(([, membership]) => membership[field] === value)
+                .map(([id, membership]) => ({
+                  id,
+                  data: () => membership,
+                  ref: {
+                    delete: async () => memberships.delete(id)
+                  }
+                }))
+            })
+          };
+        }
+      };
+    },
+    doc: (path) => ({
+      set: async (membership) => {
+        memberships.set(path.split('/').at(-1), membership);
+      }
+    })
+  };
+
+  const resyncUserIds = await reconcilePublicProfileStaffMembershipsForTeam({
+    firestore,
+    teamId: 'team-1',
+    currentStaffUserIds: ['owner-user'],
+    buildMembershipId: (teamId, userId) => `${teamId}-${userId}`,
+    updatedAt: 'server-time'
+  });
+
+  assert.deepEqual(resyncUserIds.sort(), ['former-admin', 'owner-user']);
+  assert.deepEqual([...memberships.values()], [{
+    teamId: 'team-1',
+    userId: 'owner-user',
+    updatedAt: 'server-time'
+  }]);
+  assert.deepEqual(
+    await loadPublicProfileStaffTeamIds(firestore, 'former-admin'),
+    []
   );
 });

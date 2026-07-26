@@ -44,6 +44,63 @@ async function loadPublicProfileStaffTeamIds(firestore, userId) {
     .filter(Boolean))];
 }
 
+async function reconcilePublicProfileStaffMembershipsForTeam({
+  firestore,
+  teamId,
+  currentStaffUserIds = [],
+  buildMembershipId,
+  updatedAt
+}) {
+  if (!firestore || typeof buildMembershipId !== 'function') {
+    throw new TypeError('firestore and buildMembershipId are required');
+  }
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+
+  const existingSnap = await firestore.collection('publicProfileStaffMemberships')
+    .where('teamId', '==', normalizedTeamId)
+    .get();
+  const desiredById = new Map();
+  const candidateUserIds = new Set();
+  [...new Set(currentStaffUserIds
+    .map((userId) => String(userId || '').trim())
+    .filter(Boolean))]
+    .forEach((userId) => {
+      const membershipId = buildMembershipId(normalizedTeamId, userId);
+      if (!membershipId) return;
+      candidateUserIds.add(userId);
+      desiredById.set(membershipId, {
+        teamId: normalizedTeamId,
+        userId
+      });
+    });
+
+  for (const existingDoc of existingSnap.docs || []) {
+    const existing = existingDoc.data() || {};
+    const existingUserId = String(existing.userId || '').trim();
+    if (existingUserId) candidateUserIds.add(existingUserId);
+    const desired = desiredById.get(existingDoc.id);
+    if (
+      desired &&
+      existing.teamId === desired.teamId &&
+      existingUserId === desired.userId
+    ) {
+      desiredById.delete(existingDoc.id);
+      continue;
+    }
+    await existingDoc.ref.delete();
+  }
+
+  for (const [membershipId, membership] of desiredById) {
+    await firestore.doc(`publicProfileStaffMemberships/${membershipId}`).set({
+      ...membership,
+      ...(updatedAt !== undefined ? { updatedAt } : {})
+    });
+  }
+
+  return [...candidateUserIds];
+}
+
 function createPublicProfileAuthDeleteHandler({ firestore }) {
   if (!firestore) throw new TypeError('firestore is required');
 
@@ -116,6 +173,7 @@ module.exports = {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   loadPublicProfileStaffTeamIds,
+  reconcilePublicProfileStaffMembershipsForTeam,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 };

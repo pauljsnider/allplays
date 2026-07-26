@@ -8,6 +8,7 @@ const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   loadPublicProfileStaffTeamIds,
+  reconcilePublicProfileStaffMembershipsForTeam,
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 } = require('./public-user-profile-lifecycle-core.cjs');
@@ -2872,24 +2873,6 @@ async function getPublicProfileStaffUserIdsForTeam(team = null) {
   });
 }
 
-async function syncPublicProfileStaffMembershipIndex(teamId, userId, isCurrentStaff) {
-  const membershipId = publicUserProfileProjection.buildPublicProfileStaffMembershipId(
-    teamId,
-    userId
-  );
-  if (!membershipId) return;
-  const membershipRef = firestore.doc(`publicProfileStaffMemberships/${membershipId}`);
-  if (!isCurrentStaff) {
-    await membershipRef.delete();
-    return;
-  }
-  await membershipRef.set({
-    teamId,
-    userId,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  });
-}
-
 async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam) {
   const beforeKey = publicUserProfileProjection.buildTeamStaffMembershipKey(beforeTeam);
   const afterKey = publicUserProfileProjection.buildTeamStaffMembershipKey(afterTeam);
@@ -2899,17 +2882,22 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
     getPublicProfileStaffUserIdsForTeam(beforeTeam),
     getPublicProfileStaffUserIdsForTeam(afterTeam)
   ]);
-  const currentStaffUserIds = new Set(afterUserIds);
-  const candidateUserIds = new Set([...beforeUserIds, ...afterUserIds]);
+  const indexedUserIds = await reconcilePublicProfileStaffMembershipsForTeam({
+    firestore,
+    teamId,
+    currentStaffUserIds: afterUserIds,
+    buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  const candidateUserIds = new Set([
+    ...beforeUserIds,
+    ...afterUserIds,
+    ...indexedUserIds
+  ]);
   await Promise.all(
-    Array.from(candidateUserIds).map(async (candidateUserId) => {
-      await syncPublicProfileStaffMembershipIndex(
-        teamId,
-        candidateUserId,
-        currentStaffUserIds.has(candidateUserId)
-      );
-      await syncPublicUserProfileProjectionForUser(candidateUserId);
-    })
+    Array.from(candidateUserIds).map((candidateUserId) => (
+      syncPublicUserProfileProjectionForUser(candidateUserId)
+    ))
   );
 }
 

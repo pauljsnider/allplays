@@ -170,10 +170,10 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('return resolvePublicProfileStaffUserIds(team, {');
         expect(functionsSource).toContain('getUserByEmail: (email) => admin.auth().getUserByEmail(email)');
         expect(functionsSource).toContain('const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);');
-        expect(functionsSource).toContain('async function syncPublicProfileStaffMembershipIndex');
-        expect(functionsSource).toContain('publicProfileStaffMemberships/${membershipId}');
+        expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForTeam({');
+        expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
+        expect(functionsSource).toContain('...indexedUserIds');
         expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');
-        expect(functionsSource).toContain('await syncPublicProfileStaffMembershipIndex(');
         expect(functionsSource).toMatch(
             /exports\.syncPublicUserProfilesOnTeamWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
         );
