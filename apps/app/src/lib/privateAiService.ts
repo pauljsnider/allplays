@@ -103,6 +103,7 @@ import {
 import {
   buildScheduleImportPreview,
   inferScheduleCsvMapping,
+  normalizeScheduleImportDraft,
   parseCsvText,
   type ScheduleCsvImportPreviewRow
 } from './scheduleCsvImport';
@@ -186,6 +187,13 @@ export type PrivateAiRosterProposalRevision = {
   confirmationId: string;
   teamId: string;
   rows: RosterAiImportPreviewRow[];
+};
+
+export type PrivateAiScheduleProposalRevision = {
+  confirmationId: string;
+  teamId: string;
+  messageId?: string;
+  rows: ScheduleCsvImportPreviewRow[];
 };
 
 export type PrivateAiAttachmentIntent = 'roster-import' | 'schedule-import' | 'general-analysis';
@@ -1207,6 +1215,128 @@ export async function revisePrivateAiRosterImportProposal(
   return artifactSummary;
 }
 
+export async function revisePrivateAiScheduleImportProposal(
+  user: AuthUser,
+  revision: PrivateAiScheduleProposalRevision
+): Promise<{
+  summary: PrivateAiScheduleArtifactReference['summary'];
+  rows: ScheduleCsvImportPreviewRow[];
+}> {
+  if (!user?.uid) throw new Error('Sign in before editing an AI schedule proposal.');
+  const confirmationId = compactText(revision.confirmationId);
+  const teamId = compactText(revision.teamId);
+  const messageId = compactText(revision.messageId);
+  if (!confirmationId || !teamId) throw new Error('This schedule proposal is no longer editable.');
+
+  const pending = await loadPrivateAiPendingAction(user, confirmationId);
+  if (!pending || pending.toolName !== 'apply_schedule_import') {
+    throw new Error('This schedule proposal expired, was replaced, or was already confirmed.');
+  }
+  if (compactText(pending.args.teamId) !== teamId) {
+    throw new Error('This schedule proposal does not match the selected team.');
+  }
+  const authorizedTeamId = await resolveAccessibleTeamId(user, { teamId }, { requireManager: true });
+  if (authorizedTeamId !== teamId) {
+    throw new Error('You no longer have permission to manage this team schedule.');
+  }
+
+  const inputRows = Array.isArray(revision.rows) ? revision.rows : [];
+  if (!inputRows.length) throw new Error('Keep at least one schedule row in the proposal.');
+  if (inputRows.length > 200) throw new Error('Import at most 200 schedule rows at a time.');
+  const rows = inputRows.map((row, index) => normalizeScheduleImportDraft({
+    eventType: row.draft?.eventType ?? row.normalized.eventType,
+    startsAt: row.draft?.startsAt ?? row.normalized.startsAt,
+    endsAt: row.draft?.endsAt ?? row.normalized.endsAt ?? '',
+    opponent: row.draft?.opponent ?? row.normalized.opponent ?? '',
+    title: row.draft?.title ?? row.normalized.title ?? '',
+    location: row.draft?.location ?? row.normalized.location ?? '',
+    arrivalTime: row.draft?.arrivalTime ?? row.normalized.arrivalTime ?? '',
+    isHome: row.draft?.isHome ?? row.normalized.isHome,
+    notes: row.draft?.notes ?? row.normalized.notes ?? ''
+  }, { rowNumber: index + 1 })) as ScheduleCsvImportPreviewRow[];
+  const validationErrors = rows.flatMap((row) => row.errors || []);
+  const counts = summarizeSchedulePreview(rows);
+  const summary = {
+    ...counts,
+    errors: validationErrors.length
+  };
+  const nextArgs = {
+    teamId,
+    rows: rows.map((row) => row.normalized),
+    source: compactText(pending.args.source) || 'ai',
+    ...(validationErrors.length ? { __scheduleValidationErrors: validationErrors } : {})
+  };
+  const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
+  const messageRef = messageId
+    ? doc(db, 'users', user.uid, privateAiCollectionName, messageId)
+    : null;
+  const updated = await runTransaction(db, async (transaction: any) => {
+    const [snapshot, messageSnapshot] = await Promise.all([
+      transaction.get(pendingRef),
+      messageRef ? transaction.get(messageRef) : Promise.resolve(null)
+    ]);
+    const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+    if (
+      !snapshot?.exists?.()
+      || !isPlainObject(data)
+      || data.status !== 'pending'
+      || compactText(data.userId) !== user.uid
+      || compactText(data.toolName) !== 'apply_schedule_import'
+      || compactText(data.teamId || (isPlainObject(data.args) ? data.args.teamId : '')) !== teamId
+      || Date.parse(compactText(data.expiresAt)) <= Date.now()
+    ) return false;
+    const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
+    const storedArtifacts = isPlainObject(messageData) && Array.isArray(messageData.artifacts)
+      ? messageData.artifacts
+      : [];
+    const hasStoredArtifact = !messageRef || storedArtifacts.some((artifact) => (
+      isPlainObject(artifact)
+      && artifact.type === 'schedule-import'
+      && compactText(artifact.confirmationId) === confirmationId
+    ));
+    if (!hasStoredArtifact) return false;
+    transaction.set(pendingRef, {
+      args: nextArgs,
+      summary: `Schedule import | Team: ${teamId} | ${summary.total} rows${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`,
+      previewSummary: summary,
+      editedAt: serverTimestamp(),
+      audit: {
+        lastEditedBy: user.uid,
+        lastEditedAt: new Date().toISOString()
+      }
+    }, { merge: true });
+    if (messageRef) {
+      transaction.set(messageRef, {
+        artifacts: storedArtifacts.map((artifact) => {
+          if (
+            !isPlainObject(artifact)
+            || artifact.type !== 'schedule-import'
+            || compactText(artifact.confirmationId) !== confirmationId
+          ) return artifact;
+          return stripPrivateAiArtifactForStorage({
+            type: 'schedule-import',
+            confirmationId,
+            teamId,
+            teamName: compactText(artifact.teamName) || 'Team',
+            source: normalizePrivateAiImportSource(artifact.source),
+            summary,
+            previewRows: rows
+          });
+        })
+      }, { merge: true });
+    }
+    return true;
+  });
+  if (!updated) {
+    throw new Error('This schedule proposal expired, was replaced, or is currently being confirmed.');
+  }
+
+  pending.args = nextArgs;
+  pending.previewSummary = summary;
+  pendingActionMemory.set(`${user.uid}:${confirmationId}`, pending);
+  return { summary, rows };
+}
+
 export async function generatePrivateAiAnswer(
   user: AuthUser,
   question: string,
@@ -1772,6 +1902,12 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     resolve: async (user, args) => {
       const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
       if (!teamId) throw new Error('You no longer have permission to manage this team.');
+      const validationErrors = Array.isArray(args.__scheduleValidationErrors)
+        ? args.__scheduleValidationErrors.map(compactText).filter(Boolean)
+        : [];
+      if (validationErrors.length) {
+        throw new Error(`Fix the schedule review errors before confirming. ${validationErrors.join(' ')}`);
+      }
       const rows = Array.isArray(args.rows) ? args.rows as ScheduleCsvImportPreviewRow['normalized'][] : [];
       if (!rows.length) throw new Error('No valid schedule rows remain to import.');
       const batchId = `ai-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2713,8 +2849,7 @@ async function savePrivateAiPendingAction(
   const id = createConfirmationId();
   const createdAt = new Date();
   const conversationId = normalizeConversationId(context.conversationId);
-  const confirmationGroupId = compactText(context.confirmationGroupId);
-  await supersedeOlderPendingActions(user, conversationId, confirmationGroupId);
+  const confirmationGroupId = compactText(context.confirmationGroupId) || createConfirmationGroupId();
   const preparedArgs = sanitizePendingActionPayloadArgs(args);
   const teamId = compactText(args.teamId);
   const payloadScope = isTeamScopedPrivateAiPayload(definition.name) ? 'team' : 'user';
@@ -2736,26 +2871,7 @@ async function savePrivateAiPendingAction(
     expiresAt: new Date(createdAt.getTime() + pendingActionLifetimeMs).toISOString(),
     status: 'pending'
   };
-  if (payloadScope === 'team') {
-    await setDoc(doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, id), {
-      userId: user.uid,
-      toolName: definition.name,
-      args: preparedArgs,
-      status: pending.status,
-      createdAt: serverTimestamp(),
-      clientCreatedAt: pending.createdAt,
-      expiresAt: pending.expiresAt,
-      expiresAtAt: new Date(pending.expiresAt),
-      audit: {
-        preparedBy: user.uid,
-        preparedAt: pending.createdAt,
-        conversationId,
-        confirmationGroupId
-      }
-    });
-  }
-  pendingActionMemory.set(`${user.uid}:${id}`, pending);
-  await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
+  const userPayload = {
     ...pending,
     args: sanitizePendingActionArgsForUserStorage(definition.name, preparedArgs),
     createdAt: serverTimestamp(),
@@ -2768,64 +2884,139 @@ async function savePrivateAiPendingAction(
       conversationId,
       confirmationGroupId
     }
-  }).catch((error) => {
-    logger.warn('Unable to persist private AI pending action.', { error, toolName: definition.name });
-  });
-  return pending;
-}
+  };
+  const teamPayload = payloadScope === 'team' ? {
+    userId: user.uid,
+    teamId,
+    toolName: definition.name,
+    args: preparedArgs,
+    status: pending.status,
+    createdAt: serverTimestamp(),
+    clientCreatedAt: pending.createdAt,
+    expiresAt: pending.expiresAt,
+    expiresAtAt: new Date(pending.expiresAt),
+    audit: {
+      preparedBy: user.uid,
+      preparedAt: pending.createdAt,
+      conversationId,
+      confirmationGroupId
+    }
+  } : null;
 
-async function supersedeOlderPendingActions(
-  user: AuthUser,
-  conversationId: string,
-  confirmationGroupId: string
-) {
-  const writes: Promise<unknown>[] = [];
-  pendingActionMemory.forEach((pending, key) => {
-    if (
-      pending.userId !== user.uid
-      || pending.status !== 'pending'
-      || normalizeConversationId(pending.conversationId) !== conversationId
-      || pending.confirmationGroupId === confirmationGroupId
-    ) return;
-    pending.status = 'superseded';
-    pendingActionMemory.set(key, pending);
-    writes.push(setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pending.id), {
-      status: 'superseded',
-      supersededAt: serverTimestamp()
-    }, { merge: true }).catch(() => {}));
-    writes.push(clearTeamScopedPrivateAiPayload(user, pending, 'superseded'));
-  });
-  const snapshot = await getDocs(query(
+  // Read the recent durable actions before opening the transaction. Failure is
+  // fatal: replacing a proposal without knowing which older actions to
+  // supersede can make an old confirmation executable after the UI replaced it.
+  const recentSnapshot = await getDocs(query(
     collection(db, 'users', user.uid, privateAiPendingActionCollectionName),
     orderBy('createdAt', 'desc'),
-    limit(20)
-  )).catch(() => null);
-  (snapshot?.docs || []).forEach((candidate: any) => {
+    limit(100)
+  ));
+  const recentIds = new Set<string>();
+  (recentSnapshot.docs || []).forEach((candidate: any) => {
+    const candidateId = compactText(candidate?.id);
     const data = typeof candidate?.data === 'function' ? candidate.data() : null;
-    const pendingId = compactText(candidate?.id);
     if (
-      !pendingId
-      || !isPlainObject(data)
-      || data.status !== 'pending'
-      || compactText(data.userId) !== user.uid
-      || normalizeConversationId(data.conversationId) !== conversationId
-      || compactText(data.confirmationGroupId) === confirmationGroupId
-    ) return;
-    writes.push(setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pendingId), {
-      status: 'superseded',
-      supersededAt: serverTimestamp()
-    }, { merge: true }).catch(() => {}));
-    const teamId = compactText(data.teamId);
-    if (data.payloadScope === 'team' && teamId) {
-      writes.push(setDoc(doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, pendingId), {
+      candidateId
+      && isPlainObject(data)
+      && data.status === 'pending'
+      && compactText(data.userId) === user.uid
+      && normalizeConversationId(data.conversationId) === conversationId
+    ) recentIds.add(candidateId);
+  });
+  pendingActionMemory.forEach((candidate) => {
+    if (
+      candidate.userId === user.uid
+      && candidate.status === 'pending'
+      && normalizeConversationId(candidate.conversationId) === conversationId
+    ) recentIds.add(candidate.id);
+  });
+
+  const conversationRef = doc(db, 'users', user.uid, privateAiConversationCollectionName, conversationId);
+  const userPendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id);
+  await runTransaction(db, async (transaction: any) => {
+    const conversationSnapshot = await transaction.get(conversationRef);
+    const conversationData = typeof conversationSnapshot?.data === 'function'
+      ? conversationSnapshot.data()
+      : {};
+    const storedHeadIds = Array.isArray(conversationData?.pendingActionIds)
+      ? conversationData.pendingActionIds.map(compactText).filter(Boolean)
+      : [];
+    storedHeadIds.forEach((candidateId: string) => recentIds.add(candidateId));
+
+    const candidateIds = [...recentIds].filter((candidateId) => candidateId && candidateId !== id);
+    const candidateRecords = await Promise.all(candidateIds.map(async (candidateId) => {
+      const reference = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, candidateId);
+      const snapshot = await transaction.get(reference);
+      const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+      return { id: candidateId, reference, snapshot, data };
+    }));
+    const pendingRecords = candidateRecords.filter((candidate) => (
+      candidate.snapshot?.exists?.()
+      && isPlainObject(candidate.data)
+      && candidate.data.status === 'pending'
+      && compactText(candidate.data.userId) === user.uid
+      && normalizeConversationId(candidate.data.conversationId) === conversationId
+    ));
+    const supersededRecords = pendingRecords.filter((candidate) => (
+      compactText(candidate.data.confirmationGroupId) !== confirmationGroupId
+    ));
+    const sameGroupIds = pendingRecords
+      .filter((candidate) => compactText(candidate.data.confirmationGroupId) === confirmationGroupId)
+      .map((candidate) => candidate.id);
+    const teamRecords = await Promise.all(supersededRecords.map(async (candidate) => {
+      const oldTeamId = compactText(candidate.data.teamId);
+      if (candidate.data.payloadScope !== 'team' || !oldTeamId) return null;
+      const reference = doc(db, 'teams', oldTeamId, teamPrivateAiPendingActionCollectionName, candidate.id);
+      const snapshot = await transaction.get(reference);
+      const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+      return { reference, snapshot, data };
+    }));
+
+    supersededRecords.forEach((candidate) => {
+      transaction.set(candidate.reference, {
+        status: 'superseded',
+        supersededAt: serverTimestamp(),
+        supersededBy: id
+      }, { merge: true });
+    });
+    teamRecords.forEach((candidate) => {
+      if (
+        !candidate?.snapshot?.exists?.()
+        || !isPlainObject(candidate.data)
+        || compactText(candidate.data.userId) !== user.uid
+      ) return;
+      transaction.set(candidate.reference, {
         args: {},
         status: 'superseded',
         payloadClearedAt: serverTimestamp(),
-        payloadClearedBy: user.uid
-      }, { merge: true }).catch(() => {}));
+        payloadClearedBy: user.uid,
+        supersededBy: id
+      }, { merge: true });
+    });
+    if (teamPayload) {
+      transaction.set(doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, id), teamPayload);
+    }
+    transaction.set(userPendingRef, userPayload);
+    transaction.set(conversationRef, {
+      pendingActionIds: [...new Set([...sameGroupIds, id])],
+      pendingGroupId: confirmationGroupId,
+      pendingUpdatedAt: serverTimestamp()
+    }, { merge: true });
+  });
+
+  pendingActionMemory.forEach((candidate, key) => {
+    if (
+      candidate.userId === user.uid
+      && candidate.status === 'pending'
+      && normalizeConversationId(candidate.conversationId) === conversationId
+      && candidate.confirmationGroupId !== confirmationGroupId
+    ) {
+      candidate.status = 'superseded';
+      pendingActionMemory.set(key, candidate);
     }
   });
-  await Promise.all(writes);
+  pendingActionMemory.set(`${user.uid}:${id}`, pending);
+  return pending;
 }
 
 async function claimPrivateAiPendingAction(

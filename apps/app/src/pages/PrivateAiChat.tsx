@@ -24,14 +24,20 @@ import {
   loadPrivateAiMessages,
   getPrivateAiAttachmentValidationError,
   revisePrivateAiRosterImportProposal,
+  revisePrivateAiScheduleImportProposal,
   sendPrivateAiAttachmentMessage,
   sendPrivateAiMessage,
   type PrivateAiAttachmentReceipt,
   type PrivateAiArtifactReference,
   type PrivateAiRosterArtifactReference,
+  type PrivateAiScheduleArtifactReference,
   type PrivateAiConversation,
   type PrivateAiMessage
 } from '../lib/privateAiService';
+import {
+  normalizeScheduleImportDraft,
+  type ScheduleCsvImportPreviewRow
+} from '../lib/scheduleCsvImport';
 import { loadRosterImportContextForApp } from '../lib/teamDetailService';
 import {
   getPrivateAiLaunchIntentLabel,
@@ -65,6 +71,21 @@ type RosterArtifactEdit =
   | { type: 'field'; rowNumber: number; fieldKey: string; value: unknown }
   | { type: 'contact'; rowNumber: number; contactIndex: number; contactKey: 'name' | 'email' | 'phone' | 'relation'; value: string }
   | { type: 'action'; rowNumber: number; action: 'add' };
+
+type ScheduleArtifactFieldKey =
+  | 'eventType'
+  | 'startsAt'
+  | 'endsAt'
+  | 'opponent'
+  | 'title'
+  | 'location'
+  | 'arrivalTime'
+  | 'isHome'
+  | 'notes';
+
+type ScheduleArtifactEdit =
+  | { type: 'field'; rowNumber: number; fieldKey: ScheduleArtifactFieldKey; value: string }
+  | { type: 'remove'; rowNumber: number };
 
 const suggestedPrompts = [
   'What do I need to handle today?',
@@ -500,6 +521,55 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     }
   };
 
+  const editScheduleArtifact = async (
+    messageId: string,
+    artifact: PrivateAiScheduleArtifactReference,
+    edit: ScheduleArtifactEdit
+  ) => {
+    if (!auth.user || !artifact.confirmationId || !artifact.previewRows?.length) return;
+    setStatus({ tone: 'neutral', message: 'Revalidating and saving the reviewed schedule…' });
+    try {
+      const remainingRows = edit.type === 'remove'
+        ? artifact.previewRows.filter((row) => row.rowNumber !== edit.rowNumber)
+        : artifact.previewRows;
+      if (!remainingRows.length) {
+        throw new Error('Keep at least one schedule row. Edit this row or prepare a new proposal instead.');
+      }
+      const nextRows = remainingRows.map((row, index) => {
+        const draft = getScheduleArtifactDraft(row);
+        if (edit.type === 'field' && row.rowNumber === edit.rowNumber) {
+          draft[edit.fieldKey] = edit.value;
+        }
+        return normalizeScheduleImportDraft(draft, { rowNumber: index + 1 }) as ScheduleCsvImportPreviewRow;
+      });
+      const revised = await revisePrivateAiScheduleImportProposal(auth.user, {
+        confirmationId: artifact.confirmationId,
+        teamId: artifact.teamId,
+        messageId,
+        rows: nextRows
+      });
+      setMessages((current) => current.map((message) => message.id === messageId
+        ? {
+            ...message,
+            artifacts: message.artifacts?.map((candidate) => candidate.type === 'schedule-import' && candidate.confirmationId === artifact.confirmationId
+              ? { ...candidate, previewRows: revised.rows, summary: revised.summary }
+              : candidate)
+          }
+        : message));
+      setStatus({
+        tone: revised.summary.errors ? 'error' : 'success',
+        message: revised.summary.errors
+          ? `Saved the edit. Fix ${revised.summary.errors} remaining schedule review error${revised.summary.errors === 1 ? '' : 's'} before replying yes.`
+          : 'Schedule review updated. Reply yes when the complete proposal looks right.'
+      });
+    } catch (error: any) {
+      setStatus({
+        tone: 'error',
+        message: error?.message || 'Unable to save that schedule review edit.'
+      });
+    }
+  };
+
   const startNewConversation = () => {
     if (!auth.user || conversationLoading) return;
     setStatus(null);
@@ -548,6 +618,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       status={status}
       bottomRef={bottomRef}
       onRosterArtifactEdit={editRosterArtifact}
+      onScheduleArtifactEdit={editScheduleArtifact}
       onEditAndRetryRequest={editAndRetryRequest}
     />
   );
@@ -863,6 +934,7 @@ function PrivateAiThread({
   status,
   bottomRef,
   onRosterArtifactEdit,
+  onScheduleArtifactEdit,
   onEditAndRetryRequest
 }: {
   messages: PrivateAiMessage[];
@@ -881,6 +953,7 @@ function PrivateAiThread({
   status: ChatStatus | null;
   bottomRef: MutableRefObject<HTMLDivElement | null>;
   onRosterArtifactEdit: (messageId: string, artifact: PrivateAiRosterArtifactReference, edit: RosterArtifactEdit) => Promise<void>;
+  onScheduleArtifactEdit: (messageId: string, artifact: PrivateAiScheduleArtifactReference, edit: ScheduleArtifactEdit) => Promise<void>;
   onEditAndRetryRequest: (request: { text: string; hadAttachment: boolean }) => void;
 }) {
   return (
@@ -911,6 +984,7 @@ function PrivateAiThread({
                     }
                   : null}
                 onRosterArtifactEdit={onRosterArtifactEdit}
+                onScheduleArtifactEdit={onScheduleArtifactEdit}
                 onEditAndRetryRequest={onEditAndRetryRequest}
               />
             );
@@ -1137,12 +1211,14 @@ function PrivateAiBubble({
   previous,
   retryRequest,
   onRosterArtifactEdit,
+  onScheduleArtifactEdit,
   onEditAndRetryRequest
 }: {
   message: PrivateAiMessage;
   previous: PrivateAiMessage | null;
   retryRequest: { text: string; hadAttachment: boolean } | null;
   onRosterArtifactEdit: (messageId: string, artifact: PrivateAiRosterArtifactReference, edit: RosterArtifactEdit) => Promise<void>;
+  onScheduleArtifactEdit: (messageId: string, artifact: PrivateAiScheduleArtifactReference, edit: ScheduleArtifactEdit) => Promise<void>;
   onEditAndRetryRequest: (request: { text: string; hadAttachment: boolean }) => void;
 }) {
   const isOwn = message.role === 'user';
@@ -1178,7 +1254,12 @@ function PrivateAiBubble({
           {!isOwn ? message.artifacts?.map((artifact) => artifact.type === 'document-analysis' ? (
             <PrivateAiDocumentArtifactCard key={`${artifact.type}-${artifact.fileName}-${message.id}`} artifact={artifact} />
           ) : artifact.type === 'schedule-import' ? (
-            <PrivateAiScheduleArtifactCard key={`${artifact.type}-${artifact.confirmationId || message.id}`} artifact={artifact} />
+            <PrivateAiScheduleArtifactCard
+              key={`${artifact.type}-${artifact.confirmationId || message.id}`}
+              messageId={message.id}
+              artifact={artifact}
+              onEdit={onScheduleArtifactEdit}
+            />
           ) : (
             <section key={`${artifact.type}-${artifact.confirmationId || message.id}`} className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3 text-gray-950">
               <div className="flex items-start justify-between gap-2">
@@ -1374,9 +1455,13 @@ function PrivateAiBubble({
 }
 
 function PrivateAiScheduleArtifactCard({
-  artifact
+  messageId,
+  artifact,
+  onEdit
 }: {
-  artifact: Extract<PrivateAiArtifactReference, { type: 'schedule-import' }>;
+  messageId: string;
+  artifact: PrivateAiScheduleArtifactReference;
+  onEdit: (messageId: string, artifact: PrivateAiScheduleArtifactReference, edit: ScheduleArtifactEdit) => Promise<void>;
 }) {
   return (
     <section className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-gray-950">
@@ -1416,14 +1501,126 @@ function PrivateAiScheduleArtifactCard({
                     <span className="text-[10px] font-black text-emerald-700">Row {row.rowNumber}</span>
                   </div>
                 </summary>
-                <dl className="mt-2 grid gap-2 border-t border-gray-100 pt-2 text-[11px] sm:grid-cols-2">
-                  {row.normalized.location ? <ScheduleArtifactValue label="Location" value={row.normalized.location} /> : null}
-                  {row.normalized.arrivalTime ? <ScheduleArtifactValue label="Arrival" value={formatScheduleDateTime(row.normalized.arrivalTime)} /> : null}
-                  {row.normalized.isHome !== null ? <ScheduleArtifactValue label="Site" value={row.normalized.isHome ? 'Home' : 'Away'} /> : null}
-                  {row.normalized.endsAt ? <ScheduleArtifactValue label="Ends" value={formatScheduleDateTime(row.normalized.endsAt)} /> : null}
-                  {row.normalized.notes ? <ScheduleArtifactValue label="Notes" value={row.normalized.notes} wide /> : null}
-                </dl>
+                <div className="mt-2 grid gap-3 border-t border-gray-100 pt-3 text-[11px] sm:grid-cols-2">
+                  <ScheduleArtifactField label="Event type" rowNumber={row.rowNumber}>
+                    <select
+                      className="min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 font-semibold text-gray-800"
+                      value={getScheduleArtifactDraft(row).eventType}
+                      onChange={(event) => void onEdit(messageId, artifact, {
+                        type: 'field',
+                        rowNumber: row.rowNumber,
+                        fieldKey: 'eventType',
+                        value: event.target.value
+                      })}
+                      aria-label={`Row ${row.rowNumber} Event type`}
+                    >
+                      <option value="game">Game</option>
+                      <option value="practice">Practice</option>
+                    </select>
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Starts" rowNumber={row.rowNumber}>
+                    <ScheduleArtifactInput
+                      type="datetime-local"
+                      row={row}
+                      fieldKey="startsAt"
+                      label="Starts"
+                      artifact={artifact}
+                      messageId={messageId}
+                      onEdit={onEdit}
+                    />
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Ends" rowNumber={row.rowNumber}>
+                    <ScheduleArtifactInput
+                      type="datetime-local"
+                      row={row}
+                      fieldKey="endsAt"
+                      label="Ends"
+                      artifact={artifact}
+                      messageId={messageId}
+                      onEdit={onEdit}
+                    />
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField
+                    label={row.normalized.eventType === 'game' ? 'Opponent' : 'Title'}
+                    rowNumber={row.rowNumber}
+                  >
+                    <ScheduleArtifactInput
+                      row={row}
+                      fieldKey={row.normalized.eventType === 'game' ? 'opponent' : 'title'}
+                      label={row.normalized.eventType === 'game' ? 'Opponent' : 'Title'}
+                      artifact={artifact}
+                      messageId={messageId}
+                      onEdit={onEdit}
+                    />
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Location" rowNumber={row.rowNumber}>
+                    <ScheduleArtifactInput
+                      row={row}
+                      fieldKey="location"
+                      label="Location"
+                      artifact={artifact}
+                      messageId={messageId}
+                      onEdit={onEdit}
+                    />
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Arrival" rowNumber={row.rowNumber}>
+                    <ScheduleArtifactInput
+                      type="datetime-local"
+                      row={row}
+                      fieldKey="arrivalTime"
+                      label="Arrival"
+                      artifact={artifact}
+                      messageId={messageId}
+                      onEdit={onEdit}
+                    />
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Site" rowNumber={row.rowNumber}>
+                    <select
+                      className="min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 font-semibold text-gray-800"
+                      value={getScheduleArtifactDraft(row).isHome}
+                      onChange={(event) => void onEdit(messageId, artifact, {
+                        type: 'field',
+                        rowNumber: row.rowNumber,
+                        fieldKey: 'isHome',
+                        value: event.target.value
+                      })}
+                      aria-label={`Row ${row.rowNumber} Site`}
+                    >
+                      <option value="">Not specified</option>
+                      <option value="home">Home</option>
+                      <option value="away">Away</option>
+                    </select>
+                  </ScheduleArtifactField>
+                  <ScheduleArtifactField label="Notes" rowNumber={row.rowNumber} wide>
+                    <textarea
+                      key={`${row.rowNumber}-notes-${getScheduleArtifactDraft(row).notes}`}
+                      className="min-h-20 w-full rounded-lg border border-gray-200 bg-white px-2 py-2 font-semibold text-gray-800"
+                      defaultValue={getScheduleArtifactDraft(row).notes}
+                      onBlur={(event) => {
+                        if (event.target.value === getScheduleArtifactDraft(row).notes) return;
+                        void onEdit(messageId, artifact, {
+                          type: 'field',
+                          rowNumber: row.rowNumber,
+                          fieldKey: 'notes',
+                          value: event.target.value
+                        });
+                      }}
+                      aria-label={`Row ${row.rowNumber} Notes`}
+                    />
+                  </ScheduleArtifactField>
+                </div>
                 {row.errors.length ? <div className="mt-2 text-[11px] font-bold text-rose-700" role="alert">{row.errors.join(' ')}</div> : null}
+                <div className="mt-3 flex justify-end">
+                  <button
+                    type="button"
+                    className="min-h-9 rounded-lg border border-rose-200 bg-white px-3 py-2 text-[11px] font-black text-rose-700"
+                    disabled={artifact.previewRows?.length === 1}
+                    title={artifact.previewRows?.length === 1 ? 'Keep at least one schedule row' : undefined}
+                    onClick={() => void onEdit(messageId, artifact, { type: 'remove', rowNumber: row.rowNumber })}
+                  >
+                    Remove row
+                  </button>
+                </div>
               </details>
             ))}
           </div>
@@ -1431,7 +1628,7 @@ function PrivateAiScheduleArtifactCard({
       ) : null}
       <div className="mt-2 text-[11px] font-semibold text-emerald-900">
         {artifact.summary.errors
-          ? 'Send corrected instructions or a corrected file to prepare a new review.'
+          ? 'Fix the highlighted fields before replying yes.'
           : 'Reply yes to import this schedule.'}
         {' '}A newer proposal in this chat replaces it.
       </div>
@@ -1439,13 +1636,78 @@ function PrivateAiScheduleArtifactCard({
   );
 }
 
-function ScheduleArtifactValue({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+function ScheduleArtifactField({
+  label,
+  rowNumber,
+  wide = false,
+  children
+}: {
+  label: string;
+  rowNumber: number;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <dt className="font-black uppercase tracking-[0.04em] text-gray-400">{label}</dt>
-      <dd className="mt-0.5 whitespace-pre-wrap font-semibold text-gray-700">{value}</dd>
-    </div>
+    <label className={wide ? 'sm:col-span-2' : ''}>
+      <span className="mb-1 block font-black uppercase tracking-[0.04em] text-gray-500">
+        {label}
+        <span className="sr-only"> for row {rowNumber}</span>
+      </span>
+      {children}
+    </label>
   );
+}
+
+function ScheduleArtifactInput({
+  type = 'text',
+  row,
+  fieldKey,
+  label,
+  messageId,
+  artifact,
+  onEdit
+}: {
+  type?: 'text' | 'datetime-local';
+  row: ScheduleCsvImportPreviewRow;
+  fieldKey: ScheduleArtifactFieldKey;
+  label: string;
+  messageId: string;
+  artifact: PrivateAiScheduleArtifactReference;
+  onEdit: (messageId: string, artifact: PrivateAiScheduleArtifactReference, edit: ScheduleArtifactEdit) => Promise<void>;
+}) {
+  const value = getScheduleArtifactDraft(row)[fieldKey];
+  return (
+    <input
+      key={`${row.rowNumber}-${fieldKey}-${value}`}
+      type={type}
+      className="min-h-10 w-full rounded-lg border border-gray-200 bg-white px-2 font-semibold text-gray-800"
+      defaultValue={value}
+      onBlur={(event) => {
+        if (event.target.value === value) return;
+        void onEdit(messageId, artifact, {
+          type: 'field',
+          rowNumber: row.rowNumber,
+          fieldKey,
+          value: event.target.value
+        });
+      }}
+      aria-label={`Row ${row.rowNumber} ${label}`}
+    />
+  );
+}
+
+function getScheduleArtifactDraft(row: ScheduleCsvImportPreviewRow): Record<ScheduleArtifactFieldKey, string> {
+  return {
+    eventType: row.draft?.eventType || row.normalized.eventType,
+    startsAt: row.draft?.startsAt || row.normalized.startsAt || '',
+    endsAt: row.draft?.endsAt || row.normalized.endsAt || '',
+    opponent: row.draft?.opponent ?? row.normalized.opponent ?? '',
+    title: row.draft?.title ?? row.normalized.title ?? '',
+    location: row.draft?.location ?? row.normalized.location ?? '',
+    arrivalTime: row.draft?.arrivalTime || row.normalized.arrivalTime || '',
+    isHome: row.draft?.isHome || (row.normalized.isHome === null ? '' : row.normalized.isHome ? 'home' : 'away'),
+    notes: row.draft?.notes ?? row.normalized.notes ?? ''
+  };
 }
 
 function PrivateAiDocumentArtifactCard({

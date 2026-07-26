@@ -10,6 +10,7 @@ const privateAiServiceMocks = vi.hoisted(() => ({
     loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
     revisePrivateAiRosterImportProposal: vi.fn(),
+    revisePrivateAiScheduleImportProposal: vi.fn(),
     sendPrivateAiAttachmentMessage: vi.fn(),
     sendPrivateAiMessage: vi.fn(),
     getPrivateAiAttachmentValidationError: vi.fn(() => '')
@@ -25,6 +26,7 @@ vi.mock('../lib/privateAiService', () => ({
     loadPrivateAiMessages: privateAiServiceMocks.loadPrivateAiMessages,
     getPrivateAiAttachmentValidationError: privateAiServiceMocks.getPrivateAiAttachmentValidationError,
     revisePrivateAiRosterImportProposal: privateAiServiceMocks.revisePrivateAiRosterImportProposal,
+    revisePrivateAiScheduleImportProposal: privateAiServiceMocks.revisePrivateAiScheduleImportProposal,
     sendPrivateAiAttachmentMessage: privateAiServiceMocks.sendPrivateAiAttachmentMessage,
     sendPrivateAiMessage: privateAiServiceMocks.sendPrivateAiMessage,
 }));
@@ -121,6 +123,15 @@ describe('PrivateAiChat', () => {
             invitations: 0,
             errors: 0
         });
+        privateAiServiceMocks.revisePrivateAiScheduleImportProposal.mockImplementation(async (_user, revision) => ({
+            rows: revision.rows,
+            summary: {
+                total: revision.rows.length,
+                games: revision.rows.filter((row: any) => row.normalized.eventType === 'game').length,
+                practices: revision.rows.filter((row: any) => row.normalized.eventType === 'practice').length,
+                errors: revision.rows.reduce((total: number, row: any) => total + row.errors.length, 0)
+            }
+        }));
         teamDetailServiceMocks.loadRosterImportContextForApp.mockResolvedValue({
             fields: [],
             players: []
@@ -700,5 +711,135 @@ describe('PrivateAiChat', () => {
                 })
             );
         });
+    });
+
+    it('edits, revalidates, and removes schedule rows before confirmation', async () => {
+        privateAiServiceMocks.loadPrivateAiConversations.mockResolvedValue([{
+            id: 'conversation-schedule',
+            title: 'Schedule import',
+            createdAt: new Date('2026-06-28T13:18:00Z'),
+            updatedAt: new Date('2026-06-28T13:19:00Z'),
+            lastMessagePreview: 'Schedule ready'
+        }]);
+        privateAiServiceMocks.loadPrivateAiMessages.mockResolvedValue([{
+            id: 'assistant-schedule',
+            role: 'assistant',
+            text: 'I prepared two schedule rows.',
+            createdAt: new Date('2026-06-28T13:19:00Z'),
+            conversationId: 'conversation-schedule',
+            artifacts: [{
+                type: 'schedule-import',
+                confirmationId: 'ai_schedule1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                source: 'csv',
+                summary: {
+                    total: 2,
+                    games: 1,
+                    practices: 1,
+                    errors: 0
+                },
+                previewRows: [{
+                    rowNumber: 1,
+                    draft: {
+                        eventType: 'game',
+                        startsAt: '2026-08-01T10:00',
+                        endsAt: '',
+                        opponent: 'Hawks',
+                        title: '',
+                        location: 'Field 1',
+                        arrivalTime: '',
+                        isHome: 'home',
+                        notes: ''
+                    },
+                    normalized: {
+                        rowNumber: 1,
+                        eventType: 'game',
+                        startsAt: '2026-08-01T10:00',
+                        endsAt: null,
+                        opponent: 'Hawks',
+                        title: null,
+                        location: 'Field 1',
+                        arrivalTime: null,
+                        isHome: true,
+                        notes: null
+                    },
+                    errors: []
+                }, {
+                    rowNumber: 2,
+                    draft: {
+                        eventType: 'practice',
+                        startsAt: '2026-08-02T10:00',
+                        endsAt: '',
+                        opponent: '',
+                        title: 'Practice',
+                        location: 'Gym',
+                        arrivalTime: '',
+                        isHome: '',
+                        notes: ''
+                    },
+                    normalized: {
+                        rowNumber: 2,
+                        eventType: 'practice',
+                        startsAt: '2026-08-02T10:00',
+                        endsAt: null,
+                        opponent: null,
+                        title: 'Practice',
+                        location: 'Gym',
+                        arrivalTime: null,
+                        isHome: null,
+                        notes: null
+                    },
+                    errors: []
+                }]
+            }]
+        }]);
+
+        renderChat();
+
+        const opponentInput = await screen.findByLabelText('Row 1 Opponent');
+        fireEvent.change(opponentInput, { target: { value: '' } });
+        fireEvent.blur(opponentInput);
+
+        await waitFor(() => {
+            expect(privateAiServiceMocks.revisePrivateAiScheduleImportProposal).toHaveBeenLastCalledWith(
+                auth.user,
+                expect.objectContaining({
+                    confirmationId: 'ai_schedule1',
+                    teamId: 'team-1',
+                    rows: expect.arrayContaining([
+                        expect.objectContaining({
+                            errors: ['Game rows require an opponent.']
+                        })
+                    ])
+                })
+            );
+        });
+        expect(await screen.findByText('Game rows require an opponent.')).toBeTruthy();
+        expect(screen.getByText('Saved the edit. Fix 1 remaining schedule review error before replying yes.')).toBeTruthy();
+
+        const correctedOpponentInput = screen.getByLabelText('Row 1 Opponent');
+        fireEvent.change(correctedOpponentInput, { target: { value: 'Falcons' } });
+        fireEvent.blur(correctedOpponentInput);
+
+        await waitFor(() => {
+            const calls = privateAiServiceMocks.revisePrivateAiScheduleImportProposal.mock.calls;
+            const latestRevision = calls[calls.length - 1]?.[1];
+            expect(latestRevision.rows[0].normalized.opponent).toBe('Falcons');
+            expect(latestRevision.rows[0].errors).toEqual([]);
+        });
+        expect(await screen.findByText('Schedule review updated. Reply yes when the complete proposal looks right.')).toBeTruthy();
+
+        const removeButtons = screen.getAllByRole('button', { name: 'Remove row' });
+        fireEvent.click(removeButtons[1]);
+
+        await waitFor(() => {
+            const calls = privateAiServiceMocks.revisePrivateAiScheduleImportProposal.mock.calls;
+            const latestRevision = calls[calls.length - 1]?.[1];
+            expect(latestRevision.rows).toHaveLength(1);
+            expect(latestRevision.rows[0].rowNumber).toBe(1);
+        });
+        expect(screen.getByText('1 rows')).toBeTruthy();
+        expect((screen.getByRole('button', { name: 'Remove row' }) as HTMLButtonElement).disabled).toBe(true);
     });
 });
