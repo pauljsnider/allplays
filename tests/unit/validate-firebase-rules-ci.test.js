@@ -168,7 +168,7 @@ concurrency:
           verify_active_firestore_rules() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
             curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
-            jq '.source.files[]? | select(.name == "firestore.rules")'
+            jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
           }
           if [[ "$deploy_label" == "firestore" ]]; then
             echo "latest version of firestore.rules already up to date, skipping upload"
@@ -305,6 +305,10 @@ concurrency:
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 20'
         ))).toThrow('Production Firestore exact-source indexes-only deploy');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'if length == 1 and .[0].name == "firestore.rules"',
+            'if any(.[]; .name == "firestore.rules")'
+        ))).toThrow('Production Firestore active source must contain only firestore.rules');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :

@@ -323,7 +323,12 @@ export function validateProductionDeployCommand(deployProd) {
         'projects/game-flow-c6311/releases/cloud.firestore',
         'Production Firestore active release lookup'
     );
-    assertIncludes(deployProd, '.source.files[]? | select(.name == "firestore.rules")', 'Production Firestore active source lookup');
+    assertIncludes(deployProd, '(.source.files // [])', 'Production Firestore active source lookup');
+    assertIncludes(
+        deployProd,
+        'if length == 1 and .[0].name == "firestore.rules"',
+        'Production Firestore active source must contain only firestore.rules'
+    );
     assertIncludes(
         deployProd,
         'The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write.',

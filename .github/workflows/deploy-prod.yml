@@ -517,8 +517,9 @@ jobs:
             local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
             active_rules_b64="$(
               jq -er '
-                [.source.files[]? | select(.name == "firestore.rules")]
-                | if length == 1 then (.[0].content | @base64)
+                (.source.files // [])
+                | if length == 1 and .[0].name == "firestore.rules"
+                  then (.[0].content | @base64)
                   else error("expected exactly one firestore.rules source file")
                   end
               ' "$ruleset_json" 2>/dev/null || true
