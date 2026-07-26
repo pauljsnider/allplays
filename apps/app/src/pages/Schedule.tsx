@@ -749,7 +749,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
       return events.filter((event) => event.isTeamStaff === true || staffTeamIds.has(event.teamId));
     }
     const familyTeamIds = new Set(children.map((child) => child.teamId));
-    return events.filter((event) => event.isLinkedParentChild === true || familyTeamIds.has(event.teamId));
+    return events.filter((event) => (
+      event.isLinkedParentChild === true
+      || (event.isLinkedParentChild == null && familyTeamIds.has(event.teamId))
+    ));
   }, [children, events, scheduleScope, staffTeams]);
   const scopeChildren = useMemo(
     () => (scheduleScope === 'family' ? children : []),

@@ -1014,6 +1014,70 @@ describe('Schedule', () => {
     expect(exportedText).not.toContain('Family-only practice');
   });
 
+  it('keeps explicitly non-linked same-team rows out of family views and copied agendas', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    const linkedEvent = buildScheduleEvent(1, {
+      opponent: 'Linked Lions',
+      childId: 'player-1',
+      childName: 'Pat',
+      isLinkedParentChild: true,
+      isTeamStaff: true
+    });
+    const unrelatedPlayerEvent = buildScheduleEvent(2, {
+      eventKey: 'team-1::event-2::player-2::2100-06-02T18:00:00.000Z::game',
+      opponent: 'Unrelated Unicorns',
+      childId: 'player-2',
+      childName: 'Sam',
+      isLinkedParentChild: false,
+      isTeamStaff: true
+    });
+    const legacyUnmarkedEvent = buildScheduleEvent(3, {
+      opponent: 'Legacy Leopards',
+      childId: '',
+      childName: '',
+      isLinkedParentChild: undefined,
+      isTeamStaff: true
+    });
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Pat',
+        teamId: 'team-1',
+        teamName: 'Bears'
+      }],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      isPartial: false
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-1',
+        playerName: 'Pat',
+        teamId: 'team-1',
+        teamName: 'Bears'
+      }],
+      events: [linkedEvent, unrelatedPlayerEvent, legacyUnmarkedEvent],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }]
+    });
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: clipboardWrite }
+    });
+
+    renderSchedule('/schedule?scope=family&view=calendar');
+
+    expect((await screen.findAllByText('vs. Linked Lions')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('vs. Legacy Leopards').length).toBeGreaterThan(0);
+    expect(screen.queryByText('vs. Unrelated Unicorns')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy agenda' }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledTimes(1));
+    expect(clipboardWrite.mock.calls[0][0]).toContain('Linked Lions');
+    expect(clipboardWrite.mock.calls[0][0]).toContain('Legacy Leopards');
+    expect(clipboardWrite.mock.calls[0][0]).not.toContain('Unrelated Unicorns');
+  });
+
   it('uses fresh staff scope when the cached event summary predates a newly created team', async () => {
     scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
       profile: {},
@@ -1528,10 +1592,14 @@ describe('Schedule', () => {
   });
 
   it('counts staff team schedule availability in the RSVP summary when the card needs action', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      isPartial: false
+    });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
-      children: [
-        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
-      ],
+      children: [],
       events: [
         buildScheduleEvent(1, {
           eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
@@ -1544,17 +1612,21 @@ describe('Schedule', () => {
       ]
     });
 
-    renderSchedule();
+    renderSchedule('/schedule?scope=staff');
 
     expect(await screen.findByText('1 event · 1 RSVP · 0 packets')).toBeTruthy();
     expect(screen.getAllByText('Availability needed').length).toBeGreaterThan(0);
   });
 
   it('excludes locked staff team schedule availability from the RSVP summary', async () => {
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      isPartial: false
+    });
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
-      children: [
-        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
-      ],
+      children: [],
       events: [
         buildScheduleEvent(1, {
           eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
@@ -1568,7 +1640,7 @@ describe('Schedule', () => {
       ]
     });
 
-    renderSchedule();
+    renderSchedule('/schedule?scope=staff');
 
     expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
     expect(screen.queryByText('Availability needed')).toBeNull();
