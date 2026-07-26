@@ -192,6 +192,20 @@ test('ordinary non-admin coach cannot auto-link another user', async () => {
   assert.deepEqual(harness.calls.updates, []);
 });
 
+test('ordinary non-admin coach cannot probe whether an invited email has an account', async () => {
+  const harness = createHarness({
+    actorUid: 'coach-1',
+    actorEmail: 'coach@example.com',
+    includeParent: false
+  });
+
+  await assert.rejects(
+    harness.handler({ codeId: 'code-1' }, harness.context),
+    (error) => error.code === 'permission-denied'
+  );
+  assert.equal(harness.calls.transactionCount, 0);
+});
+
 test('no existing user returns a stable negative result without transaction writes', async () => {
   const harness = createHarness({ includeParent: false });
 
@@ -251,4 +265,28 @@ test('existing user is linked to the player and invite atomically in one transac
     autoAccepted: true,
     autoAcceptedAt: NOW
   });
+});
+
+test('a repeated auto-link call returns the completed result without another transaction', async () => {
+  const harness = createHarness();
+
+  await harness.handler({ codeId: 'code-1' }, harness.context);
+  const repeated = await harness.handler({ codeId: 'code-1' }, harness.context);
+
+  assert.deepEqual(repeated, { autoLinked: true, existingUser: true, userId: 'parent-1' });
+  assert.equal(harness.calls.transactionCount, 1);
+});
+
+test('a completed auto-link still requires current team-manager access', async () => {
+  const harness = createHarness();
+  await harness.handler({ codeId: 'code-1' }, harness.context);
+
+  await assert.rejects(
+    harness.handler(
+      { codeId: 'code-1' },
+      { auth: { uid: 'parent-1', token: { email: 'parent@example.com' } } }
+    ),
+    (error) => error.code === 'permission-denied'
+  );
+  assert.equal(harness.calls.transactionCount, 1);
 });

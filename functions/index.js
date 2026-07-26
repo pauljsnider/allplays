@@ -121,6 +121,7 @@ const {
   normalizeInviteEmailType,
   shouldQueueInviteEmailOnCreate
 } = require('./invite-email-core.cjs');
+const { createInviteEmailOnCreateHandler } = require('./invite-email-trigger-core.cjs');
 const {
   AUTH_EMAIL_TYPES,
   buildAuthEmailMailDocId,
@@ -2674,19 +2675,33 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   return result;
 });
 
-exports.queueParentInviteEmail = functions.firestore
+const autoAcceptParentInviteHandler = createAutoAcceptParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  normalizeFirestoreId,
+  validateCode: validateAutoAcceptParentInviteCode
+});
+
+const inviteEmailOnCreateHandler = createInviteEmailOnCreateHandler({
+  shouldQueueInviteEmail: shouldQueueInviteEmailOnCreate,
+  autoLinkParentInvite: (codeId, generatedBy) => autoAcceptParentInviteHandler(
+    { codeId },
+    { auth: { uid: generatedBy, token: {} } }
+  ),
+  loadLatestInvite: async (snapshot) => {
+    const latestSnapshot = await snapshot.ref.get();
+    return latestSnapshot.exists ? latestSnapshot.data() || {} : snapshot.data() || {};
+  },
+  queueInviteEmail: queueInviteEmailForCode,
+  logger: functions.logger
+});
+
+exports.queueParentInviteEmail = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('accessCodes/{codeId}')
-  .onCreate(async (snap, context) => {
-    const codeData = snap.data() || {};
-    // Parent invites are queued explicitly after the existing-account
-    // auto-link attempt, so their email can accurately say either "accept"
-    // or "you were linked." Household/co-parent invites do not auto-link.
-    if (!shouldQueueInviteEmailOnCreate(codeData)) {
-      return null;
-    }
-    await queueInviteEmailForCode(context.params.codeId, codeData);
-    return null;
-  });
+  .onCreate(inviteEmailOnCreateHandler);
 
 exports.cleanupFailedInviteSignup = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -3229,13 +3244,7 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
   return { merged: true, idempotent: false, requestId: requestRef.id, affectedCollections: [...affectedCollections] };
 });
 
-exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(createAutoAcceptParentInviteHandler({
-  firestore,
-  Timestamp: admin.firestore.Timestamp,
-  HttpsError: functions.https.HttpsError,
-  normalizeFirestoreId,
-  validateCode: validateAutoAcceptParentInviteCode
-}));
+exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
 
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {

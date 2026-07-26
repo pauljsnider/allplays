@@ -999,6 +999,9 @@ function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }
           expandStaffPlayers: false,
           includePastGames: true
         });
+        if (result.isPartial === true) {
+          throw new Error('The complete team schedule could not be loaded. Retry to avoid showing missing events.');
+        }
         if (!cancelled) {
           const teamEvents = result.events.filter((event) => event.teamId === model.team.id);
           setAuthoritativeEvents(teamEvents);

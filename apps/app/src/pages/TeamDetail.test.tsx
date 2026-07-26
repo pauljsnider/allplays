@@ -660,6 +660,33 @@ describe('TeamDetail', () => {
     expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
   });
 
+  it('rejects partial authoritative schedule results instead of showing missing team events', async () => {
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      statTrackerConfigs: []
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      events: [],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+      isPartial: true
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
+    expect(screen.queryByText('No team events found.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Retry schedule' })).toBeTruthy();
+  });
+
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
     const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const managedModel = {

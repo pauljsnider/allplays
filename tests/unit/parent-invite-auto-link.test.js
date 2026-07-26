@@ -34,11 +34,20 @@ describe('parent invite auto-linking', () => {
         expect(helperIndex).toBeGreaterThanOrEqual(0);
 
         const helperSource = source.slice(helperIndex, helperIndex + 900);
-        expect(helperSource).toContain('functions.https.onCall(createAutoAcceptParentInviteHandler({');
-        expect(helperSource).toContain('firestore,');
-        expect(helperSource).toContain('Timestamp: admin.firestore.Timestamp');
-        expect(helperSource).toContain('HttpsError: functions.https.HttpsError');
-        expect(helperSource).toContain('validateCode: validateAutoAcceptParentInviteCode');
+        expect(helperSource).toContain('functions.https.onCall(autoAcceptParentInviteHandler)');
+    });
+
+    it('owns first parent-invite delivery on the retryable server trigger', () => {
+        const source = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+        const triggerIndex = source.indexOf('exports.queueParentInviteEmail');
+        expect(triggerIndex).toBeGreaterThanOrEqual(0);
+
+        const triggerSource = source.slice(triggerIndex - 1200, triggerIndex + 500);
+        expect(triggerSource).toContain('createInviteEmailOnCreateHandler({');
+        expect(triggerSource).toContain('autoLinkParentInvite:');
+        expect(triggerSource).toContain('loadLatestInvite:');
+        expect(triggerSource).toContain('.runWith({ failurePolicy: true })');
+        expect(triggerSource).toContain('.onCreate(inviteEmailOnCreateHandler)');
     });
 
     it('shows auto-linked confirmation instead of code-first instructions in roster UI', () => {

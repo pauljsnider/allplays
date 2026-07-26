@@ -50,8 +50,7 @@ function isLinkedParentInvite(invite = {}) {
 
 function shouldQueueInviteEmailOnCreate(invite = {}) {
   const inviteType = normalizeInviteEmailType(invite.type);
-  return inviteType !== 'parent'
-    && Boolean(inviteType)
+  return Boolean(inviteType)
     && isValidInviteRecipientEmail(invite.email);
 }
 

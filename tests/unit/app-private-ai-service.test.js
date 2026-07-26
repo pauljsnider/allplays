@@ -1843,6 +1843,82 @@ describe('private AI service', () => {
         ]));
     });
 
+    it('blocks schedule import review when the existing schedule load is partial', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event Type,Date,Start Time,Opponent,Location',
+            'game,2026-07-30,6:00 PM,Rockets,Field 1'
+        ].join('\n');
+        const csv = new File([csvText], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+        scheduleMocks.loadParentSchedule.mockResolvedValueOnce({
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: 'Import this Bears schedule.',
+            file: csv
+        }, 'partial-schedule-preview');
+
+        expect(result.toolResults).toEqual([]);
+        expect(result.assistantMessage).toMatchObject({ role: 'assistant', error: true });
+        expect(result.assistantMessage.text).toContain('could not be loaded completely');
+        expect(result.assistantMessage.text).toContain('duplicate games and practices');
+        expect(result.assistantMessage.pendingActionIds).toEqual([]);
+    });
+
+    it('keeps an over-200 schedule upload blocked after retaining the editable first 200 rows', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event Type,Date,Start Time,Opponent,Location',
+            ...Array.from({ length: 201 }, (_, index) => (
+                `game,2026-08-01,6:00 PM,Opponent ${index + 1},Field ${index + 1}`
+            ))
+        ].join('\n');
+        const csv = new File([csvText], 'oversized-schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: 'Import this Bears schedule.',
+            file: csv
+        }, 'oversized-schedule-preview');
+
+        expect(result.assistantMessage.text).toContain('Import at most 200 schedule rows at a time.');
+        expect(result.assistantMessage.pendingActionIds).toHaveLength(1);
+        expect(result.assistantMessage.artifacts?.[0]).toMatchObject({
+            type: 'schedule-import',
+            summary: expect.objectContaining({ total: 200, errors: 1 })
+        });
+        expect(result.assistantMessage.artifacts?.[0].previewRows).toHaveLength(200);
+        const teamPayloadWrite = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[0]?.path?.join('/').includes('/privateAiPendingActions/')
+            && call[0]?.path?.join('/').startsWith('teams/team-1/')
+        ));
+        expect(teamPayloadWrite?.[1]?.args).toMatchObject({
+            rows: expect.any(Array),
+            __scheduleValidationErrors: ['Import at most 200 schedule rows at a time.'],
+            __scheduleSourceValidationErrors: ['Import at most 200 schedule rows at a time.']
+        });
+        expect(teamPayloadWrite?.[1]?.args?.rows).toHaveLength(200);
+    });
+
     it('preserves line breaks and routes prose followed by CSV to a CSV roster artifact', async () => {
         const coachUser = {
             ...authUser,
@@ -2856,7 +2932,13 @@ describe('private AI service', () => {
         const transactionSet = vi.fn();
         mockTeamScopedPendingActionPersistence({
             confirmationId: staged.confirmationId,
-            args: { teamId: 'team-1', rows: [originalRow], source: 'csv' },
+            args: {
+                teamId: 'team-1',
+                rows: [originalRow],
+                source: 'csv',
+                __scheduleValidationErrors: ['Import at most 200 schedule rows at a time.'],
+                __scheduleSourceValidationErrors: ['Import at most 200 schedule rows at a time.']
+            },
             conversationId: 'schedule-chat',
             summary: 'Schedule import',
             toolName: 'apply_schedule_import'
@@ -2886,7 +2968,13 @@ describe('private AI service', () => {
                             userId: 'user-1',
                             toolName: 'apply_schedule_import',
                             teamId: 'team-1',
-                            args: { teamId: 'team-1', rows: [originalRow], source: 'csv' },
+                            args: {
+                                teamId: 'team-1',
+                                rows: [originalRow],
+                                source: 'csv',
+                                __scheduleValidationErrors: ['Import at most 200 schedule rows at a time.'],
+                                __scheduleSourceValidationErrors: ['Import at most 200 schedule rows at a time.']
+                            },
                             expiresAt
                         })
                     };
@@ -2934,7 +3022,7 @@ describe('private AI service', () => {
         });
 
         expect(revised).toMatchObject({
-            summary: { total: 1, games: 1, practices: 0, errors: 1 },
+            summary: { total: 1, games: 1, practices: 0, errors: 2 },
             rows: [{
                 normalized: expect.objectContaining({
                     opponent: null,
@@ -2952,9 +3040,9 @@ describe('private AI service', () => {
                     teamId: 'team-1',
                     source: 'csv',
                     rowSummary: { total: 1, games: 1, practices: 0 },
-                    validationErrorCount: 1
+                    validationErrorCount: 2
                 },
-                previewSummary: { total: 1, games: 1, practices: 0, errors: 1 }
+                previewSummary: { total: 1, games: 1, practices: 0, errors: 2 }
             }),
             { merge: true }
         );
@@ -2965,7 +3053,11 @@ describe('private AI service', () => {
                 revision: 1,
                 args: expect.objectContaining({
                     teamId: 'team-1',
-                    __scheduleValidationErrors: ['Game rows require an opponent.']
+                    __scheduleValidationErrors: [
+                        'Import at most 200 schedule rows at a time.',
+                        'Game rows require an opponent.'
+                    ],
+                    __scheduleSourceValidationErrors: ['Import at most 200 schedule rows at a time.']
                 }),
                 artifact: expect.objectContaining({
                     type: 'schedule-import',
@@ -2985,9 +3077,9 @@ describe('private AI service', () => {
             expect.objectContaining({
                 artifacts: [
                     expect.objectContaining({
-                        type: 'schedule-import',
-                        confirmationId: staged.confirmationId,
-                        summary: { total: 1, games: 1, practices: 0, errors: 1 }
+                    type: 'schedule-import',
+                    confirmationId: staged.confirmationId,
+                    summary: { total: 1, games: 1, practices: 0, errors: 2 }
                     })
                 ]
             }),
@@ -3001,7 +3093,11 @@ describe('private AI service', () => {
                 teamId: 'team-1',
                 rows: revised.rows.map((row) => row.normalized),
                 source: 'csv',
-                __scheduleValidationErrors: ['Game rows require an opponent.']
+                __scheduleValidationErrors: [
+                    'Import at most 200 schedule rows at a time.',
+                    'Game rows require an opponent.'
+                ],
+                __scheduleSourceValidationErrors: ['Import at most 200 schedule rows at a time.']
             },
             conversationId: 'schedule-chat',
             summary: 'Schedule import with one error',
@@ -3020,6 +3116,71 @@ describe('private AI service', () => {
         });
         expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
         expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
+    });
+
+    it('refuses schedule proposal edits when conflict revalidation has only partial data', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const {
+            revisePrivateAiScheduleImportProposal,
+            runPrivateAiTool
+        } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const originalRow = {
+            rowNumber: 1,
+            eventType: 'game',
+            startsAt: '2026-08-01T10:00',
+            endsAt: null,
+            opponent: 'Hawks',
+            title: null,
+            location: 'Field 1',
+            arrivalTime: null,
+            isHome: true,
+            notes: null
+        };
+        const staged = await runPrivateAiTool(coachUser, {
+            name: 'apply_schedule_import',
+            args: {
+                teamId: 'team-1',
+                __preparedScheduleRows: [originalRow],
+                source: 'csv'
+            }
+        }, { conversationId: 'partial-revision', confirmationGroupId: 'partial-revision-group' });
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', rows: [originalRow], source: 'csv' },
+            conversationId: 'partial-revision',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
+        firebaseMocks.runTransaction.mockClear();
+        scheduleMocks.loadParentSchedule.mockResolvedValueOnce({
+            children: [],
+            events: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+
+        await expect(revisePrivateAiScheduleImportProposal(coachUser, {
+            confirmationId: staged.confirmationId,
+            expectedRevision: 0,
+            teamId: 'team-1',
+            messageId: 'assistant-partial',
+            rows: [{
+                rowNumber: 1,
+                draft: {
+                    eventType: 'game',
+                    startsAt: '2026-08-01T10:00',
+                    opponent: 'Hawks'
+                },
+                normalized: originalRow,
+                errors: []
+            }]
+        })).rejects.toThrow('could not be loaded completely');
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it('stores private roster payloads at team scope and reports invitation delivery outcomes', async () => {
@@ -3759,6 +3920,51 @@ describe('private AI service', () => {
         );
         expect(result.toolResults).toHaveLength(2);
         expect(result.answer).toContain('RSVP updated');
+    });
+
+    it('executes grouped writes in order and reports partial success without inviting a whole-group retry', async () => {
+        scheduleMocks.submitParentScheduleRsvp
+            .mockResolvedValueOnce({ going: 5, notResponded: 2 })
+            .mockRejectedValueOnce(new Error('Second RSVP failed'));
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'going', note: 'First action' }
+        }, { conversationId: 'partial-group', confirmationGroupId: 'group-partial' });
+        await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', playerId: 'player-1', response: 'not_going', note: 'Second action' }
+        }, { conversationId: 'partial-group', confirmationGroupId: 'group-partial' });
+
+        const result = await generatePrivateAiAnswer(authUser, 'yes', [], { conversationId: 'partial-group' });
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ id: 'game-1' }),
+            authUser,
+            'going',
+            'First action'
+        );
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ id: 'game-1' }),
+            authUser,
+            'not_going',
+            'Second action'
+        );
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({ name: 'update_rsvp', ok: true }),
+            expect.objectContaining({ name: 'update_rsvp', ok: false, error: 'Second RSVP failed' })
+        ]);
+        expect(result.answer).toContain('Partially completed this confirmation group');
+        expect(result.answer).toContain('RSVP updated');
+        expect(result.answer).toContain('Second RSVP failed');
+        expect(result.answer).toContain('do not retry the entire group');
+
+        const repeated = await generatePrivateAiAnswer(authUser, 'yes', [], { conversationId: 'partial-group' });
+        expect(repeated.answer).toContain('do not have a pending change');
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledTimes(2);
     });
 
     it('preserves omitted private player profile fields during AI profile writes', async () => {

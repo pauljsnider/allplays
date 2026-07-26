@@ -938,6 +938,9 @@ async function sendPrivateAiScheduleImportMessage(
 
   try {
     const schedule = await loadParentSchedule(user, { includePastGames: true });
+    if (schedule.isPartial === true) {
+      throw new Error('The existing schedule could not be loaded completely. Retry before reviewing an import so duplicate games and practices are not missed.');
+    }
     const currentEvents = getCurrentScheduleImportEvents(schedule.events || [], teamId);
 
     if (input.csvText) {
@@ -974,9 +977,12 @@ async function sendPrivateAiScheduleImportMessage(
       previewErrors = preview.errors;
     }
     endPreviewTimer();
+    const sourceValidationErrors: string[] = [];
     if (rows.length > 200) {
       rows = rows.slice(0, 200);
-      previewErrors.push('Import at most 200 schedule rows at a time.');
+      const rowLimitError = 'Import at most 200 schedule rows at a time.';
+      previewErrors.push(rowLimitError);
+      sourceValidationErrors.push(rowLimitError);
     }
 
     const invalidRows = rows.filter((row) => row.errors.length > 0);
@@ -1014,7 +1020,8 @@ async function sendPrivateAiScheduleImportMessage(
             teamId,
             rows: rows.map((row) => row.normalized),
             source,
-            __scheduleValidationErrors: validationErrors
+            __scheduleValidationErrors: validationErrors,
+            ...(sourceValidationErrors.length ? { __scheduleSourceValidationErrors: sourceValidationErrors } : {})
           }, {
             conversationId: activeConversationId,
             confirmationGroupId: createConfirmationGroupId(),
@@ -1478,11 +1485,20 @@ export async function revisePrivateAiScheduleImportProposal(
     notes: row.draft?.notes ?? row.normalized.notes ?? ''
   }, { rowNumber: index + 1 })) as ScheduleCsvImportPreviewRow[];
   const schedule = await loadParentSchedule(user, { includePastGames: true });
+  if (schedule.isPartial === true) {
+    throw new Error('The existing schedule could not be loaded completely. Retry before editing this import so duplicate games and practices are not missed.');
+  }
   const rows = appendScheduleImportConflictErrors(
     normalizedRows,
     getCurrentScheduleImportEvents(schedule.events || [], teamId)
   );
-  const validationErrors = rows.flatMap((row) => row.errors || []);
+  const sourceValidationErrors = Array.isArray(pending.args.__scheduleSourceValidationErrors)
+    ? pending.args.__scheduleSourceValidationErrors.map(compactText).filter(Boolean)
+    : [];
+  const validationErrors = [
+    ...sourceValidationErrors,
+    ...rows.flatMap((row) => row.errors || [])
+  ];
   const counts = summarizeSchedulePreview(rows);
   const summary = {
     ...counts,
@@ -1492,7 +1508,8 @@ export async function revisePrivateAiScheduleImportProposal(
     teamId,
     rows: rows.map((row) => row.normalized),
     source: compactText(pending.args.source) || 'ai',
-    ...(validationErrors.length ? { __scheduleValidationErrors: validationErrors } : {})
+    ...(validationErrors.length ? { __scheduleValidationErrors: validationErrors } : {}),
+    ...(sourceValidationErrors.length ? { __scheduleSourceValidationErrors: sourceValidationErrors } : {})
   };
   const nextArtifact = stripPrivateAiArtifactForTeamStorage({
     type: 'schedule-import',
@@ -1626,12 +1643,19 @@ export async function generatePrivateAiAnswer(
       ? await resolvePendingActionIdsForNaturalConfirmation(user, priorMessages, context)
       : [];
   if (confirmedActionIds.length) {
-    const confirmationResults = await Promise.all(confirmedActionIds.map((id) => executeConfirmedPrivateAiAction(user, id)));
-    const failedResult = confirmationResults.find((result) => !result.ok);
+    const confirmationResults: PrivateAiToolResult[] = [];
+    for (const id of confirmedActionIds) {
+      confirmationResults.push(await executeConfirmedPrivateAiAction(user, id));
+    }
+    const successfulResults = confirmationResults.filter((result) => result.ok);
+    const failedResults = confirmationResults.filter((result) => !result.ok);
+    const partialFailure = successfulResults.length > 0 && failedResults.length > 0;
     return {
-      answer: failedResult
-        ? `I could not complete that confirmed action: ${failedResult.error || 'Action failed.'}`
-        : `Confirmed. ${summarizeExecutedActions(confirmationResults)}`,
+      answer: partialFailure
+        ? `Partially completed this confirmation group. Completed: ${summarizeExecutedActions(successfulResults)} Failed: ${failedResults.map((result) => result.error || `${result.name} failed.`).join(' ')} Successful actions are already saved; do not retry the entire group. Prepare only the failed changes again.`
+        : failedResults.length
+          ? `I could not complete that confirmed action: ${failedResults.map((result) => result.error || 'Action failed.').join(' ')}`
+          : `Confirmed. ${summarizeExecutedActions(confirmationResults)}`,
       toolResults: confirmationResults
     };
   }

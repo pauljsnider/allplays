@@ -15,6 +15,20 @@ function createAutoAcceptParentInviteHandler({
   normalizeFirestoreId,
   validateCode
 }) {
+  function getCompletedAutoLink(data = {}) {
+    const userId = String(data.usedBy || '').trim();
+    if (
+      data.type === 'parent_invite'
+      && data.autoAccepted === true
+      && data.used === true
+      && String(data.status || '').trim().toLowerCase() === 'accepted'
+      && userId
+    ) {
+      return { autoLinked: true, existingUser: true, userId };
+    }
+    return null;
+  }
+
   return async function autoAcceptParentInviteForExistingUser(data, context = {}) {
     if (!context.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Sign in before auto-linking a parent invite.');
@@ -28,7 +42,6 @@ function createAutoAcceptParentInviteHandler({
     }
 
     const codeData = codeSnap.data() || {};
-    validateCode(codeData);
     const inviteEmail = normalizeParentInviteEmail(codeData.email);
     if (!inviteEmail) {
       throw new HttpsError('failed-precondition', 'Parent invite has no email to auto-link.');
@@ -49,10 +62,6 @@ function createAutoAcceptParentInviteHandler({
     if (!playerSnap.exists) {
       throw new HttpsError('not-found', 'Player not found.');
     }
-    if (userQuerySnap.empty) {
-      return { autoLinked: false, existingUser: false, reason: 'no-existing-user' };
-    }
-
     const team = teamSnap.data() || {};
     const actor = actorSnap.exists ? actorSnap.data() || {} : {};
     const actorEmail = context.auth.token?.email || actor.email || '';
@@ -60,11 +69,18 @@ function createAutoAcceptParentInviteHandler({
       throw new HttpsError('permission-denied', 'Only team owners and admins can auto-link parent invites.');
     }
 
+    const completedAutoLink = getCompletedAutoLink(codeData);
+    if (completedAutoLink) return completedAutoLink;
+    validateCode(codeData);
+    if (userQuerySnap.empty) {
+      return { autoLinked: false, existingUser: false, reason: 'no-existing-user' };
+    }
+
     const targetUserDoc = userQuerySnap.docs[0];
     const userRef = targetUserDoc.ref;
     const now = Timestamp.now();
 
-    await firestore.runTransaction(async (transaction) => {
+    const transactionResult = await firestore.runTransaction(async (transaction) => {
       const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
       const [latestCodeSnap, latestPlayerSnap, latestUserSnap] = await Promise.all([
         transaction.get(codeRef),
@@ -83,6 +99,8 @@ function createAutoAcceptParentInviteHandler({
       }
 
       const latestCodeData = latestCodeSnap.data() || {};
+      const completedTransactionAutoLink = getCompletedAutoLink(latestCodeData);
+      if (completedTransactionAutoLink) return completedTransactionAutoLink;
       validateCode(latestCodeData);
       if (normalizeParentInviteEmail(latestCodeData.email) !== inviteEmail) {
         throw new HttpsError('failed-precondition', 'Parent invite email changed before auto-linking.');
@@ -126,9 +144,10 @@ function createAutoAcceptParentInviteHandler({
         autoAccepted: true,
         autoAcceptedAt: now
       });
+      return { autoLinked: true, existingUser: true, userId: userRef.id };
     });
 
-    return { autoLinked: true, existingUser: true, userId: userRef.id };
+    return transactionResult || { autoLinked: true, existingUser: true, userId: userRef.id };
   };
 }
 

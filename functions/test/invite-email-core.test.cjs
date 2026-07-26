@@ -103,11 +103,11 @@ test('builds an auto-linked parent notification without a consumed acceptance li
   assert.doesNotMatch(retryMessage.html, /LINK1234|accept-invite/);
 });
 
-test('defers parent on-create email until auto-linking completes', () => {
+test('queues every supported invite type from the durable on-create trigger', () => {
   assert.equal(shouldQueueInviteEmailOnCreate({
     type: 'parent_invite',
     email: 'parent@example.com'
-  }), false);
+  }), true);
   assert.equal(shouldQueueInviteEmailOnCreate({
     type: 'household_invite',
     email: 'family@example.com'
