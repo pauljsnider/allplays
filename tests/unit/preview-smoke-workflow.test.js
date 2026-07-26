@@ -5,16 +5,32 @@ const workflow = readFileSync(
     new URL('../../.github/workflows/preview-smoke.yml', import.meta.url),
     'utf8'
 );
+const integrationWorkflow = readFileSync(
+    new URL('../../.github/workflows/pr-integration.yml', import.meta.url),
+    'utf8'
+);
 
 describe('preview-smoke CI workflow', () => {
-    it('runs for code changes without creating duplicate runs for label churn', () => {
-        const triggerSection = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'));
+    it('is called by the consolidated code-head workflow without label-churn runs', () => {
+        const childTriggerSection = workflow.slice(
+            workflow.indexOf('\non:'),
+            workflow.indexOf('\nconcurrency:')
+        );
+        const triggerSection = integrationWorkflow.slice(
+            integrationWorkflow.indexOf('\non:'),
+            integrationWorkflow.indexOf('\npermissions:')
+        );
         const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  preview-smoke-run:'));
         const gateSection = workflow.slice(workflow.indexOf('  preview-smoke:'));
 
+        expect(childTriggerSection).toContain('workflow_call:');
+        expect(childTriggerSection).toContain('workflow_dispatch:');
+        expect(childTriggerSection).not.toContain('pull_request:');
         expect(triggerSection).toContain('      - synchronize');
         expect(triggerSection).not.toContain('      - unlabeled');
         expect(triggerSection).not.toContain('      - labeled');
+        expect(integrationWorkflow).toContain('uses: ./.github/workflows/preview-smoke.yml');
+        expect(integrationWorkflow).toContain('name: preview-smoke');
         expect(workflow).toContain('group: preview-smoke-${{ github.event.pull_request.number }}');
         expect(changesSection).not.toContain('external-claim');
         expect(changesSection).not.toContain('LABEL_NAME');
