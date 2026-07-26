@@ -122,8 +122,8 @@ function sanitizePublicLocation(value) {
   const raw = typeof value === 'string' ? value.replace(/\r/g, '') : '';
   if (!raw.trim()) return '';
   const sensitiveBoundaries = [
-    raw.search(/(?:^|\n)\s*(?:\(?\s*arrival\s+time\b|assignments?\s*:)/i),
-    raw.search(/\s+\(\s*arrival\s+time\b/i),
+    raw.search(/(?:^|\n)\s*\(?\s*(?:arrival\s+time\b|assignments?\s*:)/i),
+    raw.search(/\s+\(\s*(?:arrival\s+time\b|assignments?\s*:)/i),
     raw.search(/\s+assignments?\s*:/i)
   ].filter((index) => index >= 0);
   const sensitiveBoundary = sensitiveBoundaries.length ? Math.min(...sensitiveBoundaries) : -1;

@@ -181,6 +181,8 @@ test('query parsing uses complete UTC days and calendar years for default bounds
 test('location and team id sanitizers reject unsafe values', () => {
   assert.equal(sanitizePublicLocation('Field 4\nArrival Time: 5:00 PM\nAssignments: snacks'), 'Field 4');
   assert.equal(sanitizePublicLocation('Field 4 (Arrival Time: 5:00 PM) Assignments: snacks'), 'Field 4');
+  assert.equal(sanitizePublicLocation('Field 4 (Assignments: Snacks - Parent Name)'), 'Field 4');
+  assert.equal(sanitizePublicLocation('(Assignment: Parent Name)'), '');
   assert.equal(normalizeTeamId('team_123-ABC'), 'team_123-ABC');
   assert.equal(normalizeTeamId('../team'), '');
 });
