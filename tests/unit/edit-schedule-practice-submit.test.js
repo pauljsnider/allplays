@@ -126,6 +126,7 @@ describe('edit schedule practice save flow', () => {
                 title: 'Recurring Practice',
                 startDate,
                 endDate,
+                timeZone: 'America/Chicago',
                 location: 'Main Gym',
                 notes: 'Ball movement',
                 scheduleNotifications: {
@@ -165,6 +166,7 @@ describe('edit schedule practice save flow', () => {
             startTime: '17:00',
             endTime: '18:30',
             endDayOffset: 0,
+            timeZone: 'America/Chicago',
             recurrence: {
                 freq: 'weekly',
                 interval: 2,
@@ -199,6 +201,7 @@ describe('edit schedule practice save flow', () => {
                 title: 'Recurring Practice',
                 startDate,
                 endDate,
+                timeZone: 'America/Chicago',
                 location: 'Aux Gym',
                 notes: 'Update cadence',
                 scheduleNotifications: {
@@ -238,6 +241,7 @@ describe('edit schedule practice save flow', () => {
             startTime: '17:15',
             endTime: '18:45',
             endDayOffset: 0,
+            timeZone: 'America/Chicago',
             recurrence: {
                 freq: 'weekly',
                 interval: 1,
@@ -254,9 +258,10 @@ describe('edit schedule practice save flow', () => {
     it('wires the practice submit flow through the shared save helper', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=2';");
+        expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=3';");
         expect(source).toContain('const { savedPracticeId } = await savePracticeForm({');
         expect(source).toContain('applyPracticeRecurrenceFields');
+        expect(source).toContain("endDayOffset: document.getElementById('occurrence-end-time').value <= document.getElementById('occurrence-start-time').value ? 1 : 0");
     });
 
     it('does not save isSeriesMaster or recurrence when editing a non-recurring practice', async () => {

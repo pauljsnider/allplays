@@ -88,7 +88,10 @@ const {
   parsePublicGamesQuery,
   serializePublicGame
 } = require('./public-team-api-core.cjs');
-const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
+const {
+  buildCalendarFeedGamesQuery,
+  buildCalendarFeedRecurringMastersQuery
+} = require('./calendar-feed-window-core.cjs');
 const {
   buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryJobPlan,
@@ -5900,6 +5903,10 @@ function getCalendarFeedGamesQuery(teamId) {
   return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
 }
 
+function getCalendarFeedRecurringMastersQuery(teamId) {
+  return buildCalendarFeedRecurringMastersQuery(firestore.collection(`teams/${teamId}/games`));
+}
+
 const PUBLIC_TEAM_API_CACHE_CONTROL = 'public, max-age=60, s-maxage=300';
 const PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS = 1000;
 const PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS = 5000;
@@ -6194,8 +6201,18 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const eventsSnap = await getCalendarFeedGamesQuery(teamId).get();
-    const events = eventsSnap.docs.map((docSnap) => {
+    const [eventsSnap, recurringMastersSnap] = await Promise.all([
+      getCalendarFeedGamesQuery(teamId).get(),
+      getCalendarFeedRecurringMastersQuery(teamId).get()
+    ]);
+    const recurringPracticeDocs = recurringMastersSnap.docs.filter((docSnap) => {
+      const event = docSnap.data() || {};
+      return event.type === 'practice' && event.isSeriesMaster === true && Boolean(event.recurrence);
+    });
+    const eventDocs = new Map(
+      [...eventsSnap.docs, ...recurringPracticeDocs].map((docSnap) => [docSnap.id, docSnap])
+    );
+    const events = [...eventDocs.values()].map((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
       game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
       return game;
