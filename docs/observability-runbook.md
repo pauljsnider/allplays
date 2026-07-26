@@ -69,7 +69,7 @@ If the critical workflow monitor is noisy, disable only its schedule while inves
 
 ## Firestore Rules API retry exhaustion
 
-The serialized production release train allows at most three Firestore Rules API checks per release: up to two non-persistent `projects:test` health probes, followed by one persistent Firestore rules/index deployment attempt only after the probe passes. If the probe or deployment fails, the job summary identifies the Google API surface, final HTTP error class, attempt count, and surfaces that were not deployed. The summary uses only fixed operational labels and does not copy API response bodies, credentials, tenant identifiers, or application data.
+The serialized production release train allows at most five Firestore Rules API checks per release: up to two non-persistent `projects:test` health probes, followed by up to three persistent Firestore rules/index deployment attempts only after the probe passes. If the probe or deployment fails, the job summary identifies the Google API surface, final HTTP error class, attempt count, and surfaces that were not deployed. The summary uses only fixed operational labels and does not copy API response bodies, credentials, tenant identifiers, or application data.
 
 Application deployment remains fail-closed. When Rules or indexes differ from the last successful production deployment, Hosting and Functions do not deploy until the combined Firestore configuration command succeeds. The Firebase CLI may apply indexes before a later Rules API failure, so treat the Rules and index state as potentially partial and verify both before retrying. Existing Hosting and Functions production remains active; do not bypass the workflow or deploy application surfaces separately.
 
