@@ -109,6 +109,36 @@ describe('role-aware Schedule submenu', () => {
         expect(buildScheduleSubmenuGroups(auth).map((group) => group.id)).toEqual(['family', 'staff']);
     });
 
+    it('shows staff navigation after authoritative team discovery for an adminEmails-only manager', () => {
+        const auth = authState({
+            user: {
+                uid: 'email-admin-1',
+                email: 'team-admin@example.com',
+                displayName: 'Team Admin',
+                roles: []
+            }
+        });
+
+        expect(hasStaffScheduleAccess(auth)).toBe(false);
+        expect(buildScheduleSubmenuGroups(auth, 'team-admin', {
+            hasFamily: false,
+            hasStaff: true
+        })).toEqual([
+            expect.objectContaining({
+                id: 'staff',
+                items: expect.arrayContaining([
+                    expect.objectContaining({
+                        id: 'staff-schedule',
+                        path: expect.stringContaining('teamId=team-admin')
+                    }),
+                    expect.objectContaining({ id: 'staff-add' }),
+                    expect.objectContaining({ id: 'staff-attendance' }),
+                    expect.objectContaining({ id: 'staff-ai' })
+                ])
+            })
+        ]);
+    });
+
     it('renders one role-aware task row on mobile instead of both navigation groups', () => {
         const auth = authState({
             roles: ['parent', 'coach'],

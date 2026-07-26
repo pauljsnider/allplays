@@ -5,6 +5,7 @@ import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
 import { hasFamilyScheduleAccess, hasStaffScheduleAccess, ScheduleRoleSubmenu } from '../components/ScheduleRoleSubmenu';
+import { useScheduleAccessReporter } from '../components/ScheduleAccessReporting';
 import {
   hydrateParentScheduleRsvps,
   loadParentSchedule,
@@ -175,15 +176,24 @@ function mergePartialScheduleScope(
   };
 }
 
+function resolveScheduleScope(
+  auth: AuthState,
+  requestedScope: string | null,
+  childCount: number,
+  staffTeamCount: number
+): 'family' | 'staff' {
+  const hasFamilyAccess = hasFamilyScheduleAccess(auth) || childCount > 0;
+  const hasStaffAccess = hasStaffScheduleAccess(auth) || staffTeamCount > 0;
+  if (requestedScope === 'staff' && hasStaffAccess) return 'staff';
+  if (requestedScope === 'family' && hasFamilyAccess) return 'family';
+  return hasStaffAccess && !hasFamilyAccess ? 'staff' : 'family';
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
+  const reportScheduleAccess = useScheduleAccessReporter();
   const requestedScheduleScope = searchParams.get('scope');
-  const scheduleScope = requestedScheduleScope === 'staff' || requestedScheduleScope === 'family'
-    ? requestedScheduleScope
-    : hasStaffScheduleAccess(auth) && !hasFamilyScheduleAccess(auth)
-      ? 'staff'
-      : 'family';
   const staffSection = String(searchParams.get('staffSection') || '').trim();
   const [filter, setFilter] = useState<ParentScheduleFilter>(() => getScheduleFilterFromQuery(searchParams.get('filter')) || 'upcoming-all');
   const [view, setView] = useState<ScheduleViewMode>(() => getScheduleViewFromQuery(searchParams.get('view')) || 'list');
@@ -193,6 +203,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [staffTeams, setStaffTeams] = useState<ParentScheduleStaffTeam[]>([]);
+  const hasFamilyAccess = hasFamilyScheduleAccess(auth) || children.length > 0;
+  const hasStaffAccess = hasStaffScheduleAccess(auth) || staffTeams.length > 0;
+  const scheduleScope = resolveScheduleScope(
+    auth,
+    requestedScheduleScope,
+    children.length,
+    staffTeams.length
+  );
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
   const {
     loading: scheduleReadLoading,
@@ -225,6 +243,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const staffTeamsRef = useRef<ParentScheduleStaffTeam[]>([]);
+  const activeScheduleScopeRef = useRef<'family' | 'staff'>(scheduleScope);
+  activeScheduleScopeRef.current = scheduleScope;
   const activeUserIdRef = useRef<string | null>(auth.user?.uid || null);
   const scheduleRefreshVersionRef = useRef(0);
   activeUserIdRef.current = auth.user?.uid || null;
@@ -240,10 +261,48 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
+    staffTeamsRef.current = data.staffTeams ?? [];
+    activeScheduleScopeRef.current = resolveScheduleScope(
+      auth,
+      requestedScheduleScope,
+      data.children.length,
+      staffTeamsRef.current.length
+    );
     setChildren(data.children);
     setEvents(data.events);
-    setStaffTeams(data.staffTeams ?? []);
+    setStaffTeams(staffTeamsRef.current);
   };
+
+  const updateScheduleStaffTeams = (
+    updater: (current: ParentScheduleStaffTeam[]) => ParentScheduleStaffTeam[]
+  ) => {
+    const nextStaffTeams = updater(staffTeamsRef.current);
+    staffTeamsRef.current = nextStaffTeams;
+    activeScheduleScopeRef.current = resolveScheduleScope(
+      auth,
+      requestedScheduleScope,
+      childrenRef.current.length,
+      nextStaffTeams.length
+    );
+    setStaffTeams(nextStaffTeams);
+  };
+
+  useEffect(() => {
+    const userId = auth.user?.uid;
+    if (!userId) {
+      reportScheduleAccess(null);
+      return;
+    }
+    reportScheduleAccess({
+      userId,
+      hasFamily: hasFamilyAccess,
+      hasStaff: hasStaffAccess
+    });
+  }, [auth.user?.uid, hasFamilyAccess, hasStaffAccess, reportScheduleAccess]);
+
+  useEffect(() => () => {
+    reportScheduleAccess(null);
+  }, [reportScheduleAccess]);
 
   const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
     const mergedChildren = [...childrenRef.current];
@@ -337,7 +396,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }
     });
 
-    const teamIds = Array.from(new Set(childrenRef.current.map((child) => child.teamId).filter(Boolean)));
+    const teamIds = Array.from(new Set([
+      ...childrenRef.current.map((child) => child.teamId),
+      ...(activeScheduleScopeRef.current === 'staff'
+        ? staffTeamsRef.current.map((team) => team.teamId)
+        : [])
+    ].filter(Boolean)));
     if (!teamIds.length) {
       return null;
     }
@@ -471,7 +535,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           );
           childrenRef.current = mergedScope.children;
           setChildren(mergedScope.children);
-          setStaffTeams((currentStaffTeams) => (
+          updateScheduleStaffTeams((currentStaffTeams) => (
             mergePartialScheduleScope(
               childrenRef.current,
               eventsRef.current,
@@ -486,6 +550,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
         refreshedChildren = parentScope.children ?? [];
         refreshedStaffTeams = parentScope.staffTeams ?? [];
         childrenRef.current = refreshedChildren;
+        staffTeamsRef.current = refreshedStaffTeams;
+        activeScheduleScopeRef.current = resolveScheduleScope(
+          auth,
+          requestedScheduleScope,
+          refreshedChildren.length,
+          refreshedStaffTeams.length
+        );
         setChildren(refreshedChildren);
         setStaffTeams(refreshedStaffTeams);
         updateScheduleEvents((currentEvents) => applyAuthoritativeScheduleScope(
@@ -1049,6 +1120,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           selectedTeamId={selectedTeamId}
           variant="page"
           activeState={{ scope: scheduleScope, view, filter, staffSection }}
+          access={{ hasFamily: hasFamilyAccess, hasStaff: hasStaffAccess }}
         />
       ) : null}
 

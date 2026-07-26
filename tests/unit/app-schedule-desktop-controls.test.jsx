@@ -371,6 +371,93 @@ describe('React app desktop Schedule controls', () => {
         expect(container.textContent).not.toContain('Import schedule CSV');
     });
 
+    it('defaults an adminEmails-only manager to staff scope and reveals the mobile staff submenu', async () => {
+        layoutState.isDesktopWeb = false;
+        layoutState.isMobileWeb = true;
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-admin', teamName: 'Admin Team' }],
+            isPartial: false
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            staffTeams: [{ teamId: 'team-admin', teamName: 'Admin Team' }],
+            events: [event({
+                eventKey: 'team-admin::game-1::staff',
+                teamId: 'team-admin',
+                teamName: 'Admin Team',
+                childId: 'staff',
+                childName: 'Team',
+                isTeamStaff: true
+            })]
+        });
+
+        const { container } = await renderSchedule(['/schedule']);
+        await waitForText(container, 'Team schedule management');
+
+        expect(container.querySelector('[data-testid="schedule-mobile-subnav"]')).toBeTruthy();
+        expect(container.textContent).toContain('Schedule');
+        expect(container.textContent).toContain('Add');
+        expect(container.textContent).toContain('Attendance');
+        expect(container.textContent).toContain('AI');
+        expect(container.textContent).not.toContain('Family schedule tasks');
+    });
+
+    it('loads older staff history using authoritative teams for a manager without linked children', async () => {
+        const staffTeam = { teamId: 'team-admin', teamName: 'Admin Team' };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [staffTeam],
+            isPartial: false
+        });
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.scheduleRangeByTeam) {
+                return {
+                    children: [],
+                    staffTeams: [staffTeam],
+                    events: [event({
+                        eventKey: 'team-admin::older-game::staff',
+                        id: 'older-game',
+                        teamId: 'team-admin',
+                        teamName: 'Admin Team',
+                        childId: 'staff',
+                        childName: 'Team',
+                        opponent: 'Older Opponent',
+                        date: futureDate(-(500 * 24)),
+                        isTeamStaff: true
+                    })]
+                };
+            }
+            return {
+                children: [],
+                staffTeams: [staffTeam],
+                events: [event({
+                    eventKey: 'team-admin::recent-game::staff',
+                    id: 'recent-game',
+                    teamId: 'team-admin',
+                    teamName: 'Admin Team',
+                    childId: 'staff',
+                    childName: 'Team',
+                    opponent: 'Recent Opponent',
+                    date: futureDate(-(30 * 24)),
+                    isTeamStaff: true
+                })]
+            };
+        });
+
+        const { container } = await renderSchedule(['/schedule?filter=past-all']);
+        await waitForText(container, 'Older Opponent');
+
+        const historyCall = scheduleMocks.loadParentSchedule.mock.calls.find(([, options]) => options?.scheduleRangeByTeam);
+        expect(historyCall?.[1]?.scheduleRangeByTeam).toHaveProperty('team-admin');
+        expect(historyCall?.[1]?.scheduleRangeByTeam['team-admin']).toEqual({
+            startDate: expect.any(Date),
+            endDate: expect.any(Date)
+        });
+    });
+
     it('opens the tournament shell from staff tools and cancels without creating data', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             children: [
@@ -514,6 +601,7 @@ describe('React app desktop Schedule controls', () => {
             children: [
                 { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
             ],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
             events: [event({ isTeamStaff: true })]
         });
 
@@ -745,6 +833,7 @@ describe('React app desktop Schedule controls', () => {
             children: [
                 { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
             ],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
             events: [event({ isTeamStaff: true })]
         });
         clearAppDataCache('app-schedule-summary');

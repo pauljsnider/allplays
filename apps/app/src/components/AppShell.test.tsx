@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useEffect } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,7 @@ import { AppShell } from './AppShell';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
+import { useScheduleAccessReporter } from './ScheduleAccessReporting';
 
 const publicActionMocks = vi.hoisted(() => ({
   openPublicUrl: vi.fn(() => Promise.resolve()),
@@ -89,6 +91,18 @@ vi.mock('./NotificationInboxSheet', () => ({
   ),
 }));
 
+function ReportDiscoveredScheduleAccess() {
+  const reportAccess = useScheduleAccessReporter();
+  useEffect(() => {
+    reportAccess({
+      userId: 'user-123',
+      hasFamily: false,
+      hasStaff: true
+    });
+  }, [reportAccess]);
+  return <div>Schedule content</div>;
+}
+
 const auth: AuthState = {
   user: null,
   profile: null,
@@ -119,6 +133,45 @@ function LocationDisplay() {
 }
 
 describe('AppShell', () => {
+  it('updates desktop schedule navigation for an authoritatively discovered email-only team admin', async () => {
+    const emailOnlyAdminAuth = {
+      ...signedInAuth,
+      roles: [],
+      isParent: false,
+      isCoach: false,
+      isAdmin: false,
+      user: signedInAuth.user ? {
+        ...signedInAuth.user,
+        roles: [],
+        parentTeamIds: [],
+        parentPlayerKeys: [],
+        parentOf: [],
+        coachOf: []
+      } : null
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route
+            path="/schedule"
+            element={(
+              <AppShell auth={emailOnlyAdminAuth}>
+                <ReportDiscoveredScheduleAccess />
+              </AppShell>
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Team schedule')).toBeTruthy();
+      expect(screen.getByText('Manage with AI')).toBeTruthy();
+    });
+    expect(screen.queryByText('Family schedule')).toBeNull();
+  });
+
   beforeEach(() => {
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);

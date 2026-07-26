@@ -23,19 +23,26 @@ type ScheduleSubmenuActiveState = {
   staffSection?: string;
 };
 
+export type ScheduleSubmenuAccess = {
+  hasFamily: boolean;
+  hasStaff: boolean;
+};
+
 export function ScheduleRoleSubmenu({
   auth,
   selectedTeamId = '',
   variant = 'sidebar',
-  activeState
+  activeState,
+  access
 }: {
   auth: AuthState;
   selectedTeamId?: string;
   variant?: 'sidebar' | 'page';
   activeState?: ScheduleSubmenuActiveState;
+  access?: ScheduleSubmenuAccess;
 }) {
   const location = useLocation();
-  const groups = buildScheduleSubmenuGroups(auth, selectedTeamId);
+  const groups = buildScheduleSubmenuGroups(auth, selectedTeamId, access);
   if (!groups.length) return null;
 
   if (variant === 'page') {
@@ -129,10 +136,16 @@ export function ScheduleRoleSubmenu({
   );
 }
 
-export function buildScheduleSubmenuGroups(auth: AuthState, selectedTeamId = ''): ScheduleSubmenuGroup[] {
+export function buildScheduleSubmenuGroups(
+  auth: AuthState,
+  selectedTeamId = '',
+  access?: ScheduleSubmenuAccess
+): ScheduleSubmenuGroup[] {
   const groups: ScheduleSubmenuGroup[] = [];
   const teamQuery = selectedTeamId ? `&teamId=${encodeURIComponent(selectedTeamId)}` : '';
-  if (hasFamilyScheduleAccess(auth)) {
+  const hasFamilyAccess = access?.hasFamily ?? hasFamilyScheduleAccess(auth);
+  const hasStaffAccess = access?.hasStaff ?? hasStaffScheduleAccess(auth);
+  if (hasFamilyAccess) {
     groups.push({
       id: 'family',
       label: 'Family schedule',
@@ -144,7 +157,7 @@ export function buildScheduleSubmenuGroups(auth: AuthState, selectedTeamId = '')
       ]
     });
   }
-  if (hasStaffScheduleAccess(auth)) {
+  if (hasStaffAccess) {
     groups.push({
       id: 'staff',
       label: 'Team management',

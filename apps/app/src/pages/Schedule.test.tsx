@@ -1678,6 +1678,7 @@ describe('Schedule', () => {
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
       ],
+      staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
       events: Array.from({ length: 16 }, (_, index) => buildScheduleEvent(index + 1, {
         isTeamStaff: true,
         opponent: `Rivals ${index + 1}`

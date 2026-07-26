@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -43,6 +43,10 @@ import type { AuthState, AuthUser, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
 import { hasFamilyScheduleAccess, ScheduleRoleSubmenu } from './ScheduleRoleSubmenu';
+import {
+  ScheduleAccessReportingProvider,
+  type ScheduleAccessReport
+} from './ScheduleAccessReporting';
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
@@ -108,6 +112,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [signingOut, setSigningOut] = useState(false);
+  const [reportedScheduleAccess, setReportedScheduleAccess] = useState<ScheduleAccessReport | null>(null);
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -134,6 +139,21 @@ export function AppShell({ auth, children }: AppShellProps) {
           ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
           : 'No unread notifications'
     : 'No unread notifications';
+  const reportScheduleAccess = useCallback((report: ScheduleAccessReport | null) => {
+    setReportedScheduleAccess((current) => {
+      if (
+        current?.userId === report?.userId
+        && current?.hasFamily === report?.hasFamily
+        && current?.hasStaff === report?.hasStaff
+      ) {
+        return current;
+      }
+      return report;
+    });
+  }, []);
+  const activeReportedScheduleAccess = reportedScheduleAccess?.userId === auth.user?.uid
+    ? reportedScheduleAccess
+    : null;
   const handleSignOut = async () => {
     setSigningOut(true);
     try {
@@ -396,6 +416,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   );
 
   return (
+    <ScheduleAccessReportingProvider onReport={reportScheduleAccess}>
     <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Notification status" data-testid="app-shell-notification-status">
         {unreadNotificationStatus}
@@ -478,7 +499,16 @@ export function AppShell({ auth, children }: AppShellProps) {
                         <span>{item.label}</span>
                       </NavLink>
                       {item.label === 'Schedule' && location.pathname === '/schedule' ? (
-                        <ScheduleRoleSubmenu auth={auth} selectedTeamId={new URLSearchParams(location.search).get('teamId') || ''} />
+                        <ScheduleRoleSubmenu
+                          auth={auth}
+                          selectedTeamId={new URLSearchParams(location.search).get('teamId') || ''}
+                          access={activeReportedScheduleAccess
+                            ? {
+                                hasFamily: activeReportedScheduleAccess.hasFamily,
+                                hasStaff: activeReportedScheduleAccess.hasStaff
+                              }
+                            : undefined}
+                        />
                       ) : null}
                     </div>
                   );
@@ -768,6 +798,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         </Modal>
       ) : null}
     </div>
+    </ScheduleAccessReportingProvider>
   );
 }
 
