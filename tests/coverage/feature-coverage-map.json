@@ -774,12 +774,16 @@
                 "listPublicOpportunities",
                 "listPublicOpportunityReports",
                 "moderatePublicOpportunity",
+                "publicTeamGamesV1",
+                "publicTeamRosterV1",
                 "renewPublicOpportunity",
                 "replyToOpportunityInquiry",
                 "reportPublicOpportunity",
                 "updatePublicOpportunity"
             ],
             "unitTests": [
+                "functions/test/public-team-api-core.test.cjs",
+                "functions/test/public-team-api-handler-contract.test.cjs",
                 "tests/unit/public-opportunities-core.test.js",
                 "tests/unit/public-opportunities-functions-source.test.js",
                 "tests/unit/public-opportunities-rules.test.js"

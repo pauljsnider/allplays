@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export const PREVIEW_WORKFLOW_NAME = 'deploy-preview';
-export const PREVIEW_WORKFLOW_PATH = '.github/workflows/deploy-preview.yml';
+export const PREVIEW_WORKFLOW_NAME = 'pr-integration';
+export const PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-integration.yml';
 export const PREVIEW_ARTIFACT_NAME = 'firebase-preview-hosting-bundle';
 export const MAX_PREVIEW_ARCHIVE_BYTES = 100 * 1024 * 1024;
 

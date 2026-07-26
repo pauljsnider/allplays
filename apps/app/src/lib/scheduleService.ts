@@ -1985,6 +1985,7 @@ export type SchedulePracticeFormInput = {
   title: string;
   startDate: Date;
   endDate: Date;
+  timeZone?: string | null;
   location?: string | null;
   notes?: string | null;
   scheduleNotifications?: Record<string, unknown> | null;
@@ -2219,6 +2220,7 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
     recurrenceConfig: recurrence,
     startDate,
     endDate,
+    timeZone: compactString(input.timeZone) || Intl.DateTimeFormat().resolvedOptions().timeZone,
     Timestamp,
     deleteField,
     generateSeriesId
@@ -2246,10 +2248,15 @@ function buildOccurrenceOverridePayload(input: SchedulePracticeFormInput) {
   if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
   if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
   if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  const startDay = new Date(startDate);
+  const endDay = new Date(endDate);
+  startDay.setHours(0, 0, 0, 0);
+  endDay.setHours(0, 0, 0, 0);
   return {
     title,
     startTime: startDate.toTimeString().slice(0, 5),
     endTime: endDate.toTimeString().slice(0, 5),
+    endDayOffset: Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000)),
     location: compactString(input.location),
     notes: compactString(input.notes)
   };

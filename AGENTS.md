@@ -34,11 +34,12 @@ Open legacy pages at `http://localhost:8000`. Open the app locally at `http://lo
 ## Testing Guidelines
 
 ### Test suite overview
-The repo has two automated test tiers:
+The repo has three automated test tiers:
 
 | Tier | Framework | Location | Run command |
 |------|-----------|----------|-------------|
-| Unit | Vitest | `tests/unit/` | `npm test` |
+| Legacy unit/contracts | Vitest | `tests/unit/` | `npm test` |
+| React app | Vitest | `apps/app/src/` | `npm run test:app` |
 | Smoke (E2E) | Playwright | `tests/smoke/` | `npm run test:smoke` |
 
 ### Unit tests (`tests/unit/`)
@@ -46,6 +47,13 @@ The repo has two automated test tiers:
 - Test pure logic extracted into JS modules, and assert on HTML structure/content of static pages.
 - Mock Firebase and external deps with `vi.fn()` / `vi.mock()`.
 - Run a single file during development: `npx vitest run tests/unit/my-file.test.js --reporter=verbose`
+
+### React app tests (`apps/app/src/`)
+- Keep React component and app unit tests colocated with app code.
+- Run focused tests through the app package configuration:
+  `npm run test:app -- src/path/to/file.test.tsx`.
+- The app setup loads `@testing-library/jest-dom/vitest`; do not move app tests
+  to root `tests/unit/` to work around missing DOM matchers.
 
 ### Smoke tests (`tests/smoke/`)
 - Use Playwright against a live server (`npm run serve:firebase` or `python3 -m http.server`).
@@ -55,7 +63,7 @@ The repo has two automated test tiers:
 
 ### What to write for each change
 - **New JS module:** unit test covering the exported functions and error branches.
-- **New React app helper:** unit test in `tests/unit/` and focused Playwright smoke when it changes a user flow.
+- **New React app helper:** colocated app unit test and focused Playwright smoke when it changes a user flow.
 - **New static HTML page:** unit test checking structure, data attributes, JS wiring, and internal link targets; smoke test checking boot, key selectors, and interactive behaviors.
 - **Bug fix:** add a regression unit test that fails before the fix and passes after.
 - **UI flow change:** update or extend the relevant smoke spec.
@@ -84,4 +92,18 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 - Update Firebase web config in `js/firebase.js` and `js/firebase-images.js` when changing projects.
 - Ensure Auth authorized domains include local dev and the deployed host.
 - Public Firebase config in app/native bundles is expected; do not commit service account keys, private API keys, provisioning profiles, or signing certificates.
-- GitHub Pages deployment uses `.github/workflows/app-github-pages.yml` and `scripts/stage-pages-bundle.mjs` to publish the legacy site root plus the React build under `/app/`.
+- Pull-request CI has two code-head entrypoints: `pr-fast` for unit and app
+  quality checks, and `pr-integration` for reusable regression, native, preview
+  smoke, and untrusted preview-artifact work. Preserve the stable
+  `unit-tests`, `cache-bust-guard`, `app-quality`, `mobile-build`, and
+  `preview-smoke` contexts.
+- `external-claim` is ownership metadata and must not trigger or restart CI.
+  Legacy workflow files are reusable/manual only; do not restore competing
+  pull-request or master-push triggers.
+- GitHub Pages publication is serialized behind the exact-SHA production
+  release in `.github/workflows/deploy-prod.yml`.
+  `.github/workflows/app-github-pages.yml` is manual validation only.
+- Keep the untrusted reusable `deploy-preview.yml` builder separate from the
+  default-branch `deploy-preview-trusted.yml` OIDC workflow. The trusted
+  verifier is bound to the successful `pr-integration` run and exact current
+  head.

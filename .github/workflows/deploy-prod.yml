@@ -6,13 +6,17 @@ on:
       - master
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: production-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -47,6 +51,8 @@ jobs:
 
   regression-guards:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -220,6 +226,20 @@ jobs:
           fi
           if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             firestore_success_sha="$last_success_sha"
+          fi
+          if [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            && [[ "$last_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            && git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null \
+            && git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
+            if git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"; then
+              if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
+                echo "::notice::A newer complete production deployment supersedes the older Firestore component marker; advancing the rules baseline."
+              fi
+              firestore_success_sha="$last_success_sha"
+            elif ! git merge-base --is-ancestor "$last_success_sha" "$firestore_success_sha"; then
+              echo "::warning::The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
+              firestore_success_sha=""
+            fi
           fi
 
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
@@ -570,6 +590,64 @@ jobs:
             done
           }
 
+          test_firestore_rules_api() {
+            local max_attempts="${1:-2}"
+            local base_delay_seconds="${2:-20}"
+            local attempt request_file response_file curl_status http_status retry_delay_seconds
+            request_file="$RUNNER_TEMP/firestore-rules-preflight-request.json"
+            jq -n \
+              --rawfile content "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" \
+              '{
+                source:{
+                  files:[{
+                    name:"firestore.rules",
+                    content:$content
+                  }]
+                },
+                testSuite:{testCases:[]}
+              }' >"$request_file"
+
+            for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+              response_file="$RUNNER_TEMP/firestore-rules-preflight-attempt-${attempt}.json"
+              set +e
+              http_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 60 \
+                  --output "$response_file" \
+                  --write-out '%{http_code}' \
+                  --request POST \
+                  --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+                  --header "Content-Type: application/json" \
+                  --data-binary "@${request_file}" \
+                  "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
+              )"
+              curl_status="$?"
+              set -e
+
+              if (( curl_status == 0 )) \
+                && [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
+                && ! jq -e 'any(.issues[]?; .severity == "ERROR")' "$response_file" >/dev/null; then
+                echo "::notice::The non-persistent Firestore Rules API preflight passed on attempt ${attempt}/${max_attempts}."
+                return 0
+              fi
+
+              if (( curl_status == 0 )) \
+                && [[ ! "$http_status" =~ ^(408|409|429|500|502|503|504)$ ]]; then
+                echo "Firestore Rules API preflight failed with non-transient HTTP ${http_status}." >&2
+                return 1
+              fi
+              if (( attempt == max_attempts )); then
+                echo "Firestore Rules API health preflight did not recover after ${max_attempts} bounded attempts; no persistent Firestore, Functions, or Hosting mutation was attempted." >&2
+                return 1
+              fi
+
+              retry_delay_seconds=$((base_delay_seconds * attempt))
+              echo "Transient Firestore Rules API preflight failure (curl=${curl_status}, HTTP=${http_status}); retrying in ${retry_delay_seconds}s." >&2
+              sleep "$retry_delay_seconds"
+            done
+          }
+
           record_component_deployment() {
             local component_environment="$1"
             local component_description="$2"
@@ -627,7 +705,14 @@ jobs:
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             # Keep coupled authorization/index changes fail-closed: application code
             # must not publish until its Firestore configuration is active.
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
+            # Probe the non-persistent projects:test endpoint first. A known
+            # Rules API outage opens the circuit before any ruleset/release
+            # mutation. The actual idempotent deploy gets three bounded attempts
+            # because the API can recover between a successful preflight and the
+            # Firebase CLI's own compile request. This keeps the total
+            # projects:test calls bounded to at most five per release run.
+            test_firestore_rules_api 2 20
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
           else
             # No authorization/index drift exists relative to the last successful
             # production deployment. Do not make a redundant Rules API write: an
@@ -658,6 +743,51 @@ jobs:
             node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply
           fi
 
+      - name: Record Firebase component deployment markers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          record_component() {
+            local environment="$1"
+            local description="$2"
+            local deployment_id
+            deployment_id="$(
+              jq -n \
+                --arg ref "$GITHUB_SHA" \
+                --arg environment "$environment" \
+                '{
+                  ref:$ref,
+                  environment:$environment,
+                  auto_merge:false,
+                  required_contexts:[],
+                  transient_environment:false,
+                  production_environment:true,
+                  description:"Release-train component marker"
+                }' \
+                | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
+            )"
+            jq -n \
+              --arg description "$description" \
+              --arg environment "$environment" \
+              --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              '{
+                state:"success",
+                description:$description,
+                environment:$environment,
+                log_url:$log_url,
+                auto_inactive:true
+              }' \
+              | gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+                --input - \
+                --jq '.state' \
+                | grep -Fxq success
+          }
+          record_component production-storage "Storage authorization is current at ${GITHUB_SHA}."
+          record_component production-functions "Firebase Functions are current at ${GITHUB_SHA}."
+          record_component production-firebase-hosting "Firebase Hosting is current at ${GITHUB_SHA}."
+
       - name: Remove production deploy credential
         if: always()
         env:
@@ -672,3 +802,97 @@ jobs:
             echo "GOOGLE_APPLICATION_CREDENTIALS="
             echo "GOOGLE_GHA_CREDS_PATH="
           } >> "$GITHUB_ENV"
+
+  deploy-pages:
+    if: vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'
+    needs: [prepare-deploy, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+
+    steps:
+      - name: Download exact-SHA production handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: firebase-production-trusted-ready
+          path: ${{ runner.temp }}/firebase-production-ready
+
+      - name: Validate Pages handoff identity
+        env:
+          EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/firebase-production-ready"
+          runtime_config="$bundle/site/.well-known/allplays-runtime-config.json"
+          [[ "$PREPARED_HEAD_SHA" == "$GITHUB_SHA" ]]
+          grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"
+          test -f "$bundle/site/index.html"
+          test -f "$bundle/site/app/index.html"
+          test -f "$bundle/site/.nojekyll"
+          [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]
+          jq -e \
+            --arg expected_site_key "$EXPECTED_APP_CHECK_SITE_KEY" \
+            '.appCheck.enabled == true and
+             .appCheck.recaptchaEnterpriseSiteKey == $expected_site_key' \
+            "$runtime_config" >/dev/null
+
+      - name: Upload exact-SHA Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: ${{ runner.temp }}/firebase-production-ready/site
+
+      - name: Deploy exact-SHA Pages artifact
+        id: pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+  release-marker:
+    if: >-
+      always() &&
+      needs.deploy.result == 'success' &&
+      (needs.deploy-pages.result == 'success' || needs.deploy-pages.result == 'skipped')
+    needs: [deploy, deploy-pages]
+    runs-on: ubuntu-latest
+    permissions:
+      deployments: write
+
+    steps:
+      - name: Record complete release marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deployment_id="$(
+            jq -n \
+              --arg ref "$GITHUB_SHA" \
+              '{
+                ref:$ref,
+                environment:"production-release",
+                auto_merge:false,
+                required_contexts:[],
+                transient_environment:false,
+                production_environment:true,
+                description:"Complete serialized production release"
+              }' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq '.id'
+          )"
+          jq -n \
+            --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{
+              state:"success",
+              description:"All enabled production components reached the exact release SHA.",
+              environment:"production-release",
+              log_url:$log_url,
+              auto_inactive:true
+            }' \
+            | gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              --input - \
+              --jq '.state' \
+              | grep -Fxq success

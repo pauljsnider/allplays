@@ -95,7 +95,7 @@ on:
 
 concurrency:
   group: production-deploy-\${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
       - name: Checkout
         uses: actions/checkout@v5
@@ -133,6 +133,9 @@ concurrency:
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
           firestore_success_sha="$deployment_sha"
+          git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
+          firestore_success_sha="$last_success_sha"
+          echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
       - name: Deploy Firebase Storage rules when available
@@ -177,8 +180,13 @@ concurrency:
             echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
           } >> "$GITHUB_STEP_SUMMARY"
           fi
+          test_firestore_rules_api() {
+            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
+          }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
+            projects:test calls bounded to at most five per release run
+            test_firestore_rules_api 2 20
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
           else
             :
           fi
@@ -278,16 +286,16 @@ concurrency:
             'docs/observability-runbook.md'
         ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`,
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20`,
             `retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30`
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20`
         ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
           fi`,
             `else
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
           fi`
         ))).toThrow('Production must not redeploy unchanged Firestore configuration');
     });

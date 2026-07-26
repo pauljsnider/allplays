@@ -118,9 +118,12 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
         expect(production.slice(productionDeploy)).toContain('timeout-minutes: 20');
         const oidcJobs = workflowJobs(production).filter((job) => job.permissions?.['id-token'] === 'write');
-        expect(oidcJobs).toHaveLength(1);
-        expect(JSON.stringify(oidcJobs[0])).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
-        expect(JSON.stringify(oidcJobs[0])).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        expect(oidcJobs).toHaveLength(2);
+        for (const oidcJob of oidcJobs) {
+            expect(JSON.stringify(oidcJob)).not.toMatch(/npm (?:ci|install)|stage-pages-bundle|write-firebase-hosting-config/);
+            expect(JSON.stringify(oidcJob)).toMatch(/actions\/download-artifact@[0-9a-f]{40}/);
+        }
+        expect(production).toMatch(/actions\/deploy-pages@[0-9a-f]{40}/);
         expect(production).toMatch(/name: Upload trusted production deploy handoff[\s\S]*retention-days: 30/);
         expect(production).toContain('functions-runtime.tar');
         expect(production).toContain('cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"');
@@ -153,6 +156,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production).toContain('deployments: read');
         expect(production).toContain('deployments: write');
         expect(production).toContain('firestore_success_sha="$deployment_sha"');
+        expect(production).toContain(
+            'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"'
+        );
+        expect(production).toContain('firestore_success_sha="$last_success_sha"');
+        expect(production).toContain(
+            'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.'
+        );
         expect(componentMarker).toBeGreaterThan(end);
         expect(componentMarker).toBeLessThan(retryEnabledDeploy);
         expect(retryEnabledDeploy).toBeGreaterThan(end);

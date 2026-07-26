@@ -110,7 +110,7 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('bounds normal deploys to three attempts and gives Firestore an extended retry window', () => {
+    it('bounds normal and probe-gated Firestore deploys to three attempts', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
@@ -139,7 +139,9 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('if (( attempt == max_attempts )); then');
         expect(productionSource).toContain('retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))');
         expect(productionSource).toContain('if (( retry_delay_seconds > 120 )); then');
-        expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30');
+        expect(productionSource).toContain('test_firestore_rules_api 2 20');
+        expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20');
+        expect(productionSource).toContain('projects:test calls bounded to at most five per release run');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');
         const retryEnabledDeploy = productionSource.indexOf('"retry-enabled-functions"');
         const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');

@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  deployments: read
 
 concurrency:
   group: post-deploy-smoke-${{ github.event.workflow_run.head_branch }}
@@ -23,6 +24,36 @@ jobs:
       name: production-smoke
 
     steps:
+      - name: Verify complete exact-SHA release marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          deployment_ids="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+              -f environment=production-release \
+              -f sha="$RELEASE_SHA" \
+              -F per_page=20 \
+              --jq '.[].id'
+          )"
+          [[ -n "$deployment_ids" ]]
+          release_current=false
+          while IFS= read -r deployment_id; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            state="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+                -F per_page=1 \
+                --jq '.[0].state // ""'
+            )"
+            if [[ "$state" == "success" ]]; then
+              release_current=true
+              break
+            fi
+          done <<<"$deployment_ids"
+          [[ "$release_current" == "true" ]]
+
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
