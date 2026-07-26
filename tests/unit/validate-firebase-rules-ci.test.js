@@ -190,9 +190,14 @@ concurrency:
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
           }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            projects:test calls bounded to at most five per release run
-            test_firestore_rules_api 2 20
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+            if verify_active_firestore_rules; then
+              echo "The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
+              retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
+            else
+              projects:test calls bounded to at most five per release run
+              test_firestore_rules_api 2 20
+              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+            fi
           else
             :
           fi
@@ -296,6 +301,10 @@ concurrency:
             `retry_firebase_deploy "hosting,functions" "application"
             retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20`
         ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
+            'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 20'
+        ))).toThrow('Production Firestore exact-source indexes-only deploy');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
