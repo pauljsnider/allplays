@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parse as parseYaml } from 'yaml';
 
 function readProjectFile(path) {
     return readFileSync(path, 'utf8');
@@ -17,8 +16,6 @@ describe('Capacitor native config', () => {
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLockSource = readProjectFile('apps/app/pnpm-lock.yaml');
-        const appPnpmLock = parseYaml(appPnpmLockSource);
 
         const rootRuntimePackages = ['@capacitor/cli', '@capacitor/android', '@capacitor/core', '@capacitor/ios'];
         rootRuntimePackages.forEach((dependency) => {
@@ -38,12 +35,6 @@ describe('Capacitor native config', () => {
         expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
         expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
         expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
-
-        expect(appPnpmLock.importers['.'].dependencies['@capacitor/core'].specifier).toBe('^8.5.0');
-        expect(appPnpmLock.importers['.'].dependencies['@capacitor/camera'].specifier).toBe('^8.2.2');
-        expect(appPnpmLock.packages['@capacitor/core@8.5.0']).toBeDefined();
-        expect(appPnpmLock.packages['@capacitor/camera@8.2.2']).toBeDefined();
-        expect(appPnpmLockSource).not.toMatch(/@capacitor\/core(?:@|': )8\.4\.2/);
     });
 
     it('keeps the synchronized iOS SwiftPM runtime aligned with the JavaScript lockfile', () => {
@@ -154,24 +145,21 @@ describe('Capacitor native config', () => {
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
 
-    it('pins the app Vite dependency version in both lockfiles', () => {
+    it('pins the app Vite dependency version in the npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
 
+        expect(existsSync('apps/app/pnpm-lock.yaml')).toBe(false);
         expect(appPackage.devDependencies.vite).toBe('^8.2.1');
         expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.2.1');
         expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.2.1');
-        expect(appPnpmLock).toContain('vite@8.2.1:');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
-        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.2.1`);
     });
 
-    it('keeps app dependency maintenance updates aligned across the manifest and lockfiles', () => {
+    it('keeps app dependency maintenance updates aligned across the manifest and npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const expectedDependencies = {
             'lucide-react': { group: 'dependencies', specifier: '^1.32.0', version: '1.32.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
@@ -181,26 +169,20 @@ describe('Capacitor native config', () => {
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
-            const pnpmDependency = appPnpmLock.importers['.'][expected.group][dependency];
-
             expect(appPackage[expected.group][dependency]).toBe(expected.specifier);
             expect(appPackageLock.packages[''][expected.group][dependency]).toBe(expected.specifier);
             expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
-            expect(pnpmDependency.specifier).toBe(expected.specifier);
-            expect(pnpmDependency.version).toMatch(new RegExp(`^${expected.version.replaceAll('.', '\\.')}(?:$|\\()`));
-            expect(appPnpmLock.packages[`${dependency}@${expected.version}`]).toBeDefined();
         });
     });
 
-    it('keeps the pnpm jsdom dependency graph aligned with the app update', () => {
-        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
-        const jsdomDependency = appPnpmLock.importers['.'].devDependencies.jsdom;
+    it('keeps the npm jsdom dependency graph aligned with the app update', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
 
-        expect(jsdomDependency).toEqual({ specifier: '^30.0.1', version: '30.0.1' });
-        expect(appPnpmLock.packages['jsdom@30.0.1']).toBeDefined();
-        expect(appPnpmLock.packages['jsdom@29.1.1']).toBeUndefined();
-        expect(appPnpmLock.packages['undici@8.10.0'].engines.node).toBe('>=22.19.0');
-        expect(appPnpmLock.packages['undici@7.28.0']).toBeUndefined();
+        expect(appPackage.devDependencies.jsdom).toBe('^30.0.1');
+        expect(appPackageLock.packages['node_modules/jsdom'].version).toBe('30.0.1');
+        expect(appPackageLock.packages['node_modules/undici'].version).toBe('8.10.0');
+        expect(appPackageLock.packages['node_modules/undici'].engines.node).toBe('>=22.19.0');
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
@@ -229,7 +211,6 @@ describe('Capacitor native config', () => {
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
@@ -245,10 +226,6 @@ describe('Capacitor native config', () => {
         expect(appPackageLock.packages[''].dependencies[appCheckPackage]).toBe(appCheckVersion);
         expect(rootPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
         expect(appPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
-        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].specifier).toBe(appCheckVersion);
-        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].version).toMatch(/^8\.4\.0(?:$|\()/);
-        expect(appPnpmLock.packages[`${appCheckPackage}@${appCheckVersion}`]).toBeDefined();
-        expect(Object.keys(appPnpmLock.snapshots)).toContainEqual(expect.stringMatching(/^@capacitor-firebase\/app-check@8\.4\.0\(/));
         expect(androidSettings).toContain("include ':capacitor-firebase-app-check'");
         expect(androidBuild).toContain("implementation project(':capacitor-firebase-app-check')");
         expect(config.experimental.ios.spm.packageOptions['@capacitor-firebase/app-check']).toEqual({
@@ -301,27 +278,22 @@ describe('Capacitor native config', () => {
         expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
     });
 
-    it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
+    it('keeps Vitest and coverage peer versions aligned in the app npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const vitestVersion = appPackage.devDependencies.vitest.replace(/^\^/, '');
 
         expect(appPackage.devDependencies['@vitest/coverage-v8']).toBe(`^${vitestVersion}`);
         expect(appPackageLock.packages[''].devDependencies.vitest).toBe(`^${vitestVersion}`);
         expect(appPackageLock.packages['node_modules/vitest'].version).toBe(vitestVersion);
         expect(appPackageLock.packages['node_modules/@vitest/coverage-v8'].peerDependencies.vitest).toBe(vitestVersion);
-        expect(appPnpmLock).toContain(`version: ${vitestVersion}(vitest@${vitestVersion})`);
-        expect(appPnpmLock).toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@${vitestVersion})':`);
-        expect(appPnpmLock).not.toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@4.1.9)'`);
     });
 
-    it('keeps shared dependency maintenance versions aligned across manifests and lockfiles', () => {
+    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and npm lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
             firebase: { specifier: '12.17.1', version: '12.17.1' },
@@ -335,21 +307,6 @@ describe('Capacitor native config', () => {
             expect(appPackageLock.packages[''].dependencies[dependency]).toBe(expected.specifier);
             expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
             expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
-        });
-
-        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.2':");
-        expect(appPnpmLock).toContain('firebase@12.17.1:');
-        expect(appPnpmLock).not.toContain('firebase@12.17.0:');
-        expect(appPnpmLock).toContain('web-vitals@6.1.1:');
-        const expectedPluginVersions = {
-            '@capacitor-firebase/app-check': '8.4.0',
-            '@capacitor-firebase/authentication': '8.4.0',
-            '@capacitor-firebase/messaging': '8.4.0',
-            '@capacitor-firebase/performance': '8.4.0'
-        };
-        Object.entries(expectedPluginVersions).forEach(([plugin, version]) => {
-            expect(appPnpmLock).toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.1)`);
-            expect(appPnpmLock).not.toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.0)`);
         });
     });
 
