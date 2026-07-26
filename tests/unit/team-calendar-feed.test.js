@@ -151,8 +151,8 @@ describe('team calendar subscription feed', () => {
         });
 
         expect(occurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
-            date: new Date('2026-07-28T00:00:00Z'),
-            end: new Date('2026-07-28T01:30:00Z')
+            date: new Date('2026-07-27T23:00:00Z'),
+            end: new Date('2026-07-28T00:30:00Z')
         });
     });
 
@@ -175,6 +175,90 @@ describe('team calendar subscription feed', () => {
         expect(chicagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
             date: new Date('2026-07-27T23:00:00Z'),
             end: new Date('2026-07-28T00:30:00Z')
+        });
+    });
+
+    it('infers legacy US timezones so wall-clock times remain stable across DST', () => {
+        const newYorkOccurrences = expandRecurringCalendarEvent({
+            id: 'new-york-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-06T23:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const losAngelesOccurrences = expandRecurringCalendarEvent({
+            id: 'los-angeles-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T02:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(newYorkOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-27T22:00:00Z'),
+            end: new Date('2026-07-27T23:30:00Z')
+        });
+        expect(losAngelesOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T01:00:00Z'),
+            end: new Date('2026-07-28T02:30:00Z')
+        });
+    });
+
+    it('uses recurrence weekdays to disambiguate legacy negative-antimeridian offsets', () => {
+        const honoluluOccurrences = expandRecurringCalendarEvent({
+            id: 'honolulu-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T04:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+        const pagoPagoOccurrences = expandRecurringCalendarEvent({
+            id: 'pago-pago-evening',
+            type: 'practice',
+            isSeriesMaster: true,
+            date: new Date('2025-01-07T05:00:00Z'),
+            startTime: '18:00',
+            endTime: '19:30',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO']
+            }
+        }, {
+            now: new Date('2026-07-25T12:00:00Z')
+        });
+
+        expect(honoluluOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T04:00:00Z'),
+            end: new Date('2026-07-28T05:30:00Z')
+        });
+        expect(pagoPagoOccurrences.find((occurrence) => occurrence.instanceDate === '2026-07-27')).toMatchObject({
+            date: new Date('2026-07-28T05:00:00Z'),
+            end: new Date('2026-07-28T06:30:00Z')
         });
     });
 
