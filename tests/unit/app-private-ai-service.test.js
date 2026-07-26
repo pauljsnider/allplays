@@ -252,13 +252,14 @@ function mockTeamScopedPendingActionPersistence({
     teamId = 'team-1',
     args,
     conversationId = 'default',
-    summary = 'Roster import'
+    summary = 'Roster import',
+    toolName = 'apply_roster_import'
 }) {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
     const userData = {
         status: 'pending',
         userId: 'user-1',
-        toolName: 'apply_roster_import',
+        toolName,
         args: { teamId, operationSummary: { total: args.operations?.length || 0 } },
         payloadScope: 'team',
         teamId,
@@ -269,7 +270,7 @@ function mockTeamScopedPendingActionPersistence({
     const teamData = {
         status: 'pending',
         userId: 'user-1',
-        toolName: 'apply_roster_import',
+        toolName,
         teamId,
         args,
         expiresAt
@@ -550,7 +551,7 @@ describe('private AI service', () => {
         ]);
     });
 
-    it('restores attachment receipts and editable roster preview rows from saved chats', async () => {
+    it('hydrates editable roster preview rows from the revocable team payload', async () => {
         const previewRow = rosterPreviewRow({
             errors: ['Row 1: no matching existing player was found.']
         });
@@ -587,6 +588,33 @@ describe('private AI service', () => {
                 })
             }]
         });
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => ({
+                status: 'pending',
+                userId: 'user-1',
+                teamId: 'team-1',
+                toolName: 'apply_roster_import',
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                artifact: {
+                    type: 'roster-import',
+                    confirmationId: 'ai_roster_1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    source: 'csv',
+                    summary: {
+                        total: 1,
+                        add: 0,
+                        update: 1,
+                        deactivate: 0,
+                        reactivate: 0,
+                        invitations: 0,
+                        errors: 1
+                    },
+                    previewRows: [previewRow]
+                }
+            })
+        });
 
         const { loadPrivateAiMessages } = await import('../../apps/app/src/lib/privateAiService.ts');
         const messages = await loadPrivateAiMessages(authUser, undefined, 'conversation-roster');
@@ -608,7 +636,37 @@ describe('private AI service', () => {
         });
     });
 
-    it('restores normalized schedule preview rows without retaining raw CSV row data', async () => {
+    it('hydrates normalized schedule preview rows from the revocable team payload', async () => {
+        const secureArtifact = {
+            type: 'schedule-import',
+            confirmationId: 'ai_schedule_1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            source: 'csv',
+            summary: {
+                total: 1,
+                games: 1,
+                practices: 0,
+                errors: 0
+            },
+            previewRows: [{
+                rowNumber: 1,
+                draft: { rawOpponentColumn: 'Rockets' },
+                normalized: {
+                    rowNumber: 1,
+                    eventType: 'game',
+                    startsAt: '2026-07-30T18:00:00.000Z',
+                    endsAt: null,
+                    opponent: 'Rockets',
+                    title: null,
+                    location: 'Field 1',
+                    arrivalTime: null,
+                    isHome: true,
+                    notes: 'Wear white'
+                },
+                errors: []
+            }]
+        };
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
                 id: 'msg-schedule-preview',
@@ -617,38 +675,20 @@ describe('private AI service', () => {
                     text: 'This schedule is ready to review.',
                     conversationId: 'conversation-schedule',
                     clientCreatedAt: '2026-05-21T12:01:00Z',
-                    artifacts: [{
-                        type: 'schedule-import',
-                        confirmationId: 'ai_schedule_1',
-                        teamId: 'team-1',
-                        teamName: 'Bears',
-                        source: 'csv',
-                        summary: {
-                            total: 1,
-                            games: 1,
-                            practices: 0,
-                            errors: 0
-                        },
-                        previewRows: [{
-                            rowNumber: 1,
-                            draft: { rawOpponentColumn: 'Rockets' },
-                            normalized: {
-                                rowNumber: 1,
-                                eventType: 'game',
-                                startsAt: '2026-07-30T18:00:00.000Z',
-                                endsAt: null,
-                                opponent: 'Rockets',
-                                title: null,
-                                location: 'Field 1',
-                                arrivalTime: null,
-                                isHome: true,
-                                notes: 'Wear white'
-                            },
-                            errors: []
-                        }]
-                    }]
+                    artifacts: [secureArtifact]
                 })
             }]
+        });
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => ({
+                status: 'pending',
+                userId: 'user-1',
+                teamId: 'team-1',
+                toolName: 'apply_schedule_import',
+                expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                artifact: secureArtifact
+            })
         });
 
         const { loadPrivateAiMessages } = await import('../../apps/app/src/lib/privateAiService.ts');
@@ -667,6 +707,75 @@ describe('private AI service', () => {
             }]
         });
         expect(messages[0].artifacts[0].previewRows[0].draft).toEqual({});
+    });
+
+    it.each([
+        {
+            type: 'roster-import',
+            confirmationId: 'ai_roster_revoked',
+            summary: {
+                total: 1,
+                add: 0,
+                update: 1,
+                deactivate: 0,
+                reactivate: 0,
+                invitations: 1,
+                errors: 0
+            },
+            previewRows: [rosterPreviewRow({
+                contacts: [{ email: 'private-parent@example.com' }]
+            })]
+        },
+        {
+            type: 'schedule-import',
+            confirmationId: 'ai_schedule_revoked',
+            summary: { total: 1, games: 1, practices: 0, errors: 0 },
+            previewRows: [{
+                rowNumber: 1,
+                draft: {},
+                normalized: {
+                    rowNumber: 1,
+                    eventType: 'game',
+                    startsAt: '2026-07-30T18:00:00.000Z',
+                    opponent: 'Rockets',
+                    location: 'Private Field',
+                    notes: 'Private note'
+                },
+                errors: []
+            }]
+        }
+    ])('removes legacy $type preview details when team access is revoked', async (artifact) => {
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{
+                id: `message-${artifact.confirmationId}`,
+                data: () => ({
+                    role: 'assistant',
+                    text: 'Review prepared.',
+                    conversationId: 'revoked-team',
+                    clientCreatedAt: '2026-05-21T12:01:00Z',
+                    artifacts: [{
+                        ...artifact,
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        source: 'csv'
+                    }]
+                })
+            }]
+        });
+        firebaseMocks.getDoc.mockRejectedValueOnce(new Error('permission-denied'));
+
+        const { loadPrivateAiMessages } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const messages = await loadPrivateAiMessages(authUser, undefined, 'revoked-team');
+
+        expect(messages[0].artifacts[0]).toMatchObject({
+            type: artifact.type,
+            confirmationId: artifact.confirmationId,
+            teamId: 'team-1',
+            summary: artifact.summary
+        });
+        expect(messages[0].artifacts[0]).not.toHaveProperty('previewRows');
+        expect(JSON.stringify(messages[0].artifacts[0])).not.toContain('private-parent@example.com');
+        expect(JSON.stringify(messages[0].artifacts[0])).not.toContain('Private Field');
     });
 
     it('loads and creates user-scoped private AI conversations', async () => {
@@ -1242,19 +1351,24 @@ describe('private AI service', () => {
             .find((payload) => payload.role === 'assistant');
         expect(storedAssistant.artifacts[0]).toMatchObject({
             type: 'roster-import',
-            previewRows: [{
-                rowNumber: 1,
-                action: 'update',
-                name: 'Avery',
-                number: '10',
-                fields: [
-                    { key: 'name', label: 'Name', type: 'text', value: 'Avery' },
-                    { key: 'number', label: 'Jersey Number', type: 'text', value: '10' }
-                ]
-            }]
+            summary: expect.objectContaining({ total: 1, update: 1 })
         });
-        expect(storedAssistant.artifacts[0].previewRows[0]).not.toHaveProperty('operation');
-        expect(storedAssistant.artifacts[0].previewRows[0]).not.toHaveProperty('rawOperation');
+        expect(storedAssistant.artifacts[0]).not.toHaveProperty('previewRows');
+        const storedTeamPayload = firebaseMocks.setDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload.toolName === 'apply_roster_import' && payload.artifact);
+        expect(storedTeamPayload.artifact.previewRows[0]).toMatchObject({
+            rowNumber: 1,
+            action: 'update',
+            name: 'Avery',
+            number: '10',
+            fields: [
+                { key: 'name', label: 'Name', type: 'text', value: 'Avery' },
+                { key: 'number', label: 'Jersey Number', type: 'text', value: '10' }
+            ]
+        });
+        expect(storedTeamPayload.artifact.previewRows[0]).not.toHaveProperty('operation');
+        expect(storedTeamPayload.artifact.previewRows[0]).not.toHaveProperty('rawOperation');
     });
 
     it('persists an actionable roster failure when the pending import cannot be saved', async () => {
@@ -1385,7 +1499,11 @@ describe('private AI service', () => {
             .map((call) => call[1])
             .find((payload) => payload.role === 'assistant');
         expect(storedAssistant.pendingActionIds).toHaveLength(1);
-        expect(storedAssistant.artifacts[0].previewRows[0]).toMatchObject({
+        expect(storedAssistant.artifacts[0]).not.toHaveProperty('previewRows');
+        const storedTeamPayload = firebaseMocks.setDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload.toolName === 'apply_roster_import' && payload.artifact);
+        expect(storedTeamPayload.artifact.previewRows[0]).toMatchObject({
             action: 'update',
             name: 'Avery',
             fields: expect.arrayContaining([
@@ -1393,7 +1511,7 @@ describe('private AI service', () => {
             ]),
             errors: ['Row 1: no matching existing player was found.']
         });
-        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('untrustedExtra');
+        expect(JSON.stringify(storedTeamPayload.artifact)).not.toContain('untrustedExtra');
 
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
@@ -1403,6 +1521,10 @@ describe('private AI service', () => {
                     clientCreatedAt: '2026-07-25T12:00:00Z'
                 })
             }]
+        });
+        firebaseMocks.getDoc.mockResolvedValueOnce({
+            exists: () => true,
+            data: () => storedTeamPayload
         });
         const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-reload');
         expect(reloaded[0]).toMatchObject({
@@ -2432,6 +2554,19 @@ describe('private AI service', () => {
                         })
                     };
                 }
+                if (path === `teams/team-1/privateAiPendingActions/${staged.confirmationId}`) {
+                    return {
+                        exists: () => true,
+                        data: () => ({
+                            status: 'pending',
+                            userId: 'user-1',
+                            toolName: 'apply_roster_import',
+                            teamId: 'team-1',
+                            args: { teamId: 'team-1', operations: [originalOperation] },
+                            expiresAt: new Date(Date.now() + 60_000).toISOString()
+                        })
+                    };
+                }
                 if (path === 'users/user-1/privateAiMessages/assistant-roster') {
                     return {
                         exists: () => true,
@@ -2450,13 +2585,7 @@ describe('private AI service', () => {
                                     reactivate: 0,
                                     invitations: 0,
                                     errors: 0
-                                },
-                                previewRows: [rosterPreviewRow({
-                                    action: 'add',
-                                    playerId: '',
-                                    name: 'Avery',
-                                    operation: originalOperation
-                                })]
+                                }
                             }]
                         })
                     };
@@ -2508,7 +2637,19 @@ describe('private AI service', () => {
                 args: {
                     teamId: 'team-1',
                     operations: [revisedOperation]
-                }
+                },
+                artifact: expect.objectContaining({
+                    type: 'roster-import',
+                    previewRows: [
+                        expect.objectContaining({
+                            action: 'add',
+                            name: 'Avery Smith',
+                            fields: expect.arrayContaining([
+                                expect.objectContaining({ key: 'name', value: 'Avery Smith' })
+                            ])
+                        })
+                    ]
+                })
             }),
             { merge: true }
         );
@@ -2520,16 +2661,7 @@ describe('private AI service', () => {
                     expect.objectContaining({
                         type: 'roster-import',
                         confirmationId: staged.confirmationId,
-                        summary: expect.objectContaining({ total: 1, add: 1, errors: 0 }),
-                        previewRows: [
-                            expect.objectContaining({
-                                action: 'add',
-                                name: 'Avery Smith',
-                                fields: expect.arrayContaining([
-                                    expect.objectContaining({ key: 'name', value: 'Avery Smith' })
-                                ])
-                            })
-                        ]
+                        summary: expect.objectContaining({ total: 1, add: 1, errors: 0 })
                     })
                 ]
             }),
@@ -2537,6 +2669,8 @@ describe('private AI service', () => {
         );
 
         const persistedArtifact = transactionSet.mock.calls[2][1].artifacts[0];
+        expect(persistedArtifact).not.toHaveProperty('previewRows');
+        const persistedTeamPayload = transactionSet.mock.calls[1][1];
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
                 id: 'assistant-roster',
@@ -2548,6 +2682,19 @@ describe('private AI service', () => {
                     clientCreatedAt: '2026-07-25T12:00:00Z'
                 })
             }]
+        });
+        firebaseMocks.getDoc.mockReset();
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            expect(reference.path).toEqual([
+                'teams',
+                'team-1',
+                'privateAiPendingActions',
+                staged.confirmationId
+            ]);
+            return {
+                exists: () => true,
+                data: () => persistedTeamPayload
+            };
         });
         const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-chat');
         expect(reloaded[0]).toMatchObject({
@@ -2611,10 +2758,31 @@ describe('private AI service', () => {
         }, { conversationId: 'schedule-chat', confirmationGroupId: 'schedule-group' });
         const expiresAt = new Date(Date.now() + 60_000).toISOString();
         const transactionSet = vi.fn();
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', rows: [originalRow], source: 'csv' },
+            conversationId: 'schedule-chat',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
         firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
             get: vi.fn(async (reference) => {
                 const path = reference?.path?.join('/');
                 if (path === `users/user-1/privateAiPendingActions/${staged.confirmationId}`) {
+                    return {
+                        exists: () => true,
+                        data: () => ({
+                            status: 'pending',
+                            userId: 'user-1',
+                            toolName: 'apply_schedule_import',
+                            teamId: 'team-1',
+                            payloadScope: 'team',
+                            args: { teamId: 'team-1', rowSummary: { total: 1 }, source: 'csv' },
+                            expiresAt
+                        })
+                    };
+                }
+                if (path === `teams/team-1/privateAiPendingActions/${staged.confirmationId}`) {
                     return {
                         exists: () => true,
                         data: () => ({
@@ -2637,8 +2805,7 @@ describe('private AI service', () => {
                                 teamId: 'team-1',
                                 teamName: 'Bears',
                                 source: 'csv',
-                                summary: { total: 1, games: 1, practices: 0, errors: 0 },
-                                previewRows: [{ rowNumber: 1, normalized: originalRow, errors: [] }]
+                                summary: { total: 1, games: 1, practices: 0, errors: 0 }
                             }]
                         })
                     };
@@ -2685,58 +2852,64 @@ describe('private AI service', () => {
             1,
             expect.objectContaining({ path: ['users', 'user-1', 'privateAiPendingActions', staged.confirmationId] }),
             expect.objectContaining({
-                args: expect.objectContaining({
+                args: {
                     teamId: 'team-1',
-                    __scheduleValidationErrors: ['Game rows require an opponent.']
-                }),
+                    source: 'csv',
+                    rowSummary: { total: 1, games: 1, practices: 0 },
+                    validationErrorCount: 1
+                },
                 previewSummary: { total: 1, games: 1, practices: 0, errors: 1 }
             }),
             { merge: true }
         );
         expect(transactionSet).toHaveBeenNthCalledWith(
             2,
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', staged.confirmationId] }),
+            expect.objectContaining({
+                args: expect.objectContaining({
+                    teamId: 'team-1',
+                    __scheduleValidationErrors: ['Game rows require an opponent.']
+                }),
+                artifact: expect.objectContaining({
+                    type: 'schedule-import',
+                    previewRows: [
+                        expect.objectContaining({
+                            normalized: expect.objectContaining({ opponent: null, location: 'Field 2' }),
+                            errors: ['Game rows require an opponent.']
+                        })
+                    ]
+                })
+            }),
+            { merge: true }
+        );
+        expect(transactionSet).toHaveBeenNthCalledWith(
+            3,
             expect.objectContaining({ path: ['users', 'user-1', 'privateAiMessages', 'assistant-schedule'] }),
             expect.objectContaining({
                 artifacts: [
                     expect.objectContaining({
                         type: 'schedule-import',
                         confirmationId: staged.confirmationId,
-                        summary: { total: 1, games: 1, practices: 0, errors: 1 },
-                        previewRows: [
-                            expect.objectContaining({
-                                normalized: expect.objectContaining({ opponent: null, location: 'Field 2' }),
-                                errors: ['Game rows require an opponent.']
-                            })
-                        ]
+                        summary: { total: 1, games: 1, practices: 0, errors: 1 }
                     })
                 ]
             }),
             { merge: true }
         );
+        expect(transactionSet.mock.calls[2][1].artifacts[0]).not.toHaveProperty('previewRows');
 
-        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
-            get: vi.fn(async () => ({
-                exists: () => true,
-                data: () => ({
-                    status: 'pending',
-                    userId: 'user-1',
-                    toolName: 'apply_schedule_import',
-                    teamId: 'team-1',
-                    payloadScope: 'user',
-                    args: {
-                        teamId: 'team-1',
-                        rows: revised.rows.map((row) => row.normalized),
-                        source: 'csv',
-                        __scheduleValidationErrors: ['Game rows require an opponent.']
-                    },
-                    summary: 'Schedule import with one error',
-                    conversationId: 'schedule-chat',
-                    confirmationGroupId: 'schedule-group',
-                    expiresAt
-                })
-            })),
-            set: vi.fn()
-        }));
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: {
+                teamId: 'team-1',
+                rows: revised.rows.map((row) => row.normalized),
+                source: 'csv',
+                __scheduleValidationErrors: ['Game rows require an opponent.']
+            },
+            conversationId: 'schedule-chat',
+            summary: 'Schedule import with one error',
+            toolName: 'apply_schedule_import'
+        });
         const confirmation = await generatePrivateAiAnswer(
             coachUser,
             `confirm ${staged.confirmationId}`,
@@ -3022,6 +3195,13 @@ describe('private AI service', () => {
         });
         expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
         expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', source: 'csv', rows },
+            conversationId: 'schedule-chat',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
 
         const confirmed = await generatePrivateAiAnswer(
             coachUser,
@@ -3041,6 +3221,7 @@ describe('private AI service', () => {
             coachUser
         );
 
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => false, data: () => null });
         const repeated = await generatePrivateAiAnswer(
             coachUser,
             `confirm ${staged.confirmationId}`,
@@ -3081,6 +3262,13 @@ describe('private AI service', () => {
             name: 'apply_schedule_import',
             args: { teamId: 'team-1', __preparedScheduleRows: rows }
         }, { conversationId: 'partial-schedule' });
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: partial.confirmationId,
+            args: { teamId: 'team-1', rows },
+            conversationId: 'partial-schedule',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
         const partialResult = await generatePrivateAiAnswer(
             coachUser,
             `confirm ${partial.confirmationId}`,
@@ -3106,6 +3294,13 @@ describe('private AI service', () => {
             name: 'apply_schedule_import',
             args: { teamId: 'team-1', __preparedScheduleRows: rows }
         }, { conversationId: 'failed-schedule' });
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: failed.confirmationId,
+            args: { teamId: 'team-1', rows },
+            conversationId: 'failed-schedule',
+            summary: 'Schedule import',
+            toolName: 'apply_schedule_import'
+        });
         const failedResult = await generatePrivateAiAnswer(
             coachUser,
             `confirm ${failed.confirmationId}`,

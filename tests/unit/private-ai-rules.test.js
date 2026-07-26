@@ -194,5 +194,82 @@ describe('private AI Firestore rules', () => {
                 args: { operations: [] }
             }));
         });
+
+        it('revokes roster and schedule preview details while retaining only safe chat summaries', async () => {
+            const formerCoachId = 'former-coach';
+            const formerCoachEmail = 'former-coach@example.com';
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await updateDoc(doc(adminDb, 'teams/team-1'), {
+                    adminEmails: ['second-manager@example.com', formerCoachEmail]
+                });
+                await setDoc(doc(adminDb, `users/${formerCoachId}/privateAiMessages/review`), {
+                    artifacts: [
+                        {
+                            type: 'roster-import',
+                            confirmationId: 'roster-review',
+                            teamId: 'team-1',
+                            summary: { total: 1, invitations: 1 }
+                        },
+                        {
+                            type: 'schedule-import',
+                            confirmationId: 'schedule-review',
+                            teamId: 'team-1',
+                            summary: { total: 1, games: 1 }
+                        }
+                    ]
+                });
+                await setDoc(doc(adminDb, 'teams/team-1/privateAiPendingActions/roster-review'), {
+                    userId: formerCoachId,
+                    teamId: 'team-1',
+                    toolName: 'apply_roster_import',
+                    status: 'pending',
+                    expiresAtAt: new Date(Date.now() + 60_000),
+                    artifact: {
+                        previewRows: [{
+                            name: 'Private Player',
+                            contacts: [{ email: 'private-parent@example.com' }]
+                        }]
+                    }
+                });
+                await setDoc(doc(adminDb, 'teams/team-1/privateAiPendingActions/schedule-review'), {
+                    userId: formerCoachId,
+                    teamId: 'team-1',
+                    toolName: 'apply_schedule_import',
+                    status: 'pending',
+                    expiresAtAt: new Date(Date.now() + 60_000),
+                    artifact: {
+                        previewRows: [{
+                            location: 'Private Field',
+                            notes: 'Private note'
+                        }]
+                    }
+                });
+            });
+
+            const formerCoachDb = testEnv.authenticatedContext(formerCoachId, {
+                email: formerCoachEmail,
+                email_verified: true
+            }).firestore();
+            const chatRef = doc(formerCoachDb, `users/${formerCoachId}/privateAiMessages/review`);
+            const rosterRef = doc(formerCoachDb, 'teams/team-1/privateAiPendingActions/roster-review');
+            const scheduleRef = doc(formerCoachDb, 'teams/team-1/privateAiPendingActions/schedule-review');
+
+            await assertSucceeds(getDoc(chatRef));
+            await assertSucceeds(getDoc(rosterRef));
+            await assertSucceeds(getDoc(scheduleRef));
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await updateDoc(doc(context.firestore(), 'teams/team-1'), {
+                    adminEmails: ['second-manager@example.com']
+                });
+            });
+
+            const chatSnapshot = await assertSucceeds(getDoc(chatRef));
+            expect(JSON.stringify(chatSnapshot.data())).not.toContain('Private Player');
+            expect(JSON.stringify(chatSnapshot.data())).not.toContain('Private Field');
+            await assertFails(getDoc(rosterRef));
+            await assertFails(getDoc(scheduleRef));
+        });
     });
 });

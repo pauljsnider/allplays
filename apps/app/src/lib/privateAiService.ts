@@ -184,6 +184,10 @@ export type PrivateAiArtifactReference =
   | PrivateAiScheduleArtifactReference
   | PrivateAiDocumentArtifactReference;
 
+type PrivateAiTeamArtifactDraft =
+  | Omit<PrivateAiRosterArtifactReference, 'confirmationId'>
+  | Omit<PrivateAiScheduleArtifactReference, 'confirmationId'>;
+
 export type PrivateAiRosterProposalRevision = {
   confirmationId: string;
   teamId: string;
@@ -293,6 +297,7 @@ type PrivateAiToolContext = {
   conversationId?: string;
   confirmationGroupId?: string;
   allowedToolNames?: string[];
+  preparedArtifact?: PrivateAiTeamArtifactDraft;
 };
 
 type InternalPrivateAiToolContext = PrivateAiToolContext & {
@@ -370,7 +375,8 @@ export async function loadPrivateAiMessages(
     Math.max(messageLimit, maxLoadedMessages)
   );
 
-  return messages.reverse();
+  const hydratedMessages = await hydratePrivateAiTeamArtifactPreviews(user, messages);
+  return hydratedMessages.reverse();
 }
 
 async function loadPrivateAiConversationRecoveryMessages(user: AuthUser): Promise<PrivateAiMessage[]> {
@@ -977,6 +983,22 @@ async function sendPrivateAiScheduleImportMessage(
 
     const invalidRows = rows.filter((row) => row.errors.length > 0);
     const summary = summarizeSchedulePreview(rows);
+    const validationErrors = [
+      ...previewErrors,
+      ...invalidRows.flatMap((row) => row.errors)
+    ];
+    const artifactSummary = {
+      ...summary,
+      errors: validationErrors.length
+    };
+    const preparedArtifact: PrivateAiTeamArtifactDraft = {
+      type: 'schedule-import',
+      teamId,
+      teamName,
+      source,
+      summary: artifactSummary,
+      previewRows: rows
+    };
     let toolResult: PrivateAiToolResult | null = null;
     let assistantText = '';
     if (previewErrors.length || invalidRows.length || !rows.length) {
@@ -984,8 +1006,37 @@ async function sendPrivateAiScheduleImportMessage(
         `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
         ...previewErrors,
         ...invalidRows.flatMap((row) => row.errors),
-        rows.length ? 'Send corrected instructions or attach a corrected file to prepare a new preview.' : ''
+        rows.length ? '' : 'Send corrected instructions or attach a corrected file to prepare a new preview.'
       ].filter(Boolean).join(' ');
+      if (rows.length && validationErrors.length) {
+        const definition = getPrivateAiToolDefinition('apply_schedule_import');
+        if (definition) {
+          const pending = await savePrivateAiPendingAction(user, definition, {
+            teamId,
+            rows: rows.map((row) => row.normalized),
+            source,
+            __scheduleValidationErrors: validationErrors
+          }, {
+            conversationId: activeConversationId,
+            confirmationGroupId: createConfirmationGroupId(),
+            preparedArtifact
+          }, {
+            summary: `Schedule import | Team: ${teamId} | ${summary.total} rows | ${validationErrors.length} errors`,
+            previewSummary: artifactSummary
+          });
+          toolResult = {
+            name: definition.name,
+            ok: true,
+            requiresConfirmation: true,
+            confirmationId: pending.id,
+            data: {
+              summary: pending.summary,
+              previewSummary: pending.previewSummary
+            }
+          };
+          assistantText += ' Edit the highlighted fields in this review; confirmation stays blocked until every error is fixed.';
+        }
+      }
     } else {
       toolResult = await runPrivateAiTool(user, {
         name: 'apply_schedule_import',
@@ -996,7 +1047,8 @@ async function sendPrivateAiScheduleImportMessage(
         }
       }, {
         conversationId: activeConversationId,
-        confirmationGroupId: createConfirmationGroupId()
+        confirmationGroupId: createConfirmationGroupId(),
+        preparedArtifact
       });
       if (!toolResult.ok) {
         return savePrivateAiImportFailureResult(user, {
@@ -1017,10 +1069,7 @@ async function sendPrivateAiScheduleImportMessage(
       teamId,
       teamName,
       source,
-      summary: {
-        ...summary,
-        errors: previewErrors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
-      },
+      summary: artifactSummary,
       previewRows: rows
     };
     const assistantMessage = await savePrivateAiMessage(user, {
@@ -1111,6 +1160,18 @@ export async function sendPrivateAiRosterImportMessage(
     const summary = summarizeRosterPreview(preview.rows);
     const invalidRows = preview.rows.filter((row) => row.errors.length > 0);
     const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
+    const artifactSummary = {
+      ...summary,
+      errors: preview.errors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
+    };
+    const preparedArtifact: PrivateAiTeamArtifactDraft = {
+      type: 'roster-import',
+      teamId,
+      teamName,
+      source: preview.source,
+      summary: artifactSummary,
+      previewRows: preview.rows
+    };
     let toolResult: PrivateAiToolResult | null = null;
     let assistantText = '';
 
@@ -1131,7 +1192,8 @@ export async function sendPrivateAiRosterImportMessage(
             __rosterValidationErrors: validationErrors
           }, {
             conversationId: activeConversationId,
-            confirmationGroupId: createConfirmationGroupId()
+            confirmationGroupId: createConfirmationGroupId(),
+            preparedArtifact
           }, {
             summary: `Roster import | Team: ${teamId} | ${summary.total} operations | ${summary.invitations} invitations | ${validationErrors.length} errors`,
             previewSummary: { ...summary, errors: validationErrors.length }
@@ -1160,7 +1222,8 @@ export async function sendPrivateAiRosterImportMessage(
         }
       }, {
         conversationId: activeConversationId,
-        confirmationGroupId: createConfirmationGroupId()
+        confirmationGroupId: createConfirmationGroupId(),
+        preparedArtifact
       });
       if (!toolResult.ok) {
         return savePrivateAiImportFailureResult(user, {
@@ -1181,10 +1244,7 @@ export async function sendPrivateAiRosterImportMessage(
       teamId,
       teamName,
       source: preview.source,
-      summary: {
-        ...summary,
-        errors: preview.errors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
-      },
+      summary: artifactSummary,
       previewRows: preview.rows
     };
     const assistantMessage = await savePrivateAiMessage(user, {
@@ -1265,11 +1325,15 @@ export async function revisePrivateAiRosterImportProposal(
   const messageRef = doc(db, 'users', user.uid, privateAiCollectionName, messageId);
 
   const updated = await runTransaction(db, async (transaction: any) => {
-    const [snapshot, messageSnapshot] = await Promise.all([
+    const [snapshot, teamPayloadSnapshot, messageSnapshot] = await Promise.all([
       transaction.get(pendingRef),
+      transaction.get(teamPayloadRef),
       transaction.get(messageRef)
     ]);
     const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+    const teamPayload = typeof teamPayloadSnapshot?.data === 'function'
+      ? teamPayloadSnapshot.data()
+      : null;
     if (
       !snapshot?.exists?.()
       || !isPlainObject(data)
@@ -1278,6 +1342,15 @@ export async function revisePrivateAiRosterImportProposal(
       || compactText(data.toolName) !== 'apply_roster_import'
       || compactText(data.teamId || (isPlainObject(data.args) ? data.args.teamId : '')) !== teamId
       || Date.parse(compactText(data.expiresAt)) <= Date.now()
+    ) return false;
+    if (
+      !teamPayloadSnapshot?.exists?.()
+      || !isPlainObject(teamPayload)
+      || teamPayload.status !== 'pending'
+      || compactText(teamPayload.userId) !== user.uid
+      || compactText(teamPayload.toolName) !== 'apply_roster_import'
+      || compactText(teamPayload.teamId) !== teamId
+      || (compactText(teamPayload.expiresAt) && Date.parse(compactText(teamPayload.expiresAt)) <= Date.now())
     ) return false;
     const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
     const storedArtifacts = isPlainObject(messageData) && Array.isArray(messageData.artifacts)
@@ -1302,8 +1375,18 @@ export async function revisePrivateAiRosterImportProposal(
     }, { merge: true });
     transaction.set(teamPayloadRef, {
       userId: user.uid,
+      teamId,
       toolName: 'apply_roster_import',
       args: nextArgs,
+      artifact: stripPrivateAiArtifactForTeamStorage({
+        type: 'roster-import',
+        confirmationId,
+        teamId,
+        teamName: compactText(matchingArtifact.teamName) || 'Team',
+        source: normalizePrivateAiImportSource(matchingArtifact.source),
+        summary: artifactSummary,
+        previewRows: rows
+      }),
       status: 'pending',
       editedAt: serverTimestamp(),
       expiresAt: pending.expiresAt
@@ -1322,8 +1405,7 @@ export async function revisePrivateAiRosterImportProposal(
           teamId,
           teamName: compactText(artifact.teamName) || 'Team',
           source: normalizePrivateAiImportSource(artifact.source),
-          summary: artifactSummary,
-          previewRows: rows
+          summary: artifactSummary
         });
       })
     }, { merge: true });
@@ -1392,15 +1474,20 @@ export async function revisePrivateAiScheduleImportProposal(
     ...(validationErrors.length ? { __scheduleValidationErrors: validationErrors } : {})
   };
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId);
+  const teamPayloadRef = doc(db, 'teams', teamId, teamPrivateAiPendingActionCollectionName, confirmationId);
   const messageRef = messageId
     ? doc(db, 'users', user.uid, privateAiCollectionName, messageId)
     : null;
   const updated = await runTransaction(db, async (transaction: any) => {
-    const [snapshot, messageSnapshot] = await Promise.all([
+    const [snapshot, teamPayloadSnapshot, messageSnapshot] = await Promise.all([
       transaction.get(pendingRef),
+      transaction.get(teamPayloadRef),
       messageRef ? transaction.get(messageRef) : Promise.resolve(null)
     ]);
     const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+    const teamPayload = typeof teamPayloadSnapshot?.data === 'function'
+      ? teamPayloadSnapshot.data()
+      : null;
     if (
       !snapshot?.exists?.()
       || !isPlainObject(data)
@@ -1409,6 +1496,15 @@ export async function revisePrivateAiScheduleImportProposal(
       || compactText(data.toolName) !== 'apply_schedule_import'
       || compactText(data.teamId || (isPlainObject(data.args) ? data.args.teamId : '')) !== teamId
       || Date.parse(compactText(data.expiresAt)) <= Date.now()
+    ) return false;
+    if (
+      !teamPayloadSnapshot?.exists?.()
+      || !isPlainObject(teamPayload)
+      || teamPayload.status !== 'pending'
+      || compactText(teamPayload.userId) !== user.uid
+      || compactText(teamPayload.toolName) !== 'apply_schedule_import'
+      || compactText(teamPayload.teamId) !== teamId
+      || (compactText(teamPayload.expiresAt) && Date.parse(compactText(teamPayload.expiresAt)) <= Date.now())
     ) return false;
     const messageData = typeof messageSnapshot?.data === 'function' ? messageSnapshot.data() : null;
     const storedArtifacts = isPlainObject(messageData) && Array.isArray(messageData.artifacts)
@@ -1421,7 +1517,7 @@ export async function revisePrivateAiScheduleImportProposal(
     ));
     if (!hasStoredArtifact) return false;
     transaction.set(pendingRef, {
-      args: nextArgs,
+      args: sanitizePendingActionArgsForUserStorage('apply_schedule_import', nextArgs),
       summary: `Schedule import | Team: ${teamId} | ${summary.total} rows${validationErrors.length ? ` | ${validationErrors.length} errors` : ''}`,
       previewSummary: summary,
       editedAt: serverTimestamp(),
@@ -1429,6 +1525,29 @@ export async function revisePrivateAiScheduleImportProposal(
         lastEditedBy: user.uid,
         lastEditedAt: new Date().toISOString()
       }
+    }, { merge: true });
+    transaction.set(teamPayloadRef, {
+      userId: user.uid,
+      teamId,
+      toolName: 'apply_schedule_import',
+      args: nextArgs,
+      artifact: stripPrivateAiArtifactForTeamStorage({
+        type: 'schedule-import',
+        confirmationId,
+        teamId,
+        teamName: compactText(storedArtifacts.find((artifact) => (
+          isPlainObject(artifact)
+          && artifact.type === 'schedule-import'
+          && compactText(artifact.confirmationId) === confirmationId
+        ))?.teamName) || 'Team',
+        source: normalizePrivateAiImportSource(pending.args.source),
+        summary,
+        previewRows: rows
+      }),
+      status: 'pending',
+      editedAt: serverTimestamp(),
+      expiresAt: pending.expiresAt,
+      expiresAtAt: new Date(pending.expiresAt)
     }, { merge: true });
     if (messageRef) {
       transaction.set(messageRef, {
@@ -1444,8 +1563,7 @@ export async function revisePrivateAiScheduleImportProposal(
             teamId,
             teamName: compactText(artifact.teamName) || 'Team',
             source: normalizePrivateAiImportSource(artifact.source),
-            summary,
-            previewRows: rows
+            summary
           });
         })
       }, { merge: true });
@@ -3016,6 +3134,15 @@ async function savePrivateAiPendingAction(
     teamId,
     toolName: definition.name,
     args: preparedArgs,
+    ...(context.preparedArtifact
+      ? {
+          artifact: stripPrivateAiArtifactForTeamStorage({
+            ...context.preparedArtifact,
+            confirmationId: id,
+            teamId
+          })
+        }
+      : {}),
     status: pending.status,
     createdAt: serverTimestamp(),
     clientCreatedAt: pending.createdAt,
@@ -3113,6 +3240,7 @@ async function savePrivateAiPendingAction(
       ) return;
       transaction.set(candidate.reference, {
         args: {},
+        artifact: {},
         status: 'superseded',
         payloadClearedAt: serverTimestamp(),
         payloadClearedBy: user.uid,
@@ -3303,6 +3431,7 @@ async function clearTeamScopedPrivateAiPayload(
     pending.id
   ), {
     args: {},
+    artifact: {},
     status,
     payloadClearedAt: serverTimestamp(),
     payloadClearedBy: user.uid
@@ -3488,12 +3617,25 @@ function sanitizePendingActionPayloadArgs(args: Record<string, unknown>) {
 }
 
 function isTeamScopedPrivateAiPayload(toolName: string) {
-  return toolName === 'apply_roster_import';
+  return toolName === 'apply_roster_import' || toolName === 'apply_schedule_import';
 }
 
 function sanitizePendingActionArgsForUserStorage(toolName: string, args: Record<string, unknown>) {
   const sanitized = sanitizePendingActionPayloadArgs(args);
   if (!isTeamScopedPrivateAiPayload(toolName)) return sanitized;
+  if (toolName === 'apply_schedule_import') {
+    const rows = Array.isArray(sanitized.rows)
+      ? sanitized.rows as ScheduleCsvImportPreviewRow['normalized'][]
+      : [];
+    return {
+      teamId: compactText(sanitized.teamId),
+      source: compactText(sanitized.source),
+      rowSummary: summarizeScheduleRows(rows),
+      validationErrorCount: Array.isArray(sanitized.__scheduleValidationErrors)
+        ? sanitized.__scheduleValidationErrors.length
+        : 0
+    };
+  }
   const operations = Array.isArray(sanitized.operations)
     ? sanitized.operations as RosterImportPlannedOperationForApp[]
     : [];
@@ -3706,7 +3848,13 @@ function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) 
   if (artifact.type === 'document-analysis') {
     stored.fileName = artifact.fileName;
     stored.mimeType = artifact.mimeType;
-  } else if (artifact.type === 'roster-import' && artifact.previewRows?.length) {
+  }
+  return stored;
+}
+
+function stripPrivateAiArtifactForTeamStorage(artifact: PrivateAiRosterArtifactReference | PrivateAiScheduleArtifactReference) {
+  const stored = stripPrivateAiArtifactForStorage(artifact);
+  if (artifact.type === 'roster-import' && artifact.previewRows?.length) {
     stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
       rowNumber: row.rowNumber,
       action: row.action,
@@ -3743,6 +3891,76 @@ function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) 
     })));
   }
   return stored;
+}
+
+async function hydratePrivateAiTeamArtifactPreviews(
+  user: AuthUser,
+  messages: PrivateAiMessage[]
+): Promise<PrivateAiMessage[]> {
+  const payloads = new Map<string, Promise<PrivateAiArtifactReference | null>>();
+  const loadArtifact = (
+    artifact: PrivateAiRosterArtifactReference | PrivateAiScheduleArtifactReference
+  ) => {
+    const key = `${artifact.teamId}:${artifact.confirmationId}`;
+    const existing = payloads.get(key);
+    if (existing) return existing;
+    const request = getDoc(doc(
+      db,
+      'teams',
+      artifact.teamId,
+      teamPrivateAiPendingActionCollectionName,
+      artifact.confirmationId
+    )).then((snapshot: any) => {
+      const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+      const expectedToolName = artifact.type === 'roster-import'
+        ? 'apply_roster_import'
+        : 'apply_schedule_import';
+      const expiresAt = compactText(data?.expiresAt);
+      if (
+        !snapshot?.exists?.()
+        || !isPlainObject(data)
+        || data.status !== 'pending'
+        || compactText(data.userId) !== user.uid
+        || compactText(data.teamId) !== artifact.teamId
+        || compactText(data.toolName) !== expectedToolName
+        || (expiresAt && Date.parse(expiresAt) <= Date.now())
+      ) return null;
+      const secureArtifact = normalizePrivateAiArtifact(data.artifact);
+      if (
+        !secureArtifact
+        || secureArtifact.type === 'document-analysis'
+        || secureArtifact.type !== artifact.type
+        || secureArtifact.confirmationId !== artifact.confirmationId
+        || secureArtifact.teamId !== artifact.teamId
+      ) return null;
+      return secureArtifact;
+    }).catch(() => null);
+    payloads.set(key, request);
+    return request;
+  };
+
+  return Promise.all(messages.map(async (message) => {
+    if (!message.artifacts?.length) return message;
+    const artifacts = await Promise.all(message.artifacts.map(async (artifact) => {
+      if (
+        artifact.type === 'document-analysis'
+        || !artifact.confirmationId
+        || !artifact.teamId
+      ) return artifact;
+      const summaryArtifact = stripPrivateAiArtifactForStorage(artifact) as
+        PrivateAiRosterArtifactReference | PrivateAiScheduleArtifactReference;
+      const secureArtifact = await loadArtifact(artifact);
+      if (!secureArtifact || secureArtifact.type === 'document-analysis') return summaryArtifact;
+      return {
+        ...summaryArtifact,
+        previewRows: secureArtifact.previewRows
+      } as PrivateAiArtifactReference;
+    }));
+    return {
+      ...message,
+      artifacts
+    };
+  }));
 }
 
 function normalizePrivateAiArtifact(value: unknown): PrivateAiArtifactReference | null {
