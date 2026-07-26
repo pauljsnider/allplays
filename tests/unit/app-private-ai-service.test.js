@@ -235,8 +235,70 @@ async function executeConfirmedToolForTest(user, call, context = {}) {
     return confirmed.toolResults[0];
 }
 
+function mockTeamScopedPendingActionPersistence({
+    confirmationId,
+    teamId = 'team-1',
+    args,
+    conversationId = 'default',
+    summary = 'Roster import'
+}) {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    const userData = {
+        status: 'pending',
+        userId: 'user-1',
+        toolName: 'apply_roster_import',
+        args: { teamId, operationSummary: { total: args.operations?.length || 0 } },
+        payloadScope: 'team',
+        teamId,
+        conversationId,
+        summary,
+        expiresAt
+    };
+    const teamData = {
+        status: 'pending',
+        userId: 'user-1',
+        toolName: 'apply_roster_import',
+        teamId,
+        args,
+        expiresAt
+    };
+    const snapshotFor = (reference) => {
+        const path = reference?.path?.join('/');
+        const data = path?.startsWith(`teams/${teamId}/`) ? teamData : userData;
+        return { exists: () => true, data: () => data };
+    };
+    firebaseMocks.getDoc.mockImplementation(async (reference) => snapshotFor(reference));
+    const transactionSet = vi.fn();
+    firebaseMocks.runTransaction.mockImplementation((db, callback) => callback({
+        get: vi.fn(async (reference) => snapshotFor(reference)),
+        set: transactionSet
+    }));
+    return transactionSet;
+}
+
 beforeEach(async () => {
     vi.clearAllMocks();
+    firebaseMocks.runTransaction.mockImplementation((db, callback) => {
+        const transactionSet = vi.fn();
+        return callback({
+            get: vi.fn(async (reference) => {
+                const targetPath = reference?.path?.join('/');
+                const pendingWrite = [...firebaseMocks.setDoc.mock.calls]
+                    .reverse()
+                    .find((call) => call[0]?.path?.join('/') === targetPath && call[1]?.status === 'pending');
+                const data = pendingWrite?.[1] || {
+                    status: 'pending',
+                    userId: 'user-1',
+                    expiresAt: new Date(Date.now() + 60_000).toISOString()
+                };
+                return {
+                    exists: () => true,
+                    data: () => data
+                };
+            }),
+            set: transactionSet
+        });
+    });
     aiMocks.model.generateContent.mockReset();
     rosterAiMocks.buildRosterAiImportCommitPlan.mockImplementation((rows = []) => ({
         operations: rows.map((row) => row.operation),
@@ -1684,19 +1746,6 @@ describe('private AI service', () => {
         };
         homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [], actionItems: [], upcomingEvents: [], fees: [] });
         const transactionSet = vi.fn();
-        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
-            get: vi.fn(async () => ({
-                exists: () => true,
-                data: () => ({
-                    status: 'pending',
-                    userId: 'user-1',
-                    toolName: 'apply_roster_import',
-                    args: { teamId: 'team-1' },
-                    expiresAt: new Date(Date.now() + 60_000).toISOString()
-                })
-            })),
-            set: transactionSet
-        }));
         const {
             generatePrivateAiAnswer,
             revisePrivateAiRosterImportProposal,
@@ -1720,6 +1769,25 @@ describe('private AI service', () => {
             }
         }, { conversationId: 'roster-chat', confirmationGroupId: 'roster-group' });
 
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', operations: [originalOperation] },
+            conversationId: 'roster-chat'
+        });
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({
+                    status: 'pending',
+                    userId: 'user-1',
+                    toolName: 'apply_roster_import',
+                    teamId: 'team-1',
+                    args: { teamId: 'team-1' },
+                    expiresAt: new Date(Date.now() + 60_000).toISOString()
+                })
+            })),
+            set: transactionSet
+        }));
         const summary = await revisePrivateAiRosterImportProposal(coachUser, {
             confirmationId: staged.confirmationId,
             teamId: 'team-1',
@@ -1767,6 +1835,11 @@ describe('private AI service', () => {
             { merge: true }
         );
 
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', operations: [revisedOperation] },
+            conversationId: 'roster-chat'
+        });
         await generatePrivateAiAnswer(coachUser, `confirm ${staged.confirmationId}`, [], { conversationId: 'roster-chat' });
         expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [revisedOperation]);
     });
@@ -1843,6 +1916,11 @@ describe('private AI service', () => {
         expect(JSON.stringify(teamPendingWrite[1])).toContain('Private medical note');
         expect(JSON.stringify(teamPendingWrite[1])).toContain('retry@example.com');
 
+        mockTeamScopedPendingActionPersistence({
+            confirmationId: staged.confirmationId,
+            args: { teamId: 'team-1', operations: [operation] },
+            conversationId: 'private-roster'
+        });
         const confirmed = await generatePrivateAiAnswer(
             coachUser,
             `confirm ${staged.confirmationId}`,
@@ -1865,17 +1943,23 @@ describe('private AI service', () => {
         );
     });
 
-    it('reloads roster confirmation payloads only from the authorized team-scoped document', async () => {
+    it('claims the latest team-scoped roster revision before executing a confirmation', async () => {
         const coachUser = {
             ...authUser,
             roles: ['coach'],
             coachOf: ['team-1'],
             parentPlayerKeys: []
         };
-        const operation = {
+        const staleOperation = {
             type: 'update',
             playerId: 'player-1',
-            payload: { medicalInfo: 'Team-scoped note' },
+            payload: { medicalInfo: 'Stale team-scoped note' },
+            errors: []
+        };
+        const latestOperation = {
+            type: 'update',
+            playerId: 'player-1',
+            payload: { medicalInfo: 'Latest team-scoped note' },
             errors: []
         };
         homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
@@ -1890,6 +1974,7 @@ describe('private AI service', () => {
                         status: 'pending',
                         userId: 'user-1',
                         toolName: 'apply_roster_import',
+                        teamId: 'team-1',
                         args: {
                             teamId: 'team-1',
                             operationSummary: { total: 1, update: 1 }
@@ -1907,20 +1992,65 @@ describe('private AI service', () => {
                         status: 'pending',
                         userId: 'user-1',
                         toolName: 'apply_roster_import',
-                        args: { teamId: 'team-1', operations: [operation] }
+                        teamId: 'team-1',
+                        args: { teamId: 'team-1', operations: [staleOperation] }
                     })
                 };
             }
             return { exists: () => false, data: () => null };
         });
+        const expiresAt = new Date(Date.now() + 60_000).toISOString();
+        const transactionSet = vi.fn();
+        firebaseMocks.runTransaction.mockImplementationOnce((db, callback) => callback({
+            get: vi.fn(async (reference) => {
+                const path = reference?.path?.join('/');
+                if (path === 'users/user-1/privateAiPendingActions/ai_reload1') {
+                    return {
+                        exists: () => true,
+                        data: () => ({
+                            status: 'pending',
+                            userId: 'user-1',
+                            toolName: 'apply_roster_import',
+                            payloadScope: 'team',
+                            teamId: 'team-1',
+                            args: { teamId: 'team-1', operationSummary: { total: 1, update: 1 } },
+                            expiresAt
+                        })
+                    };
+                }
+                return {
+                    exists: () => true,
+                    data: () => ({
+                        status: 'pending',
+                        userId: 'user-1',
+                        toolName: 'apply_roster_import',
+                        teamId: 'team-1',
+                        args: { teamId: 'team-1', operations: [latestOperation] },
+                        expiresAt
+                    })
+                };
+            }),
+            set: transactionSet
+        }));
 
         const confirmed = await generatePrivateAiAnswer(coachUser, 'confirm ai_reload1');
 
-        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [operation]);
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledWith('team-1', coachUser, [latestOperation]);
+        expect(teamMocks.applyRosterImportPlanForApp).not.toHaveBeenCalledWith('team-1', coachUser, [staleOperation]);
         expect(confirmed.toolResults[0]).toMatchObject({ ok: true, confirmationId: 'ai_reload1' });
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
             path: ['teams', 'team-1', 'privateAiPendingActions', 'ai_reload1']
         }));
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['users', 'user-1', 'privateAiPendingActions', 'ai_reload1'] }),
+            expect.objectContaining({ status: 'executing', executionStartedBy: 'user-1' }),
+            { merge: true }
+        );
+        expect(transactionSet).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['teams', 'team-1', 'privateAiPendingActions', 'ai_reload1'] }),
+            expect.objectContaining({ status: 'executing', executionStartedBy: 'user-1' }),
+            { merge: true }
+        );
     });
 
     it('previews a grouped schedule import and executes it only once after confirmation', async () => {

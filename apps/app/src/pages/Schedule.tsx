@@ -680,15 +680,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const familyTeamIds = new Set(children.map((child) => child.teamId));
     return events.filter((event) => event.isLinkedParentChild === true || familyTeamIds.has(event.teamId));
   }, [children, events, scheduleScope, staffTeams]);
+  const scopeChildren = useMemo(
+    () => (scheduleScope === 'family' ? children : []),
+    [children, scheduleScope]
+  );
+  const activeSelectedPlayerId = scheduleScope === 'family' ? selectedPlayerId : '';
   const visibleEvents = useMemo(() => (
-    filterParentScheduleEvents(scopedEvents, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
-  ), [filter, scopedEvents, selectedPlayerId, selectedTeamId, timeRange]);
+    filterParentScheduleEvents(scopedEvents, { filter, playerId: activeSelectedPlayerId, teamId: selectedTeamId, timeRange })
+  ), [activeSelectedPlayerId, filter, scopedEvents, selectedTeamId, timeRange]);
   const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(scopedEvents, {
     filter: 'upcoming-all',
-    playerId: selectedPlayerId,
+    playerId: activeSelectedPlayerId,
     teamId: selectedTeamId,
     timeRange: 'all'
-  })), [scopedEvents, selectedPlayerId, selectedTeamId]);
+  })), [activeSelectedPlayerId, scopedEvents, selectedTeamId]);
   const bulkRsvpCandidates = useMemo(
     () => getBulkRsvpNoteReadyCandidates(allBulkRsvpCandidates),
     [allBulkRsvpCandidates]
@@ -793,9 +798,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   };
   const teamOptions = useMemo(
-    () => getParentScheduleTeamOptions(events, children, staffTeams),
-    [children, events, staffTeams]
+    () => getParentScheduleTeamOptions(
+      scopedEvents,
+      scopeChildren,
+      scheduleScope === 'staff' ? staffTeams : []
+    ),
+    [scheduleScope, scopeChildren, scopedEvents, staffTeams]
   );
+  useEffect(() => {
+    if (!hasLoadedSchedule || scheduleReadLoading) return;
+    if (scheduleScope === 'staff' && selectedPlayerId) {
+      setSelectedPlayerId('');
+    } else if (
+      scheduleScope === 'family'
+      && selectedPlayerId
+      && !scopeChildren.some((child) => child.playerId === selectedPlayerId)
+    ) {
+      setSelectedPlayerId('');
+    }
+    if (selectedTeamId && !teamOptions.some((team) => team.teamId === selectedTeamId)) {
+      setSelectedTeamId('');
+    }
+  }, [hasLoadedSchedule, scheduleReadLoading, scheduleScope, scopeChildren, selectedPlayerId, selectedTeamId, teamOptions]);
   const selectedDayEntries = useMemo(() => {
     if (!selectedDay) return [];
     return calendarEntries.filter((event) =>
@@ -847,9 +871,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   const handleExport = () => {
-    const exportEvents = filterParentScheduleEvents(events, {
+    const exportEvents = filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
-      playerId: selectedPlayerId,
+      playerId: activeSelectedPlayerId,
       teamId: selectedTeamId,
       timeRange: 'all'
     });
@@ -863,10 +887,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    const selectedChild = children.find((child) => child.playerId === selectedPlayerId);
+    const selectedChild = scopeChildren.find((child) => child.playerId === activeSelectedPlayerId);
     link.download = selectedChild
       ? `${selectedChild.playerName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-      : 'family-schedule.ics';
+      : scheduleScope === 'staff' ? 'team-schedule.ics' : 'family-schedule.ics';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -875,9 +899,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   const handleCopyAgenda = async () => {
-    const agendaEvents = visibleEvents.length ? visibleEvents : filterParentScheduleEvents(events, {
+    const agendaEvents = visibleEvents.length ? visibleEvents : filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
-      playerId: selectedPlayerId,
+      playerId: activeSelectedPlayerId,
       teamId: selectedTeamId,
       timeRange
     });
@@ -1077,15 +1101,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 ))}
               </select>
             </label>
-            <label className={`min-w-0 sm:min-w-48 sm:max-w-64 ${scheduleScope === 'staff' ? 'col-span-2' : ''}`}>
-              <span className="sr-only">Player filter</span>
-              <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
-                <option value="">All Players</option>
-                {children.map((child) => (
-                  <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-                ))}
-              </select>
-            </label>
+            {scheduleScope === 'family' ? (
+              <label className="min-w-0 sm:min-w-48 sm:max-w-64">
+                <span className="sr-only">Player filter</span>
+                <select aria-label="Player filter" className="auth-input min-h-11 truncate !px-3 !py-2 text-xs font-black sm:text-sm" value={activeSelectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+                  <option value="">All Players</option>
+                  {scopeChildren.map((child) => (
+                    <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -1097,10 +1123,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
               scope={scheduleScope}
               filter={filter}
               view={view}
-              selectedPlayerId={selectedPlayerId}
+              selectedPlayerId={activeSelectedPlayerId}
               selectedTeamId={selectedTeamId}
               timeRange={timeRange}
-              children={children}
+              players={scopeChildren}
               teamOptions={teamOptions}
               loading={scheduleReadLoading}
               insights={webInsights}
@@ -1653,14 +1679,14 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
   );
 }
 
-function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, players, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
   scope: 'staff' | 'family';
   filter: ParentScheduleFilter;
   view: ScheduleViewMode;
   selectedPlayerId: string;
   selectedTeamId: string;
   timeRange: ScheduleTimeRange;
-  children: ParentScheduleChild[];
+  players: ParentScheduleChild[];
   teamOptions: ParentScheduleTeamOption[];
   loading: boolean;
   insights: ScheduleWebInsights;
@@ -1679,7 +1705,10 @@ function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTe
   const filterLabel = filterOptions.find((option) => option.value === filter)?.label || 'Schedule';
   const rangeLabel = timeRangeOptions.find((option) => option.value === timeRange)?.label || 'All';
   const teamLabel = teamOptions.find((team) => team.teamId === selectedTeamId)?.teamName || 'All teams';
-  const playerLabel = children.find((child) => child.playerId === selectedPlayerId)?.playerName || 'All players';
+  const playerLabel = players.find((player) => player.playerId === selectedPlayerId)?.playerName || 'All players';
+  const activeFilterLabels = scope === 'staff'
+    ? [filterLabel, rangeLabel, teamLabel]
+    : [filterLabel, rangeLabel, teamLabel, playerLabel];
 
   return (
     <section className="app-card schedule-control-panel p-4">
@@ -1695,7 +1724,7 @@ function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTe
 
       <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
         <div className="app-label">Active filters</div>
-        <div className="mt-1 text-sm font-black text-gray-950">{filterLabel} · {rangeLabel} · {teamLabel} · {playerLabel}</div>
+        <div className="mt-1 text-sm font-black text-gray-950">{activeFilterLabels.join(' · ')}</div>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -1739,15 +1768,17 @@ function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTe
         </select>
       </label>
 
-      <label className="mt-3 block">
-        <span className="app-label">Player</span>
-        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
-          <option value="">All Players</option>
-          {children.map((child) => (
-            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
-          ))}
-        </select>
-      </label>
+      {scope === 'family' ? (
+        <label className="mt-3 block">
+          <span className="app-label">Player</span>
+          <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
+            <option value="">All Players</option>
+            {players.map((player) => (
+              <option key={`${player.teamId}-${player.playerId}`} value={player.playerId}>{player.playerName}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button type="button" className="secondary-button w-full" onClick={onExport}>

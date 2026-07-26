@@ -919,13 +919,99 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
     });
 
-    renderSchedule('/schedule?teamId=team-owned');
+    renderSchedule('/schedule?scope=staff&teamId=team-owned');
 
     const teamFilter = await screen.findByLabelText('Team filter');
-    expect(within(teamFilter).getByRole('option', { name: 'Jr KC Current' })).toBeTruthy();
+    expect(within(teamFilter).queryByRole('option', { name: 'Jr KC Current' })).toBeNull();
     expect(within(teamFilter).getByRole('option', { name: 'Vipers' })).toBeTruthy();
     expect((teamFilter as HTMLSelectElement).value).toBe('team-owned');
+    expect(screen.queryByLabelText('Player filter')).toBeNull();
     expect(await screen.findByText(/Add games and recurring practices, manage attendance, or connect calendar feeds for Vipers/)).toBeTruthy();
+  });
+
+  it('keeps staff selectors, copied agendas, and calendar exports inside staff scope', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    const familyEvent = buildPracticePacketEvent(1, {
+      teamId: 'team-family',
+      teamName: 'Family Falcons',
+      childId: 'player-family',
+      childName: 'Avery',
+      title: 'Family-only practice',
+      isLinkedParentChild: true,
+      isTeamStaff: false
+    });
+    const staffEvent = buildScheduleEvent(2, {
+      teamId: 'team-staff',
+      teamName: 'Staff Sharks',
+      childId: '',
+      childName: '',
+      opponent: 'Staff-only opponent',
+      isLinkedParentChild: false,
+      isTeamStaff: true
+    });
+    scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+      profile: {},
+      children: [{
+        playerId: 'player-family',
+        playerName: 'Avery',
+        teamId: 'team-family',
+        teamName: 'Family Falcons'
+      }],
+      staffTeams: [{ teamId: 'team-staff', teamName: 'Staff Sharks' }],
+      isPartial: false
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{
+        playerId: 'player-family',
+        playerName: 'Avery',
+        teamId: 'team-family',
+        teamName: 'Family Falcons'
+      }],
+      events: [familyEvent, staffEvent],
+      staffTeams: [{ teamId: 'team-staff', teamName: 'Staff Sharks' }]
+    });
+    const clipboardWrite = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: clipboardWrite }
+    });
+    let exportedBlob: Blob | null = null;
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: vi.fn((blob: Blob) => {
+        exportedBlob = blob;
+        return 'blob:staff-schedule';
+      })
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: vi.fn()
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    renderSchedule('/schedule?scope=staff');
+
+    const teamFilter = await screen.findByLabelText('Team');
+    expect(within(teamFilter).getByRole('option', { name: 'Staff Sharks' })).toBeTruthy();
+    expect(within(teamFilter).queryByRole('option', { name: 'Family Falcons' })).toBeNull();
+    expect(screen.queryByLabelText('Player')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upcoming Practices' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy agenda' }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledTimes(1));
+    expect(clipboardWrite.mock.calls[0][0]).toContain('Staff-only opponent');
+    expect(clipboardWrite.mock.calls[0][0]).not.toContain('Family-only practice');
+
+    fireEvent.click(screen.getByRole('button', { name: '.ics' }));
+    expect(exportedBlob).toBeTruthy();
+    const exportedText = await new Promise<string>((resolveText, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolveText(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(exportedBlob as Blob);
+    });
+    expect(exportedText).toContain('Staff-only opponent');
+    expect(exportedText).not.toContain('Family-only practice');
   });
 
   it('uses fresh staff scope when the cached event summary predates a newly created team', async () => {
@@ -953,7 +1039,7 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-parent', teamName: 'Jr KC Current' }]
     });
 
-    renderSchedule('/schedule?teamId=team-owned');
+    renderSchedule('/schedule?scope=staff&teamId=team-owned');
 
     expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
@@ -975,7 +1061,7 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
     });
 
-    renderSchedule('/schedule?teamId=team-owned');
+    renderSchedule('/schedule?scope=staff&teamId=team-owned');
 
     expect((await screen.findByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-owned');
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
@@ -1029,7 +1115,7 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }]
     });
 
-    renderSchedule('/schedule?teamId=team-owned');
+    renderSchedule('/schedule?scope=staff&teamId=team-owned');
 
     const teamFilter = await screen.findByLabelText('Team filter');
     await waitFor(() => {
@@ -1189,7 +1275,7 @@ describe('Schedule', () => {
     appDataCacheMocks.loadCachedAppData
       .mockResolvedValue({ children: [], events: [], staffTeams: [] });
 
-    renderSchedule();
+    renderSchedule('/schedule?scope=staff');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Refresh schedule' }));
     const teamFilter = await screen.findByLabelText('Team filter');
@@ -1225,7 +1311,7 @@ describe('Schedule', () => {
       staffTeams: [{ teamId: 'team-parent', teamName: 'Jr KC Current' }]
     });
 
-    renderSchedule('/schedule?teamId=team-owned');
+    renderSchedule('/schedule?scope=staff&teamId=team-owned');
 
     const teamFilter = await screen.findByLabelText('Team filter');
     expect(await within(teamFilter).findByRole('option', { name: 'Vipers' })).toBeTruthy();

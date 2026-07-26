@@ -2686,42 +2686,98 @@ async function supersedeOlderPendingActions(
   await Promise.all(writes);
 }
 
-async function claimPrivateAiPendingAction(user: AuthUser, pending: PrivateAiPendingAction) {
+async function claimPrivateAiPendingAction(
+  user: AuthUser,
+  pending: PrivateAiPendingAction
+): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${pending.id}`;
   const memoryPending = pendingActionMemory.get(memoryKey);
-  if (memoryPending && memoryPending.status !== 'pending') return false;
-  if (memoryPending) {
+  if (memoryPending && memoryPending.status !== 'pending') return null;
+
+  if (typeof runTransaction !== 'function') {
+    if (!memoryPending || pending.payloadScope === 'team') return null;
     memoryPending.status = 'executing';
     pendingActionMemory.set(memoryKey, memoryPending);
+    return memoryPending;
   }
-
-  if (typeof runTransaction !== 'function') return Boolean(memoryPending);
   const pendingRef = doc(db, 'users', user.uid, privateAiPendingActionCollectionName, pending.id);
   try {
-    return await runTransaction(db, async (transaction: any) => {
+    const claimed = await runTransaction(db, async (transaction: any): Promise<PrivateAiPendingAction | null> => {
       const snapshot = await transaction.get(pendingRef);
       const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
+      const expiresAt = compactText(data?.expiresAt);
       if (
         !snapshot?.exists?.()
         || !isPlainObject(data)
         || data.status !== 'pending'
         || compactText(data.userId) !== user.uid
-        || Date.parse(compactText(data.expiresAt)) <= Date.now()
-      ) return false;
-      transaction.set(pendingRef, {
+        || !expiresAt
+        || Date.parse(expiresAt) <= Date.now()
+      ) return null;
+
+      const toolName = compactText(data.toolName);
+      const teamId = compactText(data.teamId);
+      const payloadScope = data.payloadScope === 'team' ? 'team' : 'user';
+      let args = isPlainObject(data.args) ? data.args : {};
+      let teamPayloadRef: ReturnType<typeof doc> | null = null;
+      if (payloadScope === 'team') {
+        if (!teamId) return null;
+        teamPayloadRef = doc(
+          db,
+          'teams',
+          teamId,
+          teamPrivateAiPendingActionCollectionName,
+          pending.id
+        );
+        const payloadSnapshot = await transaction.get(teamPayloadRef);
+        const payload = typeof payloadSnapshot?.data === 'function' ? payloadSnapshot.data() : null;
+        if (
+          !payloadSnapshot?.exists?.()
+          || !isPlainObject(payload)
+          || payload.status !== 'pending'
+          || compactText(payload.userId) !== user.uid
+          || compactText(payload.toolName) !== toolName
+          || compactText(payload.teamId || (isPlainObject(payload.args) ? payload.args.teamId : '')) !== teamId
+          || !isPlainObject(payload.args)
+          || (compactText(payload.expiresAt) && Date.parse(compactText(payload.expiresAt)) <= Date.now())
+        ) return null;
+        args = payload.args;
+      }
+
+      const executionState = {
         status: 'executing',
         executionStartedAt: serverTimestamp(),
         executionStartedBy: user.uid
+      };
+      transaction.set(pendingRef, {
+        ...executionState
       }, { merge: true });
-      return true;
+      if (teamPayloadRef) {
+        transaction.set(teamPayloadRef, executionState, { merge: true });
+      }
+      return {
+        id: pending.id,
+        userId: user.uid,
+        toolName,
+        args,
+        summary: compactText(data.summary),
+        createdAt: normalizeScheduleDate(data.createdAt)?.toISOString()
+          || compactText(data.clientCreatedAt)
+          || pending.createdAt,
+        conversationId: normalizeConversationId(data.conversationId),
+        confirmationGroupId: compactText(data.confirmationGroupId),
+        previewSummary: isPlainObject(data.previewSummary) ? data.previewSummary : undefined,
+        teamId: teamId || undefined,
+        payloadScope,
+        expiresAt,
+        status: 'executing'
+      };
     });
+    if (claimed) pendingActionMemory.set(memoryKey, claimed);
+    return claimed;
   } catch (error) {
     logger.warn('Unable to transactionally claim private AI action.', { error, confirmationId: pending.id });
-    if (memoryPending) {
-      memoryPending.status = 'pending';
-      pendingActionMemory.set(memoryKey, memoryPending);
-    }
-    return false;
+    return null;
   }
 }
 
@@ -2738,35 +2794,35 @@ async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: s
   if (Date.parse(pending.expiresAt) <= Date.now()) {
     return { name: pending.toolName, ok: false, error: 'That AI preview expired. Prepare the change again before confirming.' };
   }
-  const claimed = await claimPrivateAiPendingAction(user, pending);
-  if (!claimed) {
+  const claimedPending = await claimPrivateAiPendingAction(user, pending);
+  if (!claimedPending) {
     return { name: pending.toolName, ok: false, error: 'That AI change was already confirmed, superseded, or is currently running.' };
   }
 
   const result = await runPrivateAiToolInternal(user, {
     name: definition.name,
-    args: pending.args
+    args: claimedPending.args
   }, {
     confirmedWriteToken: confirmedWriteExecutionToken
   });
   if (result.ok) {
-    pending.status = 'completed';
-    pendingActionMemory.set(`${user.uid}:${id}`, pending);
+    claimedPending.status = 'completed';
+    pendingActionMemory.set(`${user.uid}:${id}`, claimedPending);
     await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
       status: 'completed',
       completedAt: serverTimestamp(),
       completedBy: user.uid
     }, { merge: true }).catch(() => {});
-    await clearTeamScopedPrivateAiPayload(user, pending, 'completed');
+    await clearTeamScopedPrivateAiPayload(user, claimedPending, 'completed');
   } else {
-    pending.status = 'failed';
-    pendingActionMemory.set(`${user.uid}:${id}`, pending);
+    claimedPending.status = 'failed';
+    pendingActionMemory.set(`${user.uid}:${id}`, claimedPending);
     await setDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, id), {
       status: 'failed',
       failedAt: serverTimestamp(),
       failure: result.error || 'Action failed.'
     }, { merge: true }).catch(() => {});
-    await clearTeamScopedPrivateAiPayload(user, pending, 'failed');
+    await clearTeamScopedPrivateAiPayload(user, claimedPending, 'failed');
   }
   return {
     ...result,
@@ -2803,7 +2859,7 @@ async function clearTeamScopedPrivateAiPayload(
 async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${confirmationId}`;
   const fromMemory = pendingActionMemory.get(memoryKey);
-  if (fromMemory?.status === 'pending') return fromMemory;
+  if (fromMemory?.status === 'pending' && fromMemory.payloadScope !== 'team') return fromMemory;
 
   const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
