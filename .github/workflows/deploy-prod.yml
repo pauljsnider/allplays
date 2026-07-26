@@ -517,8 +517,9 @@ jobs:
             local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
             active_rules_b64="$(
               jq -er '
-                [.source.files[]? | select(.name == "firestore.rules")]
-                | if length == 1 then (.[0].content | @base64)
+                (.source.files // [])
+                | if length == 1 and .[0].name == "firestore.rules"
+                  then (.[0].content | @base64)
                   else error("expected exactly one firestore.rules source file")
                   end
               ' "$ruleset_json" 2>/dev/null || true
@@ -756,14 +757,22 @@ jobs:
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             # Keep coupled authorization/index changes fail-closed: application code
             # must not publish until its Firestore configuration is active.
-            # Probe the non-persistent projects:test endpoint first. A known
-            # Rules API outage opens the circuit before any ruleset/release
-            # mutation. The actual idempotent deploy gets three bounded attempts
-            # because the API can recover between a successful preflight and the
-            # Firebase CLI's own compile request. This keeps the total
-            # projects:test calls bounded to at most five per release run.
-            test_firestore_rules_api 2 20
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+            # A prior partial attempt may already have activated this exact,
+            # immutable rules source before its release call returned an error.
+            # In that case, update indexes without making another Rules API write.
+            if verify_active_firestore_rules; then
+              echo "::notice::The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
+              retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
+            else
+              # Probe the non-persistent projects:test endpoint first. A known
+              # Rules API outage opens the circuit before any ruleset/release
+              # mutation. The actual idempotent deploy gets three bounded attempts
+              # because the API can recover between a successful preflight and the
+              # Firebase CLI's own compile request. This keeps the total
+              # projects:test calls bounded to at most five per release run.
+              test_firestore_rules_api 2 20
+              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+            fi
           else
             # No authorization/index drift exists relative to the last successful
             # production deployment. Do not make a redundant Rules API write: an

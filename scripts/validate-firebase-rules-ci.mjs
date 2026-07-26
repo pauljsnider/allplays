@@ -323,7 +323,22 @@ export function validateProductionDeployCommand(deployProd) {
         'projects/game-flow-c6311/releases/cloud.firestore',
         'Production Firestore active release lookup'
     );
-    assertIncludes(deployProd, '.source.files[]? | select(.name == "firestore.rules")', 'Production Firestore active source lookup');
+    assertIncludes(deployProd, '(.source.files // [])', 'Production Firestore active source lookup');
+    assertIncludes(
+        deployProd,
+        'if length == 1 and .[0].name == "firestore.rules"',
+        'Production Firestore active source must contain only firestore.rules'
+    );
+    assertIncludes(
+        deployProd,
+        'The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write.',
+        'Production Firestore exact-source write avoidance'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
+        'Production Firestore exact-source indexes-only deploy'
+    );
     assertIncludes(
         deployProd,
         'The active Firestore release exactly matches this commit and indexes deployed',
@@ -413,6 +428,11 @@ export function validateProductionDeployCommand(deployProd) {
         changedBranch,
         'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
         'Production Firestore transient deploy retries'
+    );
+    assertMatches(
+        changedBranch,
+        /if verify_active_firestore_rules; then[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20[\s\S]*else[\s\S]*test_firestore_rules_api 2 20[\s\S]*retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20[\s\S]*fi/,
+        'Production Firestore exact-source short circuit'
     );
     assertIncludes(
         changedBranch,
