@@ -1104,6 +1104,7 @@ describe('private AI service', () => {
         const {
             getPrivateAiAttachmentValidationError,
             inferPrivateAiAttachmentIntent,
+            isPrivateAiScheduleAttachmentMutationRequest,
             maxPrivateAiAttachmentBytes
         } = await import('../../apps/app/src/lib/privateAiService.ts');
 
@@ -1131,6 +1132,9 @@ describe('private AI service', () => {
             text: 'Summarize the action items.',
             fileName: 'team-handbook.pdf'
         })).toBe('general-analysis');
+        expect(isPrivateAiScheduleAttachmentMutationRequest('Cancel the games shown in this schedule.')).toBe(true);
+        expect(isPrivateAiScheduleAttachmentMutationRequest('Update the existing practice times from this PDF.')).toBe(true);
+        expect(isPrivateAiScheduleAttachmentMutationRequest('Import these new games into the schedule.')).toBe(false);
     });
 
     it('routes a natural coach roster update to the roster review instead of generic chat JSON', async () => {
@@ -1185,9 +1189,179 @@ describe('private AI service', () => {
         const storedAssistant = firebaseMocks.addDoc.mock.calls
             .map((call) => call[1])
             .find((payload) => payload.role === 'assistant');
-        expect(storedAssistant.artifacts[0]).not.toHaveProperty('previewRows');
-        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('Avery');
-        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('number');
+        expect(storedAssistant.artifacts[0]).toMatchObject({
+            type: 'roster-import',
+            previewRows: [{
+                rowNumber: 1,
+                action: 'update',
+                name: 'Avery',
+                number: '10',
+                fields: [
+                    { key: 'name', label: 'Name', type: 'text', value: 'Avery' },
+                    { key: 'number', label: 'Jersey Number', type: 'text', value: '10' }
+                ]
+            }]
+        });
+        expect(storedAssistant.artifacts[0].previewRows[0]).not.toHaveProperty('operation');
+        expect(storedAssistant.artifacts[0].previewRows[0]).not.toHaveProperty('rawOperation');
+    });
+
+    it('persists an invalid roster review so its fields remain editable after chat reload', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const invalidRow = rosterPreviewRow({
+            errors: ['Row 1: no matching existing player was found.'],
+            rawOperation: {
+                action: 'update',
+                changes: { name: 'Avery', number: '10' },
+                untrustedExtra: 'do not persist'
+            }
+        });
+        rosterAiMocks.generateRosterAiImportRows.mockResolvedValue({
+            rows: [invalidRow],
+            errors: [],
+            source: 'csv'
+        });
+
+        const { loadPrivateAiMessages, sendPrivateAiRosterImportMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiRosterImportMessage(coachUser, {
+            teamId: 'team-1',
+            csvText: 'Name,Number\nAvery,10'
+        }, 'roster-reload');
+
+        expect(result.toolResults[0]).toMatchObject({
+            name: 'apply_roster_import',
+            requiresConfirmation: true
+        });
+        const storedAssistant = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload.role === 'assistant');
+        expect(storedAssistant.pendingActionIds).toHaveLength(1);
+        expect(storedAssistant.artifacts[0].previewRows[0]).toMatchObject({
+            action: 'update',
+            name: 'Avery',
+            fields: expect.arrayContaining([
+                expect.objectContaining({ key: 'number', value: '10' })
+            ]),
+            errors: ['Row 1: no matching existing player was found.']
+        });
+        expect(JSON.stringify(storedAssistant.artifacts[0])).not.toContain('untrustedExtra');
+
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{
+                id: 'stored-invalid-review',
+                data: () => ({
+                    ...storedAssistant,
+                    clientCreatedAt: '2026-07-25T12:00:00Z'
+                })
+            }]
+        });
+        const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-reload');
+        expect(reloaded[0]).toMatchObject({
+            pendingActionIds: storedAssistant.pendingActionIds,
+            artifacts: [{
+                type: 'roster-import',
+                confirmationId: storedAssistant.artifacts[0].confirmationId,
+                previewRows: [{
+                    action: 'update',
+                    name: 'Avery',
+                    fields: expect.arrayContaining([
+                        expect.objectContaining({ key: 'number', value: '10' })
+                    ]),
+                    errors: ['Row 1: no matching existing player was found.']
+                }]
+            }]
+        });
+    });
+
+    it.each([
+        {
+            label: 'CSV',
+            name: 'schedule.csv',
+            type: 'text/csv',
+            contents: 'Event ID,Event Type,Date,Opponent\ngame-1,game,2026-06-01,Rockets',
+            toolName: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: { location: 'Field 2' }
+            }
+        },
+        {
+            label: 'image',
+            name: 'schedule.png',
+            type: 'image/png',
+            contents: 'image bytes',
+            toolName: 'cancel_schedule_event',
+            args: { teamId: 'team-1', eventId: 'game-1', eventType: 'game' }
+        },
+        {
+            label: 'PDF',
+            name: 'schedule.pdf',
+            type: 'application/pdf',
+            contents: 'pdf bytes',
+            toolName: 'cancel_schedule_event',
+            args: { teamId: 'team-1', eventId: 'game-1', eventType: 'game' }
+        }
+    ])('routes $label requests for existing schedule changes through reviewed schedule tools', async ({
+        name,
+        type,
+        contents,
+        toolName,
+        args
+    }) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const file = new File([contents], name, { type });
+        Object.defineProperty(file, 'arrayBuffer', {
+            value: async () => new TextEncoder().encode(contents).buffer
+        });
+        if (type === 'text/csv') {
+            Object.defineProperty(file, 'text', { value: async () => contents });
+        } else {
+            aiMocks.model.generateContent.mockResolvedValueOnce(modelText(
+                'Existing game game-1: Bears vs Rockets, June 1 at Field 1.'
+            ));
+        }
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{ name: toolName, args }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: `I staged the requested ${toolName === 'cancel_schedule_event' ? 'cancellation' : 'update'}. Reply yes to confirm.`
+            })));
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: toolName === 'cancel_schedule_event'
+                ? 'Cancel the existing Rockets game shown in this schedule.'
+                : 'Update the existing Rockets game location from this schedule.',
+            file
+        }, `schedule-${type}`);
+
+        expect(result.toolResults).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                name: toolName,
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]));
+        expect(result.toolResults.some((tool) => tool.name === 'apply_schedule_import')).toBe(false);
+        expect(result.toolResults.some((tool) => tool.name === 'create_schedule_event')).toBe(false);
+        expect(result.assistantMessage.pendingActionIds).toHaveLength(1);
+        expect(result.assistantMessage.artifacts).toEqual([]);
+        expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
+        expect(scheduleMocks.createScheduleImportPractice).not.toHaveBeenCalled();
     });
 
     it('stores a private attachment receipt without persisting the raw roster file', async () => {

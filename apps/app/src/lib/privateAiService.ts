@@ -282,6 +282,7 @@ type PrivateAiToolDefinition = {
 type PrivateAiToolContext = {
   conversationId?: string;
   confirmationGroupId?: string;
+  allowedToolNames?: string[];
 };
 
 type InternalPrivateAiToolContext = PrivateAiToolContext & {
@@ -551,6 +552,14 @@ export function inferPrivateAiAttachmentIntent(input: {
   return 'general-analysis';
 }
 
+export function isPrivateAiScheduleAttachmentMutationRequest(value: unknown) {
+  const text = compactText(value).toLowerCase();
+  if (!text) return false;
+  if (/\b(cancel|delete|remove|reschedule|postpone)\b/.test(text)) return true;
+  return /\b(update|change|edit|move|correct)\b/.test(text)
+    && /\b(schedule|calendar|events?|games?|practices?|fixtures?|dates?|times?|locations?|opponents?|existing|current|these|those)\b/.test(text);
+}
+
 export async function sendPrivateAiAttachmentMessage(
   user: AuthUser,
   input: PrivateAiAttachmentInput,
@@ -581,6 +590,16 @@ export async function sendPrivateAiAttachmentMessage(
     }, conversationId);
   }
   if (intent === 'schedule-import') {
+    if (isPrivateAiScheduleAttachmentMutationRequest(input.text)) {
+      return sendPrivateAiScheduleManagementAttachmentMessage(user, {
+        teamId: input.teamId,
+        teamName: input.teamName,
+        text: input.text,
+        file: input.file,
+        csvText,
+        attachment
+      }, conversationId);
+    }
     return sendPrivateAiScheduleImportMessage(user, {
       teamId: input.teamId,
       teamName: input.teamName,
@@ -595,6 +614,111 @@ export async function sendPrivateAiAttachmentMessage(
     ...input,
     csvText
   }, conversationId);
+}
+
+async function sendPrivateAiScheduleManagementAttachmentMessage(
+  user: AuthUser,
+  input: {
+    teamId?: string;
+    teamName?: string;
+    text?: string;
+    file: File;
+    csvText?: string;
+    attachment: PrivateAiAttachmentReceipt;
+  },
+  conversationId: string
+): Promise<PrivateAiSendResult> {
+  const question = compactText(input.text) || 'Update the existing schedule events shown in this attachment.';
+  const teamId = await resolveAccessibleTeamId(user, {
+    teamId: input.teamId,
+    teamName: input.teamName,
+    text: question
+  }, { requireManager: true });
+  if (!teamId) throw new Error('Choose the managed team whose existing schedule should be changed.');
+  const detail = await loadParentTeamDetail(teamId, user);
+  if (!detail.canManageTeam) throw new Error('You do not have permission to manage this team schedule.');
+  const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
+  const requestedConversationId = normalizeConversationId(conversationId);
+  const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
+    ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
+    : requestedConversationId;
+  const priorMessages = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
+    ? []
+    : await loadPrivateAiMessages(user, maxHistoryMessages, activeConversationId).catch(() => []);
+  const userMessage = await savePrivateAiMessage(user, {
+    role: 'user',
+    text: question,
+    conversationId: activeConversationId,
+    attachment: input.attachment
+  });
+
+  try {
+    const attachmentReference = input.csvText
+      ? input.csvText.slice(0, 60_000)
+      : await extractScheduleAttachmentReference(input.file, question, teamName);
+    const plannerQuestion = [
+      `User request: ${question}`,
+      `Managed team: ${teamName} (${teamId})`,
+      'The attachment below is reference data for matching existing schedule events.',
+      'Use list_schedule or get_schedule_event when an event must be matched.',
+      'Use update_schedule_event or cancel_schedule_event to stage the requested changes.',
+      'Do not add or import events. Do not call create_schedule_event or apply_schedule_import.',
+      `Attachment reference:\n${attachmentReference.slice(0, 60_000)}`
+    ].join('\n');
+    const aiResult = await generatePrivateAiAnswer(user, plannerQuestion, priorMessages, {
+      conversationId: activeConversationId,
+      allowedToolNames: [
+        'list_schedule',
+        'get_schedule_event',
+        'update_schedule_event',
+        'cancel_schedule_event'
+      ]
+    });
+    const assistantMessage = await savePrivateAiMessage(user, {
+      role: 'assistant',
+      text: aiResult.answer,
+      conversationId: activeConversationId,
+      toolNames: aiResult.toolResults.filter((result) => result.ok).map((result) => result.name),
+      pendingActionIds: aiResult.toolResults
+        .filter((result) => result.ok && result.requiresConfirmation === true)
+        .map((result) => compactText(result.confirmationId))
+        .filter(Boolean)
+    });
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: aiResult.answer
+    }).catch(() => {});
+    return { userMessage, assistantMessage, toolResults: aiResult.toolResults };
+  } catch (error: any) {
+    logger.warn('Unable to prepare schedule attachment changes.', { error });
+    const assistantMessage = await savePrivateAiMessage(user, {
+      role: 'assistant',
+      text: error?.message
+        ? `I could not prepare those schedule changes: ${error.message}`
+        : 'I could not prepare those schedule changes. Try a clearer attachment or identify the event in your message.',
+      conversationId: activeConversationId,
+      error: true
+    });
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: assistantMessage.text
+    }).catch(() => {});
+    return { userMessage, assistantMessage, toolResults: [] };
+  }
+}
+
+async function extractScheduleAttachmentReference(file: File, question: string, teamName: string) {
+  const model = await getPrivateAiModel();
+  const prompt = `Transcribe the schedule information visible in this attachment so existing ALL PLAYS events can be matched.
+Return concise plain text, not JSON. Include every visible date, time, event type, opponent, title, location, status, and identifier.
+Do not propose changes and do not invent missing information.
+Managed team: ${teamName}
+User request: ${question}
+File name: ${compactText(file.name)}`;
+  const result = await model.generateContent([prompt, await fileToPrivateAiGenerativePart(file)]);
+  const reference = compactText(result?.response?.text?.());
+  if (!reference) throw new Error('AI could not read any schedule details from that attachment.');
+  return reference;
 }
 
 async function classifyPrivateAiAttachment(input: {
@@ -1149,8 +1273,26 @@ export async function generatePrivateAiAnswer(
       };
     }
 
-    const calls = planner.toolCalls.slice(0, maxToolCallsPerRound);
+    const requestedCalls = planner.toolCalls.slice(0, maxToolCallsPerRound);
+    const allowedToolNames = context.allowedToolNames?.length
+      ? new Set(context.allowedToolNames.map(compactText).filter(Boolean))
+      : null;
+    const calls = allowedToolNames
+      ? requestedCalls.filter((call) => allowedToolNames.has(compactText(call.name)))
+      : requestedCalls;
+    const blockedCalls = allowedToolNames
+      ? requestedCalls.filter((call) => !allowedToolNames.has(compactText(call.name)))
+      : [];
+    blockedCalls.forEach((call) => toolResults.push({
+      name: compactText(call.name),
+      ok: false,
+      error: 'That tool is not allowed for this attachment request.'
+    }));
     if (!calls.length) {
+      if (blockedCalls.length) {
+        plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
+        continue;
+      }
       return {
         answer: clampAnswer(plannerText || 'I need a little more information to answer that.'),
         toolResults
@@ -3247,6 +3389,35 @@ function stripPrivateAiArtifactForStorage(artifact: PrivateAiArtifactReference) 
   if (artifact.type === 'document-analysis') {
     stored.fileName = artifact.fileName;
     stored.mimeType = artifact.mimeType;
+  } else if (artifact.type === 'roster-import' && artifact.previewRows?.length) {
+    stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
+      rowNumber: row.rowNumber,
+      action: row.action,
+      playerId: row.playerId,
+      name: row.name,
+      number: row.number,
+      reason: row.reason,
+      fields: row.fields.map((field) => ({
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        ...(field.section ? { section: field.section } : {}),
+        value: field.value,
+        ...(field.options?.length ? { options: field.options } : {})
+      })),
+      contacts: row.contacts.map((contact) => ({
+        ...(hasOwn(contact, 'name') ? { name: contact.name } : {}),
+        ...(hasOwn(contact, 'email') ? { email: contact.email } : {}),
+        ...(hasOwn(contact, 'phone') ? { phone: contact.phone } : {}),
+        ...(hasOwn(contact, 'relation') ? { relation: contact.relation } : {}),
+        ...(hasOwn(contact, 'bucket') ? { bucket: contact.bucket } : {}),
+        ...(contact.providedKeys?.length ? { providedKeys: contact.providedKeys } : {})
+      })),
+      inviteCount: row.inviteCount,
+      duplicatePlayerId: row.duplicatePlayerId,
+      duplicatePlayerName: row.duplicatePlayerName,
+      errors: row.errors
+    })));
   } else if (artifact.type === 'schedule-import' && artifact.previewRows?.length) {
     stored.previewRows = sanitizePrivateAiStorageValue(artifact.previewRows.slice(0, 200).map((row) => ({
       rowNumber: row.rowNumber,
