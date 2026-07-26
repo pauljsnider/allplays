@@ -470,29 +470,31 @@ describe('pages bundle staging', () => {
         expect(previewWorkflow).not.toContain('APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY ||');
     });
 
-    it('preserves hidden Pages files and verifies them after artifact download', () => {
+    it('keeps Pages publication inside the exact-SHA production release train', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const pagesWorkflow = fs.readFileSync(
             path.join(repoRoot, '.github', 'workflows', 'app-github-pages.yml'),
             'utf8'
         );
-        const intermediateUpload = pagesWorkflow.slice(
-            pagesWorkflow.indexOf('- name: Upload app Pages bundle artifact'),
-            pagesWorkflow.indexOf('\n  deploy:')
+        const productionWorkflow = fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', 'deploy-prod.yml'),
+            'utf8'
         );
-        const deployJob = pagesWorkflow.slice(pagesWorkflow.indexOf('\n  deploy:'));
-        const downloadIndex = deployJob.indexOf('- name: Download staged Pages bundle');
-        const verifyIndex = deployJob.indexOf('- name: Verify staged Pages deployment artifact');
-        const pagesUploadIndex = deployJob.indexOf('- name: Upload GitHub Pages artifact');
+        const deployJob = productionWorkflow.slice(productionWorkflow.indexOf('\n  deploy-pages:'));
+        const downloadIndex = deployJob.indexOf('- name: Download exact-SHA production handoff');
+        const verifyIndex = deployJob.indexOf('- name: Validate Pages handoff identity');
+        const pagesUploadIndex = deployJob.indexOf('- name: Upload exact-SHA Pages artifact');
+        const pagesDeployIndex = deployJob.indexOf('- name: Deploy exact-SHA Pages artifact');
 
-        expect(intermediateUpload).toContain('include-hidden-files: true');
-        expect(pagesWorkflow).toContain("github.event_name == 'workflow_dispatch' && inputs.deploy");
-        expect(deployJob).toContain('ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
-        expect(deployJob).not.toContain('ALLPLAYS_PAGES_DEPLOY_ENABLED');
-        expect(deployJob).toContain('node scripts/verify-pages-deploy-artifact.mjs "$RUNNER_TEMP/allplays-pages"');
+        expect(pagesWorkflow).toContain('include-hidden-files: true');
+        expect(pagesWorkflow).not.toContain('\n  push:');
+        expect(pagesWorkflow).not.toContain('\n  deploy:');
+        expect(deployJob).toContain("vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'");
+        expect(deployJob).toContain('grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"');
         expect(downloadIndex).toBeGreaterThan(-1);
         expect(verifyIndex).toBeGreaterThan(downloadIndex);
         expect(pagesUploadIndex).toBeGreaterThan(verifyIndex);
+        expect(pagesDeployIndex).toBeGreaterThan(pagesUploadIndex);
     });
 
     it('runs preview browser smoke against the exact staged Pages artifact', () => {

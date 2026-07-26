@@ -69,7 +69,7 @@ If the critical workflow monitor is noisy, disable only its schedule while inves
 
 ## Firestore Rules API retry exhaustion
 
-The production workflow makes eight bounded attempts when a transient Firestore configuration deployment fails. If those attempts are exhausted, the job summary identifies the Google API surface, final HTTP error class, attempt count, and surfaces that were not deployed. The summary uses only fixed operational labels and does not copy API response bodies, credentials, tenant identifiers, or application data.
+The serialized production release train allows at most three Firestore Rules API checks per release: up to two non-persistent `projects:test` health probes, followed by one persistent Firestore rules/index deployment attempt only after the probe passes. If the probe or deployment fails, the job summary identifies the Google API surface, final HTTP error class, attempt count, and surfaces that were not deployed. The summary uses only fixed operational labels and does not copy API response bodies, credentials, tenant identifiers, or application data.
 
 Application deployment remains fail-closed. When Rules or indexes differ from the last successful production deployment, Hosting and Functions do not deploy until the combined Firestore configuration command succeeds. The Firebase CLI may apply indexes before a later Rules API failure, so treat the Rules and index state as potentially partial and verify both before retrying. Existing Hosting and Functions production remains active; do not bypass the workflow or deploy application surfaces separately.
 
@@ -77,7 +77,7 @@ Safe manual retry:
 
 1. Confirm the failed run targeted `master` and that its summary reports a transient Google API failure rather than a configuration or authorization error. Check the Firebase deploy log or console to determine whether Rules or indexes were already applied.
 2. Confirm `master` still contains the intended Firestore configuration. If a newer production deployment succeeded, no retry is needed.
-3. In GitHub Actions, open `deploy-prod`, choose **Run workflow**, select `master`, and run it. Manual dispatch is restricted to the current `master` branch and repeats the protected tests, change detection, keyless authentication, bounded retries, and fail-closed ordering.
+3. In GitHub Actions, open `deploy-prod`, choose **Run workflow**, select `master`, and run it. Manual dispatch is restricted to the current `master` branch and repeats the protected tests, change detection, keyless authentication, bounded health probe, exact-SHA Firebase/Pages ordering, and fail-closed release marker.
 4. Confirm the Firestore configuration step succeeds before Hosting and Functions, then confirm the production smoke workflow succeeds.
 
 Do not run a local `firebase deploy`, increase retry limits, expose raw API output in the summary, or bypass the protected production environment. If another bounded run ends with the same external error class, treat it as an ongoing Google service incident and leave production on the last successful configuration.

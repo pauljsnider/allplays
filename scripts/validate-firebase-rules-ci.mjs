@@ -114,7 +114,9 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
         }
         if (job.steps.some((step) => typeof step?.uses === 'string' &&
             !/^actions\/download-artifact@[0-9a-f]{40}$/.test(step.uses) &&
-            !/^google-github-actions\/auth@/.test(step.uses)
+            !/^google-github-actions\/auth@/.test(step.uses) &&
+            !/^actions\/upload-pages-artifact@[0-9a-f]{40}$/.test(step.uses) &&
+            !/^actions\/deploy-pages@[0-9a-f]{40}$/.test(step.uses)
         )) {
             throw new Error(`${label} credentialed deploy job contains an unapproved action.`);
         }
@@ -262,6 +264,7 @@ export function validateProductionDeployCommand(deployProd) {
         'Production push and manual retry triggers'
     );
     assertIncludes(deployProd, 'group: production-deploy-${{ github.ref }}', 'Production ref-scoped concurrency');
+    assertIncludes(deployProd, 'cancel-in-progress: false', 'Production release serialization without cancellation');
     assertIncludes(deployProd, 'baseline_branch="$GITHUB_REF_NAME"', 'Production push baseline branch');
     assertIncludes(deployProd, 'if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then', 'Production manual retry baseline selection');
     assertIncludes(deployProd, 'if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then', 'Production manual retry master restriction');
@@ -298,7 +301,17 @@ export function validateProductionDeployCommand(deployProd) {
         'Refusing --force outside the reviewed retry-enabled function allowlist.',
         'Production force-deploy allowlist guard'
     );
-    assertIncludes(deployProd, 'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 8 30', 'Production Firestore deploy targets and bounded extended retry');
+    assertIncludes(deployProd, 'test_firestore_rules_api 2 20', 'Production non-persistent Firestore Rules API health preflight');
+    assertIncludes(
+        deployProd,
+        'https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test',
+        'Production Firestore projects:test health endpoint'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 1 0',
+        'Production Firestore deploy gets one post-preflight mutation attempt'
+    );
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
