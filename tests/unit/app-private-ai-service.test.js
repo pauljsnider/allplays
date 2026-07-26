@@ -2407,6 +2407,151 @@ describe('private AI service', () => {
         expect(scheduleMocks.markParentPracticePacketComplete).not.toHaveBeenCalled();
     });
 
+    it('blocks ambiguous team, event, child, and player selectors before staging writes', async () => {
+        const secondChildEvent = futureEvent({
+            eventKey: 'team-1:game-1:player-2',
+            childId: 'player-2',
+            childName: 'William'
+        });
+        const secondGame = futureEvent({
+            id: 'game-2',
+            eventKey: 'team-1:game-2:player-1',
+            opponent: 'Comets'
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', name: 'Will Smith', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', name: 'William Jones', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [futureEvent({ childName: 'Will Smith' }), secondChildEvent, secondGame]
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-1', teamName: 'Bears', players: [{ id: 'player-1', name: 'Will Smith' }, { id: 'player-2', name: 'William Jones' }] },
+                { teamId: 'team-2', teamName: 'Bears Gold', players: [] }
+            ],
+            players: [
+                { teamId: 'team-1', playerId: 'player-1', name: 'Will Smith', teamName: 'Bears' },
+                { teamId: 'team-1', playerId: 'player-2', name: 'William Jones', teamName: 'Bears' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-1' ? 'Bears' : 'Bears Gold' },
+            players: teamId === 'team-1'
+                ? [{ id: 'player-1', name: 'Will Smith' }, { id: 'player-2', name: 'William Jones' }]
+                : [],
+            inactivePlayers: [],
+            canManageTeam: true
+        }));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, {
+            name: 'send_team_message',
+            args: { teamName: 'Bear', text: 'Practice moved' }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('More than one accessible team matches')
+        });
+        await expect(runPrivateAiTool(authUser, {
+            name: 'claim_assignment',
+            args: { teamId: 'team-1', role: 'Snacks' }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('More than one schedule event matches')
+        });
+        await expect(runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamId: 'team-1', eventId: 'game-1', response: 'going' }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('More than one schedule event matches')
+        });
+        await expect(runPrivateAiTool(authUser, {
+            name: 'save_player_incentive_rule',
+            args: { teamId: 'team-1', playerName: 'Will', statKey: 'goals', amount: 2 }
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('More than one accessible player matches')
+        });
+
+        expect(chatMocks.sendTeamChatMessage).not.toHaveBeenCalled();
+        expect(scheduleMocks.claimParentScheduleAssignmentSlot).not.toHaveBeenCalled();
+        expect(scheduleMocks.submitParentScheduleRsvp).not.toHaveBeenCalled();
+        expect(playerMocks.saveParentPlayerIncentiveRule).not.toHaveBeenCalled();
+    });
+
+    it('persists exact resolved event and player targets in reviewed proposals', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-1', teamName: 'Bears', players: [{ id: 'player-1', name: 'Avery' }] },
+                { teamId: 'team-2', teamName: 'Bears Gold', players: [{ id: 'player-2', name: 'Avery' }] }
+            ],
+            players: [
+                { teamId: 'team-1', playerId: 'player-1', name: 'Avery', teamName: 'Bears' },
+                { teamId: 'team-2', playerId: 'player-2', name: 'Avery', teamName: 'Bears Gold' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-1' ? 'Bears' : 'Bears Gold' },
+            players: teamId === 'team-1'
+                ? [{ id: 'player-1', name: 'Avery' }]
+                : [{ id: 'player-2', name: 'Avery' }],
+            inactivePlayers: [],
+            canManageTeam: true
+        }));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const rsvp = await runPrivateAiTool(authUser, {
+            name: 'update_rsvp',
+            args: { teamName: 'Bears', eventId: 'game-1', playerName: 'Avery', response: 'going' }
+        });
+        const incentive = await runPrivateAiTool(authUser, {
+            name: 'save_player_incentive_rule',
+            args: { teamName: 'Bears', playerName: 'Avery', statKey: 'goals', amount: 2 }
+        });
+
+        expect(rsvp).toMatchObject({
+            ok: true,
+            requiresConfirmation: true,
+            data: {
+                previewSummary: {
+                    event: expect.objectContaining({
+                        eventId: 'game-1',
+                        teamId: 'team-1',
+                        childId: 'player-1'
+                    })
+                }
+            }
+        });
+        expect(incentive).toMatchObject({
+            ok: true,
+            requiresConfirmation: true,
+            data: {
+                previewSummary: expect.objectContaining({
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Avery'
+                })
+            }
+        });
+        const rsvpPending = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[1]?.toolName === 'update_rsvp'
+        ))?.[1];
+        const incentivePending = firebaseMocks.setDoc.mock.calls.find((call) => (
+            call[1]?.toolName === 'save_player_incentive_rule'
+        ))?.[1];
+        expect(rsvpPending.args).toMatchObject({
+            teamId: 'team-1',
+            eventId: 'game-1',
+            eventType: 'game',
+            childId: 'player-1'
+        });
+        expect(incentivePending.args).toMatchObject({
+            teamId: 'team-1',
+            playerId: 'player-1'
+        });
+    });
+
     it('executes confirmed AI player incentive writes', async () => {
         await executeConfirmedToolForTest(authUser, { name: 'save_player_incentive_rule', args: { teamId: 'team-1', playerId: 'player-1', statKey: 'goals', amount: 2 } });
         await executeConfirmedToolForTest(authUser, { name: 'set_player_incentive_cap', args: { teamId: 'team-1', playerId: 'player-1', maxPerGameAmount: 5 } });

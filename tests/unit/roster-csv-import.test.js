@@ -872,6 +872,17 @@ describe('roster CSV import planning', () => {
         expect(page).toContain('renderRosterCsvReview(plan)');
         expect(page).toContain('sendImportedRosterContactInvite');
         expect(page).toContain('operation.inviteRequests || []');
+        expect(page).toContain('csv-invite-delivery-results');
+        expect(page).toContain('ai-invite-delivery-results');
+        expect(page).toContain('Family invitation delivery report');
+        expect(page).toContain('Existing invite code:');
+        expect(page).toContain('Resend existing invite');
+        expect(page).toContain("queueInviteEmail(result.code, { forceNewDelivery: true })");
+        expect(page).toContain('legacy-roster-import:${currentTeamId}:${playerId}:${normalizedEmail}');
+        expect(page).toContain("setRosterInviteDeliveryResults('csv', inviteResults)");
+        expect(page).toContain("setRosterInviteDeliveryResults('ai', inviteResults)");
+        expect(page).toContain('playerId,');
+        expect(page).toContain("emailStatus: 'failed'");
         expect(page).toContain('Send / resend invite');
         expect(page).toContain('Linked account');
         expect(page).toContain('applyRosterCsvImportOperations(currentTeamId, plan.operations)');

@@ -2378,8 +2378,9 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'update_rsvp',
     mode: 'write',
     description: 'Update one linked child RSVP. Args: eventId, teamId, childId/playerId optional, response going|maybe|not_going, note.',
+    prepare: (user, args) => prepareScheduleEventAction(user, args, 'Update RSVP', { requireChildUnique: true }),
     resolve: async (user, args) => {
-      const event = await resolveAccessibleScheduleEvent(user, args);
+      const event = await resolveAccessibleScheduleEvent(user, args, { requireChildUnique: true });
       if (!event) throw new Error('No matching event was found for this account.');
       const response = normalizeAiRsvp(args.response);
       const result = await submitParentScheduleRsvp(event, user, response, compactText(args.note));
@@ -2390,6 +2391,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'update_rsvps_for_children',
     mode: 'write',
     description: 'Update multiple linked children on the same event. Args: eventId, teamId, response going|maybe|not_going, note.',
+    prepare: (user, args) => prepareScheduleEventAction(user, args, 'Update RSVPs for linked children'),
     resolve: async (user, args) => {
       const event = await resolveAccessibleScheduleEvent(user, args);
       if (!event) throw new Error('No matching event was found for this account.');
@@ -2407,6 +2409,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Claim a volunteer/task assignment slot. Args: eventId, teamId, role.',
     aliases: ['claim_task'],
+    prepare: (user, args) => prepareScheduleEventAction(user, args, 'Claim schedule assignment'),
     resolve: async (user, args) => {
       const event = await resolveAccessibleScheduleEvent(user, args);
       if (!event) throw new Error('No matching event was found for this account.');
@@ -2420,6 +2423,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Release a volunteer/task assignment claim. Args: eventId, teamId, role.',
     aliases: ['release_task'],
+    prepare: (user, args) => prepareScheduleEventAction(user, args, 'Release schedule assignment'),
     resolve: async (user, args) => {
       const event = await resolveAccessibleScheduleEvent(user, args);
       if (!event) throw new Error('No matching event was found for this account.');
@@ -2433,6 +2437,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Mark a practice/home packet complete for a linked child. Args: eventId, teamId, childId/playerId optional, playerName optional.',
     aliases: ['complete_practice_packet'],
+    prepare: preparePracticePacketCompletionAction,
     resolve: async (user, args) => {
       const event = await resolveAccessibleScheduleEvent(user, buildPracticePacketEventArgs(args));
       if (!event) throw new Error('No matching practice was found for this account.');
@@ -2447,6 +2452,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'create_ride_offer',
     mode: 'write',
     description: 'Create a rideshare offer. Args: eventId, teamId, seatCapacity, direction to|from|round-trip, note.',
+    prepare: (user, args) => prepareScheduleEventAction(user, args, 'Create ride offer'),
     resolve: async (user, args) => {
       const event = await resolveAccessibleScheduleEvent(user, args);
       if (!event) throw new Error('No matching event was found for this account.');
@@ -2462,6 +2468,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'request_ride_spot',
     mode: 'write',
     description: 'Request a seat for a linked child. Args: eventId, teamId, offerId, childId/playerId optional.',
+    prepare: (user, args) => prepareRideOfferAction(user, args, 'Request ride spot', { requireChildUnique: true }),
     resolve: async (user, args) => {
       const { event, offer } = await resolveAccessibleRideOffer(user, args);
       const childId = compactText(args.childId || args.playerId) || event.childId;
@@ -2474,6 +2481,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'cancel_ride_request',
     mode: 'write',
     description: 'Cancel a ride request. Args: eventId, teamId, offerId, requestId.',
+    prepare: (user, args) => prepareRideOfferAction(user, args, 'Cancel ride request'),
     resolve: async (user, args) => {
       const { event, offer } = await resolveAccessibleRideOffer(user, args);
       const requestId = compactText(args.requestId);
@@ -2487,6 +2495,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Close or reopen a ride offer. Args: eventId, teamId, offerId, status open|closed|cancelled.',
     aliases: ['close_or_reopen_ride_offer'],
+    prepare: (user, args) => prepareRideOfferAction(user, args, 'Update ride offer status'),
     resolve: async (user, args) => {
       const { event, offer } = await resolveAccessibleRideOffer(user, args);
       const status = compactText(args.status).toLowerCase();
@@ -2500,6 +2509,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Send a team chat message. Args: teamId or teamName, text/message, target full_team|staff.',
     aliases: ['send_message'],
+    prepare: (user, args) => prepareAccessibleTeamAction(user, args, 'Send team chat message'),
     resolve: async (user, args) => {
       const teamId = await resolveAccessibleTeamId(user, args);
       if (!teamId) throw new Error('No matching team was found for this account.');
@@ -2524,6 +2534,21 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'create_household_invite',
     mode: 'write',
     description: 'Invite a household contact for a linked player. Args: playerKey or teamId+playerId, email, displayName, relation.',
+    prepare: async (user, args) => {
+      const [teamId, playerId] = compactText(args.playerKey).split('::');
+      const prepared = await prepareAccessiblePlayerAction(user, {
+        ...args,
+        teamId: compactText(args.teamId) || teamId,
+        playerId: compactText(args.playerId) || playerId
+      }, `Invite household contact ${compactText(args.email)}`);
+      return {
+        ...prepared,
+        args: {
+          ...prepared.args,
+          playerKey: `${compactText(prepared.args.teamId)}::${compactText(prepared.args.playerId)}`
+        }
+      };
+    },
     resolve: async (user, args) => {
       const playerKey = compactText(args.playerKey) || `${compactText(args.teamId)}::${compactText(args.playerId)}`;
       return createParentHouseholdMemberInvite(user, {
@@ -2584,6 +2609,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'update_player_profile',
     mode: 'write',
     description: 'Update parent-editable private player profile fields. Args: teamId, playerId, emergencyContactName, emergencyContactPhone, medicalInfo.',
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Update player profile'),
     resolve: async (user, args) => {
       const mergedArgs = await buildMergedPlayerEditableProfileArgs(user, args);
       return updateParentPlayerEditableProfile(mergedArgs);
@@ -2594,6 +2620,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     description: 'Create or update a parent player incentive rule. Args: teamId, playerId/playerName, statKey, amountCents or amount, type per_unit|threshold, threshold, thresholdOp.',
     aliases: ['set_player_incentive_rule'],
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Save player incentive rule'),
     resolve: async (user, args) => {
       const player = await resolveAccessiblePlayer(user, args);
       if (!player) throw new Error('No matching player was found for this account.');
@@ -2621,6 +2648,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'toggle_player_incentive_rule',
     mode: 'write',
     description: 'Activate or deactivate a player incentive rule. Args: teamId, playerId/playerName, ruleId, active true|false.',
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Update player incentive rule'),
     resolve: async (user, args) => {
       const { player, rule } = await resolvePlayerIncentiveRule(user, args);
       return toggleParentPlayerIncentiveRule(user, player.teamId, player.playerId, {
@@ -2633,6 +2661,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'retire_player_incentive_rule',
     mode: 'write',
     description: 'Retire/remove a player incentive rule. Args: teamId, playerId/playerName, ruleId.',
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Retire player incentive rule'),
     resolve: async (user, args) => {
       const player = await resolveAccessiblePlayer(user, args);
       if (!player) throw new Error('No matching player was found for this account.');
@@ -2645,6 +2674,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'set_player_incentive_cap',
     mode: 'write',
     description: 'Set or clear a per-game incentive cap. Args: teamId, playerId/playerName, maxPerGameCents or maxPerGameAmount.',
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Update player incentive cap'),
     resolve: async (user, args) => {
       const player = await resolveAccessiblePlayer(user, args);
       if (!player) throw new Error('No matching player was found for this account.');
@@ -2658,6 +2688,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     name: 'mark_player_incentive_paid',
     mode: 'write',
     description: 'Mark player incentive earnings paid for a game. Args: teamId, playerId/playerName, gameId, amountCents or amount.',
+    prepare: (user, args) => prepareAccessiblePlayerAction(user, args, 'Mark player incentive paid'),
     resolve: async (user, args) => {
       const player = await resolveAccessiblePlayer(user, args);
       if (!player) throw new Error('No matching player was found for this account.');
@@ -2744,7 +2775,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'tracking-and-stats',
       description: 'Mark a team tracking item complete or incomplete for a roster player. Args: teamId/teamName, playerId/playerName, itemId, complete.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update player tracking status'),
+      prepare: (user, args) => prepareManagedTeamPlayerAction(user, args, 'Update player tracking status'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const detail = await loadParentTeamDetail(teamId, user);
@@ -2789,7 +2820,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, input, and practice scope occurrence|series.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update schedule event'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Update schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const service = await import('./scheduleService');
@@ -2809,7 +2840,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Cancel a managed-team game or practice without deleting history. Args: teamId, eventId, eventType.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Cancel schedule event'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Cancel schedule event'),
       resolve: async (user, args) => {
         await requireManagedTeamId(user, args);
         const event = await resolveAccessibleScheduleEvent(user, args);
@@ -2825,7 +2856,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Send the normal staff RSVP reminder for a managed-team event. Args: teamId, eventId.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Send RSVP reminder'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Send RSVP reminder'),
       resolve: async (user, args) => {
         await requireManagedTeamId(user, args);
         const event = await resolveAccessibleScheduleEvent(user, args);
@@ -2839,7 +2870,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Create, update, or remove a managed event assignment. Args: teamId, eventId, action create|update|remove, role/currentRole, assignment.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Manage schedule assignment'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Manage schedule assignment'),
       resolve: async (user, args) => {
         await requireManagedTeamId(user, args);
         const event = await resolveAccessibleScheduleEvent(user, args);
@@ -2856,7 +2887,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Save player attendance for a managed practice. Args: teamId, eventId, attendance with player statuses and notes.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save practice attendance'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Save practice attendance', { eventType: 'practice' }),
       resolve: async (user, args) => {
         await requireManagedTeamId(user, args);
         const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
@@ -2900,7 +2931,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Save the home/practice packet for a managed practice. Args: teamId, eventId, packet with title, due date, notes, and blocks.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Save practice packet'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Save practice packet', { eventType: 'practice' }),
       resolve: async (user, args) => {
         await requireManagedTeamId(user, args);
         const event = await resolveAccessibleScheduleEvent(user, { ...args, type: 'practice' });
@@ -2914,7 +2945,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'game-planning-and-wrap-up',
       description: 'Update the score for a managed game. Args: teamId, eventId/gameId, homeScore, awayScore.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Update game score'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Update game score', { eventType: 'game' }),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const { updateGameScore } = await import('./scheduleService');
@@ -2929,7 +2960,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'game-planning-and-wrap-up',
       description: 'Complete a managed game wrap-up with final report payload. Args: teamId, gameId/eventId, payload.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Complete game wrap-up'),
+      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Complete game wrap-up', { eventType: 'game' }),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const { completeGameWrapupForApp } = await import('./scheduleService');
@@ -3058,6 +3089,175 @@ async function prepareManagedTeamAction(user: AuthUser, args: Record<string, unk
   };
 }
 
+async function prepareAccessibleTeamAction(user: AuthUser, args: Record<string, unknown>, label: string) {
+  const teamId = await resolveAccessibleTeamId(user, args);
+  if (!teamId) throw new Error('No accessible team matched that request.');
+  const detail = await loadParentTeamDetail(teamId, user);
+  const teamName = compactText(detail.team?.name) || teamId;
+  return {
+    args: {
+      ...args,
+      teamId
+    },
+    summary: `${label} | Team: ${teamName}`,
+    previewSummary: {
+      domain: 'team-communications',
+      teamId,
+      teamName,
+      action: label
+    }
+  };
+}
+
+async function prepareAccessiblePlayerAction(user: AuthUser, args: Record<string, unknown>, label: string) {
+  const player = await resolveAccessiblePlayer(user, args);
+  if (!player) throw new Error('No matching player was found for this account.');
+  return {
+    args: {
+      ...args,
+      teamId: player.teamId,
+      playerId: player.playerId
+    },
+    summary: `${label} | Player: ${player.name || player.playerId} | Team: ${player.teamName || player.teamId}`,
+    previewSummary: {
+      domain: 'family-player',
+      teamId: player.teamId,
+      teamName: player.teamName || player.teamId,
+      playerId: player.playerId,
+      playerName: player.name || player.playerId,
+      action: label
+    }
+  };
+}
+
+async function prepareScheduleEventAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string,
+  options: { requireChildUnique?: boolean; eventType?: 'game' | 'practice' } = {}
+) {
+  const event = await resolveAccessibleScheduleEvent(user, {
+    ...args,
+    ...(options.eventType ? { eventType: options.eventType } : {})
+  }, {
+    requireChildUnique: options.requireChildUnique === true
+  });
+  if (!event) throw new Error('No matching schedule event was found for this account.');
+  const eventSummary = summarizeScheduleEvent(event);
+  return {
+    args: {
+      ...args,
+      teamId: event.teamId,
+      eventId: event.id,
+      eventType: event.type,
+      childId: event.childId || ''
+    },
+    summary: `${label} | ${event.teamName}: ${getScheduleTitle(event)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
+    previewSummary: {
+      domain: 'schedule',
+      action: label,
+      event: eventSummary
+    }
+  };
+}
+
+async function prepareManagedScheduleEventAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string,
+  options: { eventType?: 'game' | 'practice' } = {}
+) {
+  const teamId = await requireManagedTeamId(user, args);
+  const prepared = await prepareScheduleEventAction(user, {
+    ...args,
+    teamId
+  }, label, options);
+  return {
+    ...prepared,
+    previewSummary: {
+      ...prepared.previewSummary,
+      domain: 'team-management'
+    }
+  };
+}
+
+async function prepareManagedTeamPlayerAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string
+) {
+  const teamId = await requireManagedTeamId(user, args);
+  const detail = await loadParentTeamDetail(teamId, user);
+  const player = resolveTeamDetailPlayer(detail, args);
+  if (!player) throw new Error('No matching roster player was found.');
+  const teamName = compactText(detail.team?.name) || teamId;
+  return {
+    args: {
+      ...args,
+      teamId,
+      playerId: compactText(player.id || player.playerId)
+    },
+    summary: `${label} | Player: ${compactText(player.name) || compactText(player.id)} | Team: ${teamName}`,
+    previewSummary: {
+      domain: 'team-management',
+      teamId,
+      teamName,
+      playerId: compactText(player.id || player.playerId),
+      playerName: compactText(player.name) || compactText(player.id),
+      action: label
+    }
+  };
+}
+
+async function preparePracticePacketCompletionAction(user: AuthUser, args: Record<string, unknown>) {
+  const prepared = await prepareScheduleEventAction(
+    user,
+    buildPracticePacketEventArgs(args),
+    'Mark practice packet complete',
+    { eventType: 'practice' }
+  );
+  const event = await resolveAccessibleScheduleEvent(user, prepared.args);
+  if (!event) throw new Error('No matching practice was found for this account.');
+  const packet = await loadPracticePacketForAi(user, event);
+  if (!packet) throw new Error('No practice packet was found for this practice.');
+  const child = resolvePracticePacketChild(packet, args);
+  return {
+    ...prepared,
+    args: {
+      ...prepared.args,
+      childId: compactText(child.id)
+    },
+    summary: `Mark practice packet complete | ${event.teamName}: ${getScheduleTitle(event)} | Player: ${compactText(child.name) || child.id}`,
+    previewSummary: {
+      ...prepared.previewSummary,
+      childId: compactText(child.id),
+      childName: compactText(child.name) || compactText(child.id)
+    }
+  };
+}
+
+async function prepareRideOfferAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string,
+  options: { requireChildUnique?: boolean } = {}
+) {
+  const prepared = await prepareScheduleEventAction(user, args, label, options);
+  const { offer } = await resolveAccessibleRideOffer(user, prepared.args);
+  return {
+    ...prepared,
+    args: {
+      ...prepared.args,
+      offerId: offer.id
+    },
+    summary: `${prepared.summary} | Ride offer: ${offer.driverName || offer.id}`,
+    previewSummary: {
+      ...prepared.previewSummary,
+      offer: summarizeRideOffer(offer)
+    }
+  };
+}
+
 function getPrivateAiToolDefinition(name: string) {
   const normalized = compactText(name);
   return privateAiToolDefinitions.find((definition) => (
@@ -3110,7 +3310,11 @@ async function buildMergedPlayerEditableProfileArgs(user: AuthUser, args: Record
   };
 }
 
-async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<string, unknown>): Promise<ParentScheduleEvent | null> {
+async function resolveAccessibleScheduleEvent(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  options: { requireChildUnique?: boolean } = {}
+): Promise<ParentScheduleEvent | null> {
   const requestedEventId = compactText(args.eventId || args.gameId || args.id);
   const requestedTeamId = compactText(args.teamId);
   const requestedChildId = compactText(args.childId || args.playerId);
@@ -3121,7 +3325,18 @@ async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<strin
   const schedule = await loadParentSchedule(user, { includePastGames: true });
   const events = Array.isArray(schedule.events) ? schedule.events : [];
 
-  return events.find((event: ParentScheduleEvent) => {
+  if (
+    !requestedEventId
+    && !requestedTeamId
+    && !requestedChildId
+    && !requestedTeamName
+    && !requestedPlayerName
+    && !requestedTitle
+  ) {
+    throw new Error('An event ID, team, player, or event title is required.');
+  }
+
+  const matches = events.filter((event: ParentScheduleEvent) => {
     if (requestedEventId && event.id !== requestedEventId) return false;
     if (requestedTeamId && event.teamId !== requestedTeamId) return false;
     if (requestedChildId && event.childId !== requestedChildId) return false;
@@ -3133,7 +3348,17 @@ async function resolveAccessibleScheduleEvent(user: AuthUser, args: Record<strin
       if (!title.includes(requestedTitle)) return false;
     }
     return true;
-  }) || null;
+  });
+  const uniqueMatches = Array.from(new Map(matches.map((event) => [
+    options.requireChildUnique === true
+      ? `${event.teamId}:${event.id}:${event.type}:${event.childId || ''}`
+      : `${event.teamId}:${event.id}:${event.type}`,
+    event
+  ])).values());
+  if (uniqueMatches.length > 1) {
+    throw new Error('More than one schedule event matches that request. Choose the exact event.');
+  }
+  return uniqueMatches[0] || null;
 }
 
 async function loadPracticePacketForAi(user: AuthUser, event: ParentScheduleEvent) {
@@ -5337,7 +5562,14 @@ async function resolveAccessibleTeamId(
   }
   if (teamId) return null;
   if (teamName) {
-    return eligibleTeams.find((team) => compactText(team.teamName).toLowerCase().includes(teamName))?.teamId || null;
+    const exactMatches = eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase() === teamName);
+    const matchingTeams = exactMatches.length
+      ? exactMatches
+      : eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase().includes(teamName));
+    if (matchingTeams.length > 1) {
+      throw new Error(`More than one accessible team matches "${compactText(args.teamName)}". Choose one team.`);
+    }
+    return matchingTeams[0]?.teamId || null;
   }
   const requestText = compactText(args.text || args.prompt || args.query).toLowerCase();
   if (requestText) {
@@ -5457,9 +5689,10 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
 }
 
 async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unknown>) {
-  const requestedTeamId = compactText(args.teamId);
-  const requestedPlayerId = compactText(args.playerId);
-  const requestedPlayerName = compactText(args.playerName).toLowerCase();
+  const requestedTeamId = compactText(args.teamId)
+    || (compactText(args.teamName) ? await resolveAccessibleTeamId(user, args) : '');
+  const requestedPlayerId = compactText(args.playerId || args.childId);
+  const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
   const home = await loadParentHome(user);
   const accessibleTeams = await loadAccessibleAiTeams(user);
   const players = [
@@ -5485,17 +5718,26 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
       teamName: team.teamName
     })))
   ].filter((player: any) => player.teamId && player.playerId);
-
-  if (requestedTeamId && requestedPlayerId) {
-    return players.find((player: any) => player.teamId === requestedTeamId && player.playerId === requestedPlayerId) || null;
+  const uniquePlayers = Array.from(new Map(players.map((player: any) => [
+    `${player.teamId}:${player.playerId}`,
+    player
+  ])).values());
+  const teamPlayers = requestedTeamId
+    ? uniquePlayers.filter((player: any) => player.teamId === requestedTeamId)
+    : uniquePlayers;
+  let matches = requestedPlayerId
+    ? teamPlayers.filter((player: any) => player.playerId === requestedPlayerId)
+    : [];
+  if (!requestedPlayerId && requestedPlayerName) {
+    const exactMatches = teamPlayers.filter((player: any) => compactText(player.name).toLowerCase() === requestedPlayerName);
+    matches = exactMatches.length
+      ? exactMatches
+      : teamPlayers.filter((player: any) => compactText(player.name).toLowerCase().includes(requestedPlayerName));
   }
-  if (requestedPlayerId) {
-    return players.find((player: any) => player.playerId === requestedPlayerId) || null;
+  if (matches.length > 1) {
+    throw new Error(`More than one accessible player matches "${compactText(args.playerName || args.playerId)}". Choose the exact player and team.`);
   }
-  if (requestedPlayerName) {
-    return players.find((player: any) => compactText(player.name).toLowerCase().includes(requestedPlayerName)) || null;
-  }
-  return players[0] || null;
+  return matches[0] || null;
 }
 
 function resolveTeamDetailPlayer(detail: any, args: Record<string, unknown>) {
@@ -5503,8 +5745,15 @@ function resolveTeamDetailPlayer(detail: any, args: Record<string, unknown>) {
   const playerName = compactText(args.playerName || args.childName).toLowerCase();
   const players = [...(detail.players || []), ...(detail.inactivePlayers || [])];
   if (playerId) return players.find((player: any) => compactText(player.id) === playerId) || null;
-  if (playerName) return players.find((player: any) => compactText(player.name).toLowerCase().includes(playerName)) || null;
-  return players.length === 1 ? players[0] : null;
+  if (!playerName) return null;
+  const exactMatches = players.filter((player: any) => compactText(player.name).toLowerCase() === playerName);
+  const matchingPlayers = exactMatches.length
+    ? exactMatches
+    : players.filter((player: any) => compactText(player.name).toLowerCase().includes(playerName));
+  if (matchingPlayers.length > 1) {
+    throw new Error(`More than one roster player matches "${compactText(args.playerName || args.childName)}". Choose the exact player.`);
+  }
+  return matchingPlayers[0] || null;
 }
 
 function resolvePracticePacketChild(packet: any, args: Record<string, unknown>) {
@@ -5514,10 +5763,21 @@ function resolvePracticePacketChild(packet: any, args: Record<string, unknown>) 
   if ((requestedChildId || requestedPlayerName) && !children.length) {
     throw new Error('No linked child was found for this practice packet.');
   }
-  const child = children.find((candidate: any) => (
-    (!requestedChildId || candidate.id === requestedChildId)
-    && (!requestedPlayerName || compactText(candidate.name).toLowerCase().includes(requestedPlayerName))
-  ));
+  const idMatches = requestedChildId
+    ? children.filter((candidate: any) => candidate.id === requestedChildId)
+    : children;
+  const exactNameMatches = requestedPlayerName
+    ? idMatches.filter((candidate: any) => compactText(candidate.name).toLowerCase() === requestedPlayerName)
+    : [];
+  const matchingChildren = requestedPlayerName
+    ? exactNameMatches.length
+      ? exactNameMatches
+      : idMatches.filter((candidate: any) => compactText(candidate.name).toLowerCase().includes(requestedPlayerName))
+    : idMatches;
+  if (matchingChildren.length > 1) {
+    throw new Error('More than one child matches this practice packet. Choose the exact child.');
+  }
+  const child = matchingChildren[0];
   if ((requestedChildId || requestedPlayerName) && !child) {
     throw new Error('No matching child was found for this practice packet.');
   }

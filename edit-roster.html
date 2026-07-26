@@ -155,6 +155,7 @@
                             <button id="import-csv-btn" type="button"
                                 class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Review CSV</button>
                             <div id="csv-import-status" class="hidden rounded-md border p-3 text-sm"></div>
+                            <div id="csv-invite-delivery-results" class="hidden space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"></div>
                         </div>
                     </div>
 
@@ -226,6 +227,7 @@
                                     </button>
                                 </div>
                             </div>
+                            <div id="ai-invite-delivery-results" class="hidden space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm"></div>
                         </div>
                     </div>
                 </div>
@@ -587,6 +589,8 @@
         let registrationRosterImportPlan = null;
         let rosterCsvImportPlan = null;
         let rosterCsvImportSource = '';
+        let csvRosterInviteDeliveryResults = [];
+        let aiRosterInviteDeliveryResults = [];
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
@@ -2114,7 +2118,15 @@
 
         async function sendImportedRosterContactInvite(playerId, playerNumber, request) {
             try {
-                const result = await inviteParent(currentTeamId, playerId, playerNumber || '', request.email, request.relation || 'Parent');
+                const normalizedEmail = String(request.email || '').trim().toLowerCase();
+                const result = await inviteParent(
+                    currentTeamId,
+                    playerId,
+                    playerNumber || '',
+                    normalizedEmail,
+                    request.relation || 'Parent',
+                    { idempotencyKey: `legacy-roster-import:${currentTeamId}:${playerId}:${normalizedEmail}` }
+                );
                 let emailSent = false;
                 try {
                     await queueInviteEmail(result.code);
@@ -2125,6 +2137,8 @@
                 if (result.autoLinked) {
                     return {
                         ...request,
+                        playerId,
+                        playerNumber: playerNumber || '',
                         status: 'linked',
                         emailStatus: emailSent ? 'sent' : 'retryable',
                         code: result.code || ''
@@ -2132,13 +2146,127 @@
                 }
                 return {
                     ...request,
+                    playerId,
+                    playerNumber: playerNumber || '',
                     status: emailSent ? 'sent' : 'code-created',
                     emailStatus: emailSent ? 'sent' : 'retryable',
                     code: result.code || ''
                 };
             } catch (error) {
                 console.warn('Could not create imported roster contact invite:', error);
-                return { ...request, status: 'failed', error: error?.message || 'Invite failed.' };
+                return {
+                    ...request,
+                    playerId,
+                    playerNumber: playerNumber || '',
+                    status: 'failed',
+                    emailStatus: 'failed',
+                    error: error?.message || 'Invite failed.'
+                };
+            }
+        }
+
+        function isRosterInviteDeliveryUnresolved(result) {
+            return result?.emailStatus === 'retryable' || result?.status === 'failed';
+        }
+
+        function setRosterInviteDeliveryResults(source, results) {
+            const nextResults = Array.isArray(results) ? results : [];
+            if (source === 'ai') {
+                aiRosterInviteDeliveryResults = [
+                    ...aiRosterInviteDeliveryResults.filter(isRosterInviteDeliveryUnresolved),
+                    ...nextResults
+                ];
+            } else {
+                csvRosterInviteDeliveryResults = [
+                    ...csvRosterInviteDeliveryResults.filter(isRosterInviteDeliveryUnresolved),
+                    ...nextResults
+                ];
+            }
+            renderRosterInviteDeliveryResults(source);
+        }
+
+        function renderRosterInviteDeliveryResults(source) {
+            const isAi = source === 'ai';
+            const results = isAi ? aiRosterInviteDeliveryResults : csvRosterInviteDeliveryResults;
+            const container = document.getElementById(isAi ? 'ai-invite-delivery-results' : 'csv-invite-delivery-results');
+            if (!container) return;
+            if (!results.length) {
+                container.innerHTML = '';
+                container.classList.add('hidden');
+                return;
+            }
+            const rows = results.map((result, index) => {
+                const retryable = isRosterInviteDeliveryUnresolved(result);
+                const statusLabel = result.status === 'linked'
+                    ? result.emailStatus === 'sent' ? 'Linked account · notification emailed' : 'Linked account · email needs retry'
+                    : result.emailStatus === 'sent'
+                        ? 'Invitation emailed'
+                        : result.status === 'failed'
+                            ? 'Invitation could not be created'
+                            : 'Invitation created · email needs retry';
+                return `
+                    <div class="rounded-md border ${retryable ? 'border-amber-300 bg-white' : 'border-green-200 bg-green-50'} p-3">
+                        <div class="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                                <div class="font-semibold text-gray-900">${escapeHtml(result.email || 'Contact without email')}</div>
+                                <div class="text-xs text-gray-600">${escapeHtml([result.name, result.relation].filter(Boolean).join(' · ') || 'Family contact')}</div>
+                                <div class="mt-1 text-xs ${retryable ? 'text-amber-800' : 'text-green-800'}">${escapeHtml(statusLabel)}</div>
+                                ${result.code ? `<div class="mt-1 text-xs text-gray-600">Existing invite code: <code class="font-semibold text-gray-900">${escapeHtml(result.code)}</code></div>` : ''}
+                                ${result.error ? `<div class="mt-1 text-xs text-red-700">${escapeHtml(result.error)}</div>` : ''}
+                            </div>
+                            ${retryable ? `
+                                <button type="button"
+                                    data-roster-invite-retry="${source}"
+                                    data-result-index="${index}"
+                                    class="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-200">
+                                    ${result.code ? 'Resend existing invite' : 'Retry invitation'}
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = `
+                <div class="font-semibold text-amber-950">Family invitation delivery report</div>
+                <div class="text-xs text-amber-800">Retrying an emailed invitation reuses its existing code. Saved roster players and contacts are not changed.</div>
+                ${rows.join('')}
+            `;
+            container.classList.remove('hidden');
+        }
+
+        async function retryRosterInviteDelivery(source, index, button) {
+            const results = source === 'ai' ? aiRosterInviteDeliveryResults : csvRosterInviteDeliveryResults;
+            const result = results[index];
+            if (!result || !isRosterInviteDeliveryUnresolved(result)) return;
+            const originalLabel = button?.textContent || 'Retry invitation';
+            try {
+                if (button) {
+                    button.disabled = true;
+                    button.textContent = 'Retrying...';
+                }
+                const nextResult = result.code
+                    ? {
+                        ...result,
+                        status: result.status === 'linked' ? 'linked' : 'sent',
+                        emailStatus: 'sent',
+                        error: ''
+                    }
+                    : await sendImportedRosterContactInvite(result.playerId, result.playerNumber, result);
+                if (result.code) {
+                    await queueInviteEmail(result.code, { forceNewDelivery: true });
+                }
+                results.splice(index, 1, nextResult);
+            } catch (error) {
+                results.splice(index, 1, {
+                    ...result,
+                    error: error?.message || 'Invitation email could not be retried.'
+                });
+            } finally {
+                renderRosterInviteDeliveryResults(source);
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalLabel;
+                }
             }
         }
 
@@ -2148,9 +2276,18 @@
             if (summary.sent) parts.push(`${summary.sent} emailed`);
             if (summary.linked) parts.push(`${summary.linked} linked`);
             if (summary.retryable) parts.push(`${summary.retryable} email${summary.retryable === 1 ? '' : 's'} ready to retry`);
-            if (summary.failed) parts.push(`${summary.failed} failed and can be retried from the imported contact row`);
+            if (summary.failed) parts.push(`${summary.failed} failed and listed for retry below`);
             return parts.length ? ` Family invites: ${parts.join(', ')}.` : '';
         }
+
+        document.addEventListener('click', (event) => {
+            const button = event.target?.closest?.('[data-roster-invite-retry]');
+            if (!button) return;
+            const source = button.dataset.rosterInviteRetry === 'ai' ? 'ai' : 'csv';
+            const index = Number(button.dataset.resultIndex);
+            if (!Number.isInteger(index) || index < 0) return;
+            retryRosterInviteDelivery(source, index, button);
+        });
 
         function downloadFullRosterTemplate() {
             const csv = buildFullRosterCsvTemplate(rosterFieldDefinitions);
@@ -2208,6 +2345,7 @@
                         inviteResults.push(await sendImportedRosterContactInvite(operation.playerId, operation.payload?.number, request));
                     }
                 }
+                setRosterInviteDeliveryResults('csv', inviteResults);
                 renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.${formatRosterContactInviteSummary(inviteResults)}`, inviteResults.some((result) => result.status === 'failed') ? 'info' : 'success');
                 rosterCsvImportPlan = null;
                 rosterCsvImportSource = '';
@@ -2941,6 +3079,7 @@ EXAMPLES:
                         errorCount += proposedOperations.length;
                     }
                 }
+                setRosterInviteDeliveryResults('ai', inviteResults);
 
                 // Show results
                 alert(`Applied ${successCount} change${successCount === 1 ? '' : 's'} successfully.${formatRosterContactInviteSummary(inviteResults)}${errorCount > 0 ? `\n${errorCount} roster change${errorCount === 1 ? '' : 's'} failed.` : ''}`);
