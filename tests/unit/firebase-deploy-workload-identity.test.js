@@ -156,6 +156,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production).toContain('deployments: read');
         expect(production).toContain('deployments: write');
         expect(production).toContain('firestore_success_sha="$deployment_sha"');
+        expect(production).toContain(
+            'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"'
+        );
+        expect(production).toContain('firestore_success_sha="$last_success_sha"');
+        expect(production).toContain(
+            'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.'
+        );
         expect(componentMarker).toBeGreaterThan(end);
         expect(componentMarker).toBeLessThan(retryEnabledDeploy);
         expect(retryEnabledDeploy).toBeGreaterThan(end);

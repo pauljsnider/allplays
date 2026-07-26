@@ -365,6 +365,21 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
+    assertIncludes(
+        deployProd,
+        'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"',
+        'Production Firestore stale component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_sha="$last_success_sha"',
+        'Production Firestore complete deployment baseline reuse'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering.',
+        'Production Firestore divergent baseline fail-closed fallback'
+    );
     assertIncludes(deployProd, 'git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json', 'Production Firestore component change detection');
     assertIncludes(deployProd, 'record_component_deployment()', 'Production component deployment recorder');
     assertIncludes(deployProd, '"production-firestore"', 'Production Firestore component marker');

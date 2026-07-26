@@ -227,6 +227,20 @@ jobs:
           if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             firestore_success_sha="$last_success_sha"
           fi
+          if [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            && [[ "$last_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            && git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null \
+            && git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
+            if git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"; then
+              if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
+                echo "::notice::A newer complete production deployment supersedes the older Firestore component marker; advancing the rules baseline."
+              fi
+              firestore_success_sha="$last_success_sha"
+            elif ! git merge-base --is-ancestor "$last_success_sha" "$firestore_success_sha"; then
+              echo "::warning::The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
+              firestore_success_sha=""
+            fi
+          fi
 
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
