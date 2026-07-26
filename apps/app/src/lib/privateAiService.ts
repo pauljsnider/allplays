@@ -833,6 +833,40 @@ ${input.csvText ? `CSV content:\n${input.csvText.slice(0, 120_000)}` : ''}`;
   return { userMessage, assistantMessage, toolResults: [] };
 }
 
+async function savePrivateAiImportFailureResult(
+  user: AuthUser,
+  input: {
+    userMessage: PrivateAiMessage;
+    conversationId: string;
+    question: string;
+    workflowLabel: string;
+    cause?: unknown;
+    toolResults?: PrivateAiToolResult[];
+  }
+): Promise<PrivateAiSendResult> {
+  const reason = compactText((input.cause as any)?.message || input.cause);
+  const assistantText = [
+    `I could not prepare that ${input.workflowLabel}${reason ? `: ${reason}` : '.'}`,
+    'Your request is saved in this chat, but nothing is waiting for confirmation.',
+    'Use Edit request to correct or retry it.'
+  ].join(' ');
+  const assistantMessage = await savePrivateAiMessage(user, {
+    role: 'assistant',
+    text: assistantText,
+    conversationId: input.conversationId,
+    error: true
+  });
+  await touchPrivateAiConversation(user, input.conversationId, {
+    title: buildConversationTitle(input.question),
+    lastMessagePreview: assistantText
+  }).catch(() => {});
+  return {
+    userMessage: input.userMessage,
+    assistantMessage,
+    toolResults: input.toolResults || []
+  };
+}
+
 async function sendPrivateAiScheduleImportMessage(
   user: AuthUser,
   input: {
@@ -857,10 +891,6 @@ async function sendPrivateAiScheduleImportMessage(
       ? getPrivateAiAttachmentKind(input.documentFile) === 'pdf' ? 'ai-document' : 'ai-image'
       : 'ai-text';
   const sourceLabel = source === 'csv' ? 'schedule CSV' : source === 'ai-document' ? 'schedule PDF' : source === 'ai-image' ? 'schedule image' : 'schedule instructions';
-  const previewTimer = startWorkflowTimer(WORKFLOW_TIMING.scheduleAiPreview, {
-    source,
-    teamId
-  });
   const question = compactText(input.text) || `Review the attached ${sourceLabel} for schedule import.`;
   const requestedConversationId = normalizeConversationId(conversationId);
   const activeConversationId = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID
@@ -872,20 +902,34 @@ async function sendPrivateAiScheduleImportMessage(
     conversationId: activeConversationId,
     attachment: input.attachment
   });
-  const schedule = await loadParentSchedule(user, { includePastGames: true });
-  const currentGames = (schedule.events || [])
-    .filter((event) => event.teamId === teamId && event.type === 'game' && event.isDbGame)
-    .map((event) => ({
-      id: event.id,
-      date: event.date,
-      opponent: event.opponent,
-      location: event.location,
-      status: event.isCancelled ? 'cancelled' : 'scheduled'
-    }));
-
+  const previewTimer = startWorkflowTimer(WORKFLOW_TIMING.scheduleAiPreview, {
+    source,
+    teamId
+  });
   let rows: ScheduleCsvImportPreviewRow[] = [];
   let previewErrors: string[] = [];
+  let previewTimerEnded = false;
+  const endPreviewTimer = () => {
+    if (previewTimerEnded) return;
+    previewTimerEnded = true;
+    previewTimer.end({
+      rowCount: rows.length,
+      errorCount: previewErrors.length
+    });
+  };
+
   try {
+    const schedule = await loadParentSchedule(user, { includePastGames: true });
+    const currentGames = (schedule.events || [])
+      .filter((event) => event.teamId === teamId && event.type === 'game' && event.isDbGame)
+      .map((event) => ({
+        id: event.id,
+        date: event.date,
+        opponent: event.opponent,
+        location: event.location,
+        status: event.isCancelled ? 'cancelled' : 'scheduled'
+      }));
+
     if (input.csvText) {
       try {
         const parsed = parseCsvText(input.csvText);
@@ -919,75 +963,91 @@ async function sendPrivateAiScheduleImportMessage(
       rows = preview.rows;
       previewErrors = preview.errors;
     }
-  } finally {
-    previewTimer.end({
-      rowCount: rows.length,
-      errorCount: previewErrors.length
-    });
-  }
-  if (rows.length > 200) {
-    rows = rows.slice(0, 200);
-    previewErrors.push('Import at most 200 schedule rows at a time.');
-  }
+    endPreviewTimer();
+    if (rows.length > 200) {
+      rows = rows.slice(0, 200);
+      previewErrors.push('Import at most 200 schedule rows at a time.');
+    }
 
-  const invalidRows = rows.filter((row) => row.errors.length > 0);
-  const summary = summarizeSchedulePreview(rows);
-  let toolResult: PrivateAiToolResult | null = null;
-  let assistantText = '';
-  if (previewErrors.length || invalidRows.length || !rows.length) {
-    assistantText = [
-      `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
-      ...previewErrors,
-      ...invalidRows.flatMap((row) => row.errors),
-      rows.length ? 'Send corrected instructions or attach a corrected file to prepare a new preview.' : ''
-    ].filter(Boolean).join(' ');
-  } else {
-    toolResult = await runPrivateAiTool(user, {
-      name: 'apply_schedule_import',
-      args: {
-        teamId,
-        __preparedScheduleRows: rows.map((row) => row.normalized),
-        source
+    const invalidRows = rows.filter((row) => row.errors.length > 0);
+    const summary = summarizeSchedulePreview(rows);
+    let toolResult: PrivateAiToolResult | null = null;
+    let assistantText = '';
+    if (previewErrors.length || invalidRows.length || !rows.length) {
+      assistantText = [
+        `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
+        ...previewErrors,
+        ...invalidRows.flatMap((row) => row.errors),
+        rows.length ? 'Send corrected instructions or attach a corrected file to prepare a new preview.' : ''
+      ].filter(Boolean).join(' ');
+    } else {
+      toolResult = await runPrivateAiTool(user, {
+        name: 'apply_schedule_import',
+        args: {
+          teamId,
+          __preparedScheduleRows: rows.map((row) => row.normalized),
+          source
+        }
+      }, {
+        conversationId: activeConversationId,
+        confirmationGroupId: createConfirmationGroupId()
+      });
+      if (!toolResult.ok) {
+        return savePrivateAiImportFailureResult(user, {
+          userMessage,
+          conversationId: activeConversationId,
+          question,
+          workflowLabel: 'schedule import',
+          cause: toolResult.error,
+          toolResults: [toolResult]
+        });
       }
-    }, {
-      conversationId: activeConversationId,
-      confirmationGroupId: createConfirmationGroupId()
-    });
-    assistantText = `I prepared ${summary.total} schedule row${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.games} game${summary.games === 1 ? '' : 's'} and ${summary.practices} practice${summary.practices === 1 ? '' : 's'}. Reply yes to import this schedule.`;
-  }
+      assistantText = `I prepared ${summary.total} schedule row${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.games} game${summary.games === 1 ? '' : 's'} and ${summary.practices} practice${summary.practices === 1 ? '' : 's'}. Reply yes to import this schedule.`;
+    }
 
-  const artifact: PrivateAiScheduleArtifactReference = {
-    type: 'schedule-import',
-    confirmationId: toolResult?.confirmationId || '',
-    teamId,
-    teamName,
-    source,
-    summary: {
-      ...summary,
-      errors: previewErrors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
-    },
-    previewRows: rows
-  };
-  const assistantMessage = await savePrivateAiMessage(user, {
-    role: 'assistant',
-    text: assistantText,
-    conversationId: activeConversationId,
-    toolNames: toolResult?.ok ? ['apply_schedule_import'] : [],
-    pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
-      ? [toolResult.confirmationId]
-      : [],
-    artifacts: [artifact]
-  });
-  assistantMessage.artifacts = [artifact];
-  await touchPrivateAiConversation(user, activeConversationId, {
-    title: buildConversationTitle(question),
-    lastMessagePreview: assistantText
-  }).catch(() => {});
-  return {
-    userMessage,
-    assistantMessage,
-    toolResults: toolResult ? [toolResult] : []
-  };
+    const artifact: PrivateAiScheduleArtifactReference = {
+      type: 'schedule-import',
+      confirmationId: toolResult?.confirmationId || '',
+      teamId,
+      teamName,
+      source,
+      summary: {
+        ...summary,
+        errors: previewErrors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
+      },
+      previewRows: rows
+    };
+    const assistantMessage = await savePrivateAiMessage(user, {
+      role: 'assistant',
+      text: assistantText,
+      conversationId: activeConversationId,
+      toolNames: toolResult?.ok ? ['apply_schedule_import'] : [],
+      pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
+        ? [toolResult.confirmationId]
+        : [],
+      artifacts: [artifact]
+    });
+    assistantMessage.artifacts = [artifact];
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: assistantText
+    }).catch(() => {});
+    return {
+      userMessage,
+      assistantMessage,
+      toolResults: toolResult ? [toolResult] : []
+    };
+  } catch (error: any) {
+    endPreviewTimer();
+    logger.warn('Unable to prepare private AI schedule import.', { error });
+    return savePrivateAiImportFailureResult(user, {
+      userMessage,
+      conversationId: activeConversationId,
+      question,
+      workflowLabel: 'schedule import',
+      cause: error
+    });
+  }
 }
 
 export async function sendPrivateAiRosterImportMessage(
@@ -1033,103 +1093,124 @@ export async function sendPrivateAiRosterImportMessage(
     conversationId: activeConversationId,
     attachment: input.attachment
   });
-  const preview = await generateRosterAiImportRows({
-    text: input.text,
-    csvText: input.csvText,
-    imageFile: input.imageFile,
-    currentPlayers: context.players,
-    rosterFields: context.fields
-  });
-  const summary = summarizeRosterPreview(preview.rows);
-  const invalidRows = preview.rows.filter((row) => row.errors.length > 0);
-  const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
-  let toolResult: PrivateAiToolResult | null = null;
-  let assistantText = '';
-
-  if (preview.errors.length || invalidRows.length || !preview.rows.length) {
-    assistantText = [
-      `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
-      ...preview.errors,
-      ...invalidRows.flatMap((row) => row.errors)
-    ].filter(Boolean).join(' ');
-    if (preview.rows.length && invalidRows.length) {
-      const plan = buildRosterAiImportCommitPlan(preview.rows);
-      const validationErrors = invalidRows.flatMap((row) => row.errors);
-      const definition = getPrivateAiToolDefinition('apply_roster_import');
-      if (definition) {
-        const pending = await savePrivateAiPendingAction(user, definition, {
-          teamId,
-          operations: plan.operations,
-          __rosterValidationErrors: validationErrors
-        }, {
-          conversationId: activeConversationId,
-          confirmationGroupId: createConfirmationGroupId()
-        }, {
-          summary: `Roster import | Team: ${teamId} | ${summary.total} operations | ${summary.invitations} invitations | ${validationErrors.length} errors`,
-          previewSummary: { ...summary, errors: validationErrors.length }
-        });
-        toolResult = {
-          name: definition.name,
-          ok: true,
-          requiresConfirmation: true,
-          confirmationId: pending.id,
-          data: {
-            summary: pending.summary,
-            previewSummary: pending.previewSummary
-          }
-        };
-        assistantText += ' Edit the highlighted fields in this review; confirmation stays blocked until every error is fixed.';
-      }
-    }
-  } else {
-    const plan = buildRosterAiImportCommitPlan(preview.rows);
-    toolResult = await runPrivateAiTool(user, {
-      name: 'apply_roster_import',
-      args: {
-        teamId,
-        __preparedRosterOperations: plan.operations,
-        source: preview.source
-      }
-    }, {
-      conversationId: activeConversationId,
-      confirmationGroupId: createConfirmationGroupId()
+  try {
+    const preview = await generateRosterAiImportRows({
+      text: input.text,
+      csvText: input.csvText,
+      imageFile: input.imageFile,
+      currentPlayers: context.players,
+      rosterFields: context.fields
     });
-    assistantText = `I prepared ${summary.total} roster operation${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.add} add, ${summary.update} update, ${summary.deactivate} deactivate, ${summary.reactivate} reactivate, and ${summary.invitations} family invitation${summary.invitations === 1 ? '' : 's'}. Reply yes to import these players and email these contacts.`;
+    const summary = summarizeRosterPreview(preview.rows);
+    const invalidRows = preview.rows.filter((row) => row.errors.length > 0);
+    const teamName = compactText(detail.team?.name) || compactText(input.teamName) || 'Team';
+    let toolResult: PrivateAiToolResult | null = null;
+    let assistantText = '';
+
+    if (preview.errors.length || invalidRows.length || !preview.rows.length) {
+      assistantText = [
+        `I reviewed the ${sourceLabel} for ${teamName}, but it is not ready to confirm.`,
+        ...preview.errors,
+        ...invalidRows.flatMap((row) => row.errors)
+      ].filter(Boolean).join(' ');
+      if (preview.rows.length && invalidRows.length) {
+        const plan = buildRosterAiImportCommitPlan(preview.rows);
+        const validationErrors = invalidRows.flatMap((row) => row.errors);
+        const definition = getPrivateAiToolDefinition('apply_roster_import');
+        if (definition) {
+          const pending = await savePrivateAiPendingAction(user, definition, {
+            teamId,
+            operations: plan.operations,
+            __rosterValidationErrors: validationErrors
+          }, {
+            conversationId: activeConversationId,
+            confirmationGroupId: createConfirmationGroupId()
+          }, {
+            summary: `Roster import | Team: ${teamId} | ${summary.total} operations | ${summary.invitations} invitations | ${validationErrors.length} errors`,
+            previewSummary: { ...summary, errors: validationErrors.length }
+          });
+          toolResult = {
+            name: definition.name,
+            ok: true,
+            requiresConfirmation: true,
+            confirmationId: pending.id,
+            data: {
+              summary: pending.summary,
+              previewSummary: pending.previewSummary
+            }
+          };
+          assistantText += ' Edit the highlighted fields in this review; confirmation stays blocked until every error is fixed.';
+        }
+      }
+    } else {
+      const plan = buildRosterAiImportCommitPlan(preview.rows);
+      toolResult = await runPrivateAiTool(user, {
+        name: 'apply_roster_import',
+        args: {
+          teamId,
+          __preparedRosterOperations: plan.operations,
+          source: preview.source
+        }
+      }, {
+        conversationId: activeConversationId,
+        confirmationGroupId: createConfirmationGroupId()
+      });
+      if (!toolResult.ok) {
+        return savePrivateAiImportFailureResult(user, {
+          userMessage,
+          conversationId: activeConversationId,
+          question,
+          workflowLabel: 'roster import',
+          cause: toolResult.error,
+          toolResults: [toolResult]
+        });
+      }
+      assistantText = `I prepared ${summary.total} roster operation${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.add} add, ${summary.update} update, ${summary.deactivate} deactivate, ${summary.reactivate} reactivate, and ${summary.invitations} family invitation${summary.invitations === 1 ? '' : 's'}. Reply yes to import these players and email these contacts.`;
+    }
+
+    const artifact: PrivateAiArtifactReference = {
+      type: 'roster-import',
+      confirmationId: toolResult?.confirmationId || '',
+      teamId,
+      teamName,
+      source: preview.source,
+      summary: {
+        ...summary,
+        errors: preview.errors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
+      },
+      previewRows: preview.rows
+    };
+    const assistantMessage = await savePrivateAiMessage(user, {
+      role: 'assistant',
+      text: assistantText,
+      conversationId: activeConversationId,
+      toolNames: toolResult?.ok ? ['apply_roster_import'] : [],
+      pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
+        ? [toolResult.confirmationId]
+        : [],
+      artifacts: [artifact]
+    });
+    assistantMessage.artifacts = [artifact];
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: assistantText
+    }).catch(() => {});
+
+    return {
+      userMessage,
+      assistantMessage,
+      toolResults: toolResult ? [toolResult] : []
+    };
+  } catch (error: any) {
+    logger.warn('Unable to prepare private AI roster import.', { error });
+    return savePrivateAiImportFailureResult(user, {
+      userMessage,
+      conversationId: activeConversationId,
+      question,
+      workflowLabel: 'roster import',
+      cause: error
+    });
   }
-
-  const artifact: PrivateAiArtifactReference = {
-    type: 'roster-import',
-    confirmationId: toolResult?.confirmationId || '',
-    teamId,
-    teamName,
-    source: preview.source,
-    summary: {
-      ...summary,
-      errors: preview.errors.length + invalidRows.reduce((count, row) => count + row.errors.length, 0)
-    },
-    previewRows: preview.rows
-  };
-  const assistantMessage = await savePrivateAiMessage(user, {
-    role: 'assistant',
-    text: assistantText,
-    conversationId: activeConversationId,
-    toolNames: toolResult?.ok ? ['apply_roster_import'] : [],
-    pendingActionIds: toolResult?.ok && toolResult.requiresConfirmation && toolResult.confirmationId
-      ? [toolResult.confirmationId]
-      : [],
-    artifacts: [artifact]
-  });
-  assistantMessage.artifacts = [artifact];
-  await touchPrivateAiConversation(user, activeConversationId, {
-    title: buildConversationTitle(question),
-    lastMessagePreview: assistantText
-  }).catch(() => {});
-
-  return {
-    userMessage,
-    assistantMessage,
-    toolResults: toolResult ? [toolResult] : []
-  };
 }
 
 export async function revisePrivateAiRosterImportProposal(

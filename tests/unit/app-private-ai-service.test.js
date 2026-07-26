@@ -5,6 +5,13 @@ const dbMocks = vi.hoisted(() => ({
     getUserProfile: vi.fn()
 }));
 
+const loggerMocks = vi.hoisted(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+}));
+
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
     addDoc: vi.fn(),
@@ -147,6 +154,10 @@ vi.mock('../../js/vendor/firebase-ai.js', () => ({
     getGenerativeModel: aiMocks.getGenerativeModel,
     GoogleAIBackend: aiMocks.GoogleAIBackend,
     Schema: aiMocks.Schema
+}));
+vi.mock('../../apps/app/src/lib/logger.ts', async (importOriginal) => ({
+    ...await importOriginal(),
+    createLogger: () => loggerMocks
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
@@ -1213,6 +1224,95 @@ describe('private AI service', () => {
         expect(storedAssistant.artifacts[0].previewRows[0]).not.toHaveProperty('rawOperation');
     });
 
+    it('persists an actionable roster failure when the pending import cannot be saved', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        rosterAiMocks.generateRosterAiImportRows.mockResolvedValue({
+            rows: [rosterPreviewRow()],
+            errors: [],
+            source: 'csv'
+        });
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('Pending roster storage is unavailable.'));
+
+        const { sendPrivateAiRosterImportMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiRosterImportMessage(coachUser, {
+            teamId: 'team-1',
+            csvText: 'Name,Number\nAvery,10'
+        }, 'roster-storage-failure');
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'apply_roster_import',
+                ok: false,
+                error: 'Pending roster storage is unavailable.'
+            })
+        ]);
+        expect(result.assistantMessage).toMatchObject({
+            error: true,
+            artifacts: []
+        });
+        expect(result.assistantMessage.text).toContain('I could not prepare that roster import');
+        expect(result.assistantMessage.text).toContain('nothing is waiting for confirmation');
+        expect(result.assistantMessage.text).not.toContain('Reply yes');
+        const storedAssistant = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload.role === 'assistant');
+        expect(storedAssistant).toMatchObject({
+            error: true,
+            pendingActionIds: [],
+            artifacts: []
+        });
+    });
+
+    it('pairs a persisted roster request with a durable recovery response when preview generation fails', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        rosterAiMocks.generateRosterAiImportRows.mockRejectedValueOnce(new Error('Roster extraction failed.'));
+
+        const {
+            loadPrivateAiMessages,
+            sendPrivateAiRosterImportMessage
+        } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiRosterImportMessage(coachUser, {
+            teamId: 'team-1',
+            csvText: 'Name,Number\nAvery,10'
+        }, 'roster-preview-failure');
+
+        expect(result.assistantMessage).toMatchObject({
+            role: 'assistant',
+            error: true
+        });
+        expect(result.assistantMessage.text).toContain('Roster extraction failed.');
+        const storedMessages = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .filter((payload) => payload.conversationId === 'roster-preview-failure');
+        expect(storedMessages.map((message) => message.role)).toEqual(['user', 'assistant']);
+
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: storedMessages.map((message, index) => ({
+                id: `stored-roster-${index + 1}`,
+                data: () => message
+            }))
+        });
+        const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'roster-preview-failure');
+        expect(reloaded).toEqual(expect.arrayContaining([
+            expect.objectContaining({ role: 'user' }),
+            expect.objectContaining({
+                role: 'assistant',
+                error: true,
+                text: expect.stringContaining('Roster extraction failed.')
+            })
+        ]));
+    });
+
     it('persists an invalid roster review so its fields remain editable after chat reload', async () => {
         const coachUser = {
             ...authUser,
@@ -1414,6 +1514,104 @@ describe('private AI service', () => {
             }
         });
         expect(storedUser).not.toHaveProperty('file');
+    });
+
+    it('persists an actionable schedule failure when the pending import cannot be saved', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event Type,Date,Start Time,End Time,Opponent,Location,Notes',
+            'game,2026-07-30,6:00 PM,7:30 PM,Rockets,Field 1,Wear white'
+        ].join('\n');
+        const csv = new File([csvText], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('Pending schedule storage is unavailable.'));
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: 'Import this Bears schedule.',
+            file: csv
+        }, 'schedule-storage-failure');
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'apply_schedule_import',
+                ok: false,
+                error: 'Pending schedule storage is unavailable.'
+            })
+        ]);
+        expect(result.assistantMessage).toMatchObject({
+            error: true,
+            artifacts: []
+        });
+        expect(result.assistantMessage.text).toContain('I could not prepare that schedule import');
+        expect(result.assistantMessage.text).toContain('nothing is waiting for confirmation');
+        expect(result.assistantMessage.text).not.toContain('Reply yes');
+        const storedAssistant = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .find((payload) => payload.role === 'assistant');
+        expect(storedAssistant).toMatchObject({
+            error: true,
+            pendingActionIds: [],
+            artifacts: []
+        });
+    });
+
+    it('pairs a persisted schedule request with a durable recovery response when schedule loading fails', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const csvText = [
+            'Event Type,Date,Start Time,End Time,Opponent,Location,Notes',
+            'game,2026-07-30,6:00 PM,7:30 PM,Rockets,Field 1,Wear white'
+        ].join('\n');
+        const csv = new File([csvText], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(csv, 'text', { value: async () => csvText });
+        scheduleMocks.loadParentSchedule.mockRejectedValueOnce(new Error('Schedule lookup failed.'));
+
+        const {
+            loadPrivateAiMessages,
+            sendPrivateAiAttachmentMessage
+        } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            teamId: 'team-1',
+            text: 'Import this Bears schedule.',
+            file: csv
+        }, 'schedule-preview-failure');
+
+        expect(result.assistantMessage).toMatchObject({
+            role: 'assistant',
+            error: true
+        });
+        expect(result.assistantMessage.text).toContain('Schedule lookup failed.');
+        const storedMessages = firebaseMocks.addDoc.mock.calls
+            .map((call) => call[1])
+            .filter((payload) => payload.conversationId === 'schedule-preview-failure');
+        expect(storedMessages.map((message) => message.role)).toEqual(['user', 'assistant']);
+
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: storedMessages.map((message, index) => ({
+                id: `stored-schedule-${index + 1}`,
+                data: () => message
+            }))
+        });
+        const reloaded = await loadPrivateAiMessages(coachUser, undefined, 'schedule-preview-failure');
+        expect(reloaded).toEqual(expect.arrayContaining([
+            expect.objectContaining({ role: 'user' }),
+            expect.objectContaining({
+                role: 'assistant',
+                error: true,
+                text: expect.stringContaining('Schedule lookup failed.')
+            })
+        ]));
     });
 
     it('preserves line breaks and routes prose followed by CSV to a CSV roster artifact', async () => {
