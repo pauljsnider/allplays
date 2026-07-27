@@ -2,6 +2,10 @@
 <html lang="en">
 
 <head>
+    <script type="module">
+        import { redirectLegacyAuthPage } from './js/app-redirect.js?v=1';
+        redirectLegacyAuthPage('verify-pending');
+    </script>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
   <script>
@@ -82,7 +86,7 @@
 
     <script type="module">
         import { auth } from './js/firebase.js?v=22';
-        import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=134';
+        import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=135';
         import { renderHeader, renderFooter } from './js/utils.js?v=18';
 
         renderHeader(document.getElementById('header-container'), null);
@@ -103,7 +107,7 @@
         // Check auth state
         checkAuth((user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
                 return;
             }
 
@@ -159,7 +163,7 @@
         logoutBtn.addEventListener('click', async () => {
             try {
                 await logout();
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
             } catch (error) {
                 console.error('Error logging out:', error);
             }

@@ -28,8 +28,8 @@ describe('helpKnowledgeIndex', () => {
     const accountEntry = helpKnowledgeIndex.find((entry) => entry.id === 'help-account');
 
     expect(accountEntry).toBeDefined();
-    expect(accountEntry?.text).toContain('\nLogin and Session\n- Member/Parent/Coach/Admin: Log in from #/auth');
-    expect(accountEntry?.text).toContain('\nForgot Password and Recovery\n- Member/Parent/Coach/Admin: Start reset from #/auth / #/reset-password');
+    expect(accountEntry?.text).toContain('\nLogin and Session\n- Member/Parent/Coach/Admin: Log in from /app/#/auth');
+    expect(accountEntry?.text).toContain('\nForgot Password and Recovery\n- Member/Parent/Coach/Admin: Start reset from /app/#/auth and complete it in /app/#/reset-password');
     expect(accountEntry?.text).toContain('\nProfile and Identity\n- Member/Parent/Coach/Admin: Update profile data in #/profile');
   });
 

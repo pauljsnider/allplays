@@ -66,25 +66,22 @@ describe('visual regression CI wiring', () => {
         }
     });
 
-    it('checks the legacy Tailwind fixture only in the dependency-bearing visual command', () => {
+    it('runs visual checks without obsolete legacy-login asset generation', () => {
         const packageJson = JSON.parse(readRepoFile('package.json'));
-        const generator = readRepoFile('scripts/build-legacy-visual-css.mjs');
-        const fixture = readRepoFile('tests/fixtures/legacy-login-tailwind.css');
 
-        expect(packageJson.scripts['test:smoke:visual']).toContain('npm run test:smoke:visual:assets');
-        expect(packageJson.scripts['test:smoke:visual:assets']).toBe(
-            'node scripts/build-legacy-visual-css.mjs --check'
+        expect(packageJson.scripts['test:smoke:visual']).toBe(
+            'playwright test --config=playwright.smoke.config.js --grep @visual'
         );
-        expect(generator).toContain("'tests', 'fixtures', 'legacy-login-tailwind.css'");
-        expect(generator).toContain("process.argv.includes('--check')");
-        expect(fixture).toMatch(/^\/\*! tailwindcss v\d/);
-        expect(fixture).toContain('.bg-indigo-600');
+        expect(packageJson.scripts['test:smoke:visual:update']).toBe(
+            'playwright test --config=playwright.smoke.config.js --grep @visual --update-snapshots'
+        );
+        expect(packageJson.scripts).not.toHaveProperty('test:smoke:visual:assets');
     });
 
-    it('uploads the generated legacy fixture with Linux baseline PNGs', () => {
+    it('uploads the current Linux baseline PNGs without a legacy-login fixture', () => {
         const workflow = readRepoFile('.github/workflows/update-visual-baselines.yml');
 
         expect(workflow).toContain('tests/smoke/**/*.spec.js-snapshots/*.png');
-        expect(workflow).toContain('tests/fixtures/legacy-login-tailwind.css');
+        expect(workflow).not.toContain('legacy-login-tailwind.css');
     });
 });

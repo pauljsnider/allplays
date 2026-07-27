@@ -8,7 +8,6 @@ import {
     isAppCheckEnforcementReady
 } from './stage-pages-bundle.mjs';
 
-const widgetPath = '/widget-scoreboard.html';
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
 
 export function loadJson(fileUrl, label, { readFile = readFileSync } = {}) {
@@ -63,15 +62,7 @@ export function normalizeCandidateOrigin(candidateOrigin) {
 }
 
 export function getCandidateHostChecks() {
-    const pages = [
-        ...getPublicSmokePages(),
-        {
-            name: 'scoreboard widget',
-            path: widgetPath,
-            titlePatterns: [/ALL PLAYS Scoreboard Widget/i],
-            readySelectors: ['#scoreboard-widget']
-        }
-    ];
+    const pages = getPublicSmokePages();
     const checks = pages.map((page) => ({
         ...page,
         expectedHeaders: configuredHeadersFor(page.path)

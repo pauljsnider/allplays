@@ -17,6 +17,10 @@ const {
   resolvePublicProfileStaffUserIds,
   removePublicProfileForIneligibleAuth
 } = require('./public-user-profile-lifecycle-core.cjs');
+const {
+  buildAppUrl,
+  buildRegistrationAppUrl
+} = require('./app-links-core.cjs');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   DEFAULT_MAX_ICS_BYTES,
@@ -149,6 +153,7 @@ const {
 const { createInviteEmailOnCreateHandler } = require('./invite-email-trigger-core.cjs');
 const {
   AUTH_EMAIL_TYPES,
+  buildCanonicalAuthActionUrl,
   buildAuthEmailMailDocId,
   buildAuthEmailMailJob,
   buildAuthEmailRateLimitId,
@@ -630,7 +635,6 @@ function buildRegistrationReminderMailRef(mailDocId) {
 }
 
 function buildRegistrationCheckoutUrls(appUrl, input) {
-  const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
     teamId: input.teamId,
     formId: input.formId
@@ -651,9 +655,11 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   } else if (input.publicCheckoutCapability) {
     params.set('retryPayment', '1');
   }
+  successParams.set('status', 'success');
+  params.set('status', 'cancelled');
   return {
-    successUrl: `${baseUrl}/registration.html?${successParams.toString()}&status=success`,
-    cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
+    successUrl: buildRegistrationAppUrl(successParams, appUrl),
+    cancelUrl: buildRegistrationAppUrl(params, appUrl)
   };
 }
 
@@ -2576,6 +2582,7 @@ const authEmailCallableHandlers = createAuthEmailCallableHandlers({
   queueDelivery: queueAuthEmailDelivery,
   enqueuePasswordResetRequest,
   getActionSettings: getAuthEmailActionSettings,
+  canonicalizeActionUrl: buildCanonicalAuthActionUrl,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes: EMAIL_LINK_INVITE_TYPES,
@@ -2597,6 +2604,7 @@ const passwordResetEmailWorker = createPasswordResetEmailWorker({
   normalizeEmail: normalizeAuthEmail,
   isValidEmail: isValidAuthEmail,
   getActionSettings: getAuthEmailActionSettings,
+  canonicalizeActionUrl: buildCanonicalAuthActionUrl,
   queueDelivery: queueAuthEmailDelivery,
   isAlreadyExistsError
 });
@@ -7833,18 +7841,20 @@ function buildAccessNotificationDestination({ teamId }) {
 
 function buildStaffAccessRequestNotificationDestination({ teamId }) {
   const encodedTeamId = encodeURIComponent(teamId);
+  const appRoute = `/teams/${encodedTeamId}?tab=roster`;
   return {
-    appRoute: `/parent-tools/access?teamId=${encodedTeamId}`,
-    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+    appRoute,
+    link: buildAppUrl(appRoute)
   };
 }
 
 function buildRegistrationReviewNotificationDestination({ teamId, formId }) {
   const encodedTeamId = encodeURIComponent(teamId);
   const encodedFormId = encodeURIComponent(formId);
+  const appRoute = `/teams/${encodedTeamId}/registrations/${encodedFormId}`;
   return {
-    appRoute: `/teams/${encodedTeamId}/registrations/${encodedFormId}`,
-    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+    appRoute,
+    link: buildAppUrl(appRoute)
   };
 }
 
@@ -8160,9 +8170,9 @@ function buildScheduleSectionQuery(section, childId = null) {
 
 function buildNotificationLink({ category, teamId, gameId, eventId = null, batchId = null, recipientId = null, conversationId = null, childId = null }) {
   if (category === 'officiating') {
-    return teamId
-      ? `https://allplays.ai/officials.html?teamId=${encodeURIComponent(teamId)}`
-      : 'https://allplays.ai/officials.html';
+    return buildAppUrl(teamId
+      ? `/officials?teamId=${encodeURIComponent(teamId)}`
+      : '/officials');
   }
   if (category === 'fees') {
     const params = new URLSearchParams();
@@ -8179,11 +8189,8 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
     return `https://allplays.ai/app/#/parent-tools/fees${query ? `?${query}` : ''}`;
   }
   if (category === 'liveChat' || category === 'mentions') {
-    const params = [`teamId=${encodeURIComponent(teamId)}`];
-    if (conversationId) {
-      params.push(`conversationId=${encodeURIComponent(conversationId)}`);
-    }
-    return `https://allplays.ai/team-chat.html?${params.join('&')}`;
+    const route = teamId ? `/messages/${encodeURIComponent(teamId)}` : '/messages';
+    return buildAppUrl(route, conversationId ? { conversationId } : {});
   }
   if (category === 'liveScore' && gameId) {
     return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
@@ -8216,7 +8223,9 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
   if (category === 'access') {
     return buildAccessNotificationDestination({ teamId }).link;
   }
-  return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
+  return teamId
+    ? buildAppUrl(`/teams/${encodeURIComponent(teamId)}`)
+    : buildAppUrl('/home');
 }
 
 function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null, childId = null }) {
@@ -10570,8 +10579,8 @@ function buildPreEventReminderPayload({ teamId, gameId, event }) {
   const bodyParts = [`${eventTitle} is coming up ${dateText}.`];
   if (location) bodyParts.push(`Location: ${location}`);
   const link = gameId
-    ? `https://allplays.ai/game-day.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`
-    : `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
+    ? buildAppUrl(`/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game`)
+    : buildAppUrl(`/teams/${encodeURIComponent(teamId)}`);
 
   return {
     title: 'Upcoming team event',

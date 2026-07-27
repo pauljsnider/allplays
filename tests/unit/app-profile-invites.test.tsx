@@ -219,10 +219,10 @@ describe('Profile invites', () => {
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
       title: 'ALL PLAYS invite for coach@example.com',
       text: 'Use this ALL PLAYS invite link for coach@example.com.',
-      url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42&type=friend'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42&type=friend')
+      url: expect.stringContaining('/app/#/accept-invite?code=NEWMVP42&type=friend'),
+      clipboardText: expect.stringContaining('/app/#/accept-invite?code=NEWMVP42&type=friend')
     })));
-    expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42&type=friend/)).toBeTruthy();
+    expect(screen.getByText(/\/app\/#\/accept-invite\?code=NEWMVP42&type=friend/)).toBeTruthy();
     expect(await screen.findByText('Invite shared.')).toBeTruthy();
   });
 
@@ -262,15 +262,15 @@ describe('Profile invites', () => {
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123')
+      url: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123'),
+      clipboardText: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123')
     })));
     expect(await screen.findByText('Link copied.')).toBeTruthy();
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123')
+      url: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123'),
+      clipboardText: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123')
     })));
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
@@ -290,8 +290,8 @@ describe('Profile invites', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Share saved invite link for ACTIVE123/ }));
 
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
-      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent'),
-      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent')
+      url: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123&type=parent'),
+      clipboardText: expect.stringContaining('/app/#/accept-invite?code=ACTIVE123&type=parent')
     })));
   });
 

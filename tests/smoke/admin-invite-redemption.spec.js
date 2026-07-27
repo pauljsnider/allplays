@@ -177,122 +177,6 @@ export function normalizeStreamVolunteerEmailList(streamVolunteerEmails) {
 }
 `;
 
-const ACCEPT_INVITE_DB_STUB = `
-
-export async function validateAccessCode(code) {
-    console.log('validateAccessCode called with code:', code);
-    window.__acceptInviteCalls.push({ type: 'validate', code });
-    return {
-        valid: true,
-        codeId: 'code-admin-1',
-        type: 'admin_invite',
-        data: {
-            teamId: 'team-1'
-        }
-    };
-}
-
-export async function redeemParentInvite() {
-    throw new Error('parent invite should not be redeemed in this scenario');
-}
-
-export async function redeemHouseholdInvite() {
-    throw new Error('household invite should not be redeemed in this scenario');
-}
-
-export async function redeemCoParentInvite() {
-    throw new Error('co-parent invite should not be redeemed in this scenario');
-}
-
-export async function redeemFriendInvite() {
-    throw new Error('friend invite should not be redeemed in this scenario');
-}
-
-export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
-    console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
-    window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
-    return {
-        success: true,
-        teamId: 'team-1',
-        teamName: 'Tigers'
-    };
-}
-
-export async function updateUserProfile() {
-    return undefined;
-}
-
-export async function updateTeam() {
-    return undefined;
-}
-
-export async function getTeam(teamId) {
-    return {
-        id: teamId,
-        name: 'Tigers',
-        ownerId: 'owner-1',
-        adminEmails: ['coach@example.com']
-    };
-}
-
-export async function getUserProfile() {
-    return {
-        email: 'coach@example.com'
-    };
-}
-
-export async function markAccessCodeAsUsed() {
-    return undefined;
-}
-`;
-
-const ACCEPT_INVITE_ADMIN_INVITE_STUB = `
-export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
-    console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
-    window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
-    return {
-        success: true,
-        teamId: 'team-1',
-        teamName: 'Tigers'
-    };
-}
-`;
-
-const ACCEPT_INVITE_AUTH_STUB = `
-export function isEmailSignInLink() {
-    return false;
-}
-
-export async function completeEmailLinkSignIn() {
-    throw new Error('email link flow is not expected in this test');
-}
-
-export function checkAuth(callback) {
-    callback({
-        uid: 'admin-1',
-        email: 'coach@example.com'
-    });
-}
-
-export function getRedirectUrl() {
-    return 'dashboard.html';
-}
-`;
-
-const SHARED_UTILS_STUB = `
-export function renderHeader(container) {
-    if (container) {
-        container.innerHTML = '<header data-testid="mock-header"></header>';
-    }
-}
-
-export function renderFooter(container) {
-    if (container) {
-        container.innerHTML = '<footer data-testid="mock-footer"></footer>';
-    }
-}
-`;
-
 async function mockExternalResources(page) {
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
         status: 200,
@@ -304,11 +188,6 @@ async function mockExternalResources(page) {
         contentType: 'application/javascript',
         body: 'window.tailwind = { config: {} };'
     }));
-    await page.route(/\/dashboard\.html(?:\?.*)?$/, (route) => route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<!DOCTYPE html><html><body><main data-testid="dashboard">Dashboard</main></body></html>'
-    }));
 }
 
 async function mockEditTeamDependencies(page) {
@@ -319,15 +198,6 @@ async function mockEditTeamDependencies(page) {
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/live-stream-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_STREAM_UTILS_STUB }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
-}
-
-async function mockAcceptInviteDependencies(page) {
-    await mockExternalResources(page);
-    await page.addInitScript(() => { window.__acceptInviteCalls = []; console.log('__acceptInviteCalls initialized on window'); });
-    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
-    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
-    await page.route(/\/js\/admin-invite\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_ADMIN_INVITE_STUB }));
-    await page.route('**/js/utils.js?v=18', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
 
 test('team management exposes the existing-user admin redemption fallback without granting access before redemption', async ({ page, baseURL }) => {
@@ -353,12 +223,9 @@ test('team management exposes the existing-user admin redemption fallback withou
     expect(await page.evaluate(() => window.__lastPersistedAdmin)).toBeUndefined();
 });
 
-test('accept-invite redeems an admin invite into dashboard access', async ({ page, baseURL }) => {
-    await mockAcceptInviteDependencies(page);
-
+test('legacy admin invite preserves its code and type in the canonical app route', async ({ page, baseURL }) => {
     await page.goto(`${baseURL}/accept-invite.html?code=EXIST111&type=admin`, { waitUntil: 'domcontentloaded' });
 
-    await page.waitForURL(/\/dashboard\.html$/);
-    await expect(page).toHaveURL(/\/dashboard\.html$/);
-    await expect(page.locator('[data-testid="dashboard"]')).toBeVisible();
+    await expect.poll(() => new URL(page.url()).pathname).toBe('/app/');
+    await expect.poll(() => new URL(page.url()).hash).toBe('#/accept-invite?code=EXIST111&type=admin');
 });

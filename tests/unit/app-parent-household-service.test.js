@@ -13,7 +13,10 @@ const playerDbMocks = vi.hoisted(() => ({
 vi.mock('../../apps/app/src/lib/adapters/legacyParentTools', () => parentToolsMocks);
 vi.mock('../../apps/app/src/lib/adapters/legacyPlayerDb', () => playerDbMocks);
 
-import { loadParentHouseholdInviteModel } from '../../apps/app/src/lib/parentHouseholdService.ts';
+import {
+    createParentHouseholdMemberInvite,
+    loadParentHouseholdInviteModel
+} from '../../apps/app/src/lib/parentHouseholdService.ts';
 
 const user = {
     uid: 'user-1',
@@ -49,5 +52,33 @@ describe('parent household invite service', () => {
                 status: 'linked'
             })
         ]);
+    });
+
+    it('canonicalizes stored and newly created household invite links', async () => {
+        parentToolsMocks.readFamilyMembers
+            .mockResolvedValueOnce([{
+                id: 'member-1',
+                accessCode: 'HOME1234',
+                inviteUrl: 'accept-invite.html?code=HOME1234&type=household'
+            }])
+            .mockResolvedValueOnce([]);
+        parentToolsMocks.addPendingFamilyMember.mockResolvedValueOnce({
+            code: 'HOME5678',
+            inviteUrl: 'accept-invite.html?code=HOME5678&type=household'
+        });
+
+        const model = await loadParentHouseholdInviteModel(user);
+        const created = await createParentHouseholdMemberInvite(user, {
+            playerKey: 'team-1::player-1',
+            email: 'family@example.com',
+            relation: 'Guardian'
+        });
+
+        expect(model.members[0].inviteUrl).toBe(
+            'https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household'
+        );
+        expect(created.inviteUrl).toBe(
+            'https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household'
+        );
     });
 });

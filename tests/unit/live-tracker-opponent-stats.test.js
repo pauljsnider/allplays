@@ -486,7 +486,7 @@ describe('live tracker opponent stats harness', () => {
       )
       .replace('./firebase.js?v=15', './firebase.js?v=15')
       .replace('./utils.js?v=18', './utils.js?v=123')
-      .replace('./auth.js?v=134', './auth.js?v=134');
+      .replace('./auth.js?v=135', './auth.js?v=135');
 
     const rewritten = buildModuleSource(source);
 

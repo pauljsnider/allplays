@@ -1,4 +1,5 @@
-import { collection, db, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { collection, db, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { buildRegistrationOptionCountKey } from './adapters/legacyRegistrationFormAdmin';
 import {
   buildAppRegistrationFormAdminPayload,
   buildRegistrationFormEditorDraft,
@@ -19,6 +20,41 @@ export type SaveRegistrationFormEditorForAppResult = RegistrationFormAdminPayloa
   formId: string;
   created: boolean;
 };
+
+function buildInitialRegistrationOptionCounts(
+  registrationOptions: Array<Record<string, unknown>>
+) {
+  const counts: Record<string, { enrolled: number; waitlisted: number }> = {};
+  registrationOptions.forEach((option) => {
+    const optionId = compactString(option.id);
+    const countKey = buildRegistrationOptionCountKey(optionId);
+    counts[countKey] = {
+      enrolled: 0,
+      waitlisted: 0
+    };
+  });
+  return counts;
+}
+
+function buildMissingRegistrationOptionCountUpdates(
+  registrationOptions: Array<Record<string, unknown>>,
+  existingCounts: Record<string, any> = {}
+) {
+  const updates: Record<string, unknown> = {};
+  registrationOptions.forEach((option) => {
+    const optionId = compactString(option.id);
+    const countKey = buildRegistrationOptionCountKey(optionId);
+    if (Object.prototype.hasOwnProperty.call(existingCounts, countKey)) return;
+
+    const legacyCounts = existingCounts[optionId] || {};
+    updates[`registrationOptionCounts.${countKey}`] = {
+      ...legacyCounts,
+      enrolled: Math.max(0, Number(legacyCounts.enrolled) || 0),
+      waitlisted: Math.max(0, Number(legacyCounts.waitlisted) || 0)
+    };
+  });
+  return updates;
+}
 
 export async function listRegistrationFormEditorsForApp(
   user: AuthUser | null,
@@ -86,6 +122,12 @@ export async function saveRegistrationFormEditorForApp({
 
   const actorId = compactString(user?.uid) || null;
   const timestamp = serverTimestamp();
+  const formRef = normalizedFormId
+    ? doc(db, 'teams', normalizedTeamId, 'registrationForms', normalizedFormId)
+    : doc(collection(db, `teams/${normalizedTeamId}/registrationForms`));
+  const registrationOptions = Array.isArray(result.payload.registrationOptions)
+    ? result.payload.registrationOptions
+    : [];
   const updatePayload = {
     ...result.payload,
     teamId: normalizedTeamId,
@@ -94,7 +136,20 @@ export async function saveRegistrationFormEditorForApp({
   };
 
   if (normalizedFormId) {
-    await updateDoc(doc(db, 'teams', normalizedTeamId, 'registrationForms', normalizedFormId), updatePayload);
+    // Capacity counters are updated transactionally by public submissions.
+    // Read them in the same transaction as the editor update so a concurrent
+    // submission or editor cannot have its counter overwritten by stale state.
+    await runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(formRef);
+      const existingForm = snapshot?.exists?.() ? snapshot.data() || {} : {};
+      transaction.update(formRef, {
+        ...updatePayload,
+        ...buildMissingRegistrationOptionCountUpdates(
+          registrationOptions,
+          existingForm.registrationOptionCounts || {}
+        )
+      });
+    });
     return {
       ...result,
       formId: normalizedFormId,
@@ -102,9 +157,9 @@ export async function saveRegistrationFormEditorForApp({
     };
   }
 
-  const formRef = doc(collection(db, `teams/${normalizedTeamId}/registrationForms`));
   await setDoc(formRef, {
     ...updatePayload,
+    registrationOptionCounts: buildInitialRegistrationOptionCounts(registrationOptions),
     createdAt: timestamp,
     createdBy: actorId
   });

@@ -1,3 +1,5 @@
+const { buildParentFeesAppUrl } = require('./app-links-core.cjs');
+
 function normalizeString(value) {
     return String(value || '').trim();
 }
@@ -146,16 +148,19 @@ function isEligibleTeamFeePayer({ team = {}, user = {}, uid = '', email = '', re
 }
 
 function buildTeamFeeCheckoutUrls(appUrl, { teamId, batchId, recipientId }) {
-    const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
     const params = new URLSearchParams({
         feePayment: '1',
         teamId,
         batchId,
         recipientId
     });
+    const successParams = new URLSearchParams(params);
+    successParams.set('checkout', 'success');
+    const cancelParams = new URLSearchParams(params);
+    cancelParams.set('checkout', 'cancelled');
     return {
-        successUrl: `${baseUrl}/parent-dashboard.html?${params.toString()}&checkout=success`,
-        cancelUrl: `${baseUrl}/parent-dashboard.html?${params.toString()}&checkout=cancelled`
+        successUrl: buildParentFeesAppUrl(successParams, appUrl),
+        cancelUrl: buildParentFeesAppUrl(cancelParams, appUrl)
     };
 }
 

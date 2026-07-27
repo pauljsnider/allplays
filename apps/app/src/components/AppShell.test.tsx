@@ -135,7 +135,7 @@ const signedInAuth: AuthState = {
 
 function LocationDisplay() {
   const location = useLocation();
-  return <div data-testid="current-route">{location.pathname}</div>;
+  return <div data-testid="current-route">{location.pathname}{location.search}</div>;
 }
 
 describe('AppShell', () => {
@@ -948,6 +948,37 @@ describe('AppShell', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Teams hub')).toBeTruthy();
+    });
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      actionName: /Add playerRoster, parent invite, fields, importCoach\/Admin/i,
+      expectedRoute: '/teams?workflow=roster',
+      routePath: '/teams'
+    },
+    {
+      actionName: /Game or practiceSchedule, reminders, officials, recurringCoach\/Admin/i,
+      expectedRoute: '/schedule?scope=staff&staffTools=1&staffSection=add',
+      routePath: '/schedule'
+    }
+  ])('opens $expectedRoute from the native Add workflow', async ({ actionName, expectedRoute, routePath }) => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path={routePath} element={<AppShell auth={signedInAuth}><LocationDisplay /></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /^More workflows/ }));
+    fireEvent.click(screen.getByRole('button', { name: actionName }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-route')).toHaveTextContent(expectedRoute);
     });
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });

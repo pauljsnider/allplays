@@ -87,8 +87,8 @@ export function renderHeader(container, user) {
               <a id="nav-my-players-desktop" href="parent-dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
               <a id="nav-my-teams-desktop" href="dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
               <a id="nav-profile-desktop" href="profile.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
-              <a id="nav-signin-desktop" href="login.html" class="text-sm font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
-              <a id="nav-cta-desktop" href="login.html#signup" class="text-sm font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg">Get Started</a>
+              <a id="nav-signin-desktop" href="/app/#/auth" class="text-sm font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-desktop" href="/app/#/auth?mode=signup" class="text-sm font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg">Get Started</a>
               <button id="nav-logout-desktop" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
             </div>
 
@@ -107,8 +107,8 @@ export function renderHeader(container, user) {
               <a id="nav-my-players-mobile" href="parent-dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
               <a id="nav-my-teams-mobile" href="dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
               <a id="nav-profile-mobile" href="profile.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
-              <a id="nav-signin-mobile" href="login.html" class="block text-base font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
-              <a id="nav-cta-mobile" href="login.html#signup" class="block text-center text-base font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md">Get Started</a>
+              <a id="nav-signin-mobile" href="/app/#/auth" class="block text-base font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-mobile" href="/app/#/auth?mode=signup" class="block text-center text-base font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md">Get Started</a>
               <button id="nav-logout-mobile" class="hidden w-full text-left block text-base font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
             </div>
           </div>
@@ -168,11 +168,11 @@ export function renderHeader(container, user) {
       if (navSignIn) {
         navSignIn.classList.remove('hidden');
         navSignIn.textContent = 'Sign In';
-        navSignIn.href = 'login.html';
+        navSignIn.href = '/app/#/auth';
       }
 
       navCta.textContent = 'Get Started';
-      navCta.href = 'login.html#signup';
+      navCta.href = '/app/#/auth?mode=signup';
 
       navLogout.classList.add('hidden');
       navProfile.classList.add('hidden');
@@ -180,7 +180,7 @@ export function renderHeader(container, user) {
 
     // Keep shared-header logout on the same auth bundle as page consumers.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=134');
+      const { logout } = await import('./auth.js?v=135');
       await logout();
       window.location.href = 'index.html';
     });
@@ -258,7 +258,7 @@ export function renderFooter(container) {
               <ul class="space-y-2 text-sm">
                 <li><a href="teams.html" class="hover:text-white transition">Browse Teams</a></li>
                 <li><a href="dashboard.html" class="hover:text-white transition">Dashboard</a></li>
-                <li><a href="login.html" class="hover:text-white transition">Sign In</a></li>
+                <li><a href="/app/#/auth" class="hover:text-white transition">Sign In</a></li>
               </ul>
             </div>
 

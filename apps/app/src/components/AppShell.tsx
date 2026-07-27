@@ -843,8 +843,8 @@ function buildAddWorkflows(): AddWorkflow[] {
       detail: 'Roster, parent invite, fields, import',
       section: 'Player',
       icon: UserPlus,
-      kind: 'website',
-      href: legacyUrl('edit-roster.html'),
+      kind: 'native',
+      href: '/teams?workflow=roster',
       badge: 'Coach/Admin'
     },
     {
@@ -872,8 +872,8 @@ function buildAddWorkflows(): AddWorkflow[] {
       detail: 'Schedule, reminders, officials, recurring',
       section: 'Schedule',
       icon: CalendarPlus,
-      kind: 'website',
-      href: legacyUrl('edit-schedule.html'),
+      kind: 'native',
+      href: '/schedule?scope=staff&staffTools=1&staffSection=add',
       badge: 'Coach/Admin'
     },
     {

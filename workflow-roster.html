@@ -522,7 +522,7 @@
 <li><strong>Household invite not showing for parent</strong>: Confirm the invitee used the correct email address and the invite has not already been revoked.</li>
 <li><strong>Roster import showing conflicts</strong>: Conflict rows are skipped automatically. Review the preview and apply only add/update rows that are safe.</li>
 <li><strong>Parent signup rejected with email mismatch</strong>: The parent must use the same email the invite was sent to. The admin should open the invite record, check the stored invite email, and resend to the correct address if the wrong one was used when the invite was created.</li>
-<li><strong>Parent invite appears stuck on "pending"</strong>: The invitee has not yet redeemed the code. They should open the original invite link or visit <code>accept-invite.html</code> and enter the 8-character code manually. If the invite link has expired or the email was lost, generate a fresh invite from the player's row and share the new code directly.</li>
+<li><strong>Parent invite appears stuck on "pending"</strong>: The invitee has not yet redeemed the code. They should open the original invite link or visit <code>/app/#/accept-invite</code> and enter the 8-character code manually. If the invite link has expired or the email was lost, generate a fresh invite from the player's row and share the new code directly.</li>
 <li><strong>Household contact showing "revoked" status</strong>: A revocation was applied from the inviting parent's Parent Dashboard or by an admin. The contact's delegated access has been removed and their invite token invalidated. To restore access, the parent must re-invite the contact using <strong>Invite Household Member</strong> — the old invite code cannot be reactivated.</li>
 <li><strong>Athlete profile name not prefilling</strong>: Confirm the profile builder URL includes both <code>teamId</code> and <code>playerId</code> query parameters. If either is missing, the system cannot look up the linked player record and the name field will remain blank. Navigate to the profile builder from the roster row link to ensure both parameters are present.</li>
 </ul>
@@ -545,7 +545,7 @@
     </main>
     <div id="footer-container"></div>
     <script type="module">
-      import { checkAuth } from './js/auth.js?v=134';
+      import { checkAuth } from './js/auth.js?v=135';
       import { renderHeader, renderFooter } from './js/utils.js?v=18';
       renderHeader(document.getElementById('header-container'), null);
       renderFooter(document.getElementById('footer-container'));

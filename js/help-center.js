@@ -33,7 +33,7 @@ const HELP_GUIDES = [
             'You know your email and password.'
         ],
         steps: [
-            'Open `login.html`.',
+            'Open `/app/#/auth`.',
             'Enter your email address in the email field.',
             'Enter your password in the password field.',
             'Select `Sign In`.',
@@ -51,7 +51,7 @@ const HELP_GUIDES = [
         ],
         relatedGuideIds: ['forgot-password', 'sign-up-activation'],
         quickLinks: [
-            { label: 'Open Login', url: 'login.html' },
+            { label: 'Open Login', url: '/app/#/auth' },
             { label: 'Open Dashboard', url: 'dashboard.html' },
             { label: 'Open Parent Dashboard', url: 'parent-dashboard.html' }
         ],
@@ -68,12 +68,12 @@ const HELP_GUIDES = [
             'You can access the email inbox tied to your ALL PLAYS account.'
         ],
         steps: [
-            'Open `login.html`.',
+            'Open `/app/#/auth`.',
             'Select the `Forgot password` option.',
             'Enter the account email address and submit.',
             'Open the reset email and select the reset link.',
             'Enter a new password that you can remember and confirm it.',
-            'Return to `login.html` and sign in with the new password.'
+            'Return to `/app/#/auth` and sign in with the new password.'
         ],
         commonErrors: [
             'Reset email not found: check spam/junk and wait 1-2 minutes before retry.',
@@ -86,7 +86,7 @@ const HELP_GUIDES = [
         ],
         relatedGuideIds: ['login', 'sign-up-activation'],
         quickLinks: [
-            { label: 'Open Login', url: 'login.html' }
+            { label: 'Open Login', url: '/app/#/auth' }
         ],
         lastUpdated: '2026-03-03'
     },
@@ -102,7 +102,7 @@ const HELP_GUIDES = [
             'You have access to the invite email.'
         ],
         steps: [
-            'Open `login.html#signup` or your invite link.',
+            'Open `/app/#/auth?mode=signup` or your invite link.',
             'Enter your email, password, and requested profile details.',
             'Enter the activation code exactly as provided.',
             'Submit the sign-up form and wait for account creation confirmation.',
@@ -120,8 +120,8 @@ const HELP_GUIDES = [
         ],
         relatedGuideIds: ['login', 'forgot-password'],
         quickLinks: [
-            { label: 'Open Sign Up', url: 'login.html#signup' },
-            { label: 'Accept Invite', url: 'accept-invite.html' }
+            { label: 'Open Sign Up', url: '/app/#/auth?mode=signup' },
+            { label: 'Accept Invite', url: '/app/#/accept-invite' }
         ],
         lastUpdated: '2026-03-03'
     },

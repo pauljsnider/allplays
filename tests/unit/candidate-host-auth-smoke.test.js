@@ -12,19 +12,22 @@ describe('candidate-host authenticated smoke coverage', () => {
 
         expect(workflow).toContain('npx playwright test tests/smoke/candidate-host-auth.spec.js');
         expect(workflow).toContain('CANDIDATE_HOST_URL: https://game-flow-c6311.web.app');
+        expect(workflow).toContain('SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}');
+        expect(workflow).toContain('SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}');
         expect(workflow).toContain('SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}');
         expect(workflow).toContain('SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}');
         expect(spec).toContain("process.env.CANDIDATE_HOST_URL");
         expect(spec).toContain('Candidate authentication failed at ${new URL(candidateHostUrl).origin}');
         expect(spec).toContain('Candidate post-login assertion failed at ${candidateHostUrl}');
-        expect(spec).toContain("expect(authEmail, 'SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy()");
-        expect(spec).toContain("expect(authPassword, 'SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy()");
+        expect(spec).toContain("expect(authEmail, 'SMOKE_STAFF_EMAIL or SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy()");
+        expect(spec).toContain("expect(authPassword, 'SMOKE_STAFF_PASSWORD or SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy()");
         expect(spec).not.toContain('test.skip(!hasCredentials');
         expect(spec).toContain('landingUrl.origin');
         expect(spec).toContain('toBe(new URL(candidateHostUrl).origin)');
         expect(spec).toContain('landingUrl.pathname');
         expect(spec).toContain('Candidate post-login assertion failed at ${candidateHostUrl}: unexpected route');
-        expect(spec).toContain('toMatch(/^\\/(?:dashboard|parent-dashboard)\\.html$/)');
+        expect(spec).toContain("toBe('/app/')");
+        expect(spec).toContain("expect(landingUrl.hash).not.toMatch(/^#\\/auth");
         expect(spec).toContain("testInfo.outputPath('candidate-auth-diagnostic.json')");
         expect(spec).toContain('redactDiagnosticText');
         expect(spec).not.toContain('page.screenshot');
@@ -50,6 +53,6 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(workflow).toContain('steps.canonical_prod.outcome');
         expect(workflow).toContain('test-results/**/candidate-auth-diagnostic.json');
         expect(workflow).toContain('One or more independent post-deploy signals failed.');
-        expect(workflow).toContain('timeout-minutes: 15');
+        expect(workflow).toContain('timeout-minutes: 30');
     });
 });

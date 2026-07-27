@@ -349,7 +349,7 @@ function getLegacyUrl(path: string, params: Record<string, string> = {}) {
 }
 
 function getRegistrationUrl(teamId: string, formId: string) {
-    return getLegacyUrl('registration.html', { teamId, formId });
+    return getAppRegistrationUrl(teamId, formId);
 }
 
 function getAppRegistrationUrl(teamId: string, formId: string) {

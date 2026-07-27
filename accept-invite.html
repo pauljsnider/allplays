@@ -2,6 +2,10 @@
 <html lang="en">
 
 <head>
+  <script type="module">
+    import { redirectLegacyAuthPage } from './js/app-redirect.js?v=1';
+    redirectLegacyAuthPage('accept-invite');
+  </script>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
   <script>
@@ -83,7 +87,7 @@
                 <p class="text-xs text-gray-500 mb-4">
                     Invite code: <span id="invite-code-confirmation" class="font-mono font-semibold tracking-widest"></span>
                 </p>
-                <a id="continue-invite-link" href="login.html"
+                <a id="continue-invite-link" href="/app/#/auth"
                     class="block w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
                     Sign in or create account to continue
                 </a>
@@ -113,7 +117,7 @@
                     </button>
                 </form>
                 <p class="text-xs text-gray-500 mt-4 text-center">
-                    Need to create an account? <a href="login.html" id="signup-link" class="text-indigo-600 hover:underline">Sign up here</a> with your invite code.
+                    Need to create an account? <a href="/app/#/auth?mode=signup" id="signup-link" class="text-indigo-600 hover:underline">Sign up here</a> with your invite code.
                 </p>
             </div>
 
@@ -143,7 +147,7 @@
                         class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
                         Enter Code Manually
                     </button>
-                    <a href="login.html"
+                    <a href="/app/#/auth"
                         class="block w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-200 transition text-center">
                         Go to Login
                     </a>
@@ -155,7 +159,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=134';
+        import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=135';
         import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=127';
         import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';
         import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=11';
@@ -172,9 +176,10 @@
 
         function getLoginUrlForInvite(code = normalizedInviteCode, type = normalizedInviteType) {
             const loginParams = new URLSearchParams();
+            loginParams.set('mode', 'signup');
             loginParams.set('code', String(code).trim().toUpperCase());
             loginParams.set('type', String(type || 'parent').trim().toLowerCase());
-            return `login.html?${loginParams.toString()}`;
+            return `/app/#/auth?${loginParams.toString()}`;
         }
 
         const signupLink = document.getElementById('signup-link');

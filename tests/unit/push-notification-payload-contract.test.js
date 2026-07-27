@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
+const { buildAppUrl } = require('../../functions/app-links-core.cjs');
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 function getHelper(name, nextMarker) {
     const start = source.indexOf(`function ${name}(`);
     const end = source.indexOf(`\n${nextMarker}`, start);
     const slice = source.slice(start, end);
-    return new Function(`${slice}; return ${name};`)();
+    return new Function('buildAppUrl', `${slice}; return ${name};`)(buildAppUrl);
 }
 
 const buildStaffFeeNotificationDestination = getHelper('buildStaffFeeNotificationDestination', 'function buildNotificationLink');
@@ -15,7 +18,7 @@ function getNotificationRouteHelper(name) {
     const start = source.indexOf('function buildScheduleSectionQuery(');
     const end = source.indexOf('\nasync function getUserIdsByEmails', start);
     const slice = source.slice(start, end);
-    return new Function(`${slice}; return ${name};`)();
+    return new Function('buildAppUrl', `${slice}; return ${name};`)(buildAppUrl);
 }
 
 const buildNotificationLink = getNotificationRouteHelper('buildNotificationLink');
@@ -34,7 +37,7 @@ describe('push notification payload contract', () => {
         expect(source).toContain('return `${route}?conversation=${encodeURIComponent(conversationId)}`;');
         expect(source).toContain("if (category === 'liveChat' && teamId) {");
         expect(source).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
-        expect(source).toContain('params.push(`conversationId=${encodeURIComponent(conversationId)}`);');
+        expect(source).toContain('return buildAppUrl(route, conversationId ? { conversationId } : {});');
         expect(source).toContain('fcmOptions: { link }');
     });
 

@@ -1,5 +1,5 @@
 import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=1';
-import { buildLegacyJoinUrl, generateJoinCode } from './join-code.js?v=1';
+import { buildAppJoinUrl, generateJoinCode } from './join-code.js?v=2';
 
 export const MAX_FAMILY_PLAN_SLOTS = 4;
 
@@ -416,7 +416,7 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
         usedAt: null,
         revoked: false
     });
-    const inviteUrl = buildLegacyJoinUrl(code, 'household');
+    const inviteUrl = buildAppJoinUrl(code, 'household');
     await updateDoc(doc(db, 'users', userId, 'familyMemberships', membershipRef.id), {
         accessCodeId: accessCodeRef.id,
         accessCode: code,

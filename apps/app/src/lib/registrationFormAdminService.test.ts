@@ -18,6 +18,7 @@ const firebaseMocks = vi.hoisted(() => {
     }),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    runTransaction: vi.fn(),
     serverTimestamp: vi.fn(() => 'server-timestamp'),
     setDoc: vi.fn(),
     updateDoc: vi.fn()
@@ -70,6 +71,10 @@ const webCreatedFixture = {
 describe('registrationFormAdminService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    firebaseMocks.runTransaction.mockImplementation(async (_db, callback) => callback({
+      get: firebaseMocks.getDoc,
+      update: firebaseMocks.updateDoc
+    }));
   });
 
   it('checks staff access for registration form management', () => {
@@ -167,6 +172,9 @@ describe('registrationFormAdminService', () => {
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).registrationOptions).toEqual([
       { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 }
     ]);
+    expect((firebaseMocks.setDoc.mock.calls[0][1] as any).registrationOptionCounts).toEqual({
+      'full-day': { enrolled: 0, waitlisted: 0 }
+    });
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).installmentPlan).toEqual({
       enabled: true,
       title: 'Installment plan',
@@ -176,7 +184,38 @@ describe('registrationFormAdminService', () => {
     });
   });
 
+  it('rejects colliding capacity counter IDs when creating a registration form', async () => {
+    await expect(saveRegistrationFormEditorForApp({
+      user: coachUser,
+      teamId: 'team-1',
+      draft: {
+        title: 'Collision Camp',
+        participantFieldsText: 'Player name',
+        guardianFieldsText: 'Guardian email',
+        registrationOptions: [
+          { id: 'local division', label: 'Local space', active: true },
+          { id: 'local/division', label: 'Local slash', active: true },
+          { id: 'local_division', label: 'Local underscore', active: true }
+        ],
+        waiverText: 'Guardian accepts the waiver.',
+        status: 'published'
+      }
+    })).rejects.toThrow('Registration option IDs must map to unique capacity counters.');
+
+    expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+  });
+
   it('updates closed registration forms without reopening public submissions', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        registrationOptionCounts: {
+          travel: { enrolled: 7, waitlisted: 2, lastUpdatedBy: 'server' }
+        }
+      })
+    });
+
     const result = await saveRegistrationFormEditorForApp({
       user: coachUser,
       teamId: 'team-1',
@@ -188,7 +227,8 @@ describe('registrationFormAdminService', () => {
         participantFieldsText: 'Player name\nBirthdate',
         guardianFieldsText: 'Guardian email',
         registrationOptions: [
-          { id: 'travel', label: 'Travel', capacityLimit: '12', active: true, waitlistEnabled: true }
+          { id: 'travel', label: 'Travel', capacityLimit: '12', active: true, waitlistEnabled: true },
+          { id: 'local division', label: 'Local', capacityLimit: '20', active: true, waitlistEnabled: false }
         ],
         paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
         installmentPlan: { enabled: true, title: 'Two payments', installmentCount: 2, firstDueDate: '2026-06-01', intervalDays: 14 },
@@ -222,6 +262,40 @@ describe('registrationFormAdminService', () => {
         updatedBy: 'coach-1'
       })
     );
+    expect(firebaseMocks.runTransaction).toHaveBeenCalledWith(
+      { path: 'db' },
+      expect.any(Function)
+    );
+    const updatePayload = firebaseMocks.updateDoc.mock.calls[0][1] as any;
+    expect(updatePayload).not.toHaveProperty('registrationOptionCounts');
+    expect(updatePayload).not.toHaveProperty('registrationOptionCounts.travel');
+    expect(updatePayload['registrationOptionCounts.local_division']).toEqual({
+      enrolled: 0,
+      waitlisted: 0
+    });
+  });
+
+  it('rejects colliding capacity counter IDs before updating an existing form', async () => {
+    await expect(saveRegistrationFormEditorForApp({
+      user: coachUser,
+      teamId: 'team-1',
+      formId: 'form-1',
+      draft: {
+        formId: 'form-1',
+        title: 'Collision League',
+        participantFieldsText: 'Player name',
+        guardianFieldsText: 'Guardian email',
+        registrationOptions: [
+          { id: 'local division', label: 'Local space', active: true },
+          { id: 'local/division', label: 'Local slash', active: true }
+        ],
+        waiverText: 'Guardian accepts the waiver.',
+        status: 'published'
+      }
+    })).rejects.toThrow('Registration option IDs must map to unique capacity counters.');
+
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+    expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
   });
 
   it('rejects invalid drafts before writing to Firestore', async () => {

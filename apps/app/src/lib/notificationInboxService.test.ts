@@ -39,7 +39,7 @@ describe('notificationInboxService', () => {
         vi.mocked(onSnapshot).mockReturnValue(vi.fn());
     });
 
-    it('subscribes to unread notifications with a hard count cap without hydrating inbox items', () => {
+    it('subscribes to a bounded server-filtered unread query', () => {
         const callback = vi.fn();
         vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
             onNext({ size: 3 } as never);
@@ -55,20 +55,23 @@ describe('notificationInboxService', () => {
         expect(callback).toHaveBeenCalledWith(3);
     });
 
-    it('reports the capped unread snapshot size so the shell can render 99+', () => {
+    it('counts older unread records even when more than 100 newer records are read', () => {
         const callback = vi.fn();
         vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
-            onNext({ size: 100 } as never);
+            // Firestore applies readAt == null before the limit, so newer read
+            // records never consume the unread query window.
+            onNext({ size: 4 } as never);
             return vi.fn();
         });
 
         subscribeToUnreadNotificationCount('user-123', callback);
 
+        expect(where).toHaveBeenCalledWith('readAt', '==', null);
         expect(limit).toHaveBeenCalledWith(100);
-        expect(callback).toHaveBeenCalledWith(100);
+        expect(callback).toHaveBeenCalledWith(4);
     });
 
-    it('does not attach a full inbox fallback when the unread query fails', () => {
+    it('reports bounded unread query failures without attaching another listener', () => {
         const callback = vi.fn();
         const onError = vi.fn();
         const primaryUnsubscribe = vi.fn();

@@ -708,7 +708,8 @@ function renderInvoiceRow(type) {
 }
 
 export function buildTeamFeeBatchManageUrl(teamId, batchId) {
-    return `team-fees.html#teamId=${encodeURIComponent(teamId)}&batchId=${encodeURIComponent(batchId)}`;
+    const params = new URLSearchParams({ batchId });
+    return `/app/#/teams/${encodeURIComponent(teamId)}/fees?${params.toString()}`;
 }
 
 export function renderCreatedTeamFeeBatchSuccess(teamId, batchId) {
@@ -1255,7 +1256,7 @@ async function initTeamFeesAdminPage() {
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
         import('./db.js?v=127'),
-        import('./auth.js?v=134')
+        import('./auth.js?v=135')
     ]);
 
     try {

@@ -265,12 +265,27 @@ export function validateAdminRegistrationFormPayload(payload = {}) {
     if (!Array.isArray(payload.guardianFields) || payload.guardianFields.length < 1) {
         errors.push('At least one guardian field is required.');
     }
+    const countKeys = new Set();
+    for (const option of Array.isArray(payload.registrationOptions) ? payload.registrationOptions : []) {
+        const countKey = buildRegistrationOptionCountKey(option?.id);
+        if (countKeys.has(countKey)) {
+            errors.push('Registration option IDs must map to unique capacity counters.');
+            break;
+        }
+        countKeys.add(countKey);
+    }
     return errors;
+}
+
+export function buildRegistrationOptionCountKey(optionId = '') {
+    const key = String(optionId || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
+    return key || 'option';
 }
 
 export function getAdminRegistrationShareUrl(teamId, formId, origin = '') {
     const base = String(origin || '').replace(/\/$/, '');
-    return `${base}/registration.html?teamId=${encodeURIComponent(teamId)}&formId=${encodeURIComponent(formId)}`;
+    const params = new URLSearchParams({ teamId, formId });
+    return `${base}/app/#/registration?${params.toString()}`;
 }
 
 function inferFieldType(label) {

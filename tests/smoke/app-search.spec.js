@@ -283,7 +283,7 @@ async function mockSearchModules(page) {
                 }
 
                 export async function createRosterParentInviteForApp() {
-                    return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
+                    return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
                 }
 
                 export async function createStatTrackerConfigForApp() {

@@ -183,22 +183,18 @@
                 "apps/app/src/pages/AcceptInvite.test.tsx",
                 "apps/app/src/pages/Profile.test.tsx",
                 "tests/unit/admin-invite-redemption.test.js",
+                "tests/unit/app-auth-account-action-pages.test.jsx",
                 "tests/unit/auth-google-admin-invite-cleanup.test.js",
                 "tests/unit/auth-google-parent-invite-cleanup.test.js"
             ],
             "workflowTests": [
                 "tests/smoke/admin-invite-redemption.spec.js",
                 "tests/smoke/app-auth-profile.spec.js",
+                "tests/smoke/app-authenticated-core.spec.js",
                 "tests/smoke/firebase-auth-bootstrap.spec.js",
-                "tests/smoke/login-forgot-password.spec.js",
-                "tests/smoke/login-invite-redirect.spec.js"
+                "tests/smoke/legacy-auth-redirects.spec.js"
             ],
-            "knownGaps": [
-                {
-                    "tier": "integration",
-                    "description": "React reset and verify-pending pages need direct page-boundary tests."
-                }
-            ]
+            "knownGaps": []
         },
         {
             "id": "teams.roster-settings-discovery",

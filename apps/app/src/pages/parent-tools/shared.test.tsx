@@ -42,7 +42,7 @@ describe('InviteResultCard', () => {
         render(
             <InviteResultCard
                 code="home5678"
-                inviteUrl="https://allplays.ai/app#/accept-invite?code=HOME5678&type=household"
+                inviteUrl="https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household"
                 recipientEmail="aunt@example.com"
                 emailSent
                 shareTitle="ALL PLAYS parent invite"
@@ -61,13 +61,13 @@ describe('InviteResultCard', () => {
         await waitFor(() => expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
             title: 'ALL PLAYS parent invite',
             text: 'Join this player.',
-            url: 'https://allplays.ai/app#/accept-invite?code=HOME5678&type=household',
-            clipboardText: 'https://allplays.ai/app#/accept-invite?code=HOME5678&type=household'
+            url: 'https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household',
+            clipboardText: 'https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household'
         }));
         await waitFor(() => expect(onStatus).toHaveBeenCalledWith('Invite shared.'));
 
         fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
-        await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app#/accept-invite?code=HOME5678&type=household'));
+        await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household'));
         await waitFor(() => expect(onStatus).toHaveBeenCalledWith('Invite link copied.'));
 
         fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
@@ -99,11 +99,11 @@ describe('InviteResultCard', () => {
         const onStatus = vi.fn();
         publicActionMocks.copyPublicText.mockResolvedValue('failed');
 
-        render(<InviteResultCard code="CODE1234" inviteUrl="https://allplays.ai/app#/accept-invite?code=CODE1234" onStatus={onStatus} />);
+        render(<InviteResultCard code="CODE1234" inviteUrl="https://allplays.ai/app/#/accept-invite?code=CODE1234" onStatus={onStatus} />);
 
         fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
 
-        await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app#/accept-invite?code=CODE1234'));
+        await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/accept-invite?code=CODE1234'));
         await waitFor(() => expect(onStatus).toHaveBeenCalledWith('Unable to copy invite link.'));
     });
 });

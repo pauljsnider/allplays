@@ -55,7 +55,7 @@ describe('React app team navigation helpers', () => {
         expect(items.find((item) => item.id === 'manage-roster')).toBeUndefined();
     });
 
-    it('adds coach/admin operations from the existing website for staff teams', () => {
+    it('adds native coach/admin operations for supported staff workflows', () => {
         const sections = buildTeamNavigation(team({ role: 'Coach', players: [], eventCount: 0, unreadCount: 0, openActions: 0 }));
         const management = sections.find((section) => section.id === 'management');
         const managementIds = management?.items.map((item) => item.id);
@@ -75,7 +75,14 @@ describe('React app team navigation helpers', () => {
             'stats-config',
             'certificates'
         ]);
-        expect(management?.items.find((item) => item.id === 'manage-roster')?.href).toBe('https://allplays.ai/edit-roster.html#teamId=team-1');
+        expect(management?.items.find((item) => item.id === 'manage-roster')).toMatchObject({
+            href: '/teams/team-1?tab=roster',
+            kind: 'native'
+        });
+        expect(management?.items.find((item) => item.id === 'manage-schedule')).toMatchObject({
+            href: '/schedule?scope=staff&staffTools=1&teamId=team-1',
+            kind: 'native'
+        });
         expect(management?.items.find((item) => item.id === 'stats-config')).toMatchObject({
             href: '/teams/team-1?tab=more',
             kind: 'native'
@@ -84,7 +91,10 @@ describe('React app team navigation helpers', () => {
             href: '/teams/team-1/fees',
             kind: 'native'
         });
-        expect(management?.items.find((item) => item.id === 'game-day')?.href).toBe('https://allplays.ai/game-day.html?teamId=team-1');
+        expect(management?.items.find((item) => item.id === 'game-day')).toMatchObject({
+            href: '/schedule?teamId=team-1',
+            kind: 'native'
+        });
     });
 
     it('keeps chat-only staff teams focused on messages and website management tools', () => {

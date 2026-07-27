@@ -1,6 +1,7 @@
 'use strict';
 
 const ALLPLAYS_ORIGIN = 'https://allplays.ai';
+const { buildAcceptInviteAppUrl, buildAppUrl } = require('./app-links-core.cjs');
 
 function normalizeInviteEmailType(value) {
   const type = String(value || '').trim().toLowerCase();
@@ -28,17 +29,12 @@ function buildInviteSignupUrl(code, inviteType, origin = ALLPLAYS_ORIGIN) {
   const normalizedCode = String(code || '').trim().toUpperCase();
   const normalizedType = normalizeInviteEmailType(inviteType);
   if (!normalizedCode || !normalizedType) return '';
-  const url = new URL('/accept-invite.html', origin);
-  url.searchParams.set('code', normalizedCode);
-  url.searchParams.set('type', normalizedType);
-  return url.toString();
+  return buildAcceptInviteAppUrl(normalizedCode, normalizedType, origin);
 }
 
 function buildLinkedTeamUrl(teamId, origin = ALLPLAYS_ORIGIN) {
   const normalizedTeamId = String(teamId || '').trim();
-  const url = new URL('/app/', origin);
-  url.hash = `/teams/${encodeURIComponent(normalizedTeamId)}`;
-  return url.toString();
+  return buildAppUrl(`/teams/${encodeURIComponent(normalizedTeamId)}`, {}, origin);
 }
 
 function isLinkedParentInvite(invite = {}) {

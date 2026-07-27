@@ -76,8 +76,8 @@ describe('help and workflow page inventory', () => {
         const workflowManifestEntry = workflowManifest.find((item) => item.id === 'getting-started');
         const helpPortalManifestEntry = helpPortalManifest.find((item) => item.id === 'getting-started');
 
-        expect(html).toContain('href="login.html#signup"');
-        expect(html).toContain('href="login.html"');
+        expect(html).toContain('href="/app/#/auth?mode=signup"');
+        expect(html).toContain('href="/app/#/auth"');
         expect(html).toContain('>Sign Up</a>');
         expect(html).toContain('>Sign In</a>');
         expect(html).not.toContain('Get Started Now');

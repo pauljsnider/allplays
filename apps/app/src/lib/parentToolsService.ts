@@ -64,6 +64,7 @@ import {
   uploadTeamMediaPhoto
 } from './adapters/legacyParentTools';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import { formatCurrencyFromCents as formatCurrency } from './money';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
@@ -348,7 +349,7 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
 }
 
 export function getRegistrationUrl(teamId: string, formId: string) {
-  return getLegacyUrl('registration.html', { teamId, formId });
+  return getAppRegistrationUrl(teamId, formId);
 }
 
 export function getAppRegistrationUrl(teamId: string, formId: string) {
@@ -561,7 +562,11 @@ export async function loadParentHouseholdInviteModel(user: AuthUser | null): Pro
     linkedPlayers,
     members: (members || []).map((member: any) => ({
       ...member,
-      inviteUrl: toAbsoluteLegacyUrl(member.inviteUrl)
+      inviteUrl: canonicalizeAppAcceptInviteUrl(
+        member.inviteUrl,
+        member.accessCode || member.code,
+        member.type || 'household'
+      )
     }))
   };
 }
@@ -591,7 +596,11 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
   }, { existingMembers });
   return {
     code: compactString((result as any)?.code),
-    inviteUrl: toAbsoluteLegacyUrl((result as any)?.inviteUrl),
+    inviteUrl: canonicalizeAppAcceptInviteUrl(
+      (result as any)?.inviteUrl,
+      (result as any)?.code,
+      'household'
+    ),
     email,
     emailSent: true
   };
@@ -1139,13 +1148,6 @@ function normalizeFamilyChildren(children: any[]) {
       playerNumber: compactString(child.playerNumber || child.number),
       playerPhotoUrl: child.playerPhotoUrl || null
     }));
-}
-
-function toAbsoluteLegacyUrl(value: unknown) {
-  const path = compactString(value);
-  if (!path) return '';
-  if (/^https?:\/\//i.test(path)) return path;
-  return getLegacyUrl(path.replace(/^\//, ''));
 }
 
 function getLinkedTeamIds(user: AuthUser | null) {

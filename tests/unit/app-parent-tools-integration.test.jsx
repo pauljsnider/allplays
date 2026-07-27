@@ -295,7 +295,7 @@ beforeEach(() => {
         paymentNotice: 'Online checkout available.',
         onlineCheckout: true,
         options: [{ id: 'opt-1' }],
-        url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+        url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
     }]);
     serviceMocks.loadParentCertificates.mockResolvedValue([{
         id: 'cert-1',
@@ -392,7 +392,7 @@ describe('React app parent tools integration', () => {
         const reviewLink = Array.from(container.querySelectorAll('a')).find((link) => link.textContent.trim() === 'Review');
         expect(reviewLink?.getAttribute('href')).toBe('/parent-tools/registrations/team-1/form-1');
         await clickButton(container, 'Legacy form');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
 
         await clickLink(container, 'Awards');
         await waitForText(container, 'Hustle Award');
@@ -497,7 +497,7 @@ describe('React app parent tools integration', () => {
                 paymentNotice: 'Online checkout available.',
                 onlineCheckout: true,
                 options: [{ id: 'opt-1' }],
-                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
             }]);
 
         const { container } = await renderParentTools('/parent-tools/access');

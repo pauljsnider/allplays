@@ -97,6 +97,24 @@ describe('CapabilityPage launch CTAs', () => {
         await act(async () => root.unmount());
     });
 
+    it('launches authentication capabilities on canonical app routes', async () => {
+        const routes = new Map([
+            ['login', '/auth'],
+            ['accept-invite', '/accept-invite'],
+            ['reset-password', '/reset-password'],
+            ['verify-pending', '/verify-pending']
+        ]);
+
+        for (const [capabilityId, route] of routes) {
+            const { container, root } = await renderCapabilityPage(`/capabilities/${capabilityId}`);
+            expect(linkByText(container, 'Open app route').getAttribute('href')).toBe(route);
+            expect(container.textContent).not.toContain('Open current page');
+            await act(async () => root.unmount());
+        }
+
+        expect(openPublicUrl).not.toHaveBeenCalled();
+    });
+
     it('routes the help capability to the in-app help portal', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/help');
 

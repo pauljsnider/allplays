@@ -79,8 +79,8 @@ describe('team fee checkout function helpers', () => {
         const input = { teamId: 'team_123', batchId: 'batch_456', recipientId: 'player_789' };
 
         expect(buildTeamFeeCheckoutUrls('https://allplays.example/', input)).toEqual({
-            successUrl: 'https://allplays.example/parent-dashboard.html?feePayment=1&teamId=team_123&batchId=batch_456&recipientId=player_789&checkout=success',
-            cancelUrl: 'https://allplays.example/parent-dashboard.html?feePayment=1&teamId=team_123&batchId=batch_456&recipientId=player_789&checkout=cancelled'
+            successUrl: 'https://allplays.example/app/#/parent-tools/fees?feePayment=1&teamId=team_123&batchId=batch_456&recipientId=player_789&checkout=success',
+            cancelUrl: 'https://allplays.example/app/#/parent-tools/fees?feePayment=1&teamId=team_123&batchId=batch_456&recipientId=player_789&checkout=cancelled'
         });
         expect(buildTeamFeeCheckoutMetadata({ ...input, payerUid: 'user_123' })).toEqual({
             product: 'team_fee',

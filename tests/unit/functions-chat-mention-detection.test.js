@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
+const { buildAppUrl } = require('../../functions/app-links-core.cjs');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const notifyTeamChatMessageCreatedSource = functionsSource.slice(
     functionsSource.indexOf('exports.notifyTeamChatMessageCreated = functions.firestore'),
@@ -72,7 +75,7 @@ function getNotificationDestinationBuilders() {
     const start = functionsSource.indexOf('function buildScheduleSectionQuery(');
     const end = functionsSource.indexOf('\nfunction normalizeAccessNotificationStatus');
     const slice = functionsSource.slice(start, end);
-    return new Function(`${slice}; return { buildNotificationLink, buildNotificationAppRoute };`)();
+    return new Function('buildAppUrl', `${slice}; return { buildNotificationLink, buildNotificationAppRoute };`)(buildAppUrl);
 }
 
 const detectMentionedUids = getDetectMentionedUids();
@@ -475,12 +478,12 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
 });
 
 describe('chat mention notification destinations', () => {
-    it('builds legacy and app deep links for mentioned conversation notifications', () => {
+    it('builds canonical app deep links for mentioned conversation notifications', () => {
         expect(buildNotificationLink({
             category: 'mentions',
             teamId: 'team 1',
             conversationId: 'direct/user?2'
-        })).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=direct%2Fuser%3F2');
+        })).toBe('https://allplays.ai/app/#/messages/team%201?conversationId=direct%2Fuser%3F2');
         expect(buildNotificationAppRoute({
             category: 'mentions',
             teamId: 'team 1',
@@ -493,7 +496,7 @@ describe('chat mention notification destinations', () => {
             category: 'mentions',
             teamId: 'team-1',
             conversationId: ''
-        })).toBe('https://allplays.ai/team-chat.html?teamId=team-1');
+        })).toBe('https://allplays.ai/app/#/messages/team-1');
         expect(buildNotificationAppRoute({
             category: 'mentions',
             teamId: 'team-1',

@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
+const require = createRequire(import.meta.url);
+const { buildAppUrl } = require('../../functions/app-links-core.cjs');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const scheduleLogicSource = readFileSync(new URL('../../apps/app/src/lib/scheduleLogic.ts', import.meta.url), 'utf8');
 const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
@@ -9,9 +12,10 @@ function getBuildPreEventReminderPayload() {
     const start = functionsSource.indexOf('function buildPreEventReminderPayload({ teamId, gameId, event })');
     const end = functionsSource.indexOf('\nfunction getPreEventReminderChatMessageId', start);
     const slice = functionsSource.slice(start, end);
-    return new Function('coerceDate', 'getEventTitle', `${slice}; return buildPreEventReminderPayload;`)(
+    return new Function('coerceDate', 'getEventTitle', 'buildAppUrl', `${slice}; return buildPreEventReminderPayload;`)(
         (value) => new Date(value),
-        (event) => event.title || 'Team event'
+        (event) => event.title || 'Team event',
+        buildAppUrl
     );
 }
 
@@ -142,7 +146,7 @@ describe('schedule and RSVP notification contract', () => {
         })).toEqual({
             title: 'Upcoming team event',
             body: 'vs. Falcons is coming up Sat, Jul 4, 1:30 PM. Location: Main Gym',
-            link: 'https://allplays.ai/game-day.html?teamId=team%201&gameId=game%2F1',
+            link: 'https://allplays.ai/app/#/schedule/team%201/game%2F1?section=game',
             chatText: [
                 'Schedule reminder: Upcoming team event',
                 'vs. Falcons is coming up Sat, Jul 4, 1:30 PM.',

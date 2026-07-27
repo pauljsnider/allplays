@@ -1,8 +1,7 @@
 import { getPlayerPrivateProfile } from './adapters/legacyPlayerDb';
 import { addPendingFamilyMember, getPlayers, readFamilyMembers } from './adapters/legacyParentTools';
+import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import type { AuthUser } from './types';
-
-const legacyOrigin = 'https://allplays.ai';
 
 export type ParentHouseholdLinkedPlayer = {
     teamId: string;
@@ -67,7 +66,11 @@ export async function loadParentHouseholdInviteModel(user: AuthUser | null): Pro
         linkedContacts,
         members: (members || []).map((member: any) => ({
             ...member,
-            inviteUrl: toAbsoluteLegacyUrl(member.inviteUrl)
+            inviteUrl: canonicalizeAppAcceptInviteUrl(
+                member.inviteUrl,
+                member.accessCode || member.code,
+                member.type || 'household'
+            )
         }))
     };
 }
@@ -97,14 +100,14 @@ export async function createParentHouseholdMemberInvite(user: AuthUser | null, r
     }, { existingMembers });
     return {
         code: compactString((result as any)?.code),
-        inviteUrl: toAbsoluteLegacyUrl((result as any)?.inviteUrl),
+        inviteUrl: canonicalizeAppAcceptInviteUrl(
+            (result as any)?.inviteUrl,
+            (result as any)?.code,
+            'household'
+        ),
         email,
         emailSent: true
     };
-}
-
-function getLegacyUrl(path: string) {
-    return new URL(path, legacyOrigin).toString();
 }
 
 function normalizeFamilyChildren(children: any[]) {
@@ -201,13 +204,6 @@ function dedupeFamilyContacts(contacts: ParentHouseholdFamilyContact[]) {
         a.playerName.localeCompare(b.playerName)
         || (a.name || a.email || a.phone).localeCompare(b.name || b.email || b.phone)
     ));
-}
-
-function toAbsoluteLegacyUrl(value: unknown) {
-    const path = compactString(value);
-    if (!path) return '';
-    if (/^https?:\/\//i.test(path)) return path;
-    return getLegacyUrl(path.replace(/^\//, ''));
 }
 
 function compactString(value: unknown) {

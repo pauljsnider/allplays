@@ -249,6 +249,13 @@ export function shouldShowLiveScoreControls(event?: ParentScheduleEvent | null, 
   return Boolean(event && event.type !== 'practice' && event.isDbGame && !event.isCancelled && event.canUpdateScore && user);
 }
 
+export function supportsBasketballGameTools(event?: ParentScheduleEvent | null) {
+  const sport = String(event?.sport || '').trim().toLowerCase();
+  // Keep older cached/test events compatible until they are reloaded with the
+  // team sport, but never show basketball-only controls for a known sport.
+  return !sport || sport.includes('basketball');
+}
+
 function getDefaultEventDetailSection(event?: ParentScheduleEvent | null) {
   if (isActiveTrackedScheduleEvent(event) && event?.canUpdateScore) {
     return 'game';
@@ -1608,6 +1615,8 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
+  const canLaunchStandardTracker = canUpdateScore && Boolean(event.statTrackerConfigId);
+  const hasBasketballGameTools = supportsBasketballGameTools(event);
   const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
@@ -1618,13 +1627,13 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
   const availablePanelIds = useMemo(() => {
     const panels: GameHubPanelId[] = [];
-    if (canUpdateScore) panels.push('foul');
+    if (canUpdateScore && hasBasketballGameTools) panels.push('foul');
     if (!isPractice) panels.push('reactions', 'chat');
     if (canWrapup) panels.push('wrapup', 'statsheet');
     if (canPublishLineup) panels.push('lineup', 'substitutions');
     if (!isPractice) panels.push('report');
     return panels;
-  }, [canPublishLineup, canUpdateScore, canWrapup, isPractice]);
+  }, [canPublishLineup, canUpdateScore, canWrapup, hasBasketballGameTools, isPractice]);
   const requestedPanelAvailable = requestedPanel && availablePanelIds.includes(requestedPanel)
     ? requestedPanel
     : null;
@@ -1656,7 +1665,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
 
   useEffect(() => {
     let cancelled = false;
-    if (!canUpdateScore) {
+    if (!canUpdateScore || !hasBasketballGameTools) {
       setHomeScoringPlayers([]);
       setLoadingHomeScoringPlayers(false);
       return undefined;
@@ -1677,7 +1686,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
     return () => {
       cancelled = true;
     };
-  }, [canUpdateScore, event.teamId, event.id, event.eventKey]);
+  }, [canUpdateScore, event.teamId, event.id, event.eventKey, hasBasketballGameTools]);
 
   const updateHomeScoringPlayers = useCallback((updater: HomeScoringPlayersUpdater) => {
     setHomeScoringPlayers(updater);
@@ -1811,11 +1820,16 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
 
             {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           </LiveGameClockTickerProvider>
-          {canUpdateScore ? (
+          {canLaunchStandardTracker ? (
             <Link to={standardTrackerHref} className="secondary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="standard-tracker-launch">
               <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
               Standard tracker
             </Link>
+          ) : null}
+          {canUpdateScore && !event.statTrackerConfigId ? (
+            <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800" role="status">
+              Assign a tracker config in Edit game before opening the standard tracker.
+            </div>
           ) : null}
           {canUpdateScore ? (
             <LiveScoreEditor
@@ -1828,7 +1842,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
               onScoreUpdated={onScoreUpdated}
             />
           ) : null}
-          {canUpdateScore ? (
+          {canUpdateScore && hasBasketballGameTools ? (
             <LazyGameHubPanel
               panelId="game-hub-foul-panel"
               title="Foul tracker"
@@ -3362,6 +3376,7 @@ function getBonusState(teamFouls: number) {
 
 function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showStickyControls, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; showStickyControls: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const autosaveDelayMs = 700;
+  const hasBasketballGameTools = supportsBasketballGameTools(event);
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
@@ -3549,7 +3564,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
         <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving || Boolean(playerScoringId)} />
         <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId)} />
       </div>
-      <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+      {hasBasketballGameTools ? <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team player +2</div>
@@ -3579,7 +3594,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
           </div>
         ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
         {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">{helperText}</div> : null}
-      </div>
+      </div> : null}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <button

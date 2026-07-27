@@ -268,7 +268,7 @@ function createResendAuthEmailDelivery({
         body: JSON.stringify({
           requestType: 'PASSWORD_RESET',
           email,
-          continueUrl: 'https://allplays.ai/reset-password.html',
+          continueUrl: 'https://allplays.ai/app/#/reset-password',
           canHandleCodeInApp: true
         })
       }

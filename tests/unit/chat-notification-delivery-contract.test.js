@@ -40,7 +40,7 @@ describe('team chat notification delivery contract', () => {
 
     it('routes chat notification links to the matching app conversation', () => {
         expect(functionsSource).toContain("if (category === 'liveChat' || category === 'mentions') {");
-        expect(functionsSource).toContain('params.push(`conversationId=${encodeURIComponent(conversationId)}`);');
+        expect(functionsSource).toContain('return buildAppUrl(route, conversationId ? { conversationId } : {});');
         expect(functionsSource).toContain("if (category === 'mentions' && teamId) {");
         expect(functionsSource).toContain('return `${route}?conversation=${encodeURIComponent(conversationId)}`;');
         expect(functionsSource).toContain("if (category === 'liveChat' && teamId) {");

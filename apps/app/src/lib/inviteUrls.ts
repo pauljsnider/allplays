@@ -1,9 +1,6 @@
-export function getPublicBaseUrl() {
-    if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
-        return window.location.origin;
-    }
-    return 'https://allplays.ai';
-}
+import { buildAppUrl, getPublicAppOrigin } from './appLinks';
+
+export const getPublicBaseUrl = getPublicAppOrigin;
 
 const inviteTypeAliases: Record<string, string> = {
     standard: 'standard',
@@ -32,14 +29,36 @@ export function buildAppAcceptInviteUrl(code: string, inviteType?: string | null
         return '';
     }
 
-    const url = new URL('/app', baseUrl);
-    const searchParams = new URLSearchParams();
-    searchParams.set('code', inviteCode);
+    const searchParams = new URLSearchParams({ code: inviteCode });
     const normalizedType = normalizeAppInviteType(inviteType);
     if (normalizedType) {
         searchParams.set('type', normalizedType);
     }
+    return buildAppUrl('/accept-invite', searchParams, baseUrl);
+}
 
-    url.hash = `/accept-invite?${searchParams.toString()}`;
-    return url.toString();
+export function canonicalizeAppAcceptInviteUrl(
+    value: string | null | undefined,
+    fallbackCode = '',
+    fallbackType = '',
+    baseUrl = getPublicBaseUrl()
+) {
+    const rawUrl = String(value || '').trim();
+    let code = String(fallbackCode || '').trim();
+    let inviteType = String(fallbackType || '').trim();
+
+    if (rawUrl) {
+        try {
+            const parsed = new URL(rawUrl, new URL(baseUrl).origin);
+            const hashRoute = parsed.hash.replace(/^#/, '');
+            const [, hashQuery = ''] = hashRoute.split('?', 2);
+            const hashParams = new URLSearchParams(hashQuery);
+            code = hashParams.get('code') || parsed.searchParams.get('code') || code;
+            inviteType = hashParams.get('type') || parsed.searchParams.get('type') || inviteType;
+        } catch {
+            // Fall back to the explicit code/type supplied by the caller.
+        }
+    }
+
+    return buildAppAcceptInviteUrl(code, inviteType, baseUrl);
 }

@@ -85,8 +85,8 @@ function buildActions(user) {
 
     if (!user) {
         actions.push(
-            { kind: 'action', title: 'Sign In', subtitle: 'Log in to your account', href: 'login.html' },
-            { kind: 'action', title: 'Get Started', subtitle: 'Create an account', href: 'login.html#signup' }
+            { kind: 'action', title: 'Sign In', subtitle: 'Log in to your account', href: '/app/#/auth' },
+            { kind: 'action', title: 'Get Started', subtitle: 'Create an account', href: '/app/#/auth?mode=signup' }
         );
         return actions;
     }

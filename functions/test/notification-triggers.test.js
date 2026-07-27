@@ -1222,7 +1222,7 @@ test('notifyTeamChatMessageCreated detects roster name mentions and does not dou
         const mentionCall = env.messagingCalls.find((call) => call.data.category === 'mentions');
         assert.equal(mentionCall.data.appRoute, '/messages/team-1?conversation=thread-9');
         assert.equal(mentionCall.data.conversationId, 'thread-9');
-        assert.equal(mentionCall.webLink, 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=thread-9');
+        assert.equal(mentionCall.webLink, 'https://allplays.ai/app/#/messages/team-1?conversationId=thread-9');
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2594', value: { mentionedUids: ['parent-1'] } }]);
     } finally {
         cleanup();
@@ -2008,8 +2008,8 @@ test('notifyParentMembershipRequestCreated sends access notifications only to st
         assert.deepEqual(env.messagingCalls[0].tokens.sort(), ['assistant-token', 'coach-token']);
         assert.equal(env.messagingCalls[0].title, 'Access request: Sam P. for Jordan B.');
         assert.equal(env.messagingCalls[0].data.category, 'access');
-        assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/access?teamId=team-1');
-        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/edit-roster.html?teamId=team-1');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/teams/team-1?tab=roster');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/teams/team-1?tab=roster');
     } finally {
         cleanup();
     }
@@ -2096,7 +2096,7 @@ test('notifyRegistrationSubmitted sends access notifications to staff review tar
         assert.deepEqual(env.messagingCalls[0].tokens, ['coach-token']);
         assert.equal(env.messagingCalls[0].title, 'Registration submitted: Jordan B.');
         assert.equal(env.messagingCalls[0].data.appRoute, '/teams/team-1/registrations/form-1');
-        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/edit-roster.html?teamId=team-1');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/teams/team-1/registrations/form-1');
     } finally {
         cleanup();
     }

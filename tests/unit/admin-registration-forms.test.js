@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
     buildAdminRegistrationFormPayload,
+    buildRegistrationOptionCountKey,
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
@@ -229,6 +230,27 @@ describe('admin registration form setup', () => {
         ]);
     });
 
+    it('rejects distinct option IDs that map to the same capacity counter', () => {
+        const payload = buildAdminRegistrationFormPayload({
+            title: 'Collision League',
+            waiverText: 'Accepted.',
+            registrationOptions: [
+                { id: 'local division', label: 'Local space' },
+                { id: 'local/division', label: 'Local slash' },
+                { id: 'local_division', label: 'Local underscore' }
+            ]
+        }, { teamId: 'team-1' });
+
+        expect(payload.registrationOptions.map((option) => buildRegistrationOptionCountKey(option.id))).toEqual([
+            'local_division',
+            'local_division',
+            'local_division'
+        ]);
+        expect(validateAdminRegistrationFormPayload(payload)).toContain(
+            'Registration option IDs must map to unique capacity counters.'
+        );
+    });
+
     it('preserves blank capacity inputs when rerendering registration options', () => {
         const adminSource = fs.readFileSync(new URL('../../js/admin.js', import.meta.url), 'utf8');
 
@@ -296,7 +318,7 @@ describe('admin registration form setup', () => {
 
     it('creates a shareable public registration URL for published forms', () => {
         expect(getAdminRegistrationShareUrl('team 1', 'form/2', 'https://allplays.example')).toBe(
-            'https://allplays.example/registration.html?teamId=team%201&formId=form%2F2'
+            'https://allplays.example/app/#/registration?teamId=team+1&formId=form%2F2'
         );
     });
 

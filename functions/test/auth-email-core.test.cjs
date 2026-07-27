@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   AUTH_EMAIL_TYPES,
+  buildCanonicalAuthActionUrl,
   buildAuthEmailMailDocId,
   buildAuthEmailMailJob,
   buildAuthEmailMessage,
@@ -50,7 +51,7 @@ test('uses the ALL PLAYS action handler and rejects off-origin invite continuati
     handleCodeInApp: false
   });
   assert.deepEqual(getAuthEmailActionSettings(AUTH_EMAIL_TYPES.PASSWORD_RESET), {
-    url: 'https://allplays.ai/reset-password.html',
+    url: 'https://allplays.ai/app/#/reset-password',
     handleCodeInApp: true
   });
   assert.throws(
@@ -62,17 +63,60 @@ test('uses the ALL PLAYS action handler and rejects off-origin invite continuati
 test('builds invite continuation URLs for each supported passwordless flow', () => {
   assert.equal(
     getInviteContinueUrl('ABCD1234', 'admin_invite'),
-    'https://allplays.ai/accept-invite.html?code=ABCD1234&type=admin'
+    'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=admin'
   );
   assert.equal(
     getInviteContinueUrl('HOME1234', 'household_invite'),
-    'https://allplays.ai/accept-invite.html?code=HOME1234&type=household'
+    'https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household'
   );
   assert.equal(
     getInviteContinueUrl('COPE1234', 'coparent_invite'),
-    'https://allplays.ai/accept-invite.html?code=COPE1234&type=coparent'
+    'https://allplays.ai/app/#/accept-invite?code=COPE1234&type=coparent'
   );
   assert.throws(() => getInviteContinueUrl('short', 'admin_invite'), /eight-character code/);
+});
+
+test('rewrites generated Firebase actions to canonical app entry routes', () => {
+  assert.equal(
+    buildCanonicalAuthActionUrl(
+      'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=resetPassword&oobCode=reset-code&apiKey=public-key&lang=en',
+      AUTH_EMAIL_TYPES.PASSWORD_RESET
+    ),
+    'https://allplays.ai/app/#/reset-password?mode=resetPassword&oobCode=reset-code&apiKey=public-key&lang=en'
+  );
+
+  assert.equal(
+    buildCanonicalAuthActionUrl(
+      'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=verify-code&apiKey=public-key',
+      AUTH_EMAIL_TYPES.VERIFICATION
+    ),
+    'https://allplays.ai/app/#/reset-password?mode=verifyEmail&oobCode=verify-code&apiKey=public-key&next=%2Fverify-pending'
+  );
+
+  const continueUrl = encodeURIComponent(
+    'https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household'
+  );
+  assert.equal(
+    buildCanonicalAuthActionUrl(
+      `https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=signIn&oobCode=sign-in-code&apiKey=public-key&continueUrl=${continueUrl}`,
+      AUTH_EMAIL_TYPES.SIGN_IN
+    ),
+    'https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household&mode=signIn&oobCode=sign-in-code&apiKey=public-key'
+  );
+});
+
+test('rejects malformed and mismatched generated Firebase actions', () => {
+  assert.throws(
+    () => buildCanonicalAuthActionUrl(
+      'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=code',
+      AUTH_EMAIL_TYPES.PASSWORD_RESET
+    ),
+    /does not match/
+  );
+  assert.throws(
+    () => buildCanonicalAuthActionUrl('https://game-flow-c6311.firebaseapp.com/__/auth/action', AUTH_EMAIL_TYPES.VERIFICATION),
+    /missing required parameters/
+  );
 });
 
 test('mail and rate-limit identifiers do not expose recipient email addresses', () => {

@@ -104,7 +104,8 @@ function renderTeams({ strictMode = false, initialEntry = '/teams' }: { strictMo
 
 function TeamHubRoute() {
   const { teamId } = useParams<{ teamId: string }>();
-  return <div data-testid="team-hub">Team hub: {teamId}</div>;
+  const location = useLocation();
+  return <div data-testid="team-hub">Team hub: {teamId}{location.search}</div>;
 }
 
 function TeamsLocation() {
@@ -447,6 +448,16 @@ describe('Teams single-team navigation', () => {
     });
 
     expect(screen.queryByTestId('team-hub')).toBeNull();
+    expect(screen.queryByText('Choose a team')).toBeNull();
+  });
+
+  it('opens the roster tab directly when the roster workflow targets a single linked team', async () => {
+    renderTeamsWithNav('/teams?workflow=roster');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('team-hub')).toHaveTextContent('Team hub: team-solo?tab=roster');
+    });
+
     expect(screen.queryByText('Choose a team')).toBeNull();
   });
 

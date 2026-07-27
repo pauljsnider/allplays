@@ -141,6 +141,7 @@ export type ParentScheduleEvent = {
   id: string;
   teamId: string;
   teamName: string;
+  sport?: string | null;
   teamNotificationEmail?: string | null;
   type: ScheduleEventType;
   date: Date;

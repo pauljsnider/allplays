@@ -4,7 +4,7 @@ import { resolveNativeDeepLinkRoute } from '../../apps/app/src/lib/nativeDeepLin
 describe('native deep link routing', () => {
     it('maps universal app links to HashRouter routes', () => {
         expect(resolveNativeDeepLinkRoute('https://allplays.ai/app/schedule/team-1/event-1?source=share')).toBe('/schedule/team-1/event-1?source=share');
-        expect(resolveNativeDeepLinkRoute('https://allplays.ai/app#/accept-invite?code=ABC&type=parent')).toBe('/accept-invite?code=ABC&type=parent');
+        expect(resolveNativeDeepLinkRoute('https://allplays.ai/app/#/accept-invite?code=ABC&type=parent')).toBe('/accept-invite?code=ABC&type=parent');
     });
 
     it('maps custom scheme links to app routes', () => {

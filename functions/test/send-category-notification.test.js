@@ -974,9 +974,9 @@ for (const [category, categories, expectedAppRoute] of [
                 childId: '',
                 rsvpId: '',
                 appRoute: expectedAppRoute,
-                link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
+                link: 'https://allplays.ai/app/#/messages/team-1?conversationId=staff+room'
             });
-            assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room');
+            assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/messages/team-1?conversationId=staff+room');
             assert.equal(env.inboxWrites.length, 1);
             assert.equal(env.inboxWrites[0].value.appRoute, expectedAppRoute);
             assert.equal(env.auditWrites.length, 1);

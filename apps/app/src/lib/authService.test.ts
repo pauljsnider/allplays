@@ -117,6 +117,7 @@ import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
   describeAuthError,
+  getNativeAuthIdToken,
   getNativeAuthUserId,
   getRouteForUser,
   hydrateFirebaseUser,
@@ -132,6 +133,40 @@ import {
   signOut,
   signUpWithEmail
 } from './authService';
+
+describe('getNativeAuthIdToken', () => {
+  afterEach(() => {
+    authState.currentUser = null;
+    window.localStorage.clear();
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+  });
+
+  it('returns the Firebase SDK token for signed-in web users', async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+    const getIdToken = vi.fn().mockResolvedValue('web-id-token');
+    authState.currentUser = { getIdToken } as any;
+
+    await expect(getNativeAuthIdToken(true)).resolves.toBe('web-id-token');
+
+    expect(getIdToken).toHaveBeenCalledWith(true);
+  });
+
+  it('prefers the native session token when both native and stale web state exist', async () => {
+    const getIdToken = vi.fn().mockResolvedValue('stale-web-token');
+    authState.currentUser = { getIdToken } as any;
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'native-user',
+      email: 'native@example.com',
+      idToken: 'native-id-token',
+      refreshToken: 'native-refresh-token',
+      expirationTime: Date.now() + 10 * 60 * 1000,
+      provider: 'password'
+    }));
+
+    await expect(getNativeAuthIdToken(false)).resolves.toBe('native-id-token');
+    expect(getIdToken).not.toHaveBeenCalled();
+  });
+});
 
 describe('reloadCurrentUser', () => {
   beforeEach(() => {

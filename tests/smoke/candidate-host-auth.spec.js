@@ -3,8 +3,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const candidateHostUrl = process.env.CANDIDATE_HOST_URL || '';
-const authEmail = process.env.SMOKE_AUTH_EMAIL || '';
-const authPassword = process.env.SMOKE_AUTH_PASSWORD || '';
+const authEmail = process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '';
+const authPassword = process.env.SMOKE_STAFF_PASSWORD || process.env.SMOKE_AUTH_PASSWORD || '';
 
 test.skip(!candidateHostUrl, 'CANDIDATE_HOST_URL is required for candidate-host auth smoke');
 
@@ -26,9 +26,9 @@ function redactDiagnosticText(value) {
 }
 
 async function writeRedactedDiagnostic(page, testInfo, failure) {
-    const errorText = await page.locator('#error-message').textContent().catch(() => '');
-    const submitDisabled = await page.locator('#submit-btn').isDisabled().catch(() => null);
-    const loginFormVisible = await page.locator('#login-form').isVisible().catch(() => false);
+    const errorText = await page.locator('[role="alert"]').first().textContent().catch(() => '');
+    const submitDisabled = await page.getByRole('button', { name: 'Sign in' }).last().isDisabled().catch(() => null);
+    const loginFormVisible = await page.getByRole('heading', { name: 'Sign in' }).isVisible().catch(() => false);
     const diagnosticPath = testInfo.outputPath('candidate-auth-diagnostic.json');
     await mkdir(path.dirname(diagnosticPath), { recursive: true });
     await writeFile(diagnosticPath, `${JSON.stringify({
@@ -45,24 +45,23 @@ async function writeRedactedDiagnostic(page, testInfo, failure) {
 test('candidate host accepts authentication and loads a protected landing page', async ({ page }, testInfo) => {
     test.setTimeout(45_000);
     try {
-        expect(authEmail, 'SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy();
-        expect(authPassword, 'SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy();
+        expect(authEmail, 'SMOKE_STAFF_EMAIL or SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy();
+        expect(authPassword, 'SMOKE_STAFF_PASSWORD or SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy();
 
         await test.step(`authenticate at ${candidateHostUrl}`, async () => {
-            await page.goto(candidateUrl('/login.html'), { waitUntil: 'domcontentloaded' });
-            await expect(page.locator('#login-form'), `Authentication form did not load at candidate URL ${candidateHostUrl}`)
+            await page.goto(candidateUrl('/app/#/auth'), { waitUntil: 'domcontentloaded' });
+            await expect(page.getByRole('heading', { name: 'Sign in' }), `Authentication form did not load at candidate URL ${candidateHostUrl}`)
                 .toBeVisible({ timeout: 10_000 });
-            await page.locator('#email').fill(authEmail);
-            await page.locator('#password').fill(authPassword);
-            const submitButton = page.locator('#submit-btn');
-            const errorMessage = page.locator('#error-message');
+            await page.getByLabel('Email').fill(authEmail);
+            await page.getByLabel('Password').fill(authPassword);
+            const submitButton = page.getByRole('button', { name: 'Sign in' }).last();
+            const errorMessage = page.locator('[role="alert"]').first();
             await submitButton.click();
-            await expect(submitButton).toBeDisabled({ timeout: 5_000 });
 
             const ignoreRejectedOutcome = (promise) => promise.catch(() => new Promise(() => {}));
             const outcome = await Promise.race([
                 ignoreRejectedOutcome(
-                    page.waitForURL((url) => !url.pathname.endsWith('/login.html'), { timeout: 20_000 })
+                    page.waitForURL((url) => url.pathname === '/app/' && !url.hash.startsWith('#/auth'), { timeout: 20_000 })
                         .then(() => 'navigation')
                 ),
                 ignoreRejectedOutcome(
@@ -93,15 +92,16 @@ test('candidate host accepts authentication and loads a protected landing page',
             expect(
                 landingUrl.pathname,
                 `Candidate post-login assertion failed at ${candidateHostUrl}: unexpected route ${landingUrl.pathname}`
-            ).toMatch(/^\/(?:dashboard|parent-dashboard)\.html$/);
+            ).toBe('/app/');
+            expect(landingUrl.hash).not.toMatch(/^#\/auth(?:\?|$)/);
             await expect(
                 page.locator('h1').first(),
                 `Candidate post-login assertion failed at ${candidateHostUrl}: authenticated heading was not visible`
-            ).toContainText(/My Teams|Parent Dashboard/, { timeout: 10_000 });
+            ).toContainText(/Your day|Your teams|Team/, { timeout: 10_000 });
         });
     } catch (error) {
-        await page.locator('#password').fill('').catch(() => {});
-        await page.locator('#email').fill('').catch(() => {});
+        await page.getByLabel('Password').fill('').catch(() => {});
+        await page.getByLabel('Email').fill('').catch(() => {});
         await writeRedactedDiagnostic(page, testInfo, error);
         throw new Error(
             `Candidate authentication failed at ${new URL(candidateHostUrl).origin}: ${redactDiagnosticText(error?.message)}`

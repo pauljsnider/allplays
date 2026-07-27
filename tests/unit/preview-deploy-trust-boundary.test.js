@@ -32,6 +32,10 @@ const scheduledProdSmokeWorkflow = fs.readFileSync(
     path.join(repoRoot, '.github', 'workflows', 'scheduled-prod-smoke.yml'),
     'utf8'
 );
+const extendedProductionSmoke = fs.readFileSync(
+    path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-extended.spec.js'),
+    'utf8'
+);
 const trustBoundaryRunbook = fs.readFileSync(
     path.join(repoRoot, 'docs', 'preview-deploy-trust-boundary.md'),
     'utf8'
@@ -325,6 +329,10 @@ describe('preview deployment workflow trust boundary', () => {
             expect(workflow).toContain('persist-credentials: false');
             expect(workflow).toContain('SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}');
             expect(workflow).toContain('SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}');
+            expect(workflow).toContain('SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}');
+            expect(workflow).toContain('SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}');
+            expect(workflow).toContain('SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}');
+            expect(workflow).toContain('SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}');
             expect(workflow).not.toContain('pull_request:');
             expect(workflow).not.toMatch(/^\s+\w[\w-]*:\s+write\s*$/m);
         }
@@ -333,9 +341,35 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).toContain('ref: master');
     });
 
-    it('limits scheduled production browser smoke to four runs per day', () => {
-        expect(scheduledProdSmokeWorkflow).toContain("cron: '23 */6 * * *'");
+    it('limits scheduled production browser smoke to one nightly run', () => {
+        expect(scheduledProdSmokeWorkflow).toContain("cron: '23 7 * * *'");
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
+        expect(scheduledProdSmokeWorkflow).toContain('cancel-in-progress: false');
+        expect(scheduledProdSmokeWorkflow).toContain(
+            'SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}'
+        );
+        expect(scheduledProdSmokeWorkflow).not.toContain("SMOKE_EXTENDED_WRITES: '1'");
+    });
+
+    it('verifies and removes chat notifications in the same reversible smoke workflow', () => {
+        const staffWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('staff smoke writes are deterministic and removed after validation'"
+        );
+        const parentWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('parent smoke writes restore or remove every touched record'"
+        );
+        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, parentWorkflowStart);
+
+        expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(staffWorkflow).toContain("recordType: 'chat-notification'");
+        expect(staffWorkflow).toContain('`users/${parentRestSession.localId}/notificationInbox`');
+        expect(staffWorkflow).toContain("category: 'liveChat'");
+        expect(staffWorkflow).toContain('body: chatText');
+        const notificationAssertion = staffWorkflow.indexOf('const messageDeepLink');
+        const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
+        expect(notificationAssertion).toBeGreaterThanOrEqual(0);
+        expect(cleanupCall).toBeGreaterThan(notificationAssertion);
     });
 
     it('documents the keyless credential and exact-head operational contract', () => {

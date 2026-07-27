@@ -322,7 +322,7 @@
         import { addGame, createOrganizationBlackout, createVenueAvailability, createVenueBlackout, getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls } from './js/db.js?v=127';
         import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=18';
-        import { checkAuth } from './js/auth.js?v=134';
+        import { checkAuth } from './js/auth.js?v=135';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { addDoc, collection, db, deleteDoc, doc, getDocs, Timestamp, updateDoc } from './js/firebase.js?v=22';
         import { functions, httpsCallable } from './js/firebase.js?v=22';
@@ -1329,7 +1329,7 @@
 
         checkAuth((user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
                 return;
             }
             currentUser = user;

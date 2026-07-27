@@ -22,7 +22,7 @@ describe('dashboard parent membership sync', () => {
 
     it('uses the rich auth path before loading parent-linked teams', () => {
         expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=127';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=134';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=135';");
         expect(html).toContain('function requireSyncedAuth()');
         expect(html).toContain('const user = await requireSyncedAuth();');
         expect(html).toContain('getParentTeams(user.uid)');
@@ -53,7 +53,7 @@ describe('dashboard parent membership sync', () => {
         await expect(runRequireSyncedAuth(checkAuth, windowObject)).rejects.toBe('Not authenticated');
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
-        expect(windowObject.location.href).toBe('login.html');
+        expect(windowObject.location.href).toBe('/app/#/auth');
     });
 
     it('ignores duplicate auth emissions after settling', async () => {

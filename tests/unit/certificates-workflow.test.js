@@ -290,7 +290,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('startCustomCertificate');
         expect(studio).toContain('selectRecentCompletedGames');
         expect(studio).toContain("'allplays.ai'");
-        expect(studio).toContain("window.location.href = 'login.html'");
+        expect(studio).toContain("window.location.href = '/app/#/auth'");
         expect(studio).toContain('loadOptionalCertificateResource');
         expect(studio).toContain('certificatePersistenceUnavailable');
         expect(studio).toContain('Deploy the Firestore certificate rules');

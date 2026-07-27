@@ -29,6 +29,7 @@ import {
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { clearAppDataCache } from './appDataCache';
+import { buildFirebaseSdkActionHref } from './appLinks';
 import { mergeOwnedTeamIds } from './teamAccess';
 import type { AuthUser, UserRole } from './types';
 
@@ -468,12 +469,17 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
 }
 
 export async function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
-  const fallbackUser = getNativeAuthFallbackUser();
-  if (!fallbackUser?.getIdToken) {
-    return null;
+  const webUser = auth.currentUser;
+  if (!isNativeRuntime() && webUser?.getIdToken) {
+    return webUser.getIdToken(forceRefresh);
   }
 
-  return fallbackUser.getIdToken(forceRefresh);
+  const fallbackUser = getNativeAuthFallbackUser();
+  if (fallbackUser?.getIdToken) {
+    return fallbackUser.getIdToken(forceRefresh);
+  }
+
+  return webUser?.getIdToken ? webUser.getIdToken(forceRefresh) : null;
 }
 
 export function getNativeAuthUserId(): string | null {
@@ -1436,12 +1442,16 @@ export async function applyEmailActionCode(oobCode: string) {
 }
 
 export function isEmailLink(url: string) {
-  return isSignInWithEmailLink(auth, url);
+  return isSignInWithEmailLink(auth, buildFirebaseSdkActionHref(url));
 }
 
 export async function completeEmailLink(email: string, url: string) {
   const normalizedEmail = requireValidAuthEmail(email);
-  const result = await signInWithEmailLink(auth, normalizedEmail, url) as UserCredential;
+  const result = await signInWithEmailLink(
+    auth,
+    normalizedEmail,
+    buildFirebaseSdkActionHref(url)
+  ) as UserCredential;
   const { updateUserProfile } = await loadLegacyAuthDb();
   await updateUserProfile(result.user.uid, {
     email: normalizedEmail,
