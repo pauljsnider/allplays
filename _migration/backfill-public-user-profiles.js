@@ -32,6 +32,9 @@ const {
     derivePublicProfileTeamIds,
     isPublicProfileAuthUserNotFound
 } = require('../functions/public-user-profile-projection-core.cjs');
+const {
+    loadPublicProfileNotificationCleanupScope
+} = require('../functions/public-user-profile-lifecycle-core.cjs');
 
 function readArg(name, argv = process.argv) {
     const prefix = `--${name}=`;
@@ -182,22 +185,54 @@ export async function processBackfillUsers(userDocs, processUser, logger = conso
     return failed;
 }
 
-export async function cleanupIneligiblePublicProfile(publicProfileRef, options = {}) {
+export async function cleanupIneligiblePublicProfile(
+    db,
+    userId,
+    publicProfileRef,
+    options = {}
+) {
     const apply = options.apply === true;
     const logger = options.logger || console;
+    const cleanupScope = await loadPublicProfileNotificationCleanupScope(db, userId);
+    const authIdentityRef = db.doc(`publicProfileAuthIdentities/${userId}`);
+    const authIdentitySnap = await authIdentityRef.get();
+    const recipientRefs = cleanupScope.recipientDocs
+        .map((entry) => entry.ref)
+        .filter(Boolean);
+
+    recipientRefs.forEach((ref) => {
+        logger.warn(`${apply ? 'DELETE' : 'WOULD DELETE'} ${ref.path}`);
+    });
+    cleanupScope.staffMembershipDocs.forEach((entry) => {
+        logger.warn(`${apply ? 'DELETE' : 'WOULD DELETE'} ${entry.ref.path}`);
+    });
+    if (authIdentitySnap.exists) {
+        logger.warn(`${apply ? 'DELETE' : 'WOULD DELETE'} ${authIdentityRef.path}`);
+    }
     logger.warn(
         `${apply ? 'DELETE' : 'WOULD DELETE'} ${publicProfileRef.path}: ${options.reason}`
     );
     if (apply) {
+        // Recipient documents are the externally visible authorization state.
+        // Delete them before either retry anchor so a partial failure can be
+        // retried by the projection sweep or by rerunning this migration.
+        await Promise.all(recipientRefs.map((ref) => ref.delete()));
+        await Promise.all(
+            cleanupScope.staffMembershipDocs.map((entry) => entry.ref.delete())
+        );
+        if (authIdentitySnap.exists) await authIdentityRef.delete();
         await publicProfileRef.delete();
     }
+    return {
+        authIdentitiesChanged: authIdentitySnap.exists ? 1 : 0,
+        notificationRecipientsChanged: recipientRefs.length,
+        staffMembershipsChanged: cleanupScope.staffMembershipDocs.length
+    };
 }
 
 export async function loadEligibleBackfillAuthRecord(
     auth,
-    userId,
-    publicProfileRef,
-    options = {}
+    userId
 ) {
     let authRecord;
     try {
@@ -206,17 +241,9 @@ export async function loadEligibleBackfillAuthRecord(
         if (!isPublicProfileAuthUserNotFound(error)) {
             throw error;
         }
-        await cleanupIneligiblePublicProfile(publicProfileRef, {
-            ...options,
-            reason: 'Firebase Auth user not found.'
-        });
         return { authRecord: null, status: 'missing-auth' };
     }
     if (authRecord.emailVerified !== true) {
-        await cleanupIneligiblePublicProfile(publicProfileRef, {
-            ...options,
-            reason: 'email is not verified.'
-        });
         return { authRecord: null, status: 'unverified' };
     }
     return { authRecord, status: 'eligible' };
@@ -322,6 +349,7 @@ export async function backfillPublicUserProfiles() {
     let unchanged = 0;
     let staffMembershipsChanged = 0;
     let authIdentitiesChanged = 0;
+    let notificationRecipientsChanged = 0;
     let missingAuth = 0;
     let unverified = 0;
     let orphaned = 0;
@@ -335,39 +363,37 @@ export async function backfillPublicUserProfiles() {
         const publicProfileRef = db.doc(`publicUserProfiles/${userDoc.id}`);
         const authResolution = await loadEligibleBackfillAuthRecord(
             auth,
-            userDoc.id,
-            publicProfileRef,
-            { apply: APPLY }
+            userDoc.id
         );
         if (authResolution.status === 'missing-auth') {
-            authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+            const cleanupResult = await cleanupIneligiblePublicProfile(
                 db,
                 userDoc.id,
-                null,
-                { apply: APPLY }
+                publicProfileRef,
+                {
+                    apply: APPLY,
+                    reason: 'Firebase Auth user not found.'
+                }
             );
-            staffMembershipsChanged += await reconcileBackfillStaffMemberships(
-                db,
-                userDoc.id,
-                [],
-                { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
-            );
+            authIdentitiesChanged += cleanupResult.authIdentitiesChanged;
+            notificationRecipientsChanged += cleanupResult.notificationRecipientsChanged;
+            staffMembershipsChanged += cleanupResult.staffMembershipsChanged;
             missingAuth++;
             return;
         }
         if (authResolution.status === 'unverified') {
-            authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+            const cleanupResult = await cleanupIneligiblePublicProfile(
                 db,
                 userDoc.id,
-                null,
-                { apply: APPLY }
+                publicProfileRef,
+                {
+                    apply: APPLY,
+                    reason: 'email is not verified.'
+                }
             );
-            staffMembershipsChanged += await reconcileBackfillStaffMemberships(
-                db,
-                userDoc.id,
-                [],
-                { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
-            );
+            authIdentitiesChanged += cleanupResult.authIdentitiesChanged;
+            notificationRecipientsChanged += cleanupResult.notificationRecipientsChanged;
+            staffMembershipsChanged += cleanupResult.staffMembershipsChanged;
             unverified++;
             return;
         }
@@ -426,22 +452,18 @@ export async function backfillPublicUserProfiles() {
     });
 
     failed += await processBackfillUsers(orphanProfileDocs, async (profileDoc) => {
-        await cleanupIneligiblePublicProfile(profileDoc.ref, {
-            apply: APPLY,
-            reason: 'private user profile not found.'
-        });
-        authIdentitiesChanged += await reconcileBackfillAuthIdentity(
+        const cleanupResult = await cleanupIneligiblePublicProfile(
             db,
             profileDoc.id,
-            null,
-            { apply: APPLY }
+            profileDoc.ref,
+            {
+                apply: APPLY,
+                reason: 'private user profile not found.'
+            }
         );
-        staffMembershipsChanged += await reconcileBackfillStaffMemberships(
-            db,
-            profileDoc.id,
-            [],
-            { apply: APPLY, updatedAt: FieldValue.serverTimestamp() }
-        );
+        authIdentitiesChanged += cleanupResult.authIdentitiesChanged;
+        notificationRecipientsChanged += cleanupResult.notificationRecipientsChanged;
+        staffMembershipsChanged += cleanupResult.staffMembershipsChanged;
         orphaned++;
     });
 
@@ -449,6 +471,7 @@ export async function backfillPublicUserProfiles() {
     console.log(`Unchanged: ${unchanged}`);
     console.log(`Staff memberships changed: ${staffMembershipsChanged}`);
     console.log(`Auth identities changed: ${authIdentitiesChanged}`);
+    console.log(`Notification recipients changed: ${notificationRecipientsChanged}`);
     console.log(`Missing Auth users: ${missingAuth}`);
     console.log(`Unverified users: ${unverified}`);
     console.log(`Orphaned public profiles: ${orphaned}`);
@@ -458,6 +481,7 @@ export async function backfillPublicUserProfiles() {
         unchanged,
         staffMembershipsChanged,
         authIdentitiesChanged,
+        notificationRecipientsChanged,
         missingAuth,
         unverified,
         orphaned,

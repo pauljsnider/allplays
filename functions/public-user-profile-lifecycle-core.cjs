@@ -53,6 +53,7 @@ async function loadPublicProfileNotificationCleanupScope(firestore, userId) {
   const normalizedUserId = String(userId || '').trim();
   if (!normalizedUserId) {
     return {
+      recipientDocs: [],
       staffMembershipDocs: [],
       teamIds: []
     };
@@ -89,6 +90,7 @@ async function loadPublicProfileNotificationCleanupScope(firestore, userId) {
   });
 
   return {
+    recipientDocs: recipientSnap.docs || [],
     staffMembershipDocs,
     teamIds: [...teamIds]
   };

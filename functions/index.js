@@ -3017,16 +3017,20 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
   const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
   if (!userSnap.exists) {
-    const affectedStaffTeamIds = await reconcilePublicProfileStaffMembershipsForUser({
+    const cleanupScope = await loadPublicProfileNotificationCleanupScope(
+      firestore,
+      normalizedUserId
+    );
+    await Promise.all(cleanupScope.teamIds.map((teamId) => (
+      syncNotificationRecipientForTeamUser(teamId, normalizedUserId, { forceRemove: true })
+    )));
+    await reconcilePublicProfileStaffMembershipsForUser({
       firestore,
       userId: normalizedUserId,
       currentStaffTeamIds: [],
       buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
-    await Promise.all(affectedStaffTeamIds.map((teamId) => (
-      syncNotificationRecipientForTeamUser(teamId, normalizedUserId, { forceRemove: true })
-    )));
     await authIdentityRef.delete();
     await publicProfileRef.delete();
     return null;

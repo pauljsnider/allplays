@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     buildStaffTeamIndexes,
     cleanupIneligiblePublicProfile,
@@ -15,6 +16,68 @@ import {
 
 function team(id, data) {
     return { id, data: () => data };
+}
+
+function makeCleanupDb({
+    recipientDelete = vi.fn(),
+    staffDelete = vi.fn(),
+    authIdentityDelete = vi.fn()
+} = {}) {
+    const recipientRef = {
+        path: 'teams/team-parent/notificationRecipients/user-1',
+        delete: recipientDelete
+    };
+    const staffRef = {
+        path: 'publicProfileStaffMemberships/team-staff-user-1',
+        delete: staffDelete
+    };
+    const authIdentityRef = {
+        path: 'publicProfileAuthIdentities/user-1',
+        delete: authIdentityDelete,
+        get: vi.fn().mockResolvedValue({
+            exists: true,
+            data: () => ({ email: 'parent@example.com' })
+        })
+    };
+    return {
+        collection: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+                get: vi.fn().mockResolvedValue({
+                    docs: [{
+                        data: () => ({ teamId: 'team-staff' }),
+                        ref: staffRef
+                    }]
+                })
+            })
+        }),
+        collectionGroup: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+                get: vi.fn().mockResolvedValue({
+                    docs: [{
+                        data: () => ({
+                            uid: 'user-1',
+                            teamId: 'team-parent'
+                        }),
+                        ref: recipientRef
+                    }]
+                })
+            })
+        }),
+        doc: vi.fn((path) => {
+            if (path === 'users/user-1') {
+                return {
+                    get: vi.fn().mockResolvedValue({
+                        exists: true,
+                        data: () => ({ parentTeamIds: ['team-parent'] })
+                    })
+                };
+            }
+            if (path === 'publicProfileAuthIdentities/user-1') {
+                return authIdentityRef;
+            }
+            throw new Error(`Unexpected document path: ${path}`);
+        })
+    };
 }
 
 describe('public user profile backfill', () => {
@@ -98,13 +161,14 @@ describe('public user profile backfill', () => {
     });
 
     it('reports stale profile cleanup without deleting in dry-run mode', async () => {
+        const db = makeCleanupDb();
         const publicProfileRef = {
             path: 'publicUserProfiles/user-1',
             delete: vi.fn()
         };
         const logger = { warn: vi.fn() };
 
-        await cleanupIneligiblePublicProfile(publicProfileRef, {
+        await cleanupIneligiblePublicProfile(db, 'user-1', publicProfileRef, {
             apply: false,
             logger,
             reason: 'email is not verified.'
@@ -116,18 +180,55 @@ describe('public user profile backfill', () => {
         );
     });
 
-    it('deletes stale profiles in apply mode and surfaces cleanup failures', async () => {
-        const cleanupError = new Error('delete failed');
+    it.each([
+        'Firebase Auth user not found.',
+        'email is not verified.',
+        'private user profile not found.'
+    ])('keeps every retry anchor when %s recipient cleanup partially fails', async (reason) => {
+        const cleanupError = new Error('recipient delete failed');
+        const recipientDelete = vi.fn()
+            .mockRejectedValueOnce(cleanupError)
+            .mockResolvedValue(undefined);
+        const staffDelete = vi.fn().mockResolvedValue(undefined);
+        const authIdentityDelete = vi.fn().mockResolvedValue(undefined);
+        const db = makeCleanupDb({
+            recipientDelete,
+            staffDelete,
+            authIdentityDelete
+        });
         const publicProfileRef = {
             path: 'publicUserProfiles/user-1',
-            delete: vi.fn().mockRejectedValue(cleanupError)
+            delete: vi.fn().mockResolvedValue(undefined)
         };
-
-        await expect(cleanupIneligiblePublicProfile(publicProfileRef, {
+        const options = {
             apply: true,
             logger: { warn: vi.fn() },
-            reason: 'Firebase Auth user not found.'
-        })).rejects.toBe(cleanupError);
+            reason
+        };
+
+        await expect(cleanupIneligiblePublicProfile(
+            db,
+            'user-1',
+            publicProfileRef,
+            options
+        )).rejects.toBe(cleanupError);
+        expect(publicProfileRef.delete).not.toHaveBeenCalled();
+        expect(staffDelete).not.toHaveBeenCalled();
+        expect(authIdentityDelete).not.toHaveBeenCalled();
+
+        await expect(cleanupIneligiblePublicProfile(
+            db,
+            'user-1',
+            publicProfileRef,
+            options
+        )).resolves.toEqual({
+            authIdentitiesChanged: 1,
+            notificationRecipientsChanged: 1,
+            staffMembershipsChanged: 1
+        });
+        expect(recipientDelete).toHaveBeenCalledTimes(2);
+        expect(staffDelete).toHaveBeenCalledOnce();
+        expect(authIdentityDelete).toHaveBeenCalledOnce();
         expect(publicProfileRef.delete).toHaveBeenCalledOnce();
     });
 
@@ -137,55 +238,42 @@ describe('public user profile backfill', () => {
             getUser: vi.fn().mockRejectedValue(
                 Object.assign(new Error('missing'), { code: 'auth/user-not-found' })
             ),
-            expectedStatus: 'missing-auth',
-            expectedReason: 'Firebase Auth user not found.'
+            expectedStatus: 'missing-auth'
         },
         {
             name: 'unverified users',
             getUser: vi.fn().mockResolvedValue({ emailVerified: false }),
-            expectedStatus: 'unverified',
-            expectedReason: 'email is not verified.'
+            expectedStatus: 'unverified'
         }
-    ])('removes stale backfill projections for $name', async ({
+    ])('classifies stale backfill projections for $name before full cleanup', async ({
         getUser,
-        expectedStatus,
-        expectedReason
+        expectedStatus
     }) => {
-        const publicProfileRef = {
-            path: 'publicUserProfiles/user-1',
-            delete: vi.fn().mockResolvedValue(undefined)
-        };
-        const logger = { warn: vi.fn() };
-
         await expect(loadEligibleBackfillAuthRecord(
             { getUser },
-            'user-1',
-            publicProfileRef,
-            { apply: true, logger }
+            'user-1'
         )).resolves.toEqual({ authRecord: null, status: expectedStatus });
-
-        expect(publicProfileRef.delete).toHaveBeenCalledOnce();
-        expect(logger.warn).toHaveBeenCalledWith(
-            `DELETE publicUserProfiles/user-1: ${expectedReason}`
-        );
     });
 
     it('does not delete a profile when Firebase Auth has an operational failure', async () => {
         const authError = Object.assign(new Error('Auth service unavailable'), {
             code: 'auth/internal-error'
         });
-        const publicProfileRef = {
-            path: 'publicUserProfiles/user-1',
-            delete: vi.fn()
-        };
-
         await expect(loadEligibleBackfillAuthRecord(
             { getUser: vi.fn().mockRejectedValue(authError) },
-            'user-1',
-            publicProfileRef,
-            { apply: true, logger: { warn: vi.fn() } }
+            'user-1'
         )).rejects.toBe(authError);
-        expect(publicProfileRef.delete).not.toHaveBeenCalled();
+    });
+
+    it('routes missing, unverified, and orphaned apply paths through full cleanup', () => {
+        const migrationSource = readFileSync(
+            '_migration/backfill-public-user-profiles.js',
+            'utf8'
+        );
+        expect(migrationSource.match(/cleanupIneligiblePublicProfile\(/g)).toHaveLength(4);
+        expect(migrationSource).not.toContain(
+            'await cleanupIneligiblePublicProfile(profileDoc.ref'
+        );
     });
 
     it('finds orphaned public profiles that no longer have private user records', async () => {

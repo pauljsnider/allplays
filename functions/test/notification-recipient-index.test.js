@@ -966,6 +966,69 @@ test('Auth-delete cleanup retries indexed parent recipients before deleting prof
     }
 });
 
+test('private-user deletion keeps its public-profile anchor until parent recipients are removed', async () => {
+    const userId = 'parent-1';
+    const recipientPath = `teams/team-parent/notificationRecipients/${userId}`;
+    const env = loadNotificationRecipientIndexEnv({
+        initialProjectionDocs: {
+            [`publicUserProfiles/${userId}`]: { discoveryTeamIds: ['team-parent'] },
+            [`publicProfileAuthIdentities/${userId}`]: { email: 'parent@example.com' },
+            [`publicProfileStaffMemberships/team-staff-parent-1`]: {
+                userId,
+                teamId: 'team-staff'
+            }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: {
+                uid: userId,
+                teamId: 'team-parent',
+                roles: ['parent'],
+                tokens: [{ deviceId: 'device-a', token: 'token-a' }]
+            }
+        },
+        deleteFailuresByPath: {
+            [recipientPath]: 1
+        }
+    });
+    const userRef = {
+        id: userId,
+        path: `users/${userId}`
+    };
+    const deletionChange = makeChange(
+        userRef,
+        {
+            email: 'parent@example.com',
+            parentTeamIds: ['team-parent']
+        },
+        null
+    );
+
+    try {
+        await assert.rejects(
+            env.moduleExports.syncPublicUserProfileOnUserWrite(
+                deletionChange,
+                { params: { uid: userId } }
+            ),
+            /temporary delete failure/
+        );
+        assert.ok(env.getDoc(`publicUserProfiles/${userId}`));
+        assert.ok(env.getDoc(`publicProfileAuthIdentities/${userId}`));
+        assert.ok(env.getDoc(`publicProfileStaffMemberships/team-staff-parent-1`));
+        assert.ok(env.getDoc(recipientPath));
+
+        await env.moduleExports.syncPublicUserProfileOnUserWrite(
+            deletionChange,
+            { params: { uid: userId } }
+        );
+        assert.equal(env.getDoc(recipientPath), undefined);
+        assert.equal(env.getDoc(`publicProfileStaffMemberships/team-staff-parent-1`), undefined);
+        assert.equal(env.getDoc(`publicProfileAuthIdentities/${userId}`), undefined);
+        assert.equal(env.getDoc(`publicUserProfiles/${userId}`), undefined);
+    } finally {
+        env.cleanup();
+    }
+});
+
 test('pre-provisioned admin signup immediately projects discovery and notification membership', async () => {
     const user = {
         displayName: 'New Admin',
