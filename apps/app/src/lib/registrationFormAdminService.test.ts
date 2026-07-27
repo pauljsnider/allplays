@@ -184,6 +184,28 @@ describe('registrationFormAdminService', () => {
     });
   });
 
+  it('rejects colliding capacity counter IDs when creating a registration form', async () => {
+    await expect(saveRegistrationFormEditorForApp({
+      user: coachUser,
+      teamId: 'team-1',
+      draft: {
+        title: 'Collision Camp',
+        participantFieldsText: 'Player name',
+        guardianFieldsText: 'Guardian email',
+        registrationOptions: [
+          { id: 'local division', label: 'Local space', active: true },
+          { id: 'local/division', label: 'Local slash', active: true },
+          { id: 'local_division', label: 'Local underscore', active: true }
+        ],
+        waiverText: 'Guardian accepts the waiver.',
+        status: 'published'
+      }
+    })).rejects.toThrow('Registration option IDs must map to unique capacity counters.');
+
+    expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+  });
+
   it('updates closed registration forms without reopening public submissions', async () => {
     firebaseMocks.getDoc.mockResolvedValue({
       exists: () => true,
@@ -251,6 +273,29 @@ describe('registrationFormAdminService', () => {
       enrolled: 0,
       waitlisted: 0
     });
+  });
+
+  it('rejects colliding capacity counter IDs before updating an existing form', async () => {
+    await expect(saveRegistrationFormEditorForApp({
+      user: coachUser,
+      teamId: 'team-1',
+      formId: 'form-1',
+      draft: {
+        formId: 'form-1',
+        title: 'Collision League',
+        participantFieldsText: 'Player name',
+        guardianFieldsText: 'Guardian email',
+        registrationOptions: [
+          { id: 'local division', label: 'Local space', active: true },
+          { id: 'local/division', label: 'Local slash', active: true }
+        ],
+        waiverText: 'Guardian accepts the waiver.',
+        status: 'published'
+      }
+    })).rejects.toThrow('Registration option IDs must map to unique capacity counters.');
+
+    expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+    expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
   });
 
   it('rejects invalid drafts before writing to Firestore', async () => {

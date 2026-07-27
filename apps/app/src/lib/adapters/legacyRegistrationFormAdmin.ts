@@ -1,5 +1,6 @@
 import {
   buildAdminRegistrationFormPayload as legacyBuildAdminRegistrationFormPayload,
+  buildRegistrationOptionCountKey as legacyBuildRegistrationOptionCountKey,
   formatFieldLabels as legacyFormatFieldLabels,
   isPublishedAdminRegistrationFormStatus as legacyIsPublishedAdminRegistrationFormStatus,
   normalizeAdminRegistrationFormStatus as legacyNormalizeAdminRegistrationFormStatus,
@@ -15,6 +16,7 @@ import { calculateRegistrationFeeSnapshot as legacyCalculateRegistrationFeeSnaps
  * @legacy alias; legacy shapes stay loose.
  */
 export const buildAdminRegistrationFormPayload = legacyBuildAdminRegistrationFormPayload as (...args: any[]) => any;
+export const buildRegistrationOptionCountKey = legacyBuildRegistrationOptionCountKey as (optionId?: unknown) => string;
 export const formatFieldLabels = legacyFormatFieldLabels as (...args: any[]) => any;
 export const isPublishedAdminRegistrationFormStatus = legacyIsPublishedAdminRegistrationFormStatus as (...args: any[]) => any;
 export const normalizeAdminRegistrationFormStatus = legacyNormalizeAdminRegistrationFormStatus as (...args: any[]) => any;

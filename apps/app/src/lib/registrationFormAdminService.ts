@@ -1,4 +1,5 @@
 import { collection, db, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { buildRegistrationOptionCountKey } from './adapters/legacyRegistrationFormAdmin';
 import {
   buildAppRegistrationFormAdminPayload,
   buildRegistrationFormEditorDraft,
@@ -20,17 +21,13 @@ export type SaveRegistrationFormEditorForAppResult = RegistrationFormAdminPayloa
   created: boolean;
 };
 
-function getRegistrationOptionCountKey(optionId: unknown) {
-  return compactString(optionId).replace(/[^A-Za-z0-9_-]/g, '_') || 'option';
-}
-
 function buildInitialRegistrationOptionCounts(
   registrationOptions: Array<Record<string, unknown>>
 ) {
   const counts: Record<string, { enrolled: number; waitlisted: number }> = {};
   registrationOptions.forEach((option) => {
     const optionId = compactString(option.id);
-    const countKey = getRegistrationOptionCountKey(optionId);
+    const countKey = buildRegistrationOptionCountKey(optionId);
     counts[countKey] = {
       enrolled: 0,
       waitlisted: 0
@@ -46,7 +43,7 @@ function buildMissingRegistrationOptionCountUpdates(
   const updates: Record<string, unknown> = {};
   registrationOptions.forEach((option) => {
     const optionId = compactString(option.id);
-    const countKey = getRegistrationOptionCountKey(optionId);
+    const countKey = buildRegistrationOptionCountKey(optionId);
     if (Object.prototype.hasOwnProperty.call(existingCounts, countKey)) return;
 
     const legacyCounts = existingCounts[optionId] || {};

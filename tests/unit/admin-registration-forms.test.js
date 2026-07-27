@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
     buildAdminRegistrationFormPayload,
+    buildRegistrationOptionCountKey,
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
@@ -227,6 +228,27 @@ describe('admin registration form setup', () => {
             { id: 'early', label: 'Early bird', description: 'Discounted setup window.', capacityLimit: 25, active: true, waitlistEnabled: true, sortOrder: 0 },
             { id: 'option_2', label: 'Open registration', description: '', capacityLimit: 0, active: false, waitlistEnabled: false, sortOrder: 1 }
         ]);
+    });
+
+    it('rejects distinct option IDs that map to the same capacity counter', () => {
+        const payload = buildAdminRegistrationFormPayload({
+            title: 'Collision League',
+            waiverText: 'Accepted.',
+            registrationOptions: [
+                { id: 'local division', label: 'Local space' },
+                { id: 'local/division', label: 'Local slash' },
+                { id: 'local_division', label: 'Local underscore' }
+            ]
+        }, { teamId: 'team-1' });
+
+        expect(payload.registrationOptions.map((option) => buildRegistrationOptionCountKey(option.id))).toEqual([
+            'local_division',
+            'local_division',
+            'local_division'
+        ]);
+        expect(validateAdminRegistrationFormPayload(payload)).toContain(
+            'Registration option IDs must map to unique capacity counters.'
+        );
     });
 
     it('preserves blank capacity inputs when rerendering registration options', () => {

@@ -9,6 +9,7 @@ import {
     onSnapshot,
     orderBy,
     query,
+    where,
     serverTimestamp,
     updateDoc
 } from './adapters/legacyNotificationInboxDb';
@@ -74,19 +75,14 @@ export function subscribeToUnreadNotificationCount(
 ): () => void {
     const q = query(
         collection(db, `users/${uid}/notificationInbox`),
-        orderBy('createdAt', 'desc'),
+        where('readAt', '==', null),
         limit(unreadNotificationCountLimit)
     );
 
     const primaryUnsubscribe = onSnapshot(
         q,
         (snapshot: QuerySnapshot<DocumentData>) => {
-            // Older inbox records can omit readAt entirely. Firestore's
-            // `where('readAt', '==', null)` does not return those records and
-            // also fails under the production inbox rules for some users.
-            // Keep this bounded, but count both explicit null and missing
-            // readAt values from the permitted collection query.
-            callback(snapshot.docs.filter((docSnap) => !docSnap.data()['readAt']).length);
+            callback(snapshot.size);
         },
         (error: unknown) => {
             if (onError) {
