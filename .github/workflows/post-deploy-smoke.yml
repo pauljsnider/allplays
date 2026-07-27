@@ -88,7 +88,59 @@ jobs:
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 
-      - name: Run production smoke
+      - name: Inspect fixture-backed smoke readiness
+        id: core_config
+        env:
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_REGISTRATION_FORM_ID: ${{ vars.SMOKE_REGISTRATION_FORM_ID }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          required_names=(
+            SMOKE_TEAM_ID
+            SMOKE_GAME_ID
+            SMOKE_EVENT_ID
+            SMOKE_PLAYER_ID
+            SMOKE_REGISTRATION_FORM_ID
+            SMOKE_STAFF_EMAIL
+            SMOKE_STAFF_PASSWORD
+            SMOKE_PARENT_EMAIL
+            SMOKE_PARENT_PASSWORD
+          )
+          missing_names=()
+          for name in "${required_names[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing_names+=("$name")
+            fi
+          done
+
+          if (( ${#missing_names[@]} > 0 )); then
+            missing_csv="$(IFS=,; echo "${missing_names[*]}")"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "missing=$missing_csv" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Fixture-backed production smoke not configured::Missing protected configuration names: $missing_csv"
+          else
+            staff_email_normalized="$(printf '%s' "$SMOKE_STAFF_EMAIL" | tr '[:upper:]' '[:lower:]')"
+            parent_email_normalized="$(printf '%s' "$SMOKE_PARENT_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          fi
+
+          if (( ${#missing_names[@]} == 0 )) &&
+             [[ "$staff_email_normalized" == "$parent_email_normalized" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "missing=distinct-role-accounts" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Fixture-backed production smoke not configured::Staff and parent smoke accounts must be distinct."
+          elif (( ${#missing_names[@]} == 0 )); then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run production smoke baseline
         id: canonical_prod
         continue-on-error: true
         run: >-
@@ -96,7 +148,6 @@ jobs:
           tests/smoke/app-production-bootstrap.spec.js
           tests/smoke/static-hosting-bootstrap.spec.js
           tests/smoke/legacy-auth-redirects.spec.js
-          tests/smoke/app-authenticated-core.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
           --reporter=line
@@ -120,6 +171,33 @@ jobs:
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 
+      - name: Run fixture-backed core production smoke
+        if: steps.core_config.outputs.enabled == 'true'
+        id: canonical_core
+        continue-on-error: true
+        run: >-
+          npx playwright test
+          tests/smoke/app-authenticated-core.spec.js
+          --config=playwright.smoke.config.js
+          --project=smoke
+          --reporter=line
+        env:
+          SMOKE_APP_BOOT_URL: https://allplays.ai/app/
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_SUITE: production
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_REGISTRATION_FORM_ID: ${{ vars.SMOKE_REGISTRATION_FORM_ID }}
+          SMOKE_CONVERSATION_ID: ${{ vars.SMOKE_CONVERSATION_ID }}
+          SMOKE_OPPORTUNITY_LISTING_ID: ${{ vars.SMOKE_OPPORTUNITY_LISTING_ID }}
+          SMOKE_OPPORTUNITY_INQUIRY_ID: ${{ vars.SMOKE_OPPORTUNITY_INQUIRY_ID }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
+
       - name: Upload redacted candidate authentication diagnostic
         if: always() && steps.firebase_auth.outcome == 'failure'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -132,11 +210,18 @@ jobs:
       - name: Aggregate production smoke signals
         if: always()
         env:
+          CORE_CONFIGURED: ${{ steps.core_config.outputs.enabled }}
+          CORE_MISSING: ${{ steps.core_config.outputs.missing }}
+          CORE_OUTCOME: ${{ steps.canonical_core.outcome }}
           CANONICAL_PROD_OUTCOME: ${{ steps.canonical_prod.outcome }}
           FIREBASE_AUTH_OUTCOME: ${{ steps.firebase_auth.outcome }}
           FIREBASE_PUBLIC_OUTCOME: ${{ steps.firebase_public.outcome }}
         run: |
           set -euo pipefail
+          fixture_outcome="$CORE_OUTCOME"
+          if [[ "$CORE_CONFIGURED" != "true" ]]; then
+            fixture_outcome="not-configured ($CORE_MISSING)"
+          fi
           {
             echo "### Post-deploy production signals"
             echo
@@ -144,12 +229,17 @@ jobs:
             echo "| --- | --- |"
             echo "| Firebase public origin | $FIREBASE_PUBLIC_OUTCOME |"
             echo "| Firebase authenticated login | $FIREBASE_AUTH_OUTCOME |"
-            echo "| Canonical production | $CANONICAL_PROD_OUTCOME |"
+            echo "| Canonical production baseline | $CANONICAL_PROD_OUTCOME |"
+            echo "| Fixture-backed role workflows | $fixture_outcome |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$FIREBASE_PUBLIC_OUTCOME" != "success" ||
                 "$FIREBASE_AUTH_OUTCOME" != "success" ||
                 "$CANONICAL_PROD_OUTCOME" != "success" ]]; then
             echo "One or more independent post-deploy signals failed." >&2
+            exit 1
+          fi
+          if [[ "$CORE_CONFIGURED" == "true" && "$CORE_OUTCOME" != "success" ]]; then
+            echo "The configured fixture-backed production smoke failed." >&2
             exit 1
           fi

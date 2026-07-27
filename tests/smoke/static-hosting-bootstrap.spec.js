@@ -10,7 +10,7 @@ import {
 async function loginWithPassword(page, baseURL, email, password) {
     await page.goto(`${baseURL}/app/#/auth`, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Password').fill(password);
+    await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in' }).last().click();
     await page.waitForURL((url) => url.pathname === '/app/' && !url.hash.startsWith('#/auth'), { timeout: 20000 });
     await page.waitForTimeout(1000);

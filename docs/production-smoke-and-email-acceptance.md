@@ -34,16 +34,28 @@ artifacts, screenshots, traces, videos, or chat.
 
 ## Automated tiers
 
-The post-deploy workflow checks out the exact released SHA and runs:
+The post-deploy workflow checks out the exact released SHA and always runs:
 
 - public app and marketing/legal/support boots;
 - intentional public game/replay/report routes when fixture IDs are supplied;
 - compatibility redirects for legacy login, signup, invite, reset, and
   verification URLs;
+- a protected sign-in on the Firebase candidate origin and the canonical
+  production origin.
+
+When every required fixture ID and both distinct role-specific account pairs
+are configured, the same workflow also runs:
+
 - staff and parent sign-in, refresh persistence, protected routes, role
   boundaries, logout, and signed-out rejection;
 - fixture-backed staff, parent, notification, registration, fees, media,
   certificate, schedule, message, official, profile, and help views.
+
+Missing fixture-backed configuration is reported by name as a workflow warning
+and `not-configured` summary row; it does not convert successful baseline
+release probes into a false production outage. Once configured, any
+fixture-backed failure remains fail-closed. The nightly workflow remains the
+authoritative configuration and extended-coverage sentinel.
 
 The nightly workflow always runs the core read-only checks. Extended mutations
 are opt-in: set `SMOKE_EXTENDED_WRITES_ENABLED=1` only after the synthetic team

@@ -21,6 +21,7 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(spec).toContain('Candidate post-login assertion failed at ${candidateHostUrl}');
         expect(spec).toContain("expect(authEmail, 'SMOKE_STAFF_EMAIL or SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy()");
         expect(spec).toContain("expect(authPassword, 'SMOKE_STAFF_PASSWORD or SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy()");
+        expect(spec).toContain("getByLabel('Password', { exact: true })");
         expect(spec).not.toContain('test.skip(!hasCredentials');
         expect(spec).toContain('landingUrl.origin');
         expect(spec).toContain('toBe(new URL(candidateHostUrl).origin)');
@@ -45,14 +46,33 @@ describe('candidate-host authenticated smoke coverage', () => {
 
         expect(workflow).toContain('id: firebase_public');
         expect(workflow).toContain('id: firebase_auth');
+        expect(workflow).toContain('id: core_config');
         expect(workflow).toContain('id: canonical_prod');
-        expect(workflow.match(/continue-on-error: true/g)).toHaveLength(3);
+        expect(workflow).toContain('id: canonical_core');
+        expect(workflow.match(/continue-on-error: true/g)).toHaveLength(4);
         expect(workflow).toContain('if: always()');
         expect(workflow).toContain('steps.firebase_public.outcome');
         expect(workflow).toContain('steps.firebase_auth.outcome');
         expect(workflow).toContain('steps.canonical_prod.outcome');
+        expect(workflow).toContain("if: steps.core_config.outputs.enabled == 'true'");
+        expect(workflow).toContain('Fixture-backed production smoke not configured');
+        expect(workflow).toContain('steps.canonical_core.outcome');
+        expect(workflow).toContain('The configured fixture-backed production smoke failed.');
         expect(workflow).toContain('test-results/**/candidate-auth-diagnostic.json');
         expect(workflow).toContain('One or more independent post-deploy signals failed.');
         expect(workflow).toContain('timeout-minutes: 30');
+    });
+
+    it('uses exact password labels everywhere the app auth form is automated', () => {
+        for (const file of [
+            'tests/smoke/candidate-host-auth.spec.js',
+            'tests/smoke/helpers/app-auth.js',
+            'tests/smoke/static-hosting-bootstrap.spec.js',
+            'tests/smoke/app-parent-live.spec.js'
+        ]) {
+            const source = readRepoFile(file);
+            expect(source).not.toMatch(/getByLabel\(['"]Password['"]\)(?!\s*,)/);
+            expect(source).toContain("getByLabel('Password', { exact: true })");
+        }
     });
 });
