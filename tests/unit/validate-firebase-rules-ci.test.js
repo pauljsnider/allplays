@@ -170,10 +170,31 @@ concurrency:
             curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
           }
+          find_recent_matching_firestore_ruleset() {
+            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
+            jq '(.rulesets // []) | sort_by(.createTime) | reverse | .[].name'
+            jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            [[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]
+          }
+          activate_firestore_ruleset_with_retry() {
+            [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
+            curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
+            jq 'updateMask:"rulesetName"'
+            [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]
+            verify_active_firestore_rules
+          }
+          recover_firestore_release_after_duplicate() {
+            find_recent_matching_firestore_ruleset
+            activate_firestore_ruleset_with_retry
+          }
           if [[ "$deploy_label" == "firestore" ]]; then
             echo "latest version of firestore.rules already up to date, skipping upload"
             echo "deployed indexes in firestore.indexes.json successfully"
+            echo "rules file firestore.rules compiled successfully"
+            echo "uploading rules firestore.rules"
             echo "The active Firestore release exactly matches this commit and indexes deployed"
+            recover_firestore_release_after_duplicate
+            echo "Recovered the Firebase CLI release race by activating the exact uploaded ruleset"
             echo "accepting the duplicate release 409 as success"
             api_surface="Firestore Rules API (firebaserules.googleapis.com)"
             grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
@@ -309,6 +330,18 @@ concurrency:
             'if length == 1 and .[0].name == "firestore.rules"',
             'if any(.[]; .name == "firestore.rules")'
         ))).toThrow('Production Firestore active source must contain only firestore.rules');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replaceAll(
+            'recover_firestore_release_after_duplicate',
+            'accept_duplicate_release_without_recovery'
+        ))).toThrow('Production Firestore duplicate-release recovery call');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
+            '[[ -n "$candidate_rules_b64" ]]'
+        ))).toThrow('Production Firestore recent-ruleset exact-source comparison');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"',
+            'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases"'
+        ))).toThrow('Production Firestore release PATCH method');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
