@@ -208,6 +208,67 @@ describe('roster profile fields', () => {
         ]);
     });
 
+    it('deduplicates the same parent across linked and private projections when only one copy has a user id', () => {
+        const player = {
+            parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],
+            privateProfileParents: [{ email: 'mom@example.com', relation: 'Mother', source: 'roster-ai' }]
+        };
+
+        expect(collectRosterParentContacts(player, { includeFamilyContacts: true })).toEqual([
+            expect.objectContaining({
+                userId: 'parent-1',
+                email: 'mom@example.com',
+                relation: 'Mother'
+            })
+        ]);
+    });
+
+    it('keeps linked parents with distinct user ids when they share household contact details', () => {
+        const linkedParents = [
+            { userId: 'parent-1', name: 'Pat Parent', email: 'family@example.com', phone: '555-0101', relation: 'Mother' },
+            { userId: 'parent-2', name: 'Robin Parent', email: 'family@example.com', phone: '555-0101', relation: 'Father' }
+        ];
+
+        expect(collectRosterParentContacts({ parents: linkedParents })).toEqual([
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+        expect(mergeRosterParentContacts(linkedParents, [])).toEqual([
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+    });
+
+    it('does not let an earlier unlinked contact suppress a later linked household parent', () => {
+        const contacts = [
+            { name: 'Household email', email: 'family@example.com', relation: 'Parent' },
+            { userId: 'parent-1', name: 'Pat Parent', email: 'family@example.com', relation: 'Mother' },
+            { userId: 'parent-2', name: 'Robin Parent', email: 'family@example.com', relation: 'Father' }
+        ];
+
+        expect(mergeRosterParentContacts(contacts, [])).toEqual([
+            expect.objectContaining({ name: 'Household email', email: 'family@example.com' }),
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+    });
+
+    it('carries identity aliases through duplicate contact projections', () => {
+        const player = {
+            parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],
+            privateProfileParents: [{ email: 'mom@example.com', phone: '555-0199', relation: 'Mother', source: 'roster-ai' }],
+            privateProfileContacts: [{ phone: '555-0199', relation: 'Mother', source: 'roster-csv' }]
+        };
+
+        expect(collectRosterParentContacts(player, { includeFamilyContacts: true })).toEqual([
+            expect.objectContaining({
+                userId: 'parent-1',
+                email: 'mom@example.com',
+                relation: 'Mother'
+            })
+        ]);
+    });
+
     it('merges imported parent contacts without dropping existing private metadata', () => {
         const merged = mergeRosterParentContacts(
             [

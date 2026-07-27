@@ -2878,34 +2878,25 @@ export async function getOfficialsForUsers(users = []) {
 export async function getPlayers(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const isActivePlayer = (player) => player?.active !== false;
-    // Prefer server-side ordering by jersey number, but fall back to an
-    // unordered read + client sort if indexes are still building.
-    try {
-        const q = query(collection(db, `teams/${teamId}/players`), orderBy("number"));
-        const snapshot = await getDocs(q);
-        const players = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        return includeInactive ? players : players.filter(isActivePlayer);
-    } catch (e) {
-        const code = e?.code || '';
-        if (code !== 'failed-precondition') throw e;
-
-        const snapshot = await getDocs(collection(db, `teams/${teamId}/players`));
-        const players = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Keep ordering stable and human-friendly.
-        const sorted = players.sort((a, b) => {
-            const an = (a.number ?? '').toString().trim();
-            const bn = (b.number ?? '').toString().trim();
-            const ai = an === '' ? NaN : Number.parseInt(an, 10);
-            const bi = bn === '' ? NaN : Number.parseInt(bn, 10);
-            const aIsNum = Number.isFinite(ai);
-            const bIsNum = Number.isFinite(bi);
-            if (aIsNum && bIsNum) return ai - bi;
-            if (aIsNum && !bIsNum) return -1;
-            if (!aIsNum && bIsNum) return 1;
-            return an.localeCompare(bn);
-        });
-        return includeInactive ? sorted : sorted.filter(isActivePlayer);
-    }
+    // Firestore orderBy omits documents where the ordered field is missing.
+    // Read the complete roster first so name-only players remain visible, then
+    // keep ordering stable and human-friendly on the client.
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/players`));
+    const players = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const sorted = players.sort((a, b) => {
+        const an = (a.number ?? '').toString().trim();
+        const bn = (b.number ?? '').toString().trim();
+        const ai = an === '' ? NaN : Number.parseInt(an, 10);
+        const bi = bn === '' ? NaN : Number.parseInt(bn, 10);
+        const aIsNum = Number.isFinite(ai);
+        const bIsNum = Number.isFinite(bi);
+        if (aIsNum && bIsNum) return ai - bi;
+        if (aIsNum && !bIsNum) return -1;
+        if (!aIsNum && bIsNum) return 1;
+        if (an !== bn) return an.localeCompare(bn);
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    return includeInactive ? sorted : sorted.filter(isActivePlayer);
 }
 
 export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) {
@@ -3116,6 +3107,7 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
         } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
+                number: Object.prototype.hasOwnProperty.call(payload, 'number') ? payload.number : '',
                 active: Object.prototype.hasOwnProperty.call(payload, 'active') ? payload.active : true,
                 createdAt: Timestamp.now()
             });

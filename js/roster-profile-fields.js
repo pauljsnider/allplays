@@ -594,25 +594,50 @@ export function normalizeRosterParentContact(contact = {}, options = {}) {
     };
 }
 
-function getRosterParentContactDedupeKey(contact = {}) {
-    if (contact.userId) return `user:${contact.userId}`;
-    if (contact.email) return `email:${contact.email}`;
-    if (contact.phone) return `phone:${contact.phone}`;
-    return `name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`;
+function getRosterParentContactDedupeKeys(contact = {}) {
+    const keys = [
+        contact.userId ? `user:${contact.userId}` : '',
+        contact.email ? `email:${contact.email}` : '',
+        contact.phone ? `phone:${contact.phone}` : ''
+    ].filter(Boolean);
+    if (keys.length > 0) return keys;
+    return [`name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`];
+}
+
+function registerRosterParentContactIdentity(contact, seenUserIds, seenContactKeys) {
+    const userId = normalizeRosterContactString(contact.userId);
+    if (userId) seenUserIds.add(userId);
+    getRosterParentContactDedupeKeys({ ...contact, userId: '' }).forEach((key) => {
+        const identities = seenContactKeys.get(key) || new Set();
+        identities.add(userId);
+        seenContactKeys.set(key, identities);
+    });
+}
+
+function isDuplicateRosterParentContact(contact, seenUserIds, seenContactKeys) {
+    const userId = normalizeRosterContactString(contact.userId);
+    const contactKeys = getRosterParentContactDedupeKeys({ ...contact, userId: '' });
+    if (!userId) return contactKeys.some((key) => seenContactKeys.has(key));
+    if (seenUserIds.has(userId)) return true;
+    return contactKeys.some((key) => {
+        const identities = seenContactKeys.get(key);
+        return identities?.has(userId);
+    });
 }
 
 export function mergeRosterParentContacts(existingContacts = [], importedContacts = [], options = {}) {
     const merged = [];
-    const seen = new Set();
+    const seenUserIds = new Set();
+    const seenContactKeys = new Map();
     [
         ...(Array.isArray(existingContacts) ? existingContacts : []),
         ...(Array.isArray(importedContacts) ? importedContacts : [])
     ].forEach((contact) => {
         const normalized = normalizeRosterParentContact(contact, options);
         if (!normalized) return;
-        const key = getRosterParentContactDedupeKey(normalized);
-        if (seen.has(key)) return;
-        seen.add(key);
+        const isDuplicate = isDuplicateRosterParentContact(normalized, seenUserIds, seenContactKeys);
+        registerRosterParentContactIdentity(normalized, seenUserIds, seenContactKeys);
+        if (isDuplicate) return;
         merged.push({
             ...(contact && typeof contact === 'object' ? contact : {}),
             ...normalized
@@ -639,7 +664,8 @@ export function collectRosterParentContacts(player = {}, options = {}) {
     }
 
     const contacts = [];
-    const seen = new Set();
+    const seenUserIds = new Set();
+    const seenContactKeys = new Map();
     candidates.forEach(({ contact, storage }) => {
         const normalized = normalizeRosterParentContact(contact, { storage });
         if (!normalized) return;
@@ -651,9 +677,9 @@ export function collectRosterParentContacts(player = {}, options = {}) {
             contact?.invitedByUserId ||
             contact?.inviterUserId;
         if (!includeHousehold && isHousehold) return;
-        const key = getRosterParentContactDedupeKey(normalized);
-        if (seen.has(key)) return;
-        seen.add(key);
+        const isDuplicate = isDuplicateRosterParentContact(normalized, seenUserIds, seenContactKeys);
+        registerRosterParentContactIdentity(normalized, seenUserIds, seenContactKeys);
+        if (isDuplicate) return;
         contacts.push(normalized);
     });
     return contacts;

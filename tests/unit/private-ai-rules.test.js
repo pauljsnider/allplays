@@ -15,8 +15,10 @@ import {
     setDoc,
     updateDoc
 } from 'firebase/firestore';
+import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 
-const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const rulesSource = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const rules = compactFirestoreRules(rulesSource);
 const privateAiCollections = [
     'privateAiMessages',
     'privateAiConversations',
@@ -25,7 +27,7 @@ const privateAiCollections = [
 ];
 
 function extractRuleBlock(marker, nextMarker) {
-    return rules.slice(rules.indexOf(marker), rules.indexOf(nextMarker));
+    return rulesSource.slice(rulesSource.indexOf(marker), rulesSource.indexOf(nextMarker));
 }
 
 describe('private AI Firestore rules', () => {

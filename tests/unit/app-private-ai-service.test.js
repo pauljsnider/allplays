@@ -73,6 +73,8 @@ const homeMocks = vi.hoisted(() => ({
 const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
+    createScheduledGameForApp: vi.fn(),
+    createScheduledPracticeForApp: vi.fn(),
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
@@ -91,7 +93,9 @@ const scheduleMocks = vi.hoisted(() => ({
     saveStaffPracticeAttendance: vi.fn(),
     submitParentScheduleRsvp: vi.fn(),
     submitParentScheduleRsvpForChildren: vi.fn(),
-    summarizeParentScheduleRideOffers: vi.fn()
+    summarizeParentScheduleRideOffers: vi.fn(),
+    updateScheduledGameForApp: vi.fn(),
+    updateScheduledPracticeForApp: vi.fn()
 }));
 
 const teamMocks = vi.hoisted(() => ({
@@ -396,6 +400,10 @@ beforeEach(async () => {
     });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-imported');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-imported');
+    scheduleMocks.createScheduledGameForApp.mockResolvedValue('game-created');
+    scheduleMocks.createScheduledPracticeForApp.mockResolvedValue('practice-created');
+    scheduleMocks.updateScheduledGameForApp.mockResolvedValue({ updated: true, eventId: 'game-1' });
+    scheduleMocks.updateScheduledPracticeForApp.mockResolvedValue({ updated: true, eventId: 'practice-1' });
     scheduleMocks.finalizeScheduleImportBatch.mockResolvedValue();
     scheduleMocks.loadParentScheduleAssignments.mockResolvedValue([{ role: 'Snacks', claimable: true, value: '' }]);
     scheduleMocks.claimParentScheduleAssignmentSlot.mockResolvedValue();
@@ -1172,6 +1180,214 @@ describe('private AI service', () => {
         });
     });
 
+    it('keeps an explicitly named authorized roster attachment usable when another team lookup fails', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1', 'team-2'],
+            parentPlayerKeys: []
+        };
+        const prompt = 'K - Cougars: add these players to the roster';
+        const image = new File(['roster image'], 'image.png', { type: 'image/png' });
+        const previewRow = rosterPreviewRow({
+            action: 'add',
+            playerId: '',
+            name: 'Jordan Lee',
+            number: '12',
+            fields: [
+                { key: 'name', label: 'Name', type: 'text', value: 'Jordan Lee' },
+                { key: 'number', label: 'Jersey Number', type: 'text', value: '12' }
+            ],
+            operation: {
+                type: 'add',
+                payload: { name: 'Jordan Lee', number: '12' },
+                errors: []
+            }
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-1', teamName: 'K - Cougars', players: [] },
+                { teamId: 'team-2', teamName: 'Vipers', players: [] }
+            ],
+            players: []
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-2') throw new Error('Vipers lookup failed');
+            return {
+                team: { id: 'team-1', name: 'K - Cougars' },
+                players: [],
+                inactivePlayers: [],
+                canManageTeam: true
+            };
+        });
+        rosterAiMocks.generateRosterAiImportRows.mockResolvedValue({
+            rows: [previewRow],
+            errors: [],
+            source: 'ai-image'
+        });
+
+        const { sendPrivateAiAttachmentMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await sendPrivateAiAttachmentMessage(coachUser, {
+            text: prompt,
+            file: image
+        }, 'roster-image-chat');
+
+        expect(result.userMessage).toMatchObject({
+            text: prompt,
+            attachment: {
+                name: 'image.png',
+                kind: 'image',
+                mimeType: 'image/png'
+            }
+        });
+        expect(result.assistantMessage).toMatchObject({
+            error: false,
+            artifacts: [
+                expect.objectContaining({
+                    type: 'roster-import',
+                    teamId: 'team-1',
+                    teamName: 'K - Cougars',
+                    source: 'ai-image'
+                })
+            ]
+        });
+        expect(rosterAiMocks.generateRosterAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
+            text: prompt,
+            imageFile: image
+        }));
+    });
+
+    it('resolves an exact Cougars roster team name when schedule discovery is partial', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach', 'parent'],
+            coachOf: ['team-current', 'team-vipers', 'team-cougars'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-current', teamName: 'Jr KC Current', players: [] },
+                { teamId: 'team-vipers', teamName: 'Vipers', players: [] },
+                { teamId: 'team-cougars', teamName: 'K - Cougars', players: [] }
+            ],
+            players: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [
+                { teamId: 'team-current', teamName: 'Jr KC Current' },
+                { teamId: 'team-vipers', teamName: 'Vipers' },
+                { teamId: 'team-cougars', teamName: 'K - Cougars' }
+            ],
+            isPartial: true
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: {
+                id: teamId,
+                name: {
+                    'team-current': 'Jr KC Current',
+                    'team-vipers': 'Vipers',
+                    'team-cougars': 'K - Cougars'
+                }[teamId]
+            },
+            players: [],
+            inactivePlayers: [],
+            canManageTeam: true
+        }));
+        rosterAiMocks.normalizeRosterAiImportResponse.mockReturnValue({
+            rows: [rosterPreviewRow({
+                action: 'add',
+                playerId: '',
+                name: 'Wesley Davis',
+                number: '',
+                contacts: [],
+                inviteCount: 0,
+                operation: {
+                    type: 'add',
+                    payload: { name: 'Wesley Davis' },
+                    errors: []
+                }
+            })],
+            errors: []
+        });
+        rosterAiMocks.generateRosterAiImportRows.mockResolvedValue({
+            rows: [rosterPreviewRow({
+                action: 'add',
+                playerId: '',
+                name: 'Wesley Davis',
+                number: '',
+                contacts: [],
+                inviteCount: 0,
+                operation: {
+                    type: 'add',
+                    payload: { name: 'Wesley Davis' },
+                    errors: []
+                }
+            })],
+            errors: [],
+            source: 'ai-text'
+        });
+
+        const { runPrivateAiTool, sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamName: 'K - Cougars',
+                operations: [{
+                    action: 'add',
+                    player: { name: 'Wesley Davis' }
+                }]
+            }
+        }, { conversationId: 'paul-roster-chat' });
+
+        expect(result).toMatchObject({
+            name: 'apply_roster_import',
+            ok: true,
+            requiresConfirmation: true
+        });
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['teams', 'team-cougars', 'privateAiPendingActions', expect.any(String)]
+            }),
+            expect.objectContaining({
+                teamId: 'team-cougars',
+                args: expect.objectContaining({
+                    teamId: 'team-cougars',
+                    operations: [
+                        expect.objectContaining({
+                            type: 'add',
+                            payload: { name: 'Wesley Davis' }
+                        })
+                    ]
+                })
+            })
+        );
+
+        const directResult = await sendPrivateAiMessage(
+            coachUser,
+            'For K - Cougars, add Wesley Davis, Dawson Dorsey, Hunter Ford, Clark Golden, Charlie Hansen, Ezri Heisler, and Henry Hess to the roster',
+            'paul-direct-roster-chat'
+        );
+
+        expect(directResult.assistantMessage).toMatchObject({
+            error: false,
+            artifacts: [
+                expect.objectContaining({
+                    type: 'roster-import',
+                    teamId: 'team-cougars',
+                    teamName: 'K - Cougars',
+                    summary: expect.objectContaining({
+                        add: 1,
+                        invitations: 0,
+                        errors: 0
+                    })
+                })
+            ]
+        });
+        expect(directResult.assistantMessage.text).toContain('Reply yes to apply these roster changes.');
+    });
+
     it('reports home and team-management read failures instead of presenting empty complete data', async () => {
         const coachUser = {
             ...authUser,
@@ -1245,6 +1461,8 @@ describe('private AI service', () => {
         expect(combinedRolePrompt).toContain('apply_roster_import');
         expect(combinedRolePrompt).toContain('apply_schedule_import');
         expect(combinedRolePrompt).toContain('get_player_stats');
+        expect(combinedRolePrompt).toContain('Adding roster players does not require parent or guardian email addresses');
+        expect(combinedRolePrompt).toContain('name-only add operations and no familyContacts');
 
         aiMocks.model.generateContent.mockClear();
         const platformAdminUser = {
@@ -1431,7 +1649,7 @@ describe('private AI service', () => {
             args: { settings: { name: 'Unsafe Update' } }
         })).resolves.toMatchObject({
             ok: false,
-            error: 'Could not verify all team access. Try again before using team AI tools.'
+            error: 'Could not verify all team access. Use an exact team name or team ID and try again.'
         });
         expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', coachUser);
     });
@@ -1506,7 +1724,7 @@ describe('private AI service', () => {
         });
         expect(aiMocks.model.generateContent).not.toHaveBeenCalled();
         expect(result.userMessage.text).toBe(prompt);
-        expect(result.assistantMessage.text).toContain('Reply yes to import these players');
+        expect(result.assistantMessage.text).toContain('Reply yes to apply these roster changes');
         expect(result.assistantMessage.artifacts).toEqual([
             expect.objectContaining({
                 type: 'roster-import',
@@ -3852,6 +4070,47 @@ describe('private AI service', () => {
         );
     });
 
+    it('claims a just-staged team action when the redundant pre-claim read is unavailable', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const operation = {
+            type: 'add',
+            payload: { name: 'Avery New' },
+            errors: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [], players: [] });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const staged = await runPrivateAiTool(coachUser, {
+            name: 'apply_roster_import',
+            args: {
+                teamId: 'team-1',
+                __preparedRosterOperations: [operation]
+            }
+        }, { conversationId: 'same-session-roster' });
+
+        firebaseMocks.getDoc.mockRejectedValue(new Error('Transient pre-claim read failure'));
+        const confirmed = await generatePrivateAiAnswer(
+            coachUser,
+            `confirm ${staged.confirmationId}`,
+            [],
+            { conversationId: 'same-session-roster' }
+        );
+
+        expect(confirmed.toolResults[0]).toMatchObject({
+            name: 'apply_roster_import',
+            ok: true,
+            confirmationId: staged.confirmationId
+        });
+        expect(teamMocks.applyRosterImportPlanForApp).toHaveBeenCalledOnce();
+        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+        expect(firebaseMocks.runTransaction).toHaveBeenCalled();
+    });
+
     it('claims the latest team-scoped roster revision before executing a confirmation', async () => {
         const coachUser = {
             ...authUser,
@@ -4895,6 +5154,932 @@ describe('private AI service', () => {
             { email: 'robin@allplays.ai', relation: 'Parent' }
         );
         expect(confirmed.answer).toContain('acceptance email queued');
+    });
+
+    it('uses an explicitly named managed team when unrelated access discovery is partial', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach', 'parent'],
+            coachOf: ['team-1', 'team-stale'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-1', teamName: 'Bears', players: [] }],
+            players: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: true
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-stale') throw new Error('permission-denied');
+            return {
+                team: { id: 'team-1', name: 'Bears' },
+                players: [{ id: 'player-max', name: 'Max Snider', number: '' }],
+                inactivePlayers: [],
+                canManageTeam: true
+            };
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'invite_roster_parent',
+            args: {
+                teamName: 'Bears',
+                playerName: 'Max Snider',
+                email: 'mom@allplays.ai',
+                relation: 'Mother'
+            }
+        });
+
+        expect(result).toMatchObject({
+            name: 'invite_roster_parent',
+            ok: true,
+            requiresConfirmation: true,
+            data: {
+                previewSummary: expect.objectContaining({
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-max',
+                    playerName: 'Max Snider'
+                })
+            }
+        });
+    });
+
+    it.each([
+        { args: { teamName: 'Bears' }, label: 'substring name' },
+        { args: { text: 'Send this update to the Bears parents.' }, label: 'prompt token' }
+    ])('rejects a fuzzy $label team match when access discovery is partial', async ({ args }) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-12u', 'team-13u'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-12u', teamName: 'Bears 12U', players: [] },
+                { teamId: 'team-13u', teamName: 'Bears 13U', players: [] }
+            ],
+            players: []
+        });
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [
+                { teamId: 'team-12u', teamName: 'Bears 12U' },
+                { teamId: 'team-13u', teamName: 'Bears 13U' }
+            ],
+            isPartial: false
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-13u') throw new Error('Bears 13U lookup failed');
+            return {
+                team: { id: teamId, name: 'Bears 12U' },
+                players: [],
+                inactivePlayers: [],
+                canManageTeam: true
+            };
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'send_team_email',
+            args: {
+                ...args,
+                subject: 'Schedule update',
+                body: 'Practice moved.'
+            }
+        });
+
+        expect(result).toMatchObject({
+            name: 'send_team_email',
+            ok: false,
+            error: expect.stringContaining('Bears 13U lookup failed')
+        });
+    });
+
+    it('treats an imperative parent invite as a write instead of preloading help', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            isPartial: false
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            players: [{ id: 'player-max', name: 'Max Snider', number: '' }],
+            inactivePlayers: [],
+            canManageTeam: true
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'invite_roster_parent',
+                    args: {
+                        teamName: 'Bears',
+                        playerName: 'Max Snider',
+                        email: 'mom@allplays.ai',
+                        relation: 'Mother'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I prepared the parent invitation. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            "Add mom@allplays.ai as Max Snider's Mother on the Bears roster."
+        );
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'invite_roster_parent',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(result.toolResults.some((tool) => tool.name === 'get_help')).toBe(false);
+    });
+
+    it('does not accept a false write preview without staging the matching action', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I prepared 1 schedule operation for Bears. Reply yes to apply this change.'
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01',
+                            time: '18:30',
+                            timeZone: 'America/Chicago',
+                            opponent: 'Codex AI Retest Opponent',
+                            location: 'Retest Field'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged for review. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Use teamId team-1. Add a game for Bears on August 1, 2026 at 6:30 PM America/Chicago against Codex AI Retest Opponent.'
+        );
+
+        expect(result.answer).toContain('staged for review');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+        expect(aiMocks.model.generateContent.mock.calls[1][0]).toContain('prior response claimed or described a change');
+        expect(scheduleMocks.createScheduledGameForApp).not.toHaveBeenCalled();
+    });
+
+    it('does not treat a failed matching write call as a staged action', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        teamMocks.loadParentTeamDetail.mockRejectedValue(new Error('Team access lookup failed'));
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01T18:30:00-05:00',
+                            opponent: 'Failed Write Opponent'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Create a game for Bears against Failed Write Opponent.'
+        );
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                error: expect.stringContaining('Team access lookup failed')
+            })
+        ]);
+    });
+
+    it('does not treat an unrelated staged write as the requested roster action', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01T18:30:00-05:00',
+                            opponent: 'Unrelated Write Opponent'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'Alex is staged for the roster. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Add Alex to the Bears roster.');
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                error: expect.stringContaining('does not match the requested operation')
+            })
+        ]);
+        expect(firebaseMocks.setDoc.mock.calls.some((call) => call[1]?.toolName === 'create_schedule_event')).toBe(false);
+    });
+
+    it.each([
+        'Schedule a practice for Bears tomorrow.',
+        'Move the Bears game to Friday.',
+        'Resend the parent invitation for Avery.',
+        'Retry the parent invite email for Avery.',
+        "Complete Avery's practice packet.",
+        'Request a ride spot for the Bears game.',
+        'Revoke the grandparents family share link.',
+        'Review the pending registration.'
+    ])('rejects a planner-only preview for supported imperative form: %s', async (prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            answer: 'That change is staged. Reply yes to confirm.'
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([]);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['send', 'Send a team message about practice.'],
+        ['mark', "Mark Avery's practice packet complete."],
+        ['record', 'Record practice attendance for Bears.'],
+        ['assign', 'Assign snacks for the Bears game.'],
+        ['claim', 'Claim the snacks assignment for the Bears game.'],
+        ['release', 'Release the snacks assignment for the Bears game.']
+    ])('fails closed when an unrelated tool is proposed for the %s domain', async (_domain, prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            toolCalls: [{
+                name: 'create_schedule_event',
+                args: {
+                    teamId: 'team-1',
+                    eventType: 'game',
+                    input: { startDate: '2026-08-01T18:30:00-05:00' }
+                }
+            }]
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toHaveLength(2);
+        expect(result.toolResults.every((tool) => (
+            tool.name === 'create_schedule_event'
+            && tool.ok === false
+            && tool.error.includes('does not match the requested operation')
+        ))).toBe(true);
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when an imperative write domain cannot be classified', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            toolCalls: [{
+                name: 'create_schedule_event',
+                args: {
+                    teamId: 'team-1',
+                    eventType: 'game',
+                    input: { startDate: '2026-08-01T18:30:00-05:00' }
+                }
+            }]
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Set the requested thing for Bears.');
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults.every((tool) => tool.ok === false)).toBe(true);
+        expect(result.toolResults.every((tool) => tool.error.includes('could not be classified safely'))).toBe(true);
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        'Bears: create a game for Saturday',
+        'Cougars, create a game for Saturday',
+        'In Bears, add a game for Saturday'
+    ])('corrects an unstaged write claim for team-context prefix: %s', async (prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I prepared that change. Reply yes to confirm.'
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01T18:30:00-05:00',
+                            opponent: 'Prefix Test Opponent'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The change is now staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+    });
+
+    it('stages an identical repeated planner write only once', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const repeatedCall = {
+            name: 'create_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-03T19:00:00-05:00',
+                    opponent: 'Codex Smoke Lifecycle Opponent',
+                    location: 'Smoke Field A'
+                }
+            }
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({ toolCalls: [repeatedCall] })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({ toolCalls: [repeatedCall] })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged once. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Add one Codex Smoke Lifecycle Opponent game for Bears.'
+        );
+
+        expect(result.answer).toContain('staged once');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(firebaseMocks.setDoc.mock.calls.filter((call) => (
+            call[1]?.toolName === 'create_schedule_event'
+            && call[1]?.status === 'pending'
+        ))).toHaveLength(1);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+    });
+
+    it('deduplicates equivalent schedule writes after alias and access normalization', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamName: 'Bears',
+                        type: 'game',
+                        input: {
+                            date: '2026-08-03T19:00:00-05:00',
+                            opponent: 'Canonical Opponent',
+                            location: 'Canonical Field'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-03T19:00:00-05:00',
+                            opponent: 'Canonical Opponent',
+                            location: 'Canonical Field'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged once. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Add one Canonical Opponent game to the Bears schedule.');
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(firebaseMocks.setDoc.mock.calls.filter((call) => (
+            call[1]?.toolName === 'create_schedule_event'
+            && call[1]?.status === 'pending'
+        ))).toHaveLength(1);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+    });
+
+    it('preserves a separately supplied game time and IANA time zone', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'create_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-07-30',
+                    time: '18:00',
+                    timeZone: 'America/Chicago',
+                    opponent: 'Codex AI Test Opponent',
+                    location: 'Test Field'
+                }
+            }
+        }, { conversationId: 'timed-game-chat' });
+
+        expect(result).toMatchObject({
+            name: 'create_schedule_event',
+            ok: true,
+            data: 'game-created'
+        });
+        expect(scheduleMocks.createScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            expect.objectContaining({
+                startDate: '2026-07-30T23:00:00.000Z',
+                opponent: 'Codex AI Test Opponent',
+                location: 'Test Field'
+            }),
+            coachUser
+        );
+    });
+
+    it('preserves a separately supplied IANA time zone for recurring practices', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'create_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventType: 'practice',
+                input: {
+                    startDate: '2026-10-28',
+                    time: '18:00',
+                    timeZone: 'America/Chicago',
+                    endDate: '2026-10-29T00:30:00.000Z',
+                    title: 'DST Skills',
+                    recurrence: {
+                        isRecurring: true,
+                        freq: 'weekly',
+                        interval: 1,
+                        byDays: ['WE'],
+                        endType: 'count',
+                        countValue: 4
+                    }
+                }
+            }
+        }, { conversationId: 'timed-recurring-practice-chat' });
+
+        expect(result).toMatchObject({
+            name: 'create_schedule_event',
+            ok: true,
+            data: 'practice-created'
+        });
+        expect(scheduleMocks.createScheduledPracticeForApp).toHaveBeenCalledWith(
+            'team-1',
+            expect.objectContaining({
+                startDate: '2026-10-28T23:00:00.000Z',
+                timeZone: 'America/Chicago',
+                recurrence: expect.objectContaining({ isRecurring: true })
+            }),
+            coachUser
+        );
+    });
+
+    it('rejects a nonexistent daylight-saving time instead of silently shifting it', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'create_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-03-08',
+                    time: '02:30',
+                    timeZone: 'America/Chicago',
+                    opponent: 'DST Gap Opponent'
+                }
+            }
+        })).resolves.toMatchObject({
+            name: 'create_schedule_event',
+            ok: false,
+            error: expect.stringContaining('does not exist')
+        });
+        expect(scheduleMocks.createScheduledGameForApp).not.toHaveBeenCalled();
+    });
+
+    it('includes complete schedule details in the staged confirmation preview', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(coachUser, {
+            name: 'create_schedule_event',
+            args: {
+                teamId: 'team-1',
+                teamName: 'Bears',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-01',
+                    time: '18:30',
+                    timeZone: 'America/Chicago',
+                    opponent: 'Preview Opponent',
+                    location: 'Preview Field'
+                }
+            }
+        })).resolves.toMatchObject({
+            name: 'create_schedule_event',
+            ok: true,
+            requiresConfirmation: true,
+            data: {
+                previewSummary: {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    eventType: 'game',
+                    title: 'vs Preview Opponent',
+                    startDate: '2026-08-01T23:30:00.000Z',
+                    timeZone: 'America/Chicago',
+                    opponent: 'Preview Opponent',
+                    location: 'Preview Field'
+                }
+            }
+        });
+    });
+
+    it('merges unchanged game fields into a partial schedule update before confirmation', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z'),
+                location: 'Smoke Field A',
+                opponent: 'Codex Smoke Lifecycle Opponent',
+                isHome: true,
+                notes: 'Bring white jerseys',
+                competitionType: 'tournament',
+                countsTowardSeasonRecord: false
+            })]
+        });
+
+        const result = await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-05',
+                    time: '19:15',
+                    timeZone: 'America/Chicago',
+                    location: 'Smoke Field Updated'
+                }
+            }
+        }, { conversationId: 'partial-game-update' });
+
+        expect(result).toMatchObject({ name: 'update_schedule_event', ok: true });
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-06T00:15:00.000Z',
+                endDate: '2026-08-06T01:45:00.000Z',
+                arrivalTime: '2026-08-05T23:45:00.000Z',
+                location: 'Smoke Field Updated',
+                opponent: 'Codex Smoke Lifecycle Opponent',
+                isHome: true,
+                notes: 'Bring white jerseys',
+                competitionType: 'tournament',
+                countsTowardSeasonRecord: false
+            }),
+            coachUser
+        );
+    });
+
+    it('preserves top-level event fields when preparing a partial schedule update', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z'),
+                location: 'Old Field',
+                opponent: 'Existing Opponent'
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                startDate: '2026-08-05',
+                time: '19:15',
+                timeZone: 'America/Chicago',
+                location: 'Top-level Field'
+            }
+        }, { conversationId: 'top-level-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-06T00:15:00.000Z',
+                endDate: '2026-08-06T01:45:00.000Z',
+                arrivalTime: '2026-08-05T23:45:00.000Z',
+                location: 'Top-level Field',
+                opponent: 'Existing Opponent'
+            }),
+            coachUser
+        );
+    });
+
+    it('merges a time-only schedule update with the existing local event date', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z')
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    time: '21:15',
+                    timeZone: 'America/Chicago'
+                }
+            }
+        }, { conversationId: 'time-only-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-04T02:15:00.000Z',
+                endDate: '2026-08-04T03:45:00.000Z',
+                arrivalTime: '2026-08-04T01:45:00.000Z',
+                timeZone: 'America/Chicago'
+            }),
+            coachUser
+        );
+    });
+
+    it('merges a date-only schedule update with the existing local event time', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z')
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-06',
+                    timeZone: 'America/Chicago'
+                }
+            }
+        }, { conversationId: 'date-only-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-07T00:00:00.000Z',
+                endDate: '2026-08-07T01:30:00.000Z',
+                arrivalTime: '2026-08-06T23:30:00.000Z',
+                timeZone: 'America/Chicago'
+            }),
+            coachUser
+        );
+    });
+
+    it('shows the merged proposed schedule event in update confirmations', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z'),
+                location: 'Old Field',
+                opponent: 'Old Opponent'
+            })]
+        });
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await runPrivateAiTool(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-05',
+                    time: '19:00',
+                    timeZone: 'America/Chicago',
+                    opponent: 'New Opponent',
+                    location: 'New Field'
+                }
+            }
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            requiresConfirmation: true,
+            data: {
+                summary: expect.stringContaining('New Opponent'),
+                previewSummary: {
+                    timeZone: 'America/Chicago',
+                    event: expect.objectContaining({
+                        title: expect.stringContaining('New Opponent'),
+                        date: '2026-08-06T00:00:00.000Z',
+                        endDate: '2026-08-06T01:30:00.000Z',
+                        arrivalTime: '2026-08-05T23:30:00.000Z',
+                        location: 'New Field'
+                    })
+                }
+            }
+        });
     });
 
     it('confirms all pending writes from the latest group in the active conversation', async () => {

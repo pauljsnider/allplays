@@ -3692,6 +3692,42 @@ describe('partial parent schedule team failures (#3021)', () => {
     expect(result.isPartial).toBe(true);
   });
 
+  it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
+      if (teamId === 'team-2') throw new Error('permission-denied');
+      return { id: 'team-1', name: 'Team One', active: true } as any;
+    });
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-target',
+      type: 'game',
+      date: new Date('2026-07-30T23:00:00.000Z'),
+      opponent: 'Target Opponent',
+      location: 'Target Field'
+    }] as any);
+
+    const result = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    expect(getTeam).not.toHaveBeenCalledWith('team-2');
+    expect(getDoc).not.toHaveBeenCalledWith(expect.objectContaining({
+      path: expect.stringContaining('team-2/players/p2')
+    }));
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(getGames).toHaveBeenCalledWith('team-1', expect.any(Object));
+    expect(result).toMatchObject({
+      isPartial: false,
+      children: [expect.objectContaining({ teamId: 'team-1', playerId: 'p1' })],
+      events: [expect.objectContaining({
+        teamId: 'team-1',
+        id: 'game-target',
+        opponent: 'Target Opponent'
+      })]
+    });
+  });
+
   it('streams the player/team shell before every team schedule finishes', async () => {
     vi.mocked(getGames).mockImplementation(async (teamId: string) => ([{
       id: `game-${teamId}`,

@@ -385,6 +385,8 @@ export type ParentScheduleScope = {
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
+  /** Restrict access resolution and event loading to one explicitly requested team. */
+  targetTeamId?: string;
   /** Load the team's full game history instead of the default recent window (#2034). */
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
@@ -2813,8 +2815,14 @@ type ParentScheduleChildrenResult = {
   isPartial: boolean;
 };
 
-async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChildrenResult> {
-  const links = collectParentScopeLinks(user, profile);
+async function resolveParentScheduleChildren(
+  user: AuthUser,
+  profile: Record<string, unknown>,
+  options: { targetTeamId?: string } = {}
+): Promise<ParentScheduleChildrenResult> {
+  const targetTeamId = compactString(options.targetTeamId);
+  const links = collectParentScopeLinks(user, profile)
+    .filter((link) => !targetTeamId || link.teamId === targetTeamId);
   if (!links.length) return { children: [], isPartial: false };
 
   const linksByTeam = new Map<string, ParentScopeLink[]>();
@@ -4151,9 +4159,13 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
+  const targetTeamId = compactString(options.targetTeamId);
   const childResult: ParentScheduleChildrenResult = options.parentScope?.children
-    ? { children: options.parentScope.children, isPartial: options.parentScope.isPartial === true }
-    : await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+    ? {
+        children: options.parentScope.children.filter((child) => !targetTeamId || child.teamId === targetTeamId),
+        isPartial: options.parentScope.isPartial === true
+      }
+    : await resolveParentScheduleChildren(user, profile as Record<string, unknown>, { targetTeamId });
   const children = childResult.children;
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
@@ -4164,7 +4176,9 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
   const staffTeamResult: StaffTeamsLoadResult = options.parentScope?.staffTeams
     ? { teams: options.parentScope.staffTeams, isPartial: options.parentScope.isPartial === true }
     : await loadStaffTeams(user).catch(() => ({ teams: [], isPartial: true }));
-  const staffTeams = staffTeamResult.teams;
+  const staffTeams = staffTeamResult.teams.filter((team: any) => (
+    !targetTeamId || compactString(team?.id || team?.teamId) === targetTeamId
+  ));
   await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
     const teamId = compactString(team?.id || team?.teamId);
     if (!teamId) return;
@@ -4197,7 +4211,21 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  return { children, byTeam, staffTeams, isParentScopePartial: childResult.isPartial || staffTeamResult.isPartial };
+  const targetAccessVerified = !targetTeamId
+    || children.some((child) => child.teamId === targetTeamId)
+    || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId);
+  if (targetTeamId && !targetAccessVerified && childResult.isPartial !== true && staffTeamResult.isPartial !== true) {
+    throw new Error('You do not have permission to load this team schedule.');
+  }
+  return {
+    children,
+    byTeam,
+    staffTeams,
+    targetAccessVerified,
+    isParentScopePartial: targetTeamId && targetAccessVerified
+      ? false
+      : childResult.isPartial || staffTeamResult.isPartial
+  };
 }
 
 /**
@@ -4424,11 +4452,14 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const profile = canReuseParentScope
       ? options.parentScope!.profile
       : await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams, isParentScopePartial } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+    const { children, byTeam, staffTeams, isParentScopePartial, targetAccessVerified } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
       ...options,
       expandStaffPlayers,
       parentScope: canReuseParentScope ? options.parentScope : undefined
     });
+    if (options.targetTeamId && !targetAccessVerified) {
+      throw new Error('The requested team schedule could not be verified. Retry before showing events.');
+    }
     const staffTeamSummaries = staffTeams
       .map((team: any) => {
         const teamId = compactString(team?.id || team?.teamId);

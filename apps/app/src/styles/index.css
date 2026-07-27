@@ -1561,6 +1561,13 @@
   box-shadow: 0 0 0 3px #e0e7ff;
 }
 
+@media (min-width: 768px) {
+  .private-ai-composer .chat-composer-textarea {
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+}
+
 .chat-composer-send {
   position: absolute;
   right: 5px;
