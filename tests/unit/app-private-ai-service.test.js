@@ -5899,6 +5899,51 @@ describe('private AI service', () => {
         );
     });
 
+    it('preserves top-level event fields when preparing a partial schedule update', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z'),
+                location: 'Old Field',
+                opponent: 'Existing Opponent'
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                startDate: '2026-08-05',
+                time: '19:15',
+                timeZone: 'America/Chicago',
+                location: 'Top-level Field'
+            }
+        }, { conversationId: 'top-level-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-06T00:15:00.000Z',
+                endDate: '2026-08-06T01:45:00.000Z',
+                arrivalTime: '2026-08-05T23:45:00.000Z',
+                location: 'Top-level Field',
+                opponent: 'Existing Opponent'
+            }),
+            coachUser
+        );
+    });
+
     it('merges a time-only schedule update with the existing local event date', async () => {
         const coachUser = {
             ...authUser,

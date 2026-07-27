@@ -3451,7 +3451,9 @@ async function prepareManagedScheduleEventUpdateAction(
     teamId
   });
   if (!event) throw new Error('No matching schedule event was found for this account.');
-  const requestedInput = isPlainObject(args.input) ? args.input : {};
+  // Keep the tool's existing argument contract: planners may place editable
+  // event fields either inside `input` or directly alongside the selectors.
+  const requestedInput = isPlainObject(args.input) ? args.input : args;
   const input = mergePrivateAiScheduleEventUpdateInput(event, requestedInput);
   const proposedEvent = applyPrivateAiScheduleEventUpdateInput(event, input);
   const eventSummary = summarizeScheduleEvent(proposedEvent);
