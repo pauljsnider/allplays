@@ -340,6 +340,11 @@ describe('preview deployment workflow trust boundary', () => {
     it('limits scheduled production browser smoke to one nightly run', () => {
         expect(scheduledProdSmokeWorkflow).toContain("cron: '23 7 * * *'");
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
+        expect(scheduledProdSmokeWorkflow).toContain('cancel-in-progress: false');
+        expect(scheduledProdSmokeWorkflow).toContain(
+            'SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}'
+        );
+        expect(scheduledProdSmokeWorkflow).not.toContain("SMOKE_EXTENDED_WRITES: '1'");
     });
 
     it('documents the keyless credential and exact-head operational contract', () => {

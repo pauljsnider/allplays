@@ -11,6 +11,8 @@ Store these values in the protected GitHub environment named `production-smoke`:
   `SMOKE_PARENT_EMAIL`, and `SMOKE_PARENT_PASSWORD`.
 - Required variables: `SMOKE_TEAM_ID`, `SMOKE_PLAYER_ID`,
   `SMOKE_GAME_ID`, `SMOKE_EVENT_ID`, and `SMOKE_REGISTRATION_FORM_ID`.
+- Extended-write gate: `SMOKE_EXTENDED_WRITES_ENABLED`. Leave it unset or set
+  it to `0` for the default read-only nightly suite.
 - Optional variables: `SMOKE_CONVERSATION_ID`,
   `SMOKE_OPPORTUNITY_LISTING_ID`, and `SMOKE_OPPORTUNITY_INQUIRY_ID`.
 
@@ -43,14 +45,23 @@ The post-deploy workflow checks out the exact released SHA and runs:
 - fixture-backed staff, parent, notification, registration, fees, media,
   certificate, schedule, message, official, profile, and help views.
 
-The nightly workflow adds reversible writes with the `allplays-smoke-<run-id>`
-prefix. It creates and removes a roster player and event, sends/edits/deletes a
-chat message and verifies its notification deep link, records and undoes a tracker entry, restores RSVP,
-creates and removes a rideshare offer, uploads and deletes a fixed one-pixel
-image, creates/revokes/removes a family-share token, and reads the pre-seeded
-opportunity inquiry/reply fixture without mutating it. Cleanup runs in
-`finally`; a cleanup failure fails the suite and reports only the record type and
-run ID.
+The nightly workflow always runs the core read-only checks. Extended mutations
+are opt-in: set `SMOKE_EXTENDED_WRITES_ENABLED=1` only after the synthetic team
+is isolated from real recipients and asynchronous notification inbox/batch
+side-effects have an independent reconciliation path. Until then, keep the gate
+disabled.
+
+The extended suite uses the `allplays-smoke-<run-id>` prefix. It creates and
+removes a roster player and event, sends/edits/deletes a chat message and
+verifies its notification deep link, records and undoes a tracker entry,
+restores RSVP, creates and removes a rideshare offer, uploads and deletes a
+fixed one-pixel image, creates/revokes/removes a family-share token, and reads
+the pre-seeded opportunity inquiry/reply fixture without mutating it. Direct
+record cleanup runs in `finally`; a cleanup failure fails the suite and reports
+only the record type and run ID. Scheduled runs are serialized without
+cancellation so a newer run cannot interrupt that cleanup. Runner termination
+or timeout can still bypass browser cleanup, which is why the gate must remain
+disabled until independent reconciliation exists.
 
 Playwright trace, video, and screenshots are disabled. Diagnostics redact email
 addresses, action parameters, tokens, and document-like identifiers.

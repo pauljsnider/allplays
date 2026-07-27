@@ -10,7 +10,9 @@ permissions:
 
 concurrency:
   group: scheduled-prod-smoke
-  cancel-in-progress: true
+  # Extended smoke may perform reversible writes, so let an active run finish
+  # its cleanup before a queued schedule/manual run starts.
+  cancel-in-progress: false
 
 jobs:
   scheduled-prod-smoke:
@@ -54,7 +56,7 @@ jobs:
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: extended-production
-          SMOKE_EXTENDED_WRITES: '1'
+          SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}
           SMOKE_RUN_ID: ${{ github.run_id }}
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
