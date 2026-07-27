@@ -470,16 +470,16 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
 
 export async function getNativeAuthIdToken(forceRefresh = false): Promise<string | null> {
   const webUser = auth.currentUser;
-  if (webUser?.getIdToken) {
+  if (!isNativeRuntime() && webUser?.getIdToken) {
     return webUser.getIdToken(forceRefresh);
   }
 
   const fallbackUser = getNativeAuthFallbackUser();
-  if (!fallbackUser?.getIdToken) {
-    return null;
+  if (fallbackUser?.getIdToken) {
+    return fallbackUser.getIdToken(forceRefresh);
   }
 
-  return fallbackUser.getIdToken(forceRefresh);
+  return webUser?.getIdToken ? webUser.getIdToken(forceRefresh) : null;
 }
 
 export function getNativeAuthUserId(): string | null {

@@ -34,6 +34,10 @@ test.beforeAll(async ({ browser }) => {
     })) {
         expect(value, `${name} is required for meaningful production fixture assertions`).toBeTruthy();
     }
+    expect(
+        config.staffEmail.trim().toLowerCase(),
+        'Staff and parent smoke accounts must be distinct for cross-role access checks'
+    ).not.toBe(config.parentEmail.trim().toLowerCase());
 
     staffStorageState = await createAuthenticatedStorageState(browser, {
         appBaseUrl: config.appBaseUrl,

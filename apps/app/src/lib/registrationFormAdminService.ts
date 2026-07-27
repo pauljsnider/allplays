@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { collection, db, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc } from './adapters/legacyRegistrationFormAdminDb';
 import {
   buildAppRegistrationFormAdminPayload,
   buildRegistrationFormEditorDraft,
@@ -24,22 +24,39 @@ function getRegistrationOptionCountKey(optionId: unknown) {
   return compactString(optionId).replace(/[^A-Za-z0-9_-]/g, '_') || 'option';
 }
 
-function buildRegistrationOptionCounts(
-  registrationOptions: Array<Record<string, unknown>>,
-  existingCounts: Record<string, any> = {}
+function buildInitialRegistrationOptionCounts(
+  registrationOptions: Array<Record<string, unknown>>
 ) {
-  const counts = { ...existingCounts };
+  const counts: Record<string, { enrolled: number; waitlisted: number }> = {};
   registrationOptions.forEach((option) => {
     const optionId = compactString(option.id);
     const countKey = getRegistrationOptionCountKey(optionId);
-    const existing = existingCounts[countKey] || existingCounts[optionId] || {};
     counts[countKey] = {
-      ...existing,
-      enrolled: Math.max(0, Number(existing.enrolled) || 0),
-      waitlisted: Math.max(0, Number(existing.waitlisted) || 0)
+      enrolled: 0,
+      waitlisted: 0
     };
   });
   return counts;
+}
+
+function buildMissingRegistrationOptionCountUpdates(
+  registrationOptions: Array<Record<string, unknown>>,
+  existingCounts: Record<string, any> = {}
+) {
+  const updates: Record<string, unknown> = {};
+  registrationOptions.forEach((option) => {
+    const optionId = compactString(option.id);
+    const countKey = getRegistrationOptionCountKey(optionId);
+    if (Object.prototype.hasOwnProperty.call(existingCounts, countKey)) return;
+
+    const legacyCounts = existingCounts[optionId] || {};
+    updates[`registrationOptionCounts.${countKey}`] = {
+      ...legacyCounts,
+      enrolled: Math.max(0, Number(legacyCounts.enrolled) || 0),
+      waitlisted: Math.max(0, Number(legacyCounts.waitlisted) || 0)
+    };
+  });
+  return updates;
 }
 
 export async function listRegistrationFormEditorsForApp(
@@ -111,22 +128,31 @@ export async function saveRegistrationFormEditorForApp({
   const formRef = normalizedFormId
     ? doc(db, 'teams', normalizedTeamId, 'registrationForms', normalizedFormId)
     : doc(collection(db, `teams/${normalizedTeamId}/registrationForms`));
-  const existingForm = normalizedFormId
-    ? await getDoc(formRef).then((snapshot: any) => snapshot?.exists?.() ? snapshot.data() || {} : {})
-    : {};
+  const registrationOptions = Array.isArray(result.payload.registrationOptions)
+    ? result.payload.registrationOptions
+    : [];
   const updatePayload = {
     ...result.payload,
     teamId: normalizedTeamId,
-    registrationOptionCounts: buildRegistrationOptionCounts(
-      Array.isArray(result.payload.registrationOptions) ? result.payload.registrationOptions : [],
-      existingForm.registrationOptionCounts || {}
-    ),
     updatedAt: timestamp,
     updatedBy: actorId
   };
 
   if (normalizedFormId) {
-    await updateDoc(formRef, updatePayload);
+    // Capacity counters are updated transactionally by public submissions.
+    // Read them in the same transaction as the editor update so a concurrent
+    // submission or editor cannot have its counter overwritten by stale state.
+    await runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(formRef);
+      const existingForm = snapshot?.exists?.() ? snapshot.data() || {} : {};
+      transaction.update(formRef, {
+        ...updatePayload,
+        ...buildMissingRegistrationOptionCountUpdates(
+          registrationOptions,
+          existingForm.registrationOptionCounts || {}
+        )
+      });
+    });
     return {
       ...result,
       formId: normalizedFormId,
@@ -136,6 +162,7 @@ export async function saveRegistrationFormEditorForApp({
 
   await setDoc(formRef, {
     ...updatePayload,
+    registrationOptionCounts: buildInitialRegistrationOptionCounts(registrationOptions),
     createdAt: timestamp,
     createdBy: actorId
   });

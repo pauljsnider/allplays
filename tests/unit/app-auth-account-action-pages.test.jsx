@@ -149,6 +149,17 @@ describe('ResetPassword account actions', () => {
         ).toBe(true);
     });
 
+    it('rejects an unsafe post-action continuation route', async () => {
+        const { container } = await renderWithRoutes(
+            '/reset-password?mode=verifyEmail&oobCode=verify-code&next=%2F%2Fevil.example',
+            React.createElement(ResetPassword)
+        );
+
+        await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
+        expect(container.querySelector('a[href="/verify-pending"]')).toBeTruthy();
+        expect(container.querySelector('a[href="//evil.example"]')).toBeNull();
+    });
+
     it('verifies reset codes, validates local password input, and confirms the reset', async () => {
         const { container } = await renderWithRoutes(
             '/reset-password?mode=resetPassword&oobCode=reset-code',

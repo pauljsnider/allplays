@@ -54,6 +54,10 @@ test.beforeAll(async ({ browser }) => {
     })) {
         expect(value, `${name} is required for the reversible production suite`).toBeTruthy();
     }
+    expect(
+        config.staffEmail.trim().toLowerCase(),
+        'Staff and parent smoke accounts must be distinct for cross-role access checks'
+    ).not.toBe(config.parentEmail.trim().toLowerCase());
 
     [staffStorageState, parentStorageState] = await Promise.all([
         createAuthenticatedStorageState(browser, {

@@ -205,10 +205,10 @@ export function Teams({ auth }: { auth: AuthState }) {
       ) : home.teams.length ? (
         isDesktopWeb ? (
           <div className="teams-web-workbench">
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} variant="rail" />
+            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} requestedWorkflow={requestedWorkflow} variant="rail" />
           </div>
         ) : (
-          <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} />
+          <TeamLauncher teams={home.teams} selectedTeamId={selectedTeamId} requestedWorkflow={requestedWorkflow} />
         )
       ) : (
         <EmptyTeams />
@@ -252,6 +252,9 @@ function shouldOpenSingleTeamDirectly(teams: ParentHomeTeam[]): boolean {
 function getSingleTeamDestination(teamId: string, workflow: string) {
   if (workflow === 'fees') {
     return `/teams/${encodeURIComponent(teamId)}/fees`;
+  }
+  if (workflow === 'roster') {
+    return `/teams/${encodeURIComponent(teamId)}?tab=roster`;
   }
   return `/teams/${encodeURIComponent(teamId)}`;
 }
@@ -304,9 +307,10 @@ function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {
   );
 }
 
-function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
+function TeamLauncher({ teams, selectedTeamId, requestedWorkflow = '', variant = 'grid' }: {
   teams: ParentHomeTeam[];
   selectedTeamId: string;
+  requestedWorkflow?: string;
   variant?: 'grid' | 'rail';
 }) {
   const [query, setQuery] = useState('');
@@ -335,7 +339,13 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       </label>
       <div className={`${isRail ? 'teams-team-rail-list mt-3 space-y-2' : 'mt-3 grid gap-2 xl:grid-cols-2'}`}>
         {visibleTeams.length ? visibleTeams.map((team) => (
-          <TeamLauncherRow key={team.teamId} team={team} selected={team.teamId === selectedTeamId} compact={isRail} />
+          <TeamLauncherRow
+            key={team.teamId}
+            team={team}
+            selected={team.teamId === selectedTeamId}
+            requestedWorkflow={requestedWorkflow}
+            compact={isRail}
+          />
         )) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No teams match that search.</div>
         )}
@@ -344,13 +354,13 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
   );
 }
 
-function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHomeTeam; selected: boolean; compact?: boolean }) {
+function TeamLauncherRow({ team, selected, requestedWorkflow = '', compact = false }: { team: ParentHomeTeam; selected: boolean; requestedWorkflow?: string; compact?: boolean }) {
   const nextEventSummary = getTeamNextEventSummary(team);
 
   return (
     <article className={`team-launcher-row flex min-w-0 items-center gap-2 rounded-2xl border bg-white p-2 shadow-sm transition ${compact ? 'team-launcher-row-compact' : ''} ${selected ? 'border-primary-300 bg-primary-50/50 ring-2 ring-primary-100' : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50/25'}`}>
       <Link
-        to={`/teams/${encodeURIComponent(team.teamId)}`}
+        to={getSingleTeamDestination(team.teamId, requestedWorkflow)}
         className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left"
         aria-describedby={selected ? `selected-team-${team.teamId}` : undefined}
         aria-label={`Open ${team.teamName}`}

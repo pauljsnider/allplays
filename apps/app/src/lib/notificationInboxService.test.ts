@@ -54,7 +54,8 @@ describe('notificationInboxService', () => {
 
         expect(collection).toHaveBeenCalledWith(db, 'users/user-123/notificationInbox');
         expect(limit).toHaveBeenCalledWith(100);
-        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'limit' });
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'orderBy' }, { kind: 'limit' });
         expect(callback).toHaveBeenCalledWith(2);
     });
 
@@ -89,11 +90,11 @@ describe('notificationInboxService', () => {
 
         const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
 
-        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'limit' });
+        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'orderBy' }, { kind: 'limit' });
         expect(onSnapshot).toHaveBeenCalledTimes(1);
         expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
         expect(collection).toHaveBeenCalledTimes(1);
-        expect(orderBy).not.toHaveBeenCalled();
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(limit).toHaveBeenCalledWith(100);
         expect(callback).not.toHaveBeenCalled();
         expect(onError).toHaveBeenCalledWith(unreadError);

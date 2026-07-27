@@ -79,6 +79,10 @@ describe('React app team navigation helpers', () => {
             href: '/teams/team-1?tab=roster',
             kind: 'native'
         });
+        expect(management?.items.find((item) => item.id === 'manage-schedule')).toMatchObject({
+            href: '/schedule?scope=staff&staffTools=1&teamId=team-1',
+            kind: 'native'
+        });
         expect(management?.items.find((item) => item.id === 'stats-config')).toMatchObject({
             href: '/teams/team-1?tab=more',
             kind: 'native'

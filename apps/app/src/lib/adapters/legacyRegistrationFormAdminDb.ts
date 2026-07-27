@@ -13,6 +13,7 @@ export const collection = (...args: any[]) => callLegacyFirebase('collection', a
 export const doc = (...args: any[]) => callLegacyFirebase('doc', args);
 export const getDoc = (...args: any[]) => callLegacyFirebase('getDoc', args);
 export const getDocs = (...args: any[]) => callLegacyFirebase('getDocs', args);
+export const runTransaction = (...args: any[]) => callLegacyFirebase('runTransaction', args);
 export const serverTimestamp = (...args: any[]) => callLegacyFirebase('serverTimestamp', args);
 export const setDoc = (...args: any[]) => callLegacyFirebase('setDoc', args);
 export const updateDoc = (...args: any[]) => callLegacyFirebase('updateDoc', args);

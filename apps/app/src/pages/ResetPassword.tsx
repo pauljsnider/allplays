@@ -3,13 +3,14 @@ import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, MailWarning, XCircle } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
+import { getSafeAuthNextRoute } from '../lib/authNextRoute';
 import { applyEmailActionCode, confirmReset, verifyResetCode } from '../lib/authService';
 
 export function ResetPassword() {
   const [searchParams] = useSearchParams();
   const mode = searchParams.get('mode') || '';
   const oobCode = searchParams.get('oobCode') || '';
-  const requestedNext = searchParams.get('next') || '';
+  const requestedNext = getSafeAuthNextRoute(searchParams.get('next'));
   const successRoute = mode === 'verifyEmail' ? '/verify-pending' : '/auth';
   const successLabel = mode === 'verifyEmail' ? 'Continue after verification' : 'Continue to login';
   const [state, setState] = useState<'loading' | 'reset' | 'success' | 'invalid'>('loading');
@@ -114,7 +115,7 @@ export function ResetPassword() {
       {state === 'success' ? (
         <>
           <Message icon={CheckCircle2} text={message} tone="success" />
-          <Link to={requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
+          <Link to={requestedNext || successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
         </>
       ) : null}
 

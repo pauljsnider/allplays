@@ -118,7 +118,7 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       id: 'manage-schedule',
       label: 'Manage schedule',
       detail: 'Games, practices, reminders, cancellations',
-      href: `/schedule?teamId=${encodeURIComponent(teamId)}`,
+      href: `/schedule?scope=staff&staffTools=1&teamId=${encodeURIComponent(teamId)}`,
       kind: 'native'
     },
     {

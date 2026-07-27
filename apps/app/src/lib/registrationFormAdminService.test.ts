@@ -18,6 +18,7 @@ const firebaseMocks = vi.hoisted(() => {
     }),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    runTransaction: vi.fn(),
     serverTimestamp: vi.fn(() => 'server-timestamp'),
     setDoc: vi.fn(),
     updateDoc: vi.fn()
@@ -70,6 +71,10 @@ const webCreatedFixture = {
 describe('registrationFormAdminService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    firebaseMocks.runTransaction.mockImplementation(async (_db, callback) => callback({
+      get: firebaseMocks.getDoc,
+      update: firebaseMocks.updateDoc
+    }));
   });
 
   it('checks staff access for registration form management', () => {
@@ -200,7 +205,8 @@ describe('registrationFormAdminService', () => {
         participantFieldsText: 'Player name\nBirthdate',
         guardianFieldsText: 'Guardian email',
         registrationOptions: [
-          { id: 'travel', label: 'Travel', capacityLimit: '12', active: true, waitlistEnabled: true }
+          { id: 'travel', label: 'Travel', capacityLimit: '12', active: true, waitlistEnabled: true },
+          { id: 'local division', label: 'Local', capacityLimit: '20', active: true, waitlistEnabled: false }
         ],
         paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
         installmentPlan: { enabled: true, title: 'Two payments', installmentCount: 2, firstDueDate: '2026-06-01', intervalDays: 14 },
@@ -234,8 +240,16 @@ describe('registrationFormAdminService', () => {
         updatedBy: 'coach-1'
       })
     );
-    expect((firebaseMocks.updateDoc.mock.calls[0][1] as any).registrationOptionCounts).toEqual({
-      travel: { enrolled: 7, waitlisted: 2, lastUpdatedBy: 'server' }
+    expect(firebaseMocks.runTransaction).toHaveBeenCalledWith(
+      { path: 'db' },
+      expect.any(Function)
+    );
+    const updatePayload = firebaseMocks.updateDoc.mock.calls[0][1] as any;
+    expect(updatePayload).not.toHaveProperty('registrationOptionCounts');
+    expect(updatePayload).not.toHaveProperty('registrationOptionCounts.travel');
+    expect(updatePayload['registrationOptionCounts.local_division']).toEqual({
+      enrolled: 0,
+      waitlisted: 0
     });
   });
 

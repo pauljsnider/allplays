@@ -873,7 +873,7 @@ function buildAddWorkflows(): AddWorkflow[] {
       section: 'Schedule',
       icon: CalendarPlus,
       kind: 'native',
-      href: '/schedule?create=event',
+      href: '/schedule?scope=staff&staffTools=1&staffSection=add',
       badge: 'Coach/Admin'
     },
     {

@@ -74,6 +74,7 @@ export function subscribeToUnreadNotificationCount(
 ): () => void {
     const q = query(
         collection(db, `users/${uid}/notificationInbox`),
+        orderBy('createdAt', 'desc'),
         limit(unreadNotificationCountLimit)
     );
 
