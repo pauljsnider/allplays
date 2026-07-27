@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { getPublicSmokePages } from '../tests/smoke/page-registry.js';
+import {
+    createAppCheckRuntimeConfig,
+    isAppCheckEnforcementReady
+} from './stage-pages-bundle.mjs';
 
 const runtimeConfigPath = '/.well-known/allplays-runtime-config.json';
 
@@ -18,25 +22,13 @@ const firebaseConfig = loadJson(
     new URL('../firebase.json', import.meta.url),
     'firebase.json'
 );
-const fallbackRuntimeConfig = loadJson(
-    new URL(`..${runtimeConfigPath}`, import.meta.url),
-    runtimeConfigPath
-);
-
 export function getExpectedRuntimeConfig({
     siteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
-    fallback = fallbackRuntimeConfig
+    enforcementReady = isAppCheckEnforcementReady(
+        process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+    )
 } = {}) {
-    const normalizedSiteKey = typeof siteKey === 'string' ? siteKey.trim() : '';
-    if (!/^[A-Za-z0-9_-]{10,200}$/.test(normalizedSiteKey)) return fallback;
-
-    return {
-        appCheck: {
-            enabled: true,
-            recaptchaEnterpriseSiteKey: normalizedSiteKey,
-            isTokenAutoRefreshEnabled: true
-        }
-    };
+    return createAppCheckRuntimeConfig(siteKey, { enforcementReady });
 }
 
 export function configuredHeadersFor(path, config = firebaseConfig) {

@@ -61,10 +61,21 @@ describe('candidate host public smoke', () => {
         expect(configuredHeadersFor('/teams.html', { hosting: {} })).toEqual(new Map());
     });
 
-    it('derives the expected runtime configuration from the staging site-key contract', () => {
+    it('keeps the expected runtime configuration paused without the rollout-ready gate', () => {
+        expect(getExpectedRuntimeConfig({
+            siteKey: ' public-site-key_123 '
+        })).toEqual({
+            appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        });
+    });
+
+    it('expects an enabled runtime configuration only with a rollout-ready key', () => {
         expect(getExpectedRuntimeConfig({
             siteKey: ' public-site-key_123 ',
-            fallback: { appCheck: { enabled: false } }
+            enforcementReady: true
         })).toEqual({
             appCheck: {
                 enabled: true,
@@ -72,6 +83,10 @@ describe('candidate host public smoke', () => {
                 isTokenAutoRefreshEnabled: true
             }
         });
+        expect(() => getExpectedRuntimeConfig({
+            siteKey: 'invalid key',
+            enforcementReady: true
+        })).toThrow(/enforcement-ready staging requires a valid/);
     });
 
     it('normalizes the supplied URL to one HTTPS origin for every configured request', async () => {
