@@ -2767,10 +2767,38 @@ exports.sweepIneligiblePublicUserProfiles = functions
       auth: admin.auth(),
       documentIdField: admin.firestore.FieldPath.documentId(),
       isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
+      reconcileAuthIdentity: async (userId, authIdentity) => {
+        const authIdentitySnap = await firestore.doc(`publicProfileAuthIdentities/${userId}`).get();
+        const indexedEmail = authIdentitySnap.exists
+          ? String(authIdentitySnap.data()?.email || '').trim().toLowerCase()
+          : null;
+        const currentEmail = String(authIdentity.email || '').trim().toLowerCase();
+        if (indexedEmail === currentEmail) return null;
+
+        const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);
+        const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
+          userId,
+          authIdentity
+        );
+        return {
+          affectedStaffTeamIds: uniqueNonEmptyStrings([
+            ...previousStaffTeamIds,
+            ...discoveryTeamIds
+          ])
+        };
+      },
+      syncReconciledIdentity: (userId, authIdentity, reconciliation) => (
+        Promise.all(reconciliation.affectedStaffTeamIds.map((teamId) => (
+          syncNotificationRecipientForTeamUser(teamId, userId, {
+            authEmail: authIdentity.email || ''
+          })
+        )))
+      ),
       syncEligibleProfile: (userId, authIdentity) => (
         syncPublicUserProfileProjectionForUser(userId, {
           authIdentity,
-          useIndexedStaffMemberships: true
+          useIndexedStaffMemberships: true,
+          updateAuthIdentityIndex: true
         })
       )
     });
@@ -2885,10 +2913,12 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   });
   const batch = firestore.batch();
   batch.set(publicProfileRef, payload, { merge: true });
-  batch.set(authIdentityRef, {
-    email: String(authIdentity.email || '').trim().toLowerCase(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  });
+  if (options.updateAuthIdentityIndex === true) {
+    batch.set(authIdentityRef, {
+      email: String(authIdentity.email || '').trim().toLowerCase(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  }
   await batch.commit();
   return payload;
 }
@@ -3341,7 +3371,8 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
 
   await syncPublicUserProfileProjectionForUser(userId, {
     userSnap,
-    authIdentity: currentAuthIdentity
+    authIdentity: currentAuthIdentity,
+    useIndexedStaffMemberships: true
   });
 
   return { success: true };
@@ -7238,7 +7269,11 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     return null;
   }
 
-  const email = String(resolvedUser.email || resolvedUser.profileEmail || '').trim().toLowerCase();
+  const email = String(
+    options.authEmail !== undefined
+      ? options.authEmail
+      : (resolvedUser.email || resolvedUser.profileEmail || '')
+  ).trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
     teamId,
     team: resolvedTeam,
@@ -7415,7 +7450,8 @@ exports.syncPublicUserProfileOnUserWrite = functions
       !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
     if (!sourceChanged) return null;
     await syncPublicUserProfileProjectionForUser(context.params.uid, {
-      userSnap: change.after
+      userSnap: change.after,
+      useIndexedStaffMemberships: true
     });
     return null;
   });

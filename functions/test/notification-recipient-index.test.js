@@ -607,6 +607,41 @@ test('sync keeps opted-in users indexed when they have no push devices', async (
     }
 });
 
+test('Auth identity reconciliation removes former staff notifications despite a stale user email', async () => {
+    const recipientPath = 'teams/team-1/notificationRecipients/admin-1';
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'owner-1', adminEmails: ['old-admin@example.com'] }
+        },
+        userDocs: {
+            'admin-1': { email: 'old-admin@example.com' }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: {
+                uid: 'admin-1',
+                teamId: 'team-1',
+                roles: ['staff'],
+                categories: { schedule: true },
+                tokens: []
+            }
+        }
+    });
+
+    try {
+        const result = await env.internals.syncNotificationRecipientForTeamUser(
+            'team-1',
+            'admin-1',
+            { authEmail: 'new-admin@example.com' }
+        );
+
+        assert.equal(result, null);
+        assert.equal(env.getDoc(recipientPath), undefined);
+        assert.ok(env.deletedPaths.includes(recipientPath));
+    } finally {
+        env.cleanup();
+    }
+});
+
 test('device writes refresh token lists for every team the user belongs to', async () => {
     const env = loadNotificationRecipientIndexEnv({
         teamDocs: {

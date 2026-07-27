@@ -89,6 +89,7 @@ test('Auth deletion ignores records without a uid', async () => {
 test('scheduled eligibility sweep removes ineligible users and syncs each eligible user once', async () => {
   const deletedUserIds = [];
   const reconciledUserIds = [];
+  const synchronizedIdentityUserIds = [];
   const syncedUserIds = [];
   const profileDocs = ['verified-user', 'unverified-user', 'missing-user'].map((id) => ({
     id,
@@ -122,22 +123,35 @@ test('scheduled eligibility sweep removes ineligible users and syncs each eligib
     isAuthUserNotFound: (error) => error?.code === 'auth/user-not-found',
     reconcileAuthIdentity: async (userId, authIdentity) => {
       reconciledUserIds.push([userId, authIdentity]);
+      return { affectedStaffTeamIds: ['former-team', 'current-team'] };
     },
-    syncEligibleProfile: async (userId, authIdentity, discoveryTeamIds) => {
-      syncedUserIds.push([userId, authIdentity, discoveryTeamIds]);
+    syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {
+      synchronizedIdentityUserIds.push([userId, authIdentity, reconciliation]);
+    },
+    syncEligibleProfile: async (userId, authIdentity, reconciliation) => {
+      syncedUserIds.push([userId, authIdentity, reconciliation]);
     },
     batchSize: 10
   });
 
   assert.deepEqual(await handler(), { scanned: 3, removed: 2 });
   assert.deepEqual(deletedUserIds.sort(), ['missing-user', 'unverified-user']);
-  assert.deepEqual(reconciledUserIds.map(([userId]) => userId), ['verified-user']);
+  assert.deepEqual(reconciledUserIds.map(([userId]) => userId), [
+    'verified-user',
+    'unverified-user'
+  ]);
+  assert.deepEqual(synchronizedIdentityUserIds.map(([userId]) => userId), [
+    'verified-user',
+    'unverified-user'
+  ]);
   assert.deepEqual(syncedUserIds, [['verified-user', {
     email: null,
     displayName: null,
     photoUrl: null,
     emailVerified: true
-  }, undefined]]);
+  }, {
+    affectedStaffTeamIds: ['former-team', 'current-team']
+  }]]);
 });
 
 test('mixed-case admin emails resolve once to a stable uid-based staff membership', async () => {
@@ -184,7 +198,7 @@ test('runtime profile resync reads normalized staff teams by uid without email m
 });
 
 test('unindexed mixed-case admin is discovered through full-reconciliation paths', async (t) => {
-  const synchronizationPaths = ['callable', 'changed-user-write'];
+  const synchronizationPaths = ['scheduled-auth-identity-change', 'controlled-backfill'];
 
   for (const synchronizationPath of synchronizationPaths) {
     await t.test(synchronizationPath, async () => {

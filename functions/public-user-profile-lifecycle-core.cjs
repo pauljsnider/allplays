@@ -269,6 +269,7 @@ function createPublicProfileEligibilitySweepHandler({
   documentIdField,
   isAuthUserNotFound,
   reconcileAuthIdentity,
+  syncReconciledIdentity,
   syncEligibleProfile,
   batchSize = 200,
   concurrency = 20
@@ -303,11 +304,18 @@ function createPublicProfileEligibilitySweepHandler({
             if (!isAuthUserNotFound(error)) throw error;
             authIdentity = { userMissing: true };
           }
-          const removed = await removePublicProfileForIneligibleAuth(profileDoc.ref, authIdentity);
-          if (removed) return true;
-          const reconciledIdentity = typeof reconcileAuthIdentity === 'function'
+          const reconciledIdentity = authIdentity.userMissing !== true
+            && typeof reconcileAuthIdentity === 'function'
             ? await reconcileAuthIdentity(profileDoc.id, authIdentity)
             : undefined;
+          if (
+            reconciledIdentity
+            && typeof syncReconciledIdentity === 'function'
+          ) {
+            await syncReconciledIdentity(profileDoc.id, authIdentity, reconciledIdentity);
+          }
+          const removed = await removePublicProfileForIneligibleAuth(profileDoc.ref, authIdentity);
+          if (removed) return true;
           if (typeof syncEligibleProfile === 'function') {
             await syncEligibleProfile(profileDoc.id, authIdentity, reconciledIdentity);
           }

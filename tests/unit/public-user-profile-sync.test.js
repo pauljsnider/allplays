@@ -106,6 +106,9 @@ describe('public user profile sync', () => {
         expect(callableSource).toContain('const currentAuthIdentity = await loadPublicUserProfileAuthIdentity(userId);');
         expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(userId, {');
         expect(callableSource).toContain('authIdentity: currentAuthIdentity');
+        expect(callableSource).toContain('useIndexedStaffMemberships: true');
+        expect(callableSource).not.toContain('reconcilePublicProfileStaffMembershipsForAuthUser');
+        expect(callableSource).not.toContain('loadCaseInsensitivePublicProfileStaffTeamIds');
         expect(callableSource).toContain('email: currentAuthIdentity.email || null');
         expect(callableSource).toContain('email_verified: currentAuthIdentity.emailVerified === true');
         expect(callableSource).not.toContain('email: context.auth.token?.email || null');
@@ -169,11 +172,34 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({ firestore })');
         expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
         expect(functionsSource).toContain("schedule('every 24 hours')");
+        expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
+        expect(functionsSource).toContain('if (indexedEmail === currentEmail) return null;');
+        expect(functionsSource).toContain('const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);');
+        expect(functionsSource).toContain('const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(');
+        expect(functionsSource).toContain('syncReconciledIdentity: (userId, authIdentity, reconciliation) => (');
         expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
         expect(functionsSource).toContain('useIndexedStaffMemberships: true');
-        expect(functionsSource).not.toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
+        expect(functionsSource).toContain('updateAuthIdentityIndex: true');
+        expect(functionsSource).toContain('syncNotificationRecipientForTeamUser(teamId, userId, {');
+        expect(functionsSource).toContain("authEmail: authIdentity.email || ''");
         expect(functionsSource).toContain('if (!sourceChanged) return null;');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
+    });
+
+    it('uses only the uid membership index for routine callable and user-write refreshes', () => {
+        const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
+        const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+        const userWriteStart = functionsSource.indexOf('exports.syncPublicUserProfileOnUserWrite = functions');
+        const userWriteEnd = functionsSource.indexOf('exports.syncAdminUserSearchIndexOnUserWrite', userWriteStart);
+        const userWriteSource = functionsSource.slice(userWriteStart, userWriteEnd);
+
+        for (const routineSyncSource of [callableSource, userWriteSource]) {
+            expect(routineSyncSource).toContain('useIndexedStaffMemberships: true');
+            expect(routineSyncSource).not.toContain('updateAuthIdentityIndex: true');
+            expect(routineSyncSource).not.toContain('reconcilePublicProfileStaffMembershipsForAuthUser');
+            expect(routineSyncSource).not.toContain('loadCaseInsensitivePublicProfileStaffTeamIds');
+        }
     });
 
     it('keeps mixed-case coach and owner discovery membership in a normalized uid index', () => {
