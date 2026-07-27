@@ -59,7 +59,8 @@ function normalizePublicSiteKey(value) {
     return /^[A-Za-z0-9_-]{10,200}$/.test(normalized) ? normalized : '';
 }
 
-function isAppCheckEnforcementReady(value) {
+export function isAppCheckEnforcementReady(value) {
+    if (value === true) return true;
     return typeof value === 'string' && ['true', '1'].includes(value.trim().toLowerCase());
 }
 
@@ -224,26 +225,39 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
     };
 }
 
-export function writeAppCheckRuntimeConfig(destinationDir, siteKey, { requireValidSiteKey = false } = {}) {
-    const normalizedSiteKey = normalizePublicSiteKey(siteKey);
-    if (!normalizedSiteKey) {
-        if (requireValidSiteKey) {
-            throw new Error(
-                'App Check enforcement-ready staging requires a valid ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY.'
-            );
-        }
-        return null;
+export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false } = {}) {
+    if (!isAppCheckEnforcementReady(enforcementReady)) {
+        return {
+            appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        };
     }
 
-    const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    fs.writeFileSync(outputPath, `${JSON.stringify({
+    const normalizedSiteKey = normalizePublicSiteKey(siteKey);
+    if (!normalizedSiteKey) {
+        throw new Error(
+            'App Check enforcement-ready staging requires a valid ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY.'
+        );
+    }
+
+    return {
         appCheck: {
             enabled: true,
             recaptchaEnterpriseSiteKey: normalizedSiteKey,
             isTokenAutoRefreshEnabled: true
         }
-    }, null, 2)}\n`);
+    };
+}
+
+export function writeAppCheckRuntimeConfig(destinationDir, siteKey, { enforcementReady = false } = {}) {
+    const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(
+        outputPath,
+        `${JSON.stringify(createAppCheckRuntimeConfig(siteKey, { enforcementReady }), null, 2)}\n`
+    );
     return outputPath;
 }
 
@@ -325,7 +339,7 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
         resolvedDestination,
         process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
         {
-            requireValidSiteKey: isAppCheckEnforcementReady(
+            enforcementReady: isAppCheckEnforcementReady(
                 process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
             )
         }
