@@ -318,8 +318,16 @@ type PrivateAiToolContext = {
   preparedArtifact?: PrivateAiTeamArtifactDraft;
 };
 
+type PrivateAiPreparedWrite = {
+  definitionName: string;
+  args: Record<string, unknown>;
+  summary?: string;
+  previewSummary?: Record<string, unknown>;
+};
+
 type InternalPrivateAiToolContext = PrivateAiToolContext & {
   confirmedWriteToken?: symbol;
+  preparedWrite?: PrivateAiPreparedWrite;
 };
 
 const pendingActionLifetimeMs = 30 * 60 * 1000;
@@ -1761,28 +1769,16 @@ export async function generatePrivateAiAnswer(
     const blockedCalls = allowedToolNames
       ? requestedCalls.filter((call) => !allowedToolNames.has(compactText(call.name)))
       : [];
-    const calls: PrivateAiToolCall[] = [];
-    const duplicateCalls: PrivateAiToolCall[] = [];
-    allowedCalls.forEach((call) => {
-      const key = getPrivateAiPlannerToolCallKey(call);
-      if (plannerToolCallKeys.has(key)) {
-        duplicateCalls.push(call);
-      } else {
-        plannerToolCallKeys.add(key);
-        calls.push(call);
-      }
-    });
     blockedCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
       error: 'That tool is not allowed for this attachment request.'
     }));
-    if (!calls.length) {
+    if (!allowedCalls.length) {
       if (blockedCalls.length) {
         plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
         continue;
       }
-      if (duplicateCalls.length) break;
       if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
         plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
           `CORRECTION: This is an imperative write request. Return the matching write toolCall; do not claim that a preview exists without one.\n`;
@@ -1795,7 +1791,7 @@ export async function generatePrivateAiAnswer(
     }
 
     const unrelatedWriteCalls = imperativeWriteRequest
-      ? calls.filter((call) => (
+      ? allowedCalls.filter((call) => (
           getPrivateAiToolDefinition(call.name)?.mode === 'write'
           && !privateAiWriteToolMatchesQuestion(question, call.name)
         ))
@@ -1803,17 +1799,53 @@ export async function generatePrivateAiAnswer(
     unrelatedWriteCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
-      error: 'That write tool does not match the requested operation.'
+      error: getExpectedPrivateAiWriteToolNames(question) === null
+        ? 'The requested write operation could not be classified safely.'
+        : 'That write tool does not match the requested operation.'
     }));
     const executableCalls = unrelatedWriteCalls.length
-      ? calls.filter((call) => !unrelatedWriteCalls.includes(call))
-      : calls;
+      ? allowedCalls.filter((call) => !unrelatedWriteCalls.includes(call))
+      : allowedCalls;
     if (!executableCalls.length) {
       plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
       continue;
     }
-    const roundResults = await Promise.all(executableCalls.map((call) => runPrivateAiTool(user, call, toolContext)));
+    const roundResults: PrivateAiToolResult[] = [];
+    let duplicateCallCount = 0;
+    for (const call of executableCalls) {
+      const definition = getPrivateAiToolDefinition(call.name);
+      if (definition?.mode === 'write') {
+        try {
+          const preparedWrite = await preparePrivateAiWrite(user, call);
+          const key = getPrivateAiPreparedWriteKey(preparedWrite);
+          if (plannerToolCallKeys.has(key)) {
+            duplicateCallCount += 1;
+            continue;
+          }
+          plannerToolCallKeys.add(key);
+          roundResults.push(await runPrivateAiToolInternal(user, call, {
+            ...toolContext,
+            preparedWrite
+          }));
+        } catch (error: any) {
+          roundResults.push({
+            name: compactText(call.name),
+            ok: false,
+            error: error?.message || 'Tool failed.'
+          });
+        }
+        continue;
+      }
+      const key = getPrivateAiPlannerToolCallKey(call);
+      if (plannerToolCallKeys.has(key)) {
+        duplicateCallCount += 1;
+        continue;
+      }
+      plannerToolCallKeys.add(key);
+      roundResults.push(await runPrivateAiTool(user, call, toolContext));
+    }
     toolResults.push(...roundResults);
+    if (!roundResults.length && duplicateCallCount) break;
     plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
   }
 
@@ -1872,8 +1904,20 @@ async function runPrivateAiToolInternal(
     }
 
     if (definition.mode === 'write' && !isConfirmedWrite) {
-      const prepared = definition.prepare ? await definition.prepare(user, args) : { args };
-      const pending = await savePrivateAiPendingAction(user, definition, prepared.args, context, prepared);
+      const prepared = context.preparedWrite;
+      if (prepared && prepared.definitionName !== definition.name) {
+        throw new Error('Prepared AI action does not match the requested write tool.');
+      }
+      const preparedAction = prepared
+        ? {
+            args: prepared.args,
+            summary: prepared.summary,
+            previewSummary: prepared.previewSummary
+          }
+        : definition.prepare
+          ? await definition.prepare(user, args)
+          : { args };
+      const pending = await savePrivateAiPendingAction(user, definition, preparedAction.args, context, preparedAction);
       return {
         name,
         ok: true,
@@ -2892,10 +2936,7 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       mode: 'write',
       domain: 'schedule-attendance-planning',
       description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series.',
-      prepare: (user, args) => prepareManagedScheduleEventUpdateAction(user, {
-        ...args,
-        input: normalizePrivateAiScheduleEventInput(args)
-      }, 'Update schedule event'),
+      prepare: (user, args) => prepareManagedScheduleEventUpdateAction(user, args, 'Update schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const service = await import('./scheduleService');
@@ -3275,7 +3316,6 @@ async function prepareManagedScheduleEventCreateAction(
       : 'Game';
   return {
     args: {
-      ...args,
       teamId,
       eventType,
       input
@@ -3301,7 +3341,29 @@ function mergePrivateAiScheduleEventUpdateInput(
   event: ParentScheduleEvent,
   requestedInput: Record<string, unknown>
 ) {
-  const input = { ...requestedInput };
+  const requested = { ...requestedInput };
+  const rawRequestedDate = requested.startDate ?? requested.startsAt ?? requested.date;
+  const requestedDateText = compactText(rawRequestedDate);
+  const requestedDatePart = requestedDateText.match(/^(\d{4}-\d{2}-\d{2})$/)?.[1] || '';
+  const requestedTime = requested.time ?? requested.startTime;
+  const timeZone = compactText(requested.timeZone ?? requested.timezone);
+  const existingParts = getPrivateAiScheduleDateTimeParts(event.date, timeZone);
+  if (requestedDatePart && !compactText(requestedTime)) {
+    requested.startDate = formatPrivateAiLocalDateTime(
+      requestedDatePart,
+      `${existingParts.hour}:${existingParts.minute}:${existingParts.second}`,
+      timeZone || 'UTC'
+    );
+  } else if (rawRequestedDate === undefined && compactText(requestedTime)) {
+    requested.startDate = formatPrivateAiLocalDateTime(
+      existingParts.date,
+      requestedTime,
+      timeZone || 'UTC'
+    );
+    delete requested.time;
+    delete requested.startTime;
+  }
+  const input = normalizePrivateAiScheduleEventInput({ input: requested });
   const preserve = (key: string, value: unknown) => {
     if (!hasOwn(input, key)) input[key] = value;
   };
@@ -3331,6 +3393,30 @@ function mergePrivateAiScheduleEventUpdateInput(
     preserve('opponentTeamPhoto', event.opponentTeamPhoto || '');
   }
   return input;
+}
+
+function getPrivateAiScheduleDateTimeParts(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timeZone || 'UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second
+  };
 }
 
 function applyPrivateAiScheduleEventUpdateInput(
@@ -3371,12 +3457,17 @@ async function prepareManagedScheduleEventUpdateAction(
   const eventSummary = summarizeScheduleEvent(proposedEvent);
   return {
     args: {
-      ...args,
       teamId: event.teamId,
       eventId: event.id,
       eventType: event.type,
       childId: event.childId || '',
-      input
+      input,
+      ...(event.type === 'practice'
+        ? {
+            scope: compactText(args.scope) === 'occurrence' ? 'occurrence' : 'series',
+            instanceDate: compactText(args.instanceDate)
+          }
+        : {})
     },
     summary: `${label} | ${event.teamName}: ${getScheduleTitle(proposedEvent)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
     previewSummary: {
@@ -3470,6 +3561,24 @@ function getPrivateAiToolDefinition(name: string) {
   return privateAiToolDefinitions.find((definition) => (
     definition.name === normalized || (definition.aliases || []).includes(normalized)
   )) || null;
+}
+
+async function preparePrivateAiWrite(
+  user: AuthUser,
+  call: PrivateAiToolCall
+): Promise<PrivateAiPreparedWrite> {
+  const definition = getPrivateAiToolDefinition(call.name);
+  if (!definition || definition.mode !== 'write') {
+    throw new Error(`Unsupported write tool: ${compactText(call.name)}`);
+  }
+  const args = sanitizeToolCallArgs(isPlainObject(call.args) ? call.args : {});
+  const prepared = definition.prepare ? await definition.prepare(user, args) : { args };
+  return {
+    definitionName: definition.name,
+    args: sanitizeToolCallArgs(prepared.args),
+    summary: prepared.summary,
+    previewSummary: prepared.previewSummary
+  };
 }
 
 async function loadPlayerDetailForAi(user: AuthUser, args: Record<string, unknown>) {
@@ -6412,6 +6521,10 @@ function normalizePrivateAiScheduleEventInput(args: Record<string, unknown>) {
   delete input.time;
   delete input.startTime;
   delete input.timezone;
+  delete input.startsAt;
+  delete input.date;
+  delete input.endsAt;
+  delete input.arrival;
   return input;
 }
 
@@ -6472,11 +6585,11 @@ function looksLikeFunctionalHelpQuestion(question: string) {
 
 function looksLikeImperativePrivateAiWriteRequest(question: string) {
   const text = compactText(question).toLowerCase();
-  const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|reschedule|send|set|mark|record|assign|claim|release|save|import)';
-  return /^(?:please\s+)?(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|reschedule|send|set|mark|record|assign|claim|release|save|import)\b/.test(text)
-    || /^(?:can|could|would)\s+you\s+(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
-    || /^(?:use|using)\b.{1,180}?(?:[.!;,:]\s*|\band\s+)(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
-    || /^(?:for|on)\b.{1,120}?,\s*(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
+  const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|schedule|reschedule|move|send|resend|retry|set|mark|record|assign|claim|release|save|import|complete|submit|request|revoke|retire|toggle|enable|disable|approve|reject|review|close|reopen|offer|post|pay|favorite|unfavorite)';
+  return new RegExp(`^(?:please\\s+)?${writeVerb}\\b`).test(text)
+    || new RegExp(`^(?:can|could|would)\\s+you\\s+(?:please\\s+)?${writeVerb}\\b`).test(text)
+    || new RegExp(`^(?:use|using)\\b.{1,180}?(?:[.!;,:]\\s*|\\band\\s+)(?:please\\s+)?${writeVerb}\\b`).test(text)
+    || new RegExp(`^(?:for|on)\\b.{1,120}?,\\s*(?:please\\s+)?${writeVerb}\\b`).test(text)
     || new RegExp(`^(?:in\\s+)?[^,;:\\n]{1,120}[,:]\\s*(?:please\\s+)?${writeVerb}\\b`).test(text);
 }
 
@@ -6492,7 +6605,10 @@ function hasPrivateAiWriteToolResult(question: string, toolResults: PrivateAiToo
 
 function privateAiWriteToolMatchesQuestion(question: string, toolName: string) {
   const expectedToolNames = getExpectedPrivateAiWriteToolNames(question);
-  return !expectedToolNames || expectedToolNames.has(compactText(toolName));
+  const definition = getPrivateAiToolDefinition(toolName);
+  return expectedToolNames !== null
+    && Boolean(definition)
+    && expectedToolNames.has(definition!.name);
 }
 
 function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | null {
@@ -6523,6 +6639,89 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
   ) {
     return new Set(['update_game_score']);
   }
+  if (/\b(?:rsvp|attendance response|going|not going|not_going|maybe)\b/.test(text)) {
+    if (/\b(?:remind|reminder|send)\b/.test(text)) return new Set(['send_rsvp_reminder']);
+    return new Set(['update_rsvp', 'update_rsvps_for_children']);
+  }
+  if (/\b(?:claim)\b/.test(text) && /\b(?:assignment|task|slot)\b/.test(text)) {
+    return new Set(['claim_assignment']);
+  }
+  if (/\b(?:release)\b/.test(text) && /\b(?:assignment|task|slot)\b/.test(text)) {
+    return new Set(['release_assignment']);
+  }
+  if (/\b(?:assign|assignment)\b/.test(text) && /\b(?:schedule|event|game|practice|role|task)\b/.test(text)) {
+    return new Set(['manage_schedule_assignment']);
+  }
+  if (/\b(?:practice packet|packet)\b/.test(text)) {
+    return /\b(?:mark|complete)\b/.test(text)
+      ? new Set(['mark_practice_packet_complete'])
+      : new Set(['save_practice_packet']);
+  }
+  if (/\b(?:practice attendance|attendance)\b/.test(text) && /\b(?:mark|record|save|update|set)\b/.test(text)) {
+    return new Set(['save_practice_attendance']);
+  }
+  if (/\b(?:team message|chat message|team chat|message)\b/.test(text) && /\b(?:send|post)\b/.test(text)) {
+    return new Set(['send_team_message']);
+  }
+  if (/\b(?:team email|email)\b/.test(text) && /\b(?:send|resend|retry)\b/.test(text)) {
+    return new Set(['send_team_email']);
+  }
+  if (/\b(?:tracking status|tracking item|requirement)\b/.test(text)) {
+    return /\b(?:player|athlete|complete|incomplete|mark|set)\b/.test(text)
+      ? new Set(['set_player_tracking_status'])
+      : new Set(['save_team_tracking_item']);
+  }
+  if (/\b(?:team settings?|team name|team sport|league url|livestream url)\b/.test(text)) {
+    return new Set(['update_team_settings']);
+  }
+  if (/\b(?:team admin|administrator)\b/.test(text) && /\b(?:invite|add)\b/.test(text)) {
+    return new Set(['invite_team_admin']);
+  }
+  if (/\b(?:stat configuration|stat tracker|tracker configuration)\b/.test(text)) {
+    return new Set(['save_stat_configuration']);
+  }
+  if (/\b(?:player profile|athlete profile|medical info|emergency contact)\b/.test(text)) {
+    return new Set(['update_player_profile']);
+  }
+  if (/\b(?:incentive)\b/.test(text)) {
+    if (/\b(?:pay|paid|payment)\b/.test(text)) return new Set(['mark_player_incentive_paid']);
+    if (/\b(?:retire|remove|delete)\b/.test(text)) return new Set(['retire_player_incentive_rule']);
+    if (/\b(?:enable|disable|toggle)\b/.test(text)) return new Set(['toggle_player_incentive_rule']);
+    if (/\b(?:cap|maximum|max)\b/.test(text)) return new Set(['set_player_incentive_cap']);
+    return new Set(['save_player_incentive_rule']);
+  }
+  if (/\b(?:ride offer|rideshare|ride request|ride spot|offer a ride)\b/.test(text)) {
+    if (/\b(?:request|claim)\b/.test(text)) return new Set(['request_ride_spot']);
+    if (/\b(?:cancel|remove)\b/.test(text)) return new Set(['cancel_ride_request']);
+    if (/\b(?:close|reopen|status|set)\b/.test(text)) return new Set(['set_ride_offer_status']);
+    return new Set(['create_ride_offer']);
+  }
+  if (/\b(?:household invite|household invitation|household member)\b/.test(text)) {
+    return new Set(['create_household_invite']);
+  }
+  if (/\b(?:family share|share link)\b/.test(text)) {
+    if (/\b(?:revoke|remove|delete)\b/.test(text)) return new Set(['revoke_family_share_link']);
+    if (/\b(?:calendar)\b/.test(text)) return new Set(['update_family_share_calendars']);
+    return new Set(['create_family_share_link']);
+  }
+  if (/\b(?:access request|parent access)\b/.test(text)) {
+    return new Set(['submit_access_request']);
+  }
+  if (/\b(?:team fee|fee)\b/.test(text)) {
+    return new Set(['create_team_fee']);
+  }
+  if (/\b(?:registration)\b/.test(text) && /\b(?:review|approve|reject|mark|record|update)\b/.test(text)) {
+    return new Set(['review_registration']);
+  }
+  if (/\b(?:drill favorite|favorite drill|favorite\b.{0,40}\bdrill|unfavorite\b.{0,40}\bdrill)\b/.test(text)) {
+    return new Set(['set_team_drill_favorite']);
+  }
+  if (/\b(?:practice timeline|timeline)\b/.test(text)) {
+    return new Set(['save_practice_timeline']);
+  }
+  if (/\b(?:game wrapup|game wrap-up|wrap up the game|complete the game)\b/.test(text)) {
+    return new Set(['complete_game_wrapup']);
+  }
   const scheduleEventRequest = /\b(?:schedule|game|event|match)\b/.test(text)
     || (
       /\bpractice\b/.test(text)
@@ -6535,7 +6734,7 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
     if (/\b(?:update|change|reschedule|move|set)\b/.test(text)) {
       return new Set(['update_schedule_event']);
     }
-    if (/\b(?:add|create|save|import)\b/.test(text)) {
+    if (/\b(?:add|create|save|import|schedule)\b/.test(text)) {
       return new Set(['create_schedule_event', 'apply_schedule_import']);
     }
   }
@@ -6553,6 +6752,19 @@ function getPrivateAiPlannerToolCallKey(call: PrivateAiToolCall) {
     );
   };
   return `${compactText(call.name)}:${JSON.stringify(normalizeValue(call.args))}`;
+}
+
+function getPrivateAiPreparedWriteKey(prepared: PrivateAiPreparedWrite) {
+  const normalizeValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalizeValue);
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeValue(value[key])])
+    );
+  };
+  return `${prepared.definitionName}:${JSON.stringify(normalizeValue(prepared.args))}`;
 }
 
 function looksLikeLastGameQuestion(question: string) {

@@ -5445,6 +5445,99 @@ describe('private AI service', () => {
     });
 
     it.each([
+        'Schedule a practice for Bears tomorrow.',
+        'Move the Bears game to Friday.',
+        'Resend the parent invitation for Avery.',
+        'Retry the parent invite email for Avery.',
+        "Complete Avery's practice packet.",
+        'Request a ride spot for the Bears game.',
+        'Revoke the grandparents family share link.',
+        'Review the pending registration.'
+    ])('rejects a planner-only preview for supported imperative form: %s', async (prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            answer: 'That change is staged. Reply yes to confirm.'
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([]);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        ['send', 'Send a team message about practice.'],
+        ['mark', "Mark Avery's practice packet complete."],
+        ['record', 'Record practice attendance for Bears.'],
+        ['assign', 'Assign snacks for the Bears game.'],
+        ['claim', 'Claim the snacks assignment for the Bears game.'],
+        ['release', 'Release the snacks assignment for the Bears game.']
+    ])('fails closed when an unrelated tool is proposed for the %s domain', async (_domain, prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            toolCalls: [{
+                name: 'create_schedule_event',
+                args: {
+                    teamId: 'team-1',
+                    eventType: 'game',
+                    input: { startDate: '2026-08-01T18:30:00-05:00' }
+                }
+            }]
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toHaveLength(2);
+        expect(result.toolResults.every((tool) => (
+            tool.name === 'create_schedule_event'
+            && tool.ok === false
+            && tool.error.includes('does not match the requested operation')
+        ))).toBe(true);
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when an imperative write domain cannot be classified', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent.mockResolvedValue(modelText(JSON.stringify({
+            toolCalls: [{
+                name: 'create_schedule_event',
+                args: {
+                    teamId: 'team-1',
+                    eventType: 'game',
+                    input: { startDate: '2026-08-01T18:30:00-05:00' }
+                }
+            }]
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Set the requested thing for Bears.');
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults.every((tool) => tool.ok === false)).toBe(true);
+        expect(result.toolResults.every((tool) => tool.error.includes('could not be classified safely'))).toBe(true);
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it.each([
         'Bears: create a game for Saturday',
         'Cougars, create a game for Saturday',
         'In Bears, add a game for Saturday'
@@ -5522,6 +5615,63 @@ describe('private AI service', () => {
         );
 
         expect(result.answer).toContain('staged once');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(firebaseMocks.setDoc.mock.calls.filter((call) => (
+            call[1]?.toolName === 'create_schedule_event'
+            && call[1]?.status === 'pending'
+        ))).toHaveLength(1);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+    });
+
+    it('deduplicates equivalent schedule writes after alias and access normalization', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamName: 'Bears',
+                        type: 'game',
+                        input: {
+                            date: '2026-08-03T19:00:00-05:00',
+                            opponent: 'Canonical Opponent',
+                            location: 'Canonical Field'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-03T19:00:00-05:00',
+                            opponent: 'Canonical Opponent',
+                            location: 'Canonical Field'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged once. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Add one Canonical Opponent game to the Bears schedule.');
+
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'create_schedule_event',
@@ -5744,6 +5894,90 @@ describe('private AI service', () => {
                 notes: 'Bring white jerseys',
                 competitionType: 'tournament',
                 countsTowardSeasonRecord: false
+            }),
+            coachUser
+        );
+    });
+
+    it('merges a time-only schedule update with the existing local event date', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z')
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    time: '21:15',
+                    timeZone: 'America/Chicago'
+                }
+            }
+        }, { conversationId: 'time-only-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-04T02:15:00.000Z',
+                endDate: '2026-08-04T03:45:00.000Z',
+                arrivalTime: '2026-08-04T01:45:00.000Z',
+                timeZone: 'America/Chicago'
+            }),
+            coachUser
+        );
+    });
+
+    it('merges a date-only schedule update with the existing local event time', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [{ playerId: 'player-1', name: 'Avery', teamId: 'team-1', teamName: 'Bears' }],
+            events: [futureEvent({
+                date: new Date('2026-08-04T00:00:00.000Z'),
+                endDate: new Date('2026-08-04T01:30:00.000Z'),
+                arrivalTime: new Date('2026-08-03T23:30:00.000Z')
+            })]
+        });
+
+        await executeConfirmedToolForTest(coachUser, {
+            name: 'update_schedule_event',
+            args: {
+                teamId: 'team-1',
+                eventId: 'game-1',
+                eventType: 'game',
+                input: {
+                    startDate: '2026-08-06',
+                    timeZone: 'America/Chicago'
+                }
+            }
+        }, { conversationId: 'date-only-game-update' });
+
+        expect(scheduleMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            expect.objectContaining({
+                startDate: '2026-08-07T00:00:00.000Z',
+                endDate: '2026-08-07T01:30:00.000Z',
+                arrivalTime: '2026-08-06T23:30:00.000Z',
+                timeZone: 'America/Chicago'
             }),
             coachUser
         );
