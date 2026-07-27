@@ -253,18 +253,23 @@ function createPublicProfileAuthDeleteHandler({ firestore, syncAffectedTeam }) {
         .where('userId', '==', userId)
         .get()
     ]);
-    const refs = [
-      firestore.doc(`publicUserProfiles/${userId}`),
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
+    const cleanupRefs = [
       firestore.doc(`publicProfileAuthIdentities/${userId}`),
       ...(staffMembershipSnap.docs || []).map((entry) => entry.ref)
     ];
     const affectedTeamIds = [...new Set((staffMembershipSnap.docs || [])
       .map((entry) => String(entry.data()?.teamId || '').trim())
       .filter(Boolean))];
-    await Promise.all(refs.map((ref) => ref.delete()));
     if (typeof syncAffectedTeam === 'function') {
       await Promise.all(affectedTeamIds.map((teamId) => syncAffectedTeam(teamId, userId)));
     }
+    // Keep the projection and staff index as the retry anchor until all
+    // notification recipients have been removed. Auth deletion does not have
+    // an application-level retry guarantee, while the scheduled sweep can
+    // recover any failure that leaves this projection in place.
+    await Promise.all(cleanupRefs.map((ref) => ref.delete()));
+    await publicProfileRef.delete();
     return null;
   };
 }

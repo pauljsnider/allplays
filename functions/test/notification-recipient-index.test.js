@@ -104,11 +104,13 @@ function loadNotificationRecipientIndexEnv({
     authUsersByUid = {},
     initialProjectionDocs = {},
     initialRecipientDocs = {},
+    deleteFailuresByPath = {},
     maxBatchCommitOps = 450,
     teamDocGetDelayMs = 0
 } = {}) {
     const deletedPaths = [];
     const batchCommitSizes = [];
+    const remainingDeleteFailures = new Map(Object.entries(deleteFailuresByPath));
     let activeTeamDocGets = 0;
     let maxActiveTeamDocGets = 0;
     const docStore = new Map();
@@ -192,6 +194,11 @@ function loadNotificationRecipientIndexEnv({
                 mergeStoredDoc(path, value);
             },
             async delete() {
+                const remainingFailures = Number(remainingDeleteFailures.get(path) || 0);
+                if (remainingFailures > 0) {
+                    remainingDeleteFailures.set(path, remainingFailures - 1);
+                    throw new Error(`temporary delete failure for ${path}`);
+                }
                 deletedPaths.push(path);
                 docStore.delete(path);
             },
@@ -736,6 +743,57 @@ test('ineligible Auth cleanup removes an owner recipient while team and user rec
         assert.equal(result, null);
         assert.equal(env.getDoc(recipientPath), undefined);
         assert.ok(env.deletedPaths.includes(recipientPath));
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('callable ineligible cleanup keeps its projection and indexes when recipient deletion fails', async () => {
+    const userId = 'owner-1';
+    const recipientPath = `teams/team-1/notificationRecipients/${userId}`;
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: userId, adminEmails: [] }
+        },
+        userDocs: {
+            [userId]: { email: 'owner@example.com' }
+        },
+        authUsersByUid: {
+            [userId]: { email: 'owner@example.com', emailVerified: false }
+        },
+        initialProjectionDocs: {
+            [`publicUserProfiles/${userId}`]: { discoveryTeamIds: ['team-1'] },
+            [`publicProfileAuthIdentities/${userId}`]: { email: 'owner@example.com' },
+            [`publicProfileStaffMemberships/team-1-owner-1`]: { teamId: 'team-1', userId }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: { uid: userId, teamId: 'team-1', roles: ['staff'], tokens: [] }
+        },
+        deleteFailuresByPath: {
+            [recipientPath]: 1
+        }
+    });
+
+    try {
+        await assert.rejects(
+            env.moduleExports.syncPublicUserProfileProjection(
+                { userId },
+                { auth: { uid: userId, token: {} } }
+            ),
+            /temporary delete failure/
+        );
+        assert.ok(env.getDoc(`publicUserProfiles/${userId}`));
+        assert.ok(env.getDoc(`publicProfileAuthIdentities/${userId}`));
+        assert.ok(env.getDoc(`publicProfileStaffMemberships/team-1-owner-1`));
+
+        await env.moduleExports.syncPublicUserProfileProjection(
+            { userId },
+            { auth: { uid: userId, token: {} } }
+        );
+        assert.equal(env.getDoc(recipientPath), undefined);
+        assert.equal(env.getDoc(`publicProfileStaffMemberships/team-1-owner-1`), undefined);
+        assert.equal(env.getDoc(`publicProfileAuthIdentities/${userId}`), undefined);
+        assert.equal(env.getDoc(`publicUserProfiles/${userId}`), undefined);
     } finally {
         env.cleanup();
     }

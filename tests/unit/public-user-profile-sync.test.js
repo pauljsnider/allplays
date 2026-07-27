@@ -149,7 +149,7 @@ describe('public user profile sync', () => {
             /exports\.syncPublicUserProfileOnUserWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
         );
         expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(context.params.uid, {');
-        expect(functionsSource).toContain('await removePublicProfileForIneligibleAuth(');
+        expect(functionsSource).toContain('await removePublicProfileAuthorizationForIneligibleAuth(');
     });
 
     it('removes stale discovery projections for unverified and deleted Auth identities', () => {
@@ -179,8 +179,8 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('if (!isIneligible && indexedEmail === currentEmail) return null;');
         expect(functionsSource).toContain('const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);');
         expect(functionsSource).toContain('const discoveryTeamIds = isIneligible');
-        expect(functionsSource).toContain('currentStaffTeamIds: []');
-        expect(functionsSource).toContain('syncReconciledIdentity: (userId, authIdentity, reconciliation) => (');
+        expect(functionsSource).toContain('loadPublicProfileStaffTeamIdsForIdentity(userId, indexedEmail)');
+        expect(functionsSource).toContain('syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {');
         expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
         expect(functionsSource).toContain('useIndexedStaffMemberships: true');
         expect(functionsSource).toContain('updateAuthIdentityIndex: true');
@@ -189,6 +189,25 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain("authEmail: authIdentity.email || ''");
         expect(functionsSource).not.toContain('if (!sourceChanged) return null;');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
+    });
+
+    it('retains the public-profile retry anchor until ineligible recipient cleanup completes', () => {
+        const cleanupStart = functionsSource.indexOf(
+            'async function removePublicProfileAuthorizationForIneligibleAuth'
+        );
+        const cleanupEnd = functionsSource.indexOf(
+            'async function reconcileRoutinePublicProfileAuthIdentity',
+            cleanupStart
+        );
+        const cleanupSource = functionsSource.slice(cleanupStart, cleanupEnd);
+
+        expect(cleanupSource.indexOf('syncNotificationRecipientForTeamUser')).toBeGreaterThanOrEqual(0);
+        expect(cleanupSource.indexOf('await reconcilePublicProfileStaffMembershipsForUser')).toBeGreaterThan(
+            cleanupSource.indexOf('syncNotificationRecipientForTeamUser')
+        );
+        expect(cleanupSource.indexOf('await publicProfileRef.delete()')).toBeGreaterThan(
+            cleanupSource.indexOf('await authIdentityRef.delete()')
+        );
     });
 
     it('reconciles Auth identity mismatches on routine callable and user-write refreshes', () => {

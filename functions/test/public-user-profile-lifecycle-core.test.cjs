@@ -96,6 +96,41 @@ test('Auth deletion ignores records without a uid', async () => {
   assert.equal(await handler({}), null);
 });
 
+test('Auth deletion retains the projection and indexes when recipient cleanup fails, then completes on retry', async () => {
+  const events = [];
+  let failRecipientCleanup = true;
+  const staffDoc = {
+    data: () => ({ teamId: 'team-1' }),
+    ref: { delete: async () => events.push('delete-membership') }
+  };
+  const firestore = {
+    collection: () => ({
+      where: () => ({ get: async () => ({ docs: [staffDoc] }) })
+    }),
+    doc: (path) => ({ delete: async () => events.push(`delete:${path}`) })
+  };
+  const handler = createPublicProfileAuthDeleteHandler({
+    firestore,
+    syncAffectedTeam: async () => {
+      events.push('sync-recipient');
+      if (failRecipientCleanup) throw new Error('temporary recipient cleanup failure');
+    }
+  });
+
+  await assert.rejects(handler({ uid: 'deleted-user' }), /temporary recipient cleanup failure/);
+  assert.deepEqual(events, ['sync-recipient']);
+
+  failRecipientCleanup = false;
+  await handler({ uid: 'deleted-user' });
+  assert.deepEqual(events, [
+    'sync-recipient',
+    'sync-recipient',
+    'delete:publicProfileAuthIdentities/deleted-user',
+    'delete-membership',
+    'delete:publicUserProfiles/deleted-user'
+  ]);
+});
+
 test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-delete trigger', async () => {
   const deletedUserIds = [];
   const reconciledUserIds = [];
@@ -175,6 +210,39 @@ test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-de
     affectedStaffTeamIds: ['former-team', 'current-team'],
     isIneligible: false
   }]]);
+});
+
+test('scheduled sweep does not delete an ineligible projection before its cleanup succeeds', async () => {
+  let deleteCalls = 0;
+  let failCleanup = true;
+  const profileDoc = {
+    id: 'unverified-user',
+    ref: { delete: async () => { deleteCalls++; } }
+  };
+  const query = {
+    orderBy: () => query,
+    limit: () => query,
+    startAfter: () => query,
+    get: async () => ({ docs: [profileDoc] })
+  };
+  const handler = createPublicProfileEligibilitySweepHandler({
+    firestore: { collection: () => query },
+    auth: { getUser: async () => ({ emailVerified: false }) },
+    documentIdField: 'document-id',
+    isAuthUserNotFound: () => false,
+    reconcileAuthIdentity: async () => ({ isIneligible: true }),
+    syncReconciledIdentity: async () => {
+      if (failCleanup) throw new Error('temporary recipient cleanup failure');
+    },
+    batchSize: 2
+  });
+
+  await assert.rejects(handler(), /temporary recipient cleanup failure/);
+  assert.equal(deleteCalls, 0);
+
+  failCleanup = false;
+  assert.deepEqual(await handler(), { scanned: 1, removed: 1 });
+  assert.equal(deleteCalls, 1);
 });
 
 test('mixed-case admin emails resolve once to a stable uid-based staff membership', async () => {
