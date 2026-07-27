@@ -734,21 +734,20 @@ jobs:
                 deploy_plain_log="${deploy_log}.plain"
                 sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$deploy_log" > "$deploy_plain_log"
                 if grep -Fq "deployed indexes in firestore.indexes.json successfully" "$deploy_plain_log" \
-                  && grep -Eq 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists' "$deploy_plain_log"; then
-                  if grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log"; then
-                    echo "::notice::Firestore rules and indexes are already current; accepting the duplicate release 409 as success."
+                  && grep -Eiq "$transient_pattern" "$deploy_plain_log" \
+                  && {
+                    grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log" \
+                      || {
+                        grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
+                          && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log"
+                      }
+                  }; then
+                  if verify_active_firestore_rules; then
+                    echo "::notice::The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success."
                     return 0
                   fi
-                  if grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
-                    && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log" \
-                    && verify_active_firestore_rules; then
-                    echo "::notice::The active Firestore release exactly matches this commit and indexes deployed; accepting the duplicate release 409 as success."
-                    return 0
-                  fi
-                  if grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
-                    && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log" \
-                    && recover_firestore_release_after_duplicate; then
-                    echo "::notice::Recovered the Firebase CLI release race by activating the exact uploaded ruleset; accepting the duplicate release 409 as success."
+                  if recover_firestore_release_after_duplicate; then
+                    echo "::notice::Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed."
                     return 0
                   fi
                 fi
@@ -806,64 +805,6 @@ jobs:
                 retry_delay_seconds=120
               fi
               echo "Transient Firebase ${deploy_label} deploy failure; retrying in ${retry_delay_seconds} seconds (attempt $((attempt + 1))/${max_attempts})." >&2
-              sleep "$retry_delay_seconds"
-            done
-          }
-
-          test_firestore_rules_api() {
-            local max_attempts="${1:-2}"
-            local base_delay_seconds="${2:-20}"
-            local attempt request_file response_file curl_status http_status retry_delay_seconds
-            request_file="$RUNNER_TEMP/firestore-rules-preflight-request.json"
-            jq -n \
-              --rawfile content "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" \
-              '{
-                source:{
-                  files:[{
-                    name:"firestore.rules",
-                    content:$content
-                  }]
-                },
-                testSuite:{testCases:[]}
-              }' >"$request_file"
-
-            for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-              response_file="$RUNNER_TEMP/firestore-rules-preflight-attempt-${attempt}.json"
-              set +e
-              http_status="$(
-                curl --silent --show-error \
-                  --connect-timeout 10 \
-                  --max-time 60 \
-                  --output "$response_file" \
-                  --write-out '%{http_code}' \
-                  --request POST \
-                  --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
-                  --header "Content-Type: application/json" \
-                  --data-binary "@${request_file}" \
-                  "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
-              )"
-              curl_status="$?"
-              set -e
-
-              if (( curl_status == 0 )) \
-                && [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
-                && ! jq -e 'any(.issues[]?; .severity == "ERROR")' "$response_file" >/dev/null; then
-                echo "::notice::The non-persistent Firestore Rules API preflight passed on attempt ${attempt}/${max_attempts}."
-                return 0
-              fi
-
-              if (( curl_status == 0 )) \
-                && [[ ! "$http_status" =~ ^(408|409|429|500|502|503|504)$ ]]; then
-                echo "Firestore Rules API preflight failed with non-transient HTTP ${http_status}." >&2
-                return 1
-              fi
-              if (( attempt == max_attempts )); then
-                echo "Firestore Rules API health preflight did not recover after ${max_attempts} bounded attempts; no persistent Firestore, Functions, or Hosting mutation was attempted." >&2
-                return 1
-              fi
-
-              retry_delay_seconds=$((base_delay_seconds * attempt))
-              echo "Transient Firestore Rules API preflight failure (curl=${curl_status}, HTTP=${http_status}); retrying in ${retry_delay_seconds}s." >&2
               sleep "$retry_delay_seconds"
             done
           }
@@ -932,14 +873,11 @@ jobs:
               echo "::notice::The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
               retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
             else
-              # Probe the non-persistent projects:test endpoint first. A known
-              # Rules API outage opens the circuit before any ruleset/release
-              # mutation. The actual idempotent deploy gets three bounded attempts
-              # because the API can recover between a successful preflight and the
-              # Firebase CLI's own compile request. This keeps the total
-              # projects:test calls bounded to at most five per release run.
-              test_firestore_rules_api 2 20
-              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+              # Firebase CLI begins each attempt with the same non-persistent
+              # projects:test compilation request. Keep five bounded attempts
+              # there instead of spending two calls on a duplicate preflight.
+              # No ruleset/index mutation occurs until an attempt compiles.
+              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20
             fi
           else
             # No authorization/index drift exists relative to the last successful

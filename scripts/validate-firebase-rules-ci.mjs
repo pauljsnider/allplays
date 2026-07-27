@@ -301,16 +301,13 @@ export function validateProductionDeployCommand(deployProd) {
         'Refusing --force outside the reviewed retry-enabled function allowlist.',
         'Production force-deploy allowlist guard'
     );
-    assertIncludes(deployProd, 'test_firestore_rules_api 2 20', 'Production non-persistent Firestore Rules API health preflight');
+    if (deployProd.includes('test_firestore_rules_api')) {
+        throw new Error('Production must not spend Firestore compilation attempts on a duplicate health preflight.');
+    }
     assertIncludes(
         deployProd,
-        'https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test',
-        'Production Firestore projects:test health endpoint'
-    );
-    assertIncludes(
-        deployProd,
-        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
-        'Production Firestore deploy gets bounded post-preflight retries'
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20',
+        'Production Firestore deploy gets five bounded compilation attempts'
     );
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
@@ -340,8 +337,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'The active Firestore release exactly matches this commit and indexes deployed',
-        'Production Firestore exact-source duplicate-release recovery'
+        'The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success.',
+        'Production Firestore exact-source transient-release recovery'
     );
     assertIncludes(
         deployProd,
@@ -392,15 +389,14 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'Recovered the Firebase CLI release race by activating the exact uploaded ruleset',
-        'Production Firestore duplicate-release recovery evidence'
+        'Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed.',
+        'Production Firestore transient-release recovery evidence'
     );
     assertMatches(
         deployProd,
-        /deployed indexes in firestore\.indexes\.json successfully[\s\S]{0,2500}rules file firestore\.rules compiled successfully[\s\S]{0,500}uploading rules firestore\.rules[\s\S]{0,500}recover_firestore_release_after_duplicate/,
+        /deployed indexes in firestore\.indexes\.json successfully[\s\S]{0,500}grep -Eiq "\$transient_pattern"[\s\S]{0,1000}latest version of firestore\.rules already up to date, skipping upload[\s\S]{0,1000}rules file firestore\.rules compiled successfully[\s\S]{0,500}uploading rules firestore\.rules[\s\S]{0,1000}recover_firestore_release_after_duplicate/,
         'Production Firestore release recovery safety gates'
     );
-    assertIncludes(deployProd, 'accepting the duplicate release 409 as success', 'Production Firestore verified duplicate-release recovery');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
     assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
     assertIncludes(
@@ -482,17 +478,17 @@ export function validateProductionDeployCommand(deployProd) {
     }
     assertIncludes(
         changedBranch,
-        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20',
+        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20',
         'Production Firestore transient deploy retries'
     );
     assertMatches(
         changedBranch,
-        /if verify_active_firestore_rules; then[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20[\s\S]*else[\s\S]*test_firestore_rules_api 2 20[\s\S]*retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20[\s\S]*fi/,
+        /if verify_active_firestore_rules; then[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20[\s\S]*else[\s\S]*retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20[\s\S]*fi/,
         'Production Firestore exact-source short circuit'
     );
     assertIncludes(
         changedBranch,
-        'projects:test calls bounded to at most five per release run',
+        'instead of spending two calls on a duplicate preflight',
         'Production Firestore retry request bound'
     );
     const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
