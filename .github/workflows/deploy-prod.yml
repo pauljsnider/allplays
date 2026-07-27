@@ -621,6 +621,94 @@ jobs:
             return 1
           }
 
+          create_firestore_ruleset_with_retry() {
+            local payload_file response_file ruleset_name local_rules_b64 created_rules_b64
+            local attempt curl_status http_status retry_delay_seconds
+            payload_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create.XXXXXX.json")"
+            response_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create-response.XXXXXX.json")"
+            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            jq -n \
+              --rawfile rules_source "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" \
+              '{
+                source:{
+                  files:[
+                    {
+                      name:"firestore.rules",
+                      content:$rules_source
+                    }
+                  ]
+                }
+              }' > "$payload_file"
+
+            for attempt in 1 2 3; do
+              set +e
+              http_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 60 \
+                  --output "$response_file" \
+                  --write-out '%{http_code}' \
+                  --request POST \
+                  --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+                  --header "Content-Type: application/json" \
+                  --data-binary "@${payload_file}" \
+                  "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"
+              )"
+              curl_status="$?"
+              set -e
+
+              if (( curl_status == 0 )) && [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+                ruleset_name="$(jq -er '.name' "$response_file" 2>/dev/null || true)"
+                created_rules_b64="$(
+                  jq -er '
+                    (.source.files // [])
+                    | if length == 1 and .[0].name == "firestore.rules"
+                      then (.[0].content | @base64)
+                      else error("expected exactly one firestore.rules source file")
+                      end
+                  ' "$response_file" 2>/dev/null || true
+                )"
+                if [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] \
+                  && [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]; then
+                  rm -f "$payload_file" "$response_file"
+                  printf '%s\n' "$ruleset_name"
+                  return 0
+                fi
+                echo "Firestore Rules API returned a non-matching ruleset; refusing to activate it." >&2
+                break
+              fi
+
+              if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|429|500|502|503|504)$ ]]; then
+                echo "Firestore ruleset creation failed with non-transient HTTP ${http_status}; not retrying." >&2
+                break
+              fi
+              if (( attempt < 3 )); then
+                retry_delay_seconds=$((10 * attempt))
+                echo "Transient Firestore ruleset creation failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/3)." >&2
+                sleep "$retry_delay_seconds"
+              fi
+            done
+
+            rm -f "$payload_file" "$response_file"
+            return 1
+          }
+
+          ensure_exact_firestore_ruleset() {
+            local ruleset_name
+            if ruleset_name="$(find_recent_matching_firestore_ruleset)"; then
+              printf '%s\n' "$ruleset_name"
+              return 0
+            fi
+            if ruleset_name="$(create_firestore_ruleset_with_retry)"; then
+              printf '%s\n' "$ruleset_name"
+              return 0
+            fi
+            # A timed-out create may still have committed an immutable ruleset.
+            # Recheck exact source before failing; never create or activate by name alone.
+            ruleset_name="$(find_recent_matching_firestore_ruleset)" || return 1
+            printf '%s\n' "$ruleset_name"
+          }
+
           activate_firestore_ruleset_with_retry() {
             local ruleset_name="$1"
             local payload_file response_file attempt verify_attempt curl_status http_status retry_delay_seconds
@@ -684,10 +772,21 @@ jobs:
             return 1
           }
 
-          recover_firestore_release_after_duplicate() {
-            local ruleset_name
-            ruleset_name="$(find_recent_matching_firestore_ruleset)" || return 1
-            activate_firestore_ruleset_with_retry "$ruleset_name"
+          write_firestore_configuration_blocked_summary() {
+            local failed_stage="$1"
+            {
+              echo "### Firestore configuration deploy blocked"
+              echo
+              echo "| Signal | Result |"
+              echo "| --- | --- |"
+              echo "| Failed stage | ${failed_stage} |"
+              echo '| Guaranteed not deployed | `hosting`, `functions` |'
+              echo "| Firestore configuration | Exact rules and indexes were not both verified. |"
+              echo
+              echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+              echo
+              echo "Recovery: follow the [production Firestore deploy retry procedure](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion)."
+            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           retry_firebase_deploy() {
@@ -696,8 +795,7 @@ jobs:
             local max_attempts="${3:-3}"
             local base_delay_seconds="${4:-15}"
             local acknowledge_failure_policy="${5:-false}"
-            local attempt deploy_log deploy_plain_log deploy_status retry_delay_seconds retry_jitter_seconds
-            local api_surface final_error_class final_http_status
+            local attempt deploy_log deploy_status retry_delay_seconds retry_jitter_seconds
             local -a deploy_args=(
               --only "$deploy_targets"
               --project game-flow-c6311
@@ -730,70 +828,12 @@ jobs:
                 return 0
               fi
 
-              if [[ "$deploy_label" == "firestore" ]]; then
-                deploy_plain_log="${deploy_log}.plain"
-                sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' "$deploy_log" > "$deploy_plain_log"
-                if grep -Fq "deployed indexes in firestore.indexes.json successfully" "$deploy_plain_log" \
-                  && grep -Eiq "$transient_pattern" "$deploy_plain_log" \
-                  && {
-                    grep -Fq "latest version of firestore.rules already up to date, skipping upload" "$deploy_plain_log" \
-                      || {
-                        grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
-                          && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log"
-                      }
-                  }; then
-                  if verify_active_firestore_rules; then
-                    echo "::notice::The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success."
-                    return 0
-                  fi
-                  if recover_firestore_release_after_duplicate; then
-                    echo "::notice::Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed."
-                    return 0
-                  fi
-                fi
-              fi
-
               if ! grep -Eiq "$transient_pattern" "$deploy_log"; then
                 echo "Firebase ${deploy_label} deploy failed with a non-transient error; not retrying." >&2
                 return "$deploy_status"
               fi
 
               if (( attempt == max_attempts )); then
-                if [[ "$deploy_label" == "firestore" ]]; then
-                  api_surface="Firebase Firestore deployment API"
-                  if grep -Eiq 'firebaserules\.googleapis\.com|ruleset|rules release' "$deploy_log"; then
-                    api_surface="Firestore Rules API (firebaserules.googleapis.com)"
-                  elif grep -Eiq 'firestore\.googleapis\.com|firestore index' "$deploy_log"; then
-                    api_surface="Cloud Firestore Admin API (firestore.googleapis.com)"
-                  fi
-
-                  final_http_status="$(
-                    grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \
-                      | grep -Eo '(409|429|500|502|503|504)' \
-                      | tail -n 1 \
-                      || true
-                  )"
-                  final_error_class="Transient service/network error (no HTTP status reported)"
-                  if [[ -n "$final_http_status" ]]; then
-                    final_error_class="HTTP ${final_http_status}"
-                  fi
-
-                  {
-                    echo "### Firestore configuration deploy blocked"
-                    echo
-                    echo "| Signal | Result |"
-                    echo "| --- | --- |"
-                    echo "| Google API surface | ${api_surface} |"
-                    echo "| Final error class | ${final_error_class} |"
-                    echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"
-                    echo '| Guaranteed not deployed | `hosting`, `functions` |'
-                    echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
-                    echo
-                    echo "The external transient failure exhausted all bounded attempts. Application deployment remains fail-closed, so Hosting and Functions were not deployed."
-                    echo
-                    echo "Recovery: follow the [production Firestore deploy retry procedure](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion)."
-                  } >> "$GITHUB_STEP_SUMMARY"
-                fi
                 echo "Firebase ${deploy_label} deploy failed after ${max_attempts} transient attempts." >&2
                 return "$deploy_status"
               fi
@@ -866,18 +906,26 @@ jobs:
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             # Keep coupled authorization/index changes fail-closed: application code
             # must not publish until its Firestore configuration is active.
-            # A prior partial attempt may already have activated this exact,
-            # immutable rules source before its release call returned an error.
-            # In that case, update indexes without making another Rules API write.
             if verify_active_firestore_rules; then
-              echo "::notice::The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
-              retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
+              echo "::notice::The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
             else
-              # Firebase CLI begins each attempt with the same non-persistent
-              # projects:test compilation request. Keep five bounded attempts
-              # there instead of spending two calls on a duplicate preflight.
-              # No ruleset/index mutation occurs until an attempt compiles.
-              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20
+              # The documented RuleSet create endpoint compiles the source and
+              # rejects syntax or semantic errors. Avoid Firebase CLI's separate,
+              # currently unavailable projects:test request, verify the returned
+              # immutable source byte-for-byte, then update only rulesetName.
+              if ! ruleset_name="$(ensure_exact_firestore_ruleset)"; then
+                write_firestore_configuration_blocked_summary "immutable ruleset creation and exact-source verification"
+                exit 2
+              fi
+              if ! activate_firestore_ruleset_with_retry "$ruleset_name"; then
+                write_firestore_configuration_blocked_summary "exact ruleset release activation"
+                exit 2
+              fi
+              echo "::notice::Created or reused and activated the exact staged Firestore ruleset."
+            fi
+            if ! retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15; then
+              write_firestore_configuration_blocked_summary "Firestore index deployment"
+              exit 2
             fi
           else
             # No authorization/index drift exists relative to the last successful

@@ -176,6 +176,19 @@ concurrency:
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
             [[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]
           }
+          create_firestore_ruleset_with_retry() {
+            jq --rawfile rules_source firestore.rules
+            for attempt in 1 2 3; do
+              curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"
+              jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+              [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]
+            done
+          }
+          ensure_exact_firestore_ruleset() {
+            find_recent_matching_firestore_ruleset
+            create_firestore_ruleset_with_retry
+            find_recent_matching_firestore_ruleset
+          }
           activate_firestore_ruleset_with_retry() {
             [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
             curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
@@ -183,38 +196,24 @@ concurrency:
             [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]
             verify_active_firestore_rules
           }
-          recover_firestore_release_after_duplicate() {
-            find_recent_matching_firestore_ruleset
-            activate_firestore_ruleset_with_retry
+          write_firestore_configuration_blocked_summary() {
+            {
+              echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
+              echo "Exact rules and indexes were not both verified."
+              echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+              echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
+            } >> "$GITHUB_STEP_SUMMARY"
           }
-          if [[ "$deploy_label" == "firestore" ]]; then
-            echo "deployed indexes in firestore.indexes.json successfully"
-            grep -Eiq "$transient_pattern"
-            echo "latest version of firestore.rules already up to date, skipping upload"
-            echo "rules file firestore.rules compiled successfully"
-            echo "uploading rules firestore.rules"
-            echo "The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success."
-            recover_firestore_release_after_duplicate
-            echo "Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed."
-            api_surface="Firestore Rules API (firebaserules.googleapis.com)"
-            grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
-              | grep -Eo '(409|429|500|502|503|504)'
-            final_error_class="HTTP \${final_http_status}"
-            echo "| Attempts exhausted | \${max_attempts}/\${max_attempts} |"
-            echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
-            echo "| Firestore configuration | Rules and indexes may be partially deployed; verify both before retrying. |"
-            echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
-            echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
-          } >> "$GITHUB_STEP_SUMMARY"
-          fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             if verify_active_firestore_rules; then
-              echo "The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
-              retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
+              echo "The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
             else
-              instead of spending two calls on a duplicate preflight
-              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20
+              echo "currently unavailable projects:test request"
+              ensure_exact_firestore_ruleset
+              activate_firestore_ruleset_with_retry
+              echo "Created or reused and activated the exact staged Firestore ruleset."
             fi
+            retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15
           else
             :
           fi
@@ -284,64 +283,50 @@ concurrency:
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'Firestore Rules API (firebaserules.googleapis.com)',
-            'Firestore API'
-        ))).toThrow('Production Firestore retry-exhaustion API surface');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
-              | grep -Eo '(409|429|500|502|503|504)'`,
-            `grep -Eio 'HTTP Error:[[:space:]]*(429|500|502|503|504)|(^|[^[:digit:]])(429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
-              | grep -Eo '(429|500|502|503|504)'`
-        ))).toThrow('Production Firestore retry-exhaustion HTTP status extraction');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'final_error_class="HTTP ${final_http_status}"',
-            'final_error_class="transient failure"'
-        ))).toThrow('Production Firestore retry-exhaustion HTTP error class');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"',
-            'echo "Retries exhausted"'
-        ))).toThrow('Production Firestore retry-exhaustion attempt count');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'',
             'echo "Deployment blocked"'
         ))).toThrow('Production Firestore retry-exhaustion blocked application surfaces');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'Rules and indexes may be partially deployed; verify both before retrying.',
+            'Exact rules and indexes were not both verified.',
             'Rules and indexes were not deployed.'
-        ))).toThrow('Production Firestore retry-exhaustion partial configuration status');
+        ))).toThrow('Production Firestore retry-exhaustion exact-state status');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
             'docs/observability-runbook.md'
         ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20`,
+            `ensure_exact_firestore_ruleset`,
             `retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20`
+            ensure_exact_firestore_ruleset`
         ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
-            'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 20'
+            'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
+            'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'
         ))).toThrow('Production Firestore exact-source indexes-only deploy');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'if length == 1 and .[0].name == "firestore.rules"',
             'if any(.[]; .name == "firestore.rules")'
-        ))).toThrow('Production Firestore active source must contain only firestore.rules');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replaceAll(
-            'recover_firestore_release_after_duplicate',
-            'accept_duplicate_release_without_recovery'
-        ))).toThrow('Production Firestore duplicate-release recovery call');
+        ))).toThrow('Production Firestore active, reused, and created sources must contain only firestore.rules');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
             '[[ -n "$candidate_rules_b64" ]]'
         ))).toThrow('Production Firestore recent-ruleset exact-source comparison');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '[[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]',
+            '[[ -n "$created_rules_b64" ]]'
+        ))).toThrow('Production Firestore created-ruleset exact-source comparison');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"',
+            'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases"'
+        ))).toThrow('Production Firestore ruleset create endpoint');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"',
             'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases"'
         ))).toThrow('Production Firestore release PATCH method');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'instead of spending two calls on a duplicate preflight',
+            'currently unavailable projects:test request',
             'test_firestore_rules_api 2 20'
-        ))).toThrow('Production must not spend Firestore compilation attempts on a duplicate health preflight');
+        ))).toThrow('Production must not depend on Firebase CLI projects:test before ruleset creation');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :

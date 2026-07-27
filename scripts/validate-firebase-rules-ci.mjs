@@ -301,19 +301,12 @@ export function validateProductionDeployCommand(deployProd) {
         'Refusing --force outside the reviewed retry-enabled function allowlist.',
         'Production force-deploy allowlist guard'
     );
-    if (deployProd.includes('test_firestore_rules_api')) {
-        throw new Error('Production must not spend Firestore compilation attempts on a duplicate health preflight.');
+    if (deployProd.includes('test_firestore_rules_api') || deployProd.includes('--only "firestore:rules')) {
+        throw new Error('Production must not depend on Firebase CLI projects:test before ruleset creation.');
     }
-    assertIncludes(
-        deployProd,
-        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20',
-        'Production Firestore deploy gets five bounded compilation attempts'
-    );
     assertIncludes(deployProd, 'if (( retry_delay_seconds > 120 )); then', 'Production Firebase retry delay cap');
     assertIncludes(deployProd, 'retry_jitter_seconds=$((RANDOM % 16))', 'Production Firebase retry jitter');
     assertIncludes(deployProd, 'HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists', 'Production Firestore release-race retry');
-    assertIncludes(deployProd, 'latest version of firestore.rules already up to date, skipping upload', 'Production Firestore current-rules verification');
-    assertIncludes(deployProd, 'deployed indexes in firestore.indexes.json successfully', 'Production Firestore current-indexes verification');
     assertIncludes(deployProd, 'verify_active_firestore_rules()', 'Production Firestore active-release verifier');
     assertIncludes(
         deployProd,
@@ -322,23 +315,23 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(deployProd, '(.source.files // [])', 'Production Firestore active source lookup');
     const exactSingleRulesFileGuard = 'if length == 1 and .[0].name == "firestore.rules"';
-    if (deployProd.split(exactSingleRulesFileGuard).length - 1 < 2) {
-        throw new Error('Production Firestore active source must contain only firestore.rules.');
+    if (deployProd.split(exactSingleRulesFileGuard).length - 1 < 3) {
+        throw new Error('Production Firestore active, reused, and created sources must contain only firestore.rules.');
     }
     assertIncludes(
         deployProd,
-        'The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write.',
+        'The active Firestore rules exactly match this commit; skipping a redundant ruleset write.',
         'Production Firestore exact-source write avoidance'
     );
     assertIncludes(
         deployProd,
-        'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
+        'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
         'Production Firestore exact-source indexes-only deploy'
     );
     assertIncludes(
         deployProd,
-        'The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success.',
-        'Production Firestore exact-source transient-release recovery'
+        'create_firestore_ruleset_with_retry()',
+        'Production Firestore immutable ruleset creator'
     );
     assertIncludes(
         deployProd,
@@ -359,6 +352,32 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         /\(\.rulesets \/\/ \[\]\)\s*\|\s*sort_by\(\.createTime\)\s*\|\s*reverse\s*\|\s*\.\[\]\.name/,
         'Production Firestore newest-ruleset-first lookup'
+    );
+    assertIncludes(deployProd, '--rawfile rules_source', 'Production Firestore ruleset source payload');
+    assertIncludes(
+        deployProd,
+        '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"',
+        'Production Firestore ruleset create endpoint'
+    );
+    assertMatches(
+        deployProd,
+        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3; do[\s\S]{0,5000}--request POST/,
+        'Production Firestore bounded ruleset create'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]',
+        'Production Firestore created-ruleset exact-source comparison'
+    );
+    assertIncludes(
+        deployProd,
+        'ensure_exact_firestore_ruleset()',
+        'Production Firestore create-or-reuse coordinator'
+    );
+    assertMatches(
+        deployProd,
+        /ensure_exact_firestore_ruleset\(\)[\s\S]{0,1000}find_recent_matching_firestore_ruleset[\s\S]{0,1000}create_firestore_ruleset_with_retry[\s\S]{0,1000}find_recent_matching_firestore_ruleset/,
+        'Production Firestore ambiguous-create exact-source recovery'
     );
     assertIncludes(
         deployProd,
@@ -384,34 +403,24 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'recover_firestore_release_after_duplicate',
-        'Production Firestore duplicate-release recovery call'
+        'Created or reused and activated the exact staged Firestore ruleset.',
+        'Production Firestore direct ruleset activation evidence'
     );
     assertIncludes(
         deployProd,
-        'Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed.',
-        'Production Firestore transient-release recovery evidence'
+        'write_firestore_configuration_blocked_summary()',
+        'Production Firestore fail-closed summary'
     );
     assertMatches(
         deployProd,
-        /deployed indexes in firestore\.indexes\.json successfully[\s\S]{0,500}grep -Eiq "\$transient_pattern"[\s\S]{0,1000}latest version of firestore\.rules already up to date, skipping upload[\s\S]{0,1000}rules file firestore\.rules compiled successfully[\s\S]{0,500}uploading rules firestore\.rules[\s\S]{0,1000}recover_firestore_release_after_duplicate/,
-        'Production Firestore release recovery safety gates'
+        /if verify_active_firestore_rules; then[\s\S]{0,1000}else[\s\S]{0,2000}ensure_exact_firestore_ruleset[\s\S]{0,1000}activate_firestore_ruleset_with_retry[\s\S]{0,1000}fi[\s\S]{0,500}retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
+        'Production Firestore create-release-index ordering'
     );
-    assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
-    assertIncludes(deployProd, 'Firestore Rules API (firebaserules.googleapis.com)', 'Production Firestore retry-exhaustion API surface');
-    assertIncludes(
-        deployProd,
-        `grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)'`,
-        'Production Firestore retry-exhaustion HTTP status extraction'
-    );
-    assertIncludes(deployProd, `grep -Eo '(409|429|500|502|503|504)'`, 'Production Firestore retry-exhaustion HTTP status normalization');
-    assertIncludes(deployProd, 'final_error_class="HTTP ${final_http_status}"', 'Production Firestore retry-exhaustion HTTP error class');
-    assertIncludes(deployProd, 'echo "| Attempts exhausted | ${max_attempts}/${max_attempts} |"', 'Production Firestore retry-exhaustion attempt count');
     assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(
         deployProd,
-        'Rules and indexes may be partially deployed; verify both before retrying.',
-        'Production Firestore retry-exhaustion partial configuration status'
+        'Exact rules and indexes were not both verified.',
+        'Production Firestore retry-exhaustion exact-state status'
     );
     assertIncludes(deployProd, '} >> "$GITHUB_STEP_SUMMARY"', 'Production Firestore retry-exhaustion job summary');
     assertIncludes(
@@ -478,18 +487,18 @@ export function validateProductionDeployCommand(deployProd) {
     }
     assertIncludes(
         changedBranch,
-        'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20',
-        'Production Firestore transient deploy retries'
+        'ensure_exact_firestore_ruleset',
+        'Production Firestore exact ruleset creation or reuse'
     );
     assertMatches(
         changedBranch,
-        /if verify_active_firestore_rules; then[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20[\s\S]*else[\s\S]*retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20[\s\S]*fi/,
+        /if verify_active_firestore_rules; then[\s\S]*else[\s\S]*ensure_exact_firestore_ruleset[\s\S]*activate_firestore_ruleset_with_retry[\s\S]*fi[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
         'Production Firestore exact-source short circuit'
     );
     assertIncludes(
         changedBranch,
-        'instead of spending two calls on a duplicate preflight',
-        'Production Firestore retry request bound'
+        'currently unavailable projects:test request',
+        'Production Firestore unavailable test-endpoint bypass'
     );
     const retryEnabledDeploy = deployProd.indexOf('"retry-enabled-functions"', conditionalEnd);
     const componentMarker = deployProd.indexOf('record_component_deployment', conditionalEnd);
@@ -499,7 +508,7 @@ export function validateProductionDeployCommand(deployProd) {
         throw new Error('Production application deploy must follow the targeted retry-enabled function acknowledgement.');
     }
     if (
-        changedBranch.indexOf('"firestore"') === -1
+        changedBranch.indexOf('"firestore-indexes"') === -1
         || conditionalEnd >= retryEnabledDeploy
         || componentMarker === -1
         || componentMarker >= retryEnabledDeploy

@@ -110,7 +110,7 @@ describe('authentication email delivery routing', () => {
         }
     });
 
-    it('bounds normal deploys and gives Firestore five compilation attempts', () => {
+    it('uses the bounded Firestore ruleset API and deploys indexes separately', () => {
         const productionSource = read('.github/workflows/deploy-prod.yml');
         const firebaseDeployCommands = productionSource
             .split('\n')
@@ -140,10 +140,14 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))');
         expect(productionSource).toContain('if (( retry_delay_seconds > 120 )); then');
         expect(productionSource).not.toContain('test_firestore_rules_api');
-        expect(productionSource).toContain('retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20');
+        expect(productionSource).not.toContain('retry_firebase_deploy "firestore:rules,firestore:indexes"');
+        expect(productionSource).toContain('create_firestore_ruleset_with_retry()');
+        expect(productionSource).toContain(
+            '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"'
+        );
         expect(productionSource).toContain('if verify_active_firestore_rules; then');
-        expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20');
-        expect(productionSource).toContain('instead of spending two calls on a duplicate preflight');
+        expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15');
+        expect(productionSource).toContain('currently unavailable projects:test request');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');
         const retryEnabledDeploy = productionSource.indexOf('"retry-enabled-functions"');
         const changedBranchStart = productionSource.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then');
@@ -152,7 +156,6 @@ describe('authentication email delivery routing', () => {
         const changedBranch = productionSource.slice(changedBranchStart, unchangedBranchStart);
         const unchangedBranch = productionSource.slice(unchangedBranchStart, conditionalEnd);
         const applicationDeploy = productionSource.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"');
-        expect(changedBranch).toContain('"firestore"');
         expect(changedBranch).toContain('"firestore-indexes"');
         expect(unchangedBranch).not.toContain('"application"');
         expect(unchangedBranch).not.toContain('"firestore"');
