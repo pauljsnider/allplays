@@ -1899,46 +1899,6 @@ function compactPublicProfileString(value) {
     return String(value || '').trim();
 }
 
-function uniquePublicProfileStrings(values = []) {
-    return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
-}
-
-function derivePublicProfileTeamIds(userData = {}) {
-    const parentOfTeamIds = Array.isArray(userData.parentOf)
-        ? userData.parentOf.map((link) => link?.teamId)
-        : [];
-    const parentTeamIds = Array.isArray(userData.parentTeamIds)
-        ? userData.parentTeamIds
-        : [];
-    return uniquePublicProfileStrings([...parentOfTeamIds, ...parentTeamIds]);
-}
-
-async function hashPublicProfileEmail(email) {
-    const normalized = compactPublicProfileString(email).toLowerCase();
-    if (!normalized || !globalThis.crypto?.subtle) {
-        return null;
-    }
-    const bytes = new TextEncoder().encode(normalized);
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-    return Array.from(new Uint8Array(digest))
-        .map((value) => value.toString(16).padStart(2, '0'))
-        .join('');
-}
-
-async function buildTrustedPublicUserProfileProjectionPayload(userData = {}) {
-    const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
-    const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
-    const payload = {
-        displayName: displayName || null,
-        fullName: fullName || null,
-        photoUrl: compactPublicProfileString(userData.photoUrl) || null,
-        discoveryTeamIds: derivePublicProfileTeamIds(userData),
-        emailHash: await hashPublicProfileEmail(userData.email),
-        updatedAt: Timestamp.now()
-    };
-    return payload;
-}
-
 async function buildPublicUserProfilePresentationPayload(userData = {}) {
     const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
     const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
@@ -1948,12 +1908,6 @@ async function buildPublicUserProfilePresentationPayload(userData = {}) {
         photoUrl: compactPublicProfileString(userData.photoUrl) || null,
         updatedAt: Timestamp.now()
     };
-}
-
-async function syncTrustedPublicUserProfileProjection(userId, userData = null) {
-    const nextUserData = userData || await getUserProfile(userId) || {};
-    const payload = await buildTrustedPublicUserProfileProjectionPayload(nextUserData);
-    await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
 }
 
 async function requestTrustedPublicUserProfileProjectionSync(userId) {
@@ -1973,21 +1927,17 @@ async function syncPublicUserProfile(userId, userData = null) {
         console.warn('[public-user-profile] Presentation sync deferred:', error);
         return;
     }
+    if (auth.currentUser?.uid !== userId) {
+        console.warn('[public-user-profile] Trusted projection sync deferred to the server for non-owner profile.');
+        return;
+    }
     try {
-        await syncTrustedPublicUserProfileProjection(userId, nextUserData);
-    } catch (error) {
-        if (auth.currentUser?.uid !== userId) {
-            console.warn('[public-user-profile] Trusted projection sync skipped for non-owner profile:', error);
-            return;
-        }
-        try {
-            await requestTrustedPublicUserProfileProjectionSync(userId);
-        } catch (callableError) {
-            // The callable intentionally shares the verified-email guard. A
-            // blocked or temporarily unavailable projection must not turn an
-            // otherwise successful sign-in or invite redemption into failure.
-            console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);
-        }
+        await requestTrustedPublicUserProfileProjectionSync(userId);
+    } catch (callableError) {
+        // The callable intentionally shares the verified-email guard. A
+        // blocked or temporarily unavailable projection must not turn an
+        // otherwise successful sign-in or invite redemption into failure.
+        console.warn('[public-user-profile] Trusted projection sync deferred:', callableError);
     }
 }
 

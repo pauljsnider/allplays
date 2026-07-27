@@ -3,6 +3,20 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
+const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
+const {
+  createPublicProfileAuthDeleteHandler,
+  createPublicProfileEligibilitySweepHandler,
+  createPublicProfileTeamWriteHandler,
+  loadAuthoritativePublicProfileStaffTeamIds,
+  loadCaseInsensitivePublicProfileStaffTeamIds,
+  loadPublicProfileNotificationCleanupScope,
+  loadPublicProfileStaffTeamIds,
+  reconcilePublicProfileStaffMembershipsForTeam,
+  reconcilePublicProfileStaffMembershipsForUser,
+  resolvePublicProfileStaffUserIds,
+  removePublicProfileForIneligibleAuth
+} = require('./public-user-profile-lifecycle-core.cjs');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   DEFAULT_MAX_ICS_BYTES,
@@ -2740,6 +2754,87 @@ exports.cleanupInviteSignupOnAuthDelete = functions.auth.user().onDelete(async (
   return null;
 });
 
+exports.cleanupPublicUserProfileOnAuthDelete = functions.auth
+  .user()
+  .onDelete(createPublicProfileAuthDeleteHandler({
+    firestore,
+    syncAffectedTeam: (teamId, userId) => (
+      syncNotificationRecipientForTeamUser(teamId, userId, { forceRemove: true })
+    )
+  }));
+
+exports.sweepIneligiblePublicUserProfiles = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB', failurePolicy: true })
+  .pubsub
+  .schedule('every 24 hours')
+  .onRun(async () => {
+    const publicProfileEligibilitySweepHandler = createPublicProfileEligibilitySweepHandler({
+      firestore,
+      auth: admin.auth(),
+      documentIdField: admin.firestore.FieldPath.documentId(),
+      isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
+      reconcileAuthIdentity: async (userId, authIdentity) => {
+        const authIdentitySnap = await firestore.doc(`publicProfileAuthIdentities/${userId}`).get();
+        const indexedEmail = authIdentitySnap.exists
+          ? String(authIdentitySnap.data()?.email || '').trim().toLowerCase()
+          : null;
+        const currentEmail = String(authIdentity.email || '').trim().toLowerCase();
+        const isIneligible = authIdentity.userMissing === true
+          || authIdentity.emailVerified !== true;
+        if (!isIneligible && indexedEmail === currentEmail) return null;
+
+        const [previousStaffTeamIds, cleanupScope] = await Promise.all([
+          loadPublicProfileStaffTeamIds(firestore, userId),
+          isIneligible
+            ? loadPublicProfileNotificationCleanupScope(firestore, userId)
+            : Promise.resolve({ teamIds: [] })
+        ]);
+        const discoveryTeamIds = isIneligible
+          ? await loadPublicProfileStaffTeamIdsForIdentity(userId, indexedEmail)
+          : await reconcilePublicProfileStaffMembershipsForAuthUser(userId, authIdentity);
+        return {
+          affectedStaffTeamIds: uniqueNonEmptyStrings([
+            ...previousStaffTeamIds,
+            ...discoveryTeamIds,
+            ...cleanupScope.teamIds
+          ]),
+          isIneligible
+        };
+      },
+      syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {
+        await Promise.all(reconciliation.affectedStaffTeamIds.map((teamId) => (
+          syncNotificationRecipientForTeamUser(
+            teamId,
+            userId,
+            reconciliation.isIneligible
+              ? { forceRemove: true }
+              : { authEmail: authIdentity.email || '' }
+          )
+        )));
+        if (reconciliation.isIneligible) {
+          await reconcilePublicProfileStaffMembershipsForUser({
+            firestore,
+            userId,
+            currentStaffTeamIds: [],
+            buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+          await firestore.doc(`publicProfileAuthIdentities/${userId}`).delete();
+        }
+      },
+      syncEligibleProfile: (userId, authIdentity) => (
+        syncPublicUserProfileProjectionForUser(userId, {
+          authIdentity,
+          useIndexedStaffMemberships: true,
+          updateAuthIdentityIndex: true
+        })
+      )
+    });
+    const result = await publicProfileEligibilitySweepHandler();
+    functions.logger.info('Completed public profile eligibility sweep.', result);
+    return null;
+  });
+
 function validateAutoAcceptParentInviteCode(data = {}) {
   if (!data || data.type !== 'parent_invite') {
     throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
@@ -2759,36 +2854,329 @@ function uniqueNonEmptyStrings(values = []) {
 }
 
 function compactPublicProfileString(value) {
-  return String(value || '').trim();
-}
-
-function derivePublicProfileTeamIds(userData = {}) {
-  const parentOfTeamIds = Array.isArray(userData.parentOf)
-    ? userData.parentOf.map((link) => link?.teamId)
-    : [];
-  const parentTeamIds = Array.isArray(userData.parentTeamIds)
-    ? userData.parentTeamIds
-    : [];
-  return uniqueNonEmptyStrings([...parentOfTeamIds, ...parentTeamIds]);
-}
-
-function hashPublicProfileEmail(email) {
-  const normalized = compactPublicProfileString(email).toLowerCase();
-  return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : null;
+  return publicUserProfileProjection.compactPublicProfileString(value);
 }
 
 function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
-  const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
-  const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
-  const trustedEmail = options.trustedEmail ?? userData.email;
   return {
-    displayName: displayName || null,
-    fullName: fullName || null,
-    photoUrl: compactPublicProfileString(userData.photoUrl) || null,
-    discoveryTeamIds: derivePublicProfileTeamIds(userData),
-    emailHash: hashPublicProfileEmail(trustedEmail),
+    ...publicUserProfileProjection.buildPublicUserProfileProjection(userData, options),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   };
+}
+
+async function loadPublicUserProfileAuthIdentity(userId) {
+  try {
+    const authRecord = await admin.auth().getUser(userId);
+    return {
+      email: authRecord.email || null,
+      displayName: authRecord.displayName || null,
+      photoUrl: authRecord.photoURL || null,
+      emailVerified: authRecord.emailVerified === true
+    };
+  } catch (error) {
+    if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error)) {
+      functions.logger.info('Auth user is missing for public profile projection.', {
+        userId
+      });
+      return { userMissing: true };
+    }
+    functions.logger.error('Unable to load Auth identity for public profile projection.', {
+      userId,
+      error: error?.message || String(error)
+    });
+    throw error;
+  }
+}
+
+async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return [];
+  const [ownedTeamSnap, adminTeamIds] = await Promise.all([
+    firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
+    loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
+      email,
+      documentIdField: admin.firestore.FieldPath.documentId()
+    })
+  ]);
+  return uniqueNonEmptyStrings([
+    ...(ownedTeamSnap.docs || []).map((docSnap) => docSnap.id),
+    ...adminTeamIds
+  ]);
+}
+
+async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIdentity) {
+  const normalizedUserId = String(userId || '').trim();
+  const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
+  if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) return false;
+
+  const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
+  const [cleanupScope, indexedAuthIdentitySnap] = await Promise.all([
+    loadPublicProfileNotificationCleanupScope(firestore, normalizedUserId),
+    authIdentityRef.get()
+  ]);
+  const indexedEmail = indexedAuthIdentitySnap.exists
+    ? String(indexedAuthIdentitySnap.data()?.email || '').trim().toLowerCase()
+    : '';
+  const currentEmail = String(authIdentity?.email || '').trim().toLowerCase();
+  const identityStaffTeamIds = await Promise.all(
+    uniqueNonEmptyStrings([indexedEmail, currentEmail])
+      .map((email) => loadPublicProfileStaffTeamIdsForIdentity(normalizedUserId, email))
+  );
+  const affectedStaffTeamIds = uniqueNonEmptyStrings([
+    ...cleanupScope.teamIds,
+    ...identityStaffTeamIds.flat()
+  ]);
+  // Do this before removing either recovery index. Callers such as the
+  // callable and notification triggers are not guaranteed to retry; leaving
+  // the projection intact lets the scheduled sweep retry a partial cleanup.
+  await Promise.all(affectedStaffTeamIds.map((teamId) => (
+    syncNotificationRecipientForTeamUser(teamId, normalizedUserId, { forceRemove: true })
+  )));
+  await reconcilePublicProfileStaffMembershipsForUser({
+    firestore,
+    userId: normalizedUserId,
+    currentStaffTeamIds: [],
+    buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  await authIdentityRef.delete();
+  await publicProfileRef.delete();
+  return true;
+}
+
+async function reconcileRoutinePublicProfileAuthIdentity(
+  userId,
+  authIdentity,
+  userData = {}
+) {
+  const normalizedUserId = String(userId || '').trim();
+  const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
+  const authIdentitySnap = await authIdentityRef.get();
+  const indexedEmail = authIdentitySnap.exists
+    ? String(authIdentitySnap.data()?.email || '').trim().toLowerCase()
+    : '';
+  const currentEmail = String(authIdentity?.email || '').trim().toLowerCase();
+  if (authIdentitySnap.exists && indexedEmail === currentEmail) {
+    return {
+      affectedStaffTeamIds: [],
+      discoveryTeamIds: uniqueNonEmptyStrings([
+        ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
+        ...await loadPublicProfileStaffTeamIds(firestore, normalizedUserId)
+      ]),
+      identityChanged: false
+    };
+  }
+
+  const [previousIndexedStaffTeamIds, previousIdentityStaffTeamIds] = await Promise.all([
+    loadPublicProfileStaffTeamIds(firestore, normalizedUserId),
+    indexedEmail
+      ? loadPublicProfileStaffTeamIdsForIdentity(normalizedUserId, indexedEmail)
+      : Promise.resolve([])
+  ]);
+  const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
+    normalizedUserId,
+    authIdentity,
+    userData
+  );
+  const currentIndexedStaffTeamIds = await loadPublicProfileStaffTeamIds(
+    firestore,
+    normalizedUserId
+  );
+  const affectedStaffTeamIds = uniqueNonEmptyStrings([
+    ...previousIndexedStaffTeamIds,
+    ...previousIdentityStaffTeamIds,
+    ...currentIndexedStaffTeamIds
+  ]);
+
+  await Promise.all(affectedStaffTeamIds.map((teamId) => (
+    syncNotificationRecipientForTeamUser(teamId, normalizedUserId, {
+      authEmail: currentEmail
+    })
+  )));
+  if (currentEmail) {
+    await authIdentityRef.set({
+      email: currentEmail,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  } else {
+    await authIdentityRef.delete();
+  }
+
+  return {
+    affectedStaffTeamIds,
+    discoveryTeamIds,
+    identityChanged: true
+  };
+}
+
+async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return null;
+
+  const userSnap = options.userSnap || await firestore.doc(`users/${normalizedUserId}`).get();
+  const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
+  const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
+  if (!userSnap.exists) {
+    const cleanupScope = await loadPublicProfileNotificationCleanupScope(
+      firestore,
+      normalizedUserId
+    );
+    await Promise.all(cleanupScope.teamIds.map((teamId) => (
+      syncNotificationRecipientForTeamUser(teamId, normalizedUserId, { forceRemove: true })
+    )));
+    await reconcilePublicProfileStaffMembershipsForUser({
+      firestore,
+      userId: normalizedUserId,
+      currentStaffTeamIds: [],
+      buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    await authIdentityRef.delete();
+    await publicProfileRef.delete();
+    return null;
+  }
+
+  const userData = userSnap.data() || {};
+  const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
+  const removedForIneligibleAuth = await removePublicProfileAuthorizationForIneligibleAuth(
+    normalizedUserId,
+    authIdentity
+  );
+  if (removedForIneligibleAuth) {
+    functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
+      userId: normalizedUserId,
+      reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
+    });
+    return null;
+  }
+
+  let discoveryTeamIds;
+  let routineIdentityChanged = false;
+  if (Array.isArray(options.discoveryTeamIds)) {
+    discoveryTeamIds = options.discoveryTeamIds;
+  } else if (options.useIndexedStaffMemberships === true) {
+    const reconciliation = await reconcileRoutinePublicProfileAuthIdentity(
+      normalizedUserId,
+      authIdentity,
+      userData
+    );
+    discoveryTeamIds = reconciliation.discoveryTeamIds;
+    routineIdentityChanged = reconciliation.identityChanged;
+  } else {
+    discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
+      normalizedUserId,
+      authIdentity,
+      userData
+    );
+  }
+  if (
+    options.skipProjectionWriteIfIdentityCurrent === true
+    && routineIdentityChanged !== true
+  ) {
+    return null;
+  }
+  const payload = buildTrustedPublicUserProfileProjectionPayload(userData, {
+    trustedEmail: authIdentity.email || userData.email || null,
+    trustedDisplayName: authIdentity.displayName || null,
+    trustedPhotoUrl: authIdentity.photoUrl || null,
+    discoveryTeamIds
+  });
+  const batch = firestore.batch();
+  batch.set(publicProfileRef, payload, { merge: true });
+  if (options.updateAuthIdentityIndex === true) {
+    batch.set(authIdentityRef, {
+      email: String(authIdentity.email || '').trim().toLowerCase(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  }
+  await batch.commit();
+  return payload;
+}
+
+async function getPublicProfileStaffUserIdsForTeam(team = null) {
+  return resolvePublicProfileStaffUserIds(team, {
+    getUserByEmail: (email) => admin.auth().getUserByEmail(email),
+    isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound
+  });
+}
+
+async function reconcilePublicProfileStaffMembershipsForAuthUser(
+  userId,
+  authIdentity = {},
+  userData = {}
+) {
+  const normalizedUserId = String(userId || '').trim();
+  const teamIds = new Set();
+  const rawEmail = String(authIdentity.email || '').trim();
+  const [ownedTeamSnap, caseInsensitiveAdminTeamIds] = await Promise.all([
+    firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
+    loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
+      email: rawEmail,
+      documentIdField: admin.firestore.FieldPath.documentId()
+    })
+  ]);
+  (ownedTeamSnap.docs || [])
+    .forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
+  caseInsensitiveAdminTeamIds.forEach((teamId) => teamIds.add(teamId));
+  const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(
+    firestore,
+    {
+      userId: normalizedUserId,
+      email: rawEmail,
+      queriedTeamIds: [...teamIds]
+    }
+  );
+  await reconcilePublicProfileStaffMembershipsForUser({
+    firestore,
+    userId: normalizedUserId,
+    currentStaffTeamIds: authoritativeTeamIds,
+    buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return uniqueNonEmptyStrings([
+    ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
+    ...authoritativeTeamIds
+  ]);
+}
+
+async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam, attempt = 0) {
+  const beforeKey = publicUserProfileProjection.buildTeamStaffMembershipKey(beforeTeam);
+  const afterKey = publicUserProfileProjection.buildTeamStaffMembershipKey(afterTeam);
+  if (beforeKey === afterKey) return;
+
+  const [beforeUserIds, afterUserIds] = await Promise.all([
+    getPublicProfileStaffUserIdsForTeam(beforeTeam),
+    getPublicProfileStaffUserIdsForTeam(afterTeam)
+  ]);
+  const indexedUserIds = await reconcilePublicProfileStaffMembershipsForTeam({
+    firestore,
+    teamId,
+    currentStaffUserIds: afterUserIds,
+    buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  const candidateUserIds = new Set([
+    ...beforeUserIds,
+    ...afterUserIds,
+    ...indexedUserIds
+  ]);
+  await Promise.all(
+    Array.from(candidateUserIds).map((candidateUserId) => (
+      syncPublicUserProfileProjectionForUser(candidateUserId, {
+        useIndexedStaffMemberships: true
+      })
+    ))
+  );
+  const latestTeamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const latestTeam = latestTeamSnap.exists ? (latestTeamSnap.data() || {}) : null;
+  if (
+    publicUserProfileProjection.buildTeamStaffMembershipKey(latestTeam) !== afterKey
+  ) {
+    if (attempt >= 2) {
+      throw new Error(`Team ${teamId} changed repeatedly during public profile reconciliation.`);
+    }
+    await syncPublicUserProfilesForTeamChange(teamId, afterTeam, latestTeam, attempt + 1);
+  }
 }
 
 function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
@@ -3129,19 +3517,33 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   if (userId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
   }
-  await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');
+  const currentAuthIdentity = await loadPublicUserProfileAuthIdentity(userId);
+  await removePublicProfileAuthorizationForIneligibleAuth(
+    userId,
+    currentAuthIdentity
+  );
+  await assertSensitiveEmailVerified({
+    ...context,
+    auth: {
+      ...context.auth,
+      token: {
+        ...context.auth.token,
+        email: currentAuthIdentity.email || null,
+        email_verified: currentAuthIdentity.emailVerified === true
+      }
+    }
+  }, 'sync-public-user-profile-projection');
 
   const userSnap = await firestore.doc(`users/${userId}`).get();
   if (!userSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'User profile not found.');
   }
 
-  await firestore.doc(`publicUserProfiles/${userId}`).set(
-    buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {}, {
-      trustedEmail: context.auth.token?.email || null
-    }),
-    { merge: true }
-  );
+  await syncPublicUserProfileProjectionForUser(userId, {
+    userSnap,
+    authIdentity: currentAuthIdentity,
+    useIndexedStaffMemberships: true
+  });
 
   return { success: true };
 });
@@ -7020,6 +7422,12 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   if (!recipientRef) return null;
 
   const normalizedUid = String(uid || '').trim();
+  if (options.forceRemove === true) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    await recipientRef.delete();
+    return null;
+  }
+
   const user = options.userData !== undefined ? options.userData : null;
   const team = options.teamData !== undefined ? options.teamData : null;
   const skipLegacyCleanup = options.skipLegacyCleanup === true;
@@ -7037,7 +7445,11 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     return null;
   }
 
-  const email = String(resolvedUser.email || resolvedUser.profileEmail || '').trim().toLowerCase();
+  const email = String(
+    options.authEmail !== undefined
+      ? options.authEmail
+      : (resolvedUser.email || resolvedUser.profileEmail || '')
+  ).trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
     teamId,
     team: resolvedTeam,
@@ -7086,37 +7498,61 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
 
 async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = []) {
   const normalizedUid = String(uid || '').trim();
-  if (!normalizedUid || !user) return Array.from(new Set((extraTeamIds || []).filter(Boolean)));
+  if (!normalizedUid) {
+    return {
+      authEmail: '',
+      forceRemove: true,
+      teamIds: uniqueNonEmptyStrings(extraTeamIds)
+    };
+  }
 
   const teamIds = new Set(
-    [...(Array.isArray(extraTeamIds) ? extraTeamIds : []), ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])]
+    [...(Array.isArray(extraTeamIds) ? extraTeamIds : []), ...(Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [])]
       .map((entry) => String(entry || '').trim())
       .filter(Boolean)
   );
 
-  const queries = [firestore.collection('teams').where('ownerId', '==', normalizedUid).get()];
-  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
-  if (email) {
-    queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
+  const authIdentity = await loadPublicUserProfileAuthIdentity(normalizedUid);
+  const forceRemove = !user
+    || authIdentity.userMissing === true
+    || authIdentity.emailVerified !== true;
+  if (forceRemove) {
+    const indexedStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUid);
+    indexedStaffTeamIds.forEach((teamId) => teamIds.add(teamId));
+    await removePublicProfileAuthorizationForIneligibleAuth(normalizedUid, authIdentity);
+  } else {
+    const reconciliation = await reconcileRoutinePublicProfileAuthIdentity(
+      normalizedUid,
+      authIdentity,
+      user
+    );
+    reconciliation.affectedStaffTeamIds.forEach((teamId) => teamIds.add(teamId));
+    const indexedStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUid);
+    indexedStaffTeamIds.forEach((teamId) => teamIds.add(teamId));
   }
 
-  const querySnaps = await Promise.all(queries);
-  querySnaps.forEach((snap) => {
-    (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
-  });
-
-  return Array.from(teamIds).filter(Boolean);
+  return {
+    authEmail: String(authIdentity.email || '').trim().toLowerCase(),
+    forceRemove,
+    teamIds: Array.from(teamIds).filter(Boolean)
+  };
 }
 
 async function syncNotificationRecipientsForUserChange(uid, beforeUser, afterUser) {
-  const teamIds = new Set();
-  const beforeTeamIds = await getNotificationRecipientTeamIdsForUser(beforeUser, uid);
-  const afterTeamIds = await getNotificationRecipientTeamIdsForUser(afterUser, uid);
-  beforeTeamIds.forEach((teamId) => teamIds.add(teamId));
-  afterTeamIds.forEach((teamId) => teamIds.add(teamId));
+  const teamIds = new Set(
+    uniqueNonEmptyStrings([
+      ...(Array.isArray(beforeUser?.parentTeamIds) ? beforeUser.parentTeamIds : []),
+      ...(Array.isArray(afterUser?.parentTeamIds) ? afterUser.parentTeamIds : [])
+    ])
+  );
+  const scope = await getNotificationRecipientTeamIdsForUser(afterUser || beforeUser, uid);
+  scope.teamIds.forEach((teamId) => teamIds.add(teamId));
 
   await Promise.all(Array.from(teamIds).map((teamId) => syncNotificationRecipientForTeamUser(teamId, uid, {
-    userData: afterUser || null
+    userData: afterUser || null,
+    ...(scope.forceRemove
+      ? { forceRemove: true }
+      : { authEmail: scope.authEmail })
   })));
 }
 
@@ -7162,7 +7598,16 @@ async function syncNotificationRecipientsForTeamChange(teamId, beforeTeam, after
 exports.syncTeamNotificationRecipientsOnPreferenceWrite = functions.firestore
   .document('users/{uid}/notificationPreferences/{teamId}')
   .onWrite(async (_change, context) => {
-    await syncNotificationRecipientForTeamUser(context.params.teamId, context.params.uid);
+    const userSnap = await firestore.doc(`users/${context.params.uid}`).get();
+    const user = userSnap.exists ? (userSnap.data() || {}) : null;
+    const scope = await getNotificationRecipientTeamIdsForUser(user, context.params.uid);
+    await syncNotificationRecipientForTeamUser(
+      context.params.teamId,
+      context.params.uid,
+      scope.forceRemove
+        ? { forceRemove: true }
+        : { userData: user, authEmail: scope.authEmail }
+    );
     return null;
   });
 
@@ -7171,11 +7616,17 @@ exports.syncTeamNotificationRecipientsOnDeviceWrite = functions.firestore
   .onWrite(async (_change, context) => {
     const userSnap = await firestore.doc(`users/${context.params.uid}`).get();
     const user = userSnap.exists ? (userSnap.data() || {}) : null;
-    const teamIds = await getNotificationRecipientTeamIdsForUser(user, context.params.uid);
+    const scope = await getNotificationRecipientTeamIdsForUser(user, context.params.uid);
     await runWithConcurrencyLimit(
-      teamIds,
+      scope.teamIds,
       NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
-      (teamId) => syncNotificationRecipientForTeamUser(teamId, context.params.uid, { userData: user })
+      (teamId) => syncNotificationRecipientForTeamUser(
+        teamId,
+        context.params.uid,
+        scope.forceRemove
+          ? { forceRemove: true }
+          : { userData: user, authEmail: scope.authEmail }
+      )
     );
     return null;
   });
@@ -7186,6 +7637,29 @@ exports.syncTeamNotificationRecipientsOnUserWrite = functions.firestore
     const before = change.before.exists ? (change.before.data() || {}) : null;
     const after = change.after.exists ? (change.after.data() || {}) : null;
     await syncNotificationRecipientsForUserChange(context.params.uid, before, after);
+    return null;
+  });
+
+exports.syncPublicUserProfileOnUserWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('users/{uid}')
+  .onWrite(async (change, context) => {
+    if (!change.after.exists) {
+      await syncPublicUserProfileProjectionForUser(context.params.uid, {
+        userSnap: change.after
+      });
+      return null;
+    }
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.data() || {};
+    const sourceChanged = publicUserProfileProjection.buildPublicProfileUserSourceKey(before)
+      !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
+    await syncPublicUserProfileProjectionForUser(context.params.uid, {
+      userSnap: change.after,
+      useIndexedStaffMemberships: true,
+      skipProjectionWriteIfIdentityCurrent: !sourceChanged
+    });
     return null;
   });
 
@@ -7218,6 +7692,15 @@ exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
     await syncNotificationRecipientsForTeamChange(context.params.teamId, before, after);
     return null;
   });
+
+exports.syncPublicUserProfilesOnTeamWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}')
+  .onWrite(createPublicProfileTeamWriteHandler({
+    firestore,
+    syncTeam: syncPublicUserProfilesForTeamChange
+  }));
 
 exports.syncTeamOwnerAccessOnCreate = functions
   .runWith({ failurePolicy: true })

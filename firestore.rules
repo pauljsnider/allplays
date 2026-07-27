@@ -1542,9 +1542,14 @@ service cloud.firestore {
 
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isSignedIn() && exists(userPath)
+      let publicProfilePath = /databases/$(database)/documents/publicUserProfiles/$(request.auth.uid);
+      let privateParentTeamIds = isSignedIn() && exists(userPath)
         ? get(userPath).data.get('parentTeamIds', [])
         : [];
+      let projectedTeamIds = isSignedIn() && exists(publicProfilePath)
+        ? get(publicProfilePath).data.get('discoveryTeamIds', [])
+        : [];
+      return privateParentTeamIds.concat(projectedTeamIds);
     }
 
     function canReadPublicUserProfile(userId, data) {
@@ -1591,7 +1596,7 @@ service cloud.firestore {
     }
 
     function userMembershipFields() {
-      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
+      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];
     }
 
     function teamMediaUploadGrantFields() {
@@ -1599,7 +1604,7 @@ service cloud.firestore {
     }
 
     function serverManagedUserRoleGrantFields() {
-      return ['coachOf', 'roles'];
+      return ['roles'];
     }
 
     function isOwnerUserCreatePayloadValid(data) {
@@ -2745,6 +2750,14 @@ service cloud.firestore {
                        ((isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
                         isOwnerPublicUserProfilePresentationUpdateValid(userId));
       allow delete: if isVerifiedForSensitiveWrite() && (isGlobalAdmin() || isOwner(userId));
+    }
+
+    match /publicProfileStaffMemberships/{membershipId} {
+      allow read, write: if false;
+    }
+
+    match /publicProfileAuthIdentities/{userId} {
+      allow read, write: if false;
     }
 
     // Users collection - users should only write their own profile.

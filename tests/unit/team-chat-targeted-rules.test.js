@@ -263,8 +263,9 @@ describe('targeted team chat Firestore rules', () => {
 
     it('keeps profile role grants server-managed before chat rules trust coach grants', () => {
         expect(rules).toContain('function isTeamChatStaff(teamId) {\n      return isTeamOwnerOrAdmin(teamId);\n    }');
+        expect(rules).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];");
         expect(rules).toContain('function serverManagedUserRoleGrantFields()');
-        expect(rules).toContain("return ['coachOf', 'roles'];");
+        expect(rules).toContain("return ['roles'];");
         expect(rules).toContain('!data.keys().hasAny(serverManagedUserRoleGrantFields())');
         expect(rules).toContain('!request.resource.data.diff(resource.data).affectedKeys().hasAny(serverManagedUserRoleGrantFields())');
     });

@@ -11,7 +11,6 @@ describe('verified-email sensitive action coverage', () => {
       'claim-open-officiating-slot',
       'publish-organization-schedule',
       'queue-invite-email',
-      'sync-public-user-profile-projection',
       'confirm-parent-account-merge',
       'revoke-household-member-access',
       'preview-account-merge',
@@ -25,6 +24,9 @@ describe('verified-email sensitive action coverage', () => {
     ].forEach((operation) => {
       expect(functionsSource).toContain(`await assertSensitiveEmailVerified(context, '${operation}');`);
     });
+    expect(functionsSource).toMatch(
+      /await assertSensitiveEmailVerified\(\{[\s\S]{0,500}\}, 'sync-public-user-profile-projection'\);/
+    );
   });
 
   it('keeps verification delivery and invite redemption outside the enforcement gate', () => {

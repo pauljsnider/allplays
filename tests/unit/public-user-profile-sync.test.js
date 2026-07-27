@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const legacyAuthSource = readFileSync(new URL('../../js/auth.js', import.meta.url), 'utf8');
+const appAuthSource = readFileSync(new URL('../../apps/app/src/lib/authService.ts', import.meta.url), 'utf8');
 
 function loadPublicUserProfileSyncHarness(overrides = {}) {
     const start = source.indexOf('function compactPublicProfileString(value)');
@@ -72,20 +74,20 @@ describe('public user profile sync', () => {
         expect(source).toContain("async function buildPublicUserProfilePresentationPayload(userData = {})");
         expect(source).toContain("const payload = await buildPublicUserProfilePresentationPayload(nextUserData);");
         expect(source).toContain("await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });");
-        expect(source).toContain('await syncTrustedPublicUserProfileProjection(userId, nextUserData);');
+        expect(source).toContain('await requestTrustedPublicUserProfileProjectionSync(userId);');
         expect(source).toContain("httpsCallable(functions, 'syncPublicUserProfileProjection')");
         expect(source).toContain('await syncPublicUserProfile(userId);');
     });
 
-    it('keeps discovery projection fields derived from private user data only', () => {
-        expect(source).toContain("async function buildTrustedPublicUserProfileProjectionPayload(userData = {})");
-        expect(source).toContain("async function syncTrustedPublicUserProfileProjection(userId, userData = null)");
-        expect(source).toContain("discoveryTeamIds: derivePublicProfileTeamIds(userData)");
-        expect(source).toContain("emailHash: await hashPublicProfileEmail(userData.email)");
-        expect(source).toContain('const parentOfTeamIds = Array.isArray(userData.parentOf)');
-        expect(source).toContain('const parentTeamIds = Array.isArray(userData.parentTeamIds)');
-        expect(source).not.toContain('publicProfileInput.discoveryTeamIds');
-        expect(source).not.toContain('publicProfileInput.emailHash');
+    it('does not let clients derive or write trusted discovery fields', () => {
+        const presentationStart = source.indexOf('async function buildPublicUserProfilePresentationPayload');
+        const presentationEnd = source.indexOf('async function requestTrustedPublicUserProfileProjectionSync', presentationStart);
+        const presentationSource = source.slice(presentationStart, presentationEnd);
+
+        expect(presentationSource).not.toContain('discoveryTeamIds');
+        expect(presentationSource).not.toContain('emailHash');
+        expect(source).not.toContain('buildTrustedPublicUserProfileProjectionPayload');
+        expect(source).not.toContain('syncTrustedPublicUserProfileProjection');
     });
 
     it('refreshes the public presentation projection when parent-team links change', () => {
@@ -93,34 +95,168 @@ describe('public user profile sync', () => {
         expect(source.match(/await syncPublicUserProfile\(userId\);/g)?.length || 0).toBeGreaterThanOrEqual(4);
     });
 
-    it('exposes an authenticated server projection sync for owner membership changes', () => {
+    it('reconciles an email change from Admin Auth even while the callable token is stale', () => {
+        const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
+        const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+
         expect(functionsSource).toContain('exports.syncPublicUserProfileProjection = functions.https.onCall');
         expect(functionsSource).toContain("const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');");
         expect(functionsSource).toContain("if (userId !== context.auth.uid)");
-        expect(functionsSource).toContain('trustedEmail: context.auth.token?.email || null');
-        expect(functionsSource).toContain('discoveryTeamIds: derivePublicProfileTeamIds(userData)');
-        expect(functionsSource).toContain('emailHash: hashPublicProfileEmail(trustedEmail)');
+        expect(callableSource).toContain('const currentAuthIdentity = await loadPublicUserProfileAuthIdentity(userId);');
+        expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(userId, {');
+        expect(callableSource).toContain('authIdentity: currentAuthIdentity');
+        expect(callableSource).toContain('useIndexedStaffMemberships: true');
+        expect(callableSource).not.toContain('reconcilePublicProfileStaffMembershipsForAuthUser');
+        expect(callableSource).not.toContain('loadCaseInsensitivePublicProfileStaffTeamIds');
+        expect(callableSource).toContain('email: currentAuthIdentity.email || null');
+        expect(callableSource).toContain('email_verified: currentAuthIdentity.emailVerified === true');
+        expect(callableSource).not.toContain('email: context.auth.token?.email || null');
+        expect(callableSource).not.toContain('const callableAuthIdentity = {');
     });
 
-    it('enforces verified-email policy before the callable reads or projects private profile data', () => {
+    it('enforces verified-email policy before the callable reads private profile data', () => {
         const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
         const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
         const callableSource = functionsSource.slice(callableStart, callableEnd);
         const authCheck = callableSource.indexOf('if (!context.auth?.uid)');
         const ownershipCheck = callableSource.indexOf('if (userId !== context.auth.uid)');
+        const ineligibleCleanup = callableSource.indexOf(
+            'await removePublicProfileAuthorizationForIneligibleAuth('
+        );
         const verificationGuard = callableSource.indexOf(
-            "await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');"
+            'await assertSensitiveEmailVerified({'
         );
         const privateProfileRead = callableSource.indexOf('const userSnap = await firestore.doc(`users/${userId}`).get();');
-        const publicProfileWrite = callableSource.indexOf('await firestore.doc(`publicUserProfiles/${userId}`).set(');
+        const projectionSync = callableSource.indexOf('await syncPublicUserProfileProjectionForUser(userId, {');
 
         expect(callableStart).toBeGreaterThanOrEqual(0);
         expect(callableEnd).toBeGreaterThan(callableStart);
         expect(authCheck).toBeGreaterThanOrEqual(0);
         expect(ownershipCheck).toBeGreaterThan(authCheck);
-        expect(verificationGuard).toBeGreaterThan(ownershipCheck);
+        expect(ineligibleCleanup).toBeGreaterThan(ownershipCheck);
+        expect(verificationGuard).toBeGreaterThan(ineligibleCleanup);
         expect(privateProfileRead).toBeGreaterThan(verificationGuard);
-        expect(publicProfileWrite).toBeGreaterThan(privateProfileRead);
+        expect(projectionSync).toBeGreaterThan(privateProfileRead);
+    });
+
+    it('converges legacy and app signup paths on the same server-owned projection', () => {
+        expect(legacyAuthSource).toContain('return executeEmailPasswordSignup({');
+        expect(legacyAuthSource).toContain('updateUserProfile,');
+        expect(appAuthSource).toContain('return executeEmailPasswordSignup({');
+        expect(appAuthSource).toContain('updateUserProfile: dbModule.updateUserProfile');
+        expect(functionsSource).toMatch(
+            /exports\.syncPublicUserProfileOnUserWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
+        );
+        expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(context.params.uid, {');
+        expect(functionsSource).toContain('await removePublicProfileAuthorizationForIneligibleAuth(');
+    });
+
+    it('removes stale discovery projections for unverified and deleted Auth identities', () => {
+        const syncStart = functionsSource.indexOf(
+            'async function syncPublicUserProfileProjectionForUser'
+        );
+        const syncEnd = functionsSource.indexOf(
+            'async function getPublicProfileStaffUserIdsForTeam',
+            syncStart
+        );
+        const syncSource = functionsSource.slice(syncStart, syncEnd);
+        const eligibilityCleanup = syncSource.indexOf(
+            'await removePublicProfileAuthorizationForIneligibleAuth('
+        );
+
+        expect(syncStart).toBeGreaterThanOrEqual(0);
+        expect(syncEnd).toBeGreaterThan(syncStart);
+        expect(eligibilityCleanup).toBeGreaterThanOrEqual(0);
+        expect(functionsSource).toMatch(
+            /exports\.cleanupPublicUserProfileOnAuthDelete = functions\.auth\s+\.user\(\)\s+\.onDelete/
+        );
+        expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({');
+        expect(functionsSource).toContain('syncAffectedTeam: (teamId, userId) => (');
+        expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
+        expect(functionsSource).toContain("schedule('every 24 hours')");
+        expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
+        expect(functionsSource).toContain('if (!isIneligible && indexedEmail === currentEmail) return null;');
+        expect(functionsSource).toContain('const [previousStaffTeamIds, cleanupScope] = await Promise.all([');
+        expect(functionsSource).toContain('loadPublicProfileNotificationCleanupScope(firestore, userId)');
+        expect(functionsSource).toContain('...cleanupScope.teamIds');
+        expect(functionsSource).toContain('const discoveryTeamIds = isIneligible');
+        expect(functionsSource).toContain('loadPublicProfileStaffTeamIdsForIdentity(userId, indexedEmail)');
+        expect(functionsSource).toContain('syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {');
+        expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
+        expect(functionsSource).toContain('useIndexedStaffMemberships: true');
+        expect(functionsSource).toContain('updateAuthIdentityIndex: true');
+        expect(functionsSource).toContain('reconciliation.isIneligible');
+        expect(functionsSource).toContain('? { forceRemove: true }');
+        expect(functionsSource).toContain("authEmail: authIdentity.email || ''");
+        expect(functionsSource).not.toContain('if (!sourceChanged) return null;');
+        expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
+    });
+
+    it('retains the public-profile retry anchor until ineligible recipient cleanup completes', () => {
+        const cleanupStart = functionsSource.indexOf(
+            'async function removePublicProfileAuthorizationForIneligibleAuth'
+        );
+        const cleanupEnd = functionsSource.indexOf(
+            'async function reconcileRoutinePublicProfileAuthIdentity',
+            cleanupStart
+        );
+        const cleanupSource = functionsSource.slice(cleanupStart, cleanupEnd);
+
+        expect(cleanupSource.indexOf('syncNotificationRecipientForTeamUser')).toBeGreaterThanOrEqual(0);
+        expect(cleanupSource.indexOf('await reconcilePublicProfileStaffMembershipsForUser')).toBeGreaterThan(
+            cleanupSource.indexOf('syncNotificationRecipientForTeamUser')
+        );
+        expect(cleanupSource.indexOf('await publicProfileRef.delete()')).toBeGreaterThan(
+            cleanupSource.indexOf('await authIdentityRef.delete()')
+        );
+    });
+
+    it('reconciles Auth identity mismatches on routine callable and user-write refreshes', () => {
+        const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
+        const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+        const userWriteStart = functionsSource.indexOf('exports.syncPublicUserProfileOnUserWrite = functions');
+        const userWriteEnd = functionsSource.indexOf('exports.syncAdminUserSearchIndexOnUserWrite', userWriteStart);
+        const userWriteSource = functionsSource.slice(userWriteStart, userWriteEnd);
+
+        for (const routineSyncSource of [callableSource, userWriteSource]) {
+            expect(routineSyncSource).toContain('useIndexedStaffMemberships: true');
+        }
+        expect(functionsSource).toContain('async function reconcileRoutinePublicProfileAuthIdentity(');
+        expect(functionsSource).toContain('const indexedEmail = authIdentitySnap.exists');
+        expect(functionsSource).toContain('if (authIdentitySnap.exists && indexedEmail === currentEmail)');
+        expect(functionsSource).toContain('const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(');
+        expect(functionsSource).toContain('...previousIdentityStaffTeamIds');
+        expect(functionsSource).toContain('authEmail: currentEmail');
+        expect(functionsSource).toContain('await authIdentityRef.set({');
+        expect(userWriteSource).toContain('skipProjectionWriteIfIdentityCurrent: !sourceChanged');
+        expect(functionsSource).toContain('options.skipProjectionWriteIfIdentityCurrent === true');
+    });
+
+    it('keeps mixed-case coach and owner discovery membership in a normalized uid index', () => {
+        expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
+        expect(functionsSource).toContain('return resolvePublicProfileStaffUserIds(team, {');
+        expect(functionsSource).toContain('getUserByEmail: (email) => admin.auth().getUserByEmail(email)');
+        expect(functionsSource).toContain('async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = \'\')');
+        expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForTeam({');
+        expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
+        expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForUser({');
+        expect(functionsSource).toContain('const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(');
+        expect(functionsSource).toContain('loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {');
+        expect(functionsSource).toContain('documentIdField: admin.firestore.FieldPath.documentId()');
+        expect(functionsSource).toContain('currentStaffTeamIds: authoritativeTeamIds');
+        expect(functionsSource).toContain('...indexedUserIds');
+        expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');
+        expect(functionsSource).toMatch(
+            /exports\.syncPublicUserProfilesOnTeamWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)\s+\.firestore/
+        );
+        expect(functionsSource).toContain('createPublicProfileTeamWriteHandler({');
+        expect(functionsSource).toContain('syncTeam: syncPublicUserProfilesForTeamChange');
+        expect(functionsSource).toContain('useIndexedStaffMemberships: true');
+        expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
+        expect(functionsSource).toContain('throw error;');
+        expect(functionsSource).toContain("reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'");
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {
@@ -145,11 +281,8 @@ describe('public user profile sync', () => {
         expect(callableSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
     });
 
-    it('falls back to the callable when an owner presentation sync cannot directly write trusted fields', async () => {
-        const directProjectionError = new Error('Missing or insufficient permissions.');
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(directProjectionError);
+    it('uses the callable for trusted owner projection after writing presentation fields', async () => {
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const harness = loadPublicUserProfileSyncHarness({
             setDoc,
             auth: { currentUser: { uid: 'owner-1' } }
@@ -172,15 +305,7 @@ describe('public user profile sync', () => {
             }),
             { merge: true }
         );
-        expect(setDoc).toHaveBeenNthCalledWith(
-            2,
-            expect.objectContaining({ path: 'publicUserProfiles/owner-1' }),
-            expect.objectContaining({
-                discoveryTeamIds: ['team-1'],
-                emailHash: expect.any(String)
-            }),
-            { merge: true }
-        );
+        expect(setDoc).toHaveBeenCalledTimes(1);
         expect(harness.httpsCallable).toHaveBeenCalledWith(
             expect.anything(),
             'syncPublicUserProfileProjection'
@@ -224,11 +349,8 @@ describe('public user profile sync', () => {
     });
 
     it('does not reject a bootstrap caller when the verified-email guard also defers callable projection', async () => {
-        const directProjectionError = new Error('Missing or insufficient permissions.');
         const callableProjectionError = new Error('Email verification is required.');
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(directProjectionError);
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const callable = vi.fn().mockRejectedValue(callableProjectionError);
         const harness = loadPublicUserProfileSyncHarness({ setDoc, callable });
 
@@ -243,12 +365,11 @@ describe('public user profile sync', () => {
             '[public-user-profile] Trusted projection sync deferred:',
             callableProjectionError
         );
+        expect(setDoc).toHaveBeenCalledTimes(1);
     });
 
-    it('does not invoke the trusted projection callable for non-owner profile sync failures', async () => {
-        const setDoc = vi.fn()
-            .mockResolvedValueOnce(undefined)
-            .mockRejectedValueOnce(new Error('Missing or insufficient permissions.'));
+    it('defers trusted non-owner projection to the server', async () => {
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const harness = loadPublicUserProfileSyncHarness({
             setDoc,
             auth: { currentUser: { uid: 'viewer-1' } }
@@ -260,12 +381,11 @@ describe('public user profile sync', () => {
             email: 'owner@example.com'
         })).resolves.toBeUndefined();
 
-        expect(setDoc).toHaveBeenCalledTimes(2);
+        expect(setDoc).toHaveBeenCalledTimes(1);
         expect(harness.httpsCallable).not.toHaveBeenCalled();
         expect(harness.callable).not.toHaveBeenCalled();
         expect(harness.warn).toHaveBeenCalledWith(
-            '[public-user-profile] Trusted projection sync skipped for non-owner profile:',
-            expect.any(Error)
+            '[public-user-profile] Trusted projection sync deferred to the server for non-owner profile.'
         );
     });
 });
