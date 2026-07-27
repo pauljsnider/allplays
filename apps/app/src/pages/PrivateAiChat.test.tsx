@@ -644,6 +644,7 @@ describe('PrivateAiChat', () => {
 
         renderChat();
 
+        expect(await screen.findByText('Reply yes to apply these roster changes. A newer proposal in this chat replaces it.')).toBeTruthy();
         const nameInput = await screen.findByLabelText('Row 1 Name');
         fireEvent.change(nameInput, { target: { value: 'Avery Smith' } });
         fireEvent.blur(nameInput);

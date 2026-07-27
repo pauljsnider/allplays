@@ -763,6 +763,30 @@ describe('roster CSV import planning', () => {
         expect(batch.commit).toHaveBeenCalledTimes(1);
     });
 
+    it('stores a blank jersey number for name-only additions so ordered roster queries include them', async () => {
+        const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
+
+        await applyRosterCsvImportOperations('team-1', [{
+            type: 'add',
+            playerId: 'ai_name_only_player_1',
+            payload: { name: 'Max Snider' }
+        }], {
+            pendingActionId: 'ai_name_only',
+            userId: 'coach-1'
+        });
+
+        expect(batch.set).toHaveBeenCalledWith(
+            expect.objectContaining({ path: 'teams/team-1/players/ai_name_only_player_1' }),
+            expect.objectContaining({
+                name: 'Max Snider',
+                number: '',
+                active: true,
+                createdAt: 'now'
+            })
+        );
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
     it('commits deactivate and reactivate operations in the same recoverable roster batch', async () => {
         const { applyRosterCsvImportOperations, batch } = buildRosterImportOperationHelper();
 

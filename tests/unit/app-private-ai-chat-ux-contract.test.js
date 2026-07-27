@@ -7,8 +7,11 @@ describe('private AI chat typography contract', () => {
     const css = readFileSync(join(process.cwd(), 'apps/app/src/styles/index.css'), 'utf8');
     const messageRule = css.match(/\.private-ai-message-text\s*\{([^}]+)\}/)?.[1] || '';
     const composerRule = css.match(/\.chat-composer-textarea\s*\{([^}]+)\}/)?.[1] || '';
+    const compactAiComposerRule = css.match(/\.private-ai-composer \.chat-composer-textarea\s*\{([^}]+)\}/)?.[1] || '';
 
     expect(messageRule).toContain('font-weight: 400');
     expect(composerRule).toContain('font-weight: 400');
+    expect(compactAiComposerRule).toContain('font-size: 0.875rem');
+    expect(compactAiComposerRule).toContain('line-height: 1.4');
   });
 });

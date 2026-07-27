@@ -25,7 +25,7 @@ function assertEquals(actual, expected, label) {
     }
 }
 
-export const FIRESTORE_RULES_DEPLOY_BUDGET_BYTES = 180 * 1024;
+export const FIRESTORE_RULES_DEPLOY_BUDGET_BYTES = 132 * 1024;
 
 export function validateFirestoreRulesDeployBudget(rulesSource) {
     const sourceBytes = Buffer.byteLength(rulesSource, 'utf8');

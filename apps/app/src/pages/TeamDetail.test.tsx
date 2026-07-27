@@ -685,6 +685,12 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('The complete team schedule could not be loaded. Retry to avoid showing missing events.')).toBeTruthy();
     expect(screen.queryByText('No team events found.')).toBeNull();
     expect(screen.getByRole('button', { name: 'Retry schedule' })).toBeTruthy();
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1',
+      includePastGames: true
+    });
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
