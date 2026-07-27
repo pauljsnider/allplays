@@ -1738,7 +1738,7 @@ export async function generatePrivateAiAnswer(
     const planner = parsePrivateAiPlannerResponse(plannerText);
 
     if (planner.answer && !planner.toolCalls.length) {
-      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
         plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
           `CORRECTION: Your prior response claimed or described a change without calling a write tool. ` +
           `Do not say a change is prepared, reviewed, staged, confirmed, or completed unless the matching write tool returned that result. ` +
@@ -1783,7 +1783,7 @@ export async function generatePrivateAiAnswer(
         continue;
       }
       if (duplicateCalls.length) break;
-      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
         plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
           `CORRECTION: This is an imperative write request. Return the matching write toolCall; do not claim that a preview exists without one.\n`;
         continue;
@@ -1794,12 +1794,30 @@ export async function generatePrivateAiAnswer(
       };
     }
 
-    const roundResults = await Promise.all(calls.map((call) => runPrivateAiTool(user, call, toolContext)));
+    const unrelatedWriteCalls = imperativeWriteRequest
+      ? calls.filter((call) => (
+          getPrivateAiToolDefinition(call.name)?.mode === 'write'
+          && !privateAiWriteToolMatchesQuestion(question, call.name)
+        ))
+      : [];
+    unrelatedWriteCalls.forEach((call) => toolResults.push({
+      name: compactText(call.name),
+      ok: false,
+      error: 'That write tool does not match the requested operation.'
+    }));
+    const executableCalls = unrelatedWriteCalls.length
+      ? calls.filter((call) => !unrelatedWriteCalls.includes(call))
+      : calls;
+    if (!executableCalls.length) {
+      plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
+      continue;
+    }
+    const roundResults = await Promise.all(executableCalls.map((call) => runPrivateAiTool(user, call, toolContext)));
     toolResults.push(...roundResults);
     plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
   }
 
-  if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+  if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
     return {
       answer: 'I could not prepare that change because no reviewed action was staged. Please try the request again.',
       toolResults
@@ -3364,6 +3382,7 @@ async function prepareManagedScheduleEventUpdateAction(
     previewSummary: {
       domain: 'team-management',
       action: label,
+      timeZone: compactText(input.timeZone),
       event: eventSummary
     }
   };
@@ -6461,8 +6480,66 @@ function looksLikeImperativePrivateAiWriteRequest(question: string) {
     || new RegExp(`^(?:in\\s+)?[^,;:\\n]{1,120}[,:]\\s*(?:please\\s+)?${writeVerb}\\b`).test(text);
 }
 
-function hasPrivateAiWriteToolResult(toolResults: PrivateAiToolResult[]) {
-  return toolResults.some((result) => getPrivateAiToolDefinition(result.name)?.mode === 'write');
+function hasPrivateAiWriteToolResult(question: string, toolResults: PrivateAiToolResult[]) {
+  return toolResults.some((result) => (
+    result.ok
+    && result.requiresConfirmation === true
+    && Boolean(compactText(result.confirmationId))
+    && getPrivateAiToolDefinition(result.name)?.mode === 'write'
+    && privateAiWriteToolMatchesQuestion(question, result.name)
+  ));
+}
+
+function privateAiWriteToolMatchesQuestion(question: string, toolName: string) {
+  const expectedToolNames = getExpectedPrivateAiWriteToolNames(question);
+  return !expectedToolNames || expectedToolNames.has(compactText(toolName));
+}
+
+function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | null {
+  const text = compactText(question).toLowerCase();
+  if (/\b(?:resend|retry)\b.{0,80}\b(?:parent|guardian|invite|invitation|email)\b/.test(text)) {
+    return new Set(['resend_roster_parent_invite']);
+  }
+  if (
+    /\b(?:invite|invitation)\b.{0,120}\b(?:parent|guardian|mother|father|mom|dad|email)\b/.test(text)
+    || /\b(?:parent|guardian|mother|father|mom|dad|email)\b.{0,120}\b(?:invite|invitation|roster)\b/.test(text)
+  ) {
+    return new Set(['invite_roster_parent']);
+  }
+  if (
+    /\broster\b/.test(text)
+    || (
+      /\b(?:player|athlete)\b/.test(text)
+      && /\b(?:add|remove|delete|deactivate|reactivate|import)\b/.test(text)
+      && !/\b(?:profile|tracking|incentive|fee|registration|assignment)\b/.test(text)
+    )
+  ) {
+    return new Set(['apply_roster_import']);
+  }
+  if (
+    /\b(?:update|change|set|record)\b/.test(text)
+    && /\b(?:game|match)\b/.test(text)
+    && /\bscore\b/.test(text)
+  ) {
+    return new Set(['update_game_score']);
+  }
+  const scheduleEventRequest = /\b(?:schedule|game|event|match)\b/.test(text)
+    || (
+      /\bpractice\b/.test(text)
+      && !/\b(?:packet|attendance|timeline|assignment)\b/.test(text)
+    );
+  if (scheduleEventRequest) {
+    if (/\b(?:cancel|delete|remove)\b/.test(text)) {
+      return new Set(['cancel_schedule_event']);
+    }
+    if (/\b(?:update|change|reschedule|move|set)\b/.test(text)) {
+      return new Set(['update_schedule_event']);
+    }
+    if (/\b(?:add|create|save|import)\b/.test(text)) {
+      return new Set(['create_schedule_event', 'apply_schedule_import']);
+    }
+  }
+  return null;
 }
 
 function getPrivateAiPlannerToolCallKey(call: PrivateAiToolCall) {

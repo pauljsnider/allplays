@@ -5363,10 +5363,91 @@ describe('private AI service', () => {
         expect(scheduleMocks.createScheduledGameForApp).not.toHaveBeenCalled();
     });
 
+    it('does not treat a failed matching write call as a staged action', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        teamMocks.loadParentTeamDetail.mockRejectedValue(new Error('Team access lookup failed'));
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01T18:30:00-05:00',
+                            opponent: 'Failed Write Opponent'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Create a game for Bears against Failed Write Opponent.'
+        );
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                error: expect.stringContaining('Team access lookup failed')
+            })
+        ]);
+    });
+
+    it('does not treat an unrelated staged write as the requested roster action', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-01T18:30:00-05:00',
+                            opponent: 'Unrelated Write Opponent'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'Alex is staged for the roster. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, 'Add Alex to the Bears roster.');
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                error: expect.stringContaining('does not match the requested operation')
+            })
+        ]);
+        expect(firebaseMocks.setDoc.mock.calls.some((call) => call[1]?.toolName === 'create_schedule_event')).toBe(false);
+    });
+
     it.each([
-        'Bears: add Alex to the roster',
+        'Bears: create a game for Saturday',
         'Cougars, create a game for Saturday',
-        'In Bears, invite pat@example.com'
+        'In Bears, add a game for Saturday'
     ])('corrects an unstaged write claim for team-context prefix: %s', async (prompt) => {
         const coachUser = {
             ...authUser,
@@ -5694,7 +5775,9 @@ describe('private AI service', () => {
                 eventId: 'game-1',
                 eventType: 'game',
                 input: {
-                    startDate: '2026-08-05T19:00:00-05:00',
+                    startDate: '2026-08-05',
+                    time: '19:00',
+                    timeZone: 'America/Chicago',
                     opponent: 'New Opponent',
                     location: 'New Field'
                 }
@@ -5707,6 +5790,7 @@ describe('private AI service', () => {
             data: {
                 summary: expect.stringContaining('New Opponent'),
                 previewSummary: {
+                    timeZone: 'America/Chicago',
                     event: expect.objectContaining({
                         title: expect.stringContaining('New Opponent'),
                         date: '2026-08-06T00:00:00.000Z',
