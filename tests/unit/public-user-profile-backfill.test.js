@@ -48,7 +48,7 @@ describe('public user profile backfill', () => {
         expect([...indexes.adminTeamIds.get('tim@example.com')]).toEqual(['team-1']);
     });
 
-    it('combines parent, owner, and mixed-case coach memberships for an existing user', () => {
+    it('combines parent, coachOf, owner, and mixed-case admin memberships for an existing user', () => {
         const indexes = buildStaffTeamIndexes([
             team('team-coach', { adminEmails: ['Tim@Example.com'] }),
             team('team-owned', { ownerId: 'user-1' })
@@ -56,10 +56,14 @@ describe('public user profile backfill', () => {
 
         expect(resolveProjectionTeamIds(
             'user-1',
-            { parentTeamIds: ['team-parent'], email: 'old@example.com' },
+            {
+                parentTeamIds: ['team-parent'],
+                coachOf: ['team-coach-of'],
+                email: 'old@example.com'
+            },
             { email: 'tim@example.com' },
             indexes
-        )).toEqual(['team-parent', 'team-owned', 'team-coach']);
+        )).toEqual(['team-parent', 'team-coach-of', 'team-owned', 'team-coach']);
     });
 
     it('reports a failed users collection query with actionable context', async () => {

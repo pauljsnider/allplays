@@ -26,14 +26,14 @@ test('builds stable opaque staff membership ids from normalized team and user id
   );
 });
 
-test('combines parent and server-resolved staff teams without trusting coachOf', () => {
+test('combines server-managed parent, coach, and resolved staff teams', () => {
   assert.deepEqual(
     derivePublicProfileTeamIds({
       parentOf: [{ teamId: 'team-parent' }, { teamId: 'team-shared' }],
       parentTeamIds: ['team-shared'],
       coachOf: ['team-coach-of', 'team-shared']
     }, ['team-coach', 'team-parent']),
-    ['team-parent', 'team-shared', 'team-coach']
+    ['team-parent', 'team-shared', 'team-coach-of', 'team-coach']
   );
 });
 
@@ -147,5 +147,9 @@ test('ignores unrelated user activity when deciding whether to refresh a profile
   assert.notEqual(
     buildPublicProfileUserSourceKey(before),
     buildPublicProfileUserSourceKey({ ...after, parentTeamIds: ['team-1', 'team-2'] })
+  );
+  assert.notEqual(
+    buildPublicProfileUserSourceKey(before),
+    buildPublicProfileUserSourceKey({ ...after, coachOf: ['team-coach'] })
   );
 });

@@ -101,6 +101,8 @@ function loadNotificationRecipientIndexEnv({
     preferenceDocs = {},
     deviceDocs = {},
     authUsersByEmail = {},
+    authUsersByUid = {},
+    initialProjectionDocs = {},
     initialRecipientDocs = {},
     maxBatchCommitOps = 450,
     teamDocGetDelayMs = 0
@@ -112,6 +114,9 @@ function loadNotificationRecipientIndexEnv({
     const docStore = new Map();
 
     for (const [path, value] of Object.entries(initialRecipientDocs)) {
+        docStore.set(path, JSON.parse(JSON.stringify(value)));
+    }
+    for (const [path, value] of Object.entries(initialProjectionDocs)) {
         docStore.set(path, JSON.parse(JSON.stringify(value)));
     }
 
@@ -198,7 +203,7 @@ function loadNotificationRecipientIndexEnv({
 
     function collection(path) {
         if (path === 'teams') {
-            return {
+            const teamQuery = {
                 where(field, op, value) {
                     return {
                         async get() {
@@ -218,10 +223,45 @@ function loadNotificationRecipientIndexEnv({
                         }
                     };
                 },
+                select() {
+                    return teamQuery;
+                },
+                orderBy() {
+                    return teamQuery;
+                },
+                limit() {
+                    return teamQuery;
+                },
+                startAfter() {
+                    return teamQuery;
+                },
                 async get() {
                     return makeQuerySnapshot(
                         Object.entries(teamDocs).map(([teamId, team]) => makeDocSnapshot(doc(`teams/${teamId}`), team, true))
                     );
+                }
+            };
+            return teamQuery;
+        }
+
+        if (path === 'publicProfileStaffMemberships') {
+            return {
+                where(field, op, value) {
+                    return {
+                        async get() {
+                            const prefix = `${path}/`;
+                            const docs = [...docStore.entries()]
+                                .filter(([storedPath, membership]) => (
+                                    storedPath.startsWith(prefix)
+                                    && op === '=='
+                                    && String(membership?.[field] || '').trim() === String(value || '').trim()
+                                ))
+                                .map(([storedPath, membership]) => (
+                                    makeDocSnapshot(doc(storedPath), membership, true)
+                                ));
+                            return makeQuerySnapshot(docs);
+                        }
+                    };
                 }
             };
         }
@@ -396,6 +436,9 @@ function loadNotificationRecipientIndexEnv({
             serverTimestamp: () => ({ __serverTimestamp: true }),
             delete: () => ({ __delete: true })
         },
+        FieldPath: {
+            documentId: () => '__name__'
+        },
         Timestamp: {
             now: () => ({ toMillis: () => Date.now() })
         }
@@ -406,6 +449,22 @@ function loadNotificationRecipientIndexEnv({
         initializeApp: () => {},
         firestore: firestoreFactory,
         auth: () => ({
+            getUser: async (uid) => {
+                const configured = authUsersByUid[uid];
+                if (configured instanceof Error) throw configured;
+                if (configured) return { uid, ...clone(configured) };
+                const user = userDocs[uid];
+                if (user) {
+                    return {
+                        uid,
+                        email: user.email || user.profileEmail || null,
+                        emailVerified: true
+                    };
+                }
+                const error = new Error('Auth user not found');
+                error.code = 'auth/user-not-found';
+                throw error;
+            },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
                 return uid ? { uid } : { uid: '' };
@@ -454,6 +513,11 @@ function loadNotificationRecipientIndexEnv({
         },
         getDoc(path) {
             return clone(docStore.get(path));
+        },
+        getDocs(prefix) {
+            return [...docStore.entries()]
+                .filter(([path]) => path.startsWith(prefix))
+                .map(([path, value]) => [path, clone(value)]);
         },
         cleanup() {
             delete require.cache[repoIndexPath];
@@ -672,6 +736,217 @@ test('ineligible Auth cleanup removes an owner recipient while team and user rec
         assert.equal(result, null);
         assert.equal(env.getDoc(recipientPath), undefined);
         assert.ok(env.deletedPaths.includes(recipientPath));
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('pre-provisioned admin signup immediately projects discovery and notification membership', async () => {
+    const user = {
+        displayName: 'New Admin',
+        email: 'new-admin@example.com',
+        lastLogin: 'now'
+    };
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-pre-provisioned': {
+                ownerId: 'owner-1',
+                adminEmails: ['New-Admin@Example.com']
+            }
+        },
+        userDocs: {
+            'admin-1': user
+        },
+        authUsersByUid: {
+            'admin-1': {
+                email: 'new-admin@example.com',
+                emailVerified: true,
+                displayName: 'New Admin'
+            }
+        }
+    });
+
+    try {
+        await env.moduleExports.syncPublicUserProfileOnUserWrite(
+            makeChange(
+                { id: 'admin-1', path: 'users/admin-1' },
+                null,
+                user
+            ),
+            { params: { uid: 'admin-1' } }
+        );
+
+        assert.deepEqual(
+            env.getDoc('publicUserProfiles/admin-1')?.discoveryTeamIds,
+            ['team-pre-provisioned']
+        );
+        assert.equal(
+            env.getDoc('publicProfileAuthIdentities/admin-1')?.email,
+            'new-admin@example.com'
+        );
+        assert.deepEqual(
+            env.getDocs('publicProfileStaffMemberships/').map(([, value]) => ({
+                teamId: value.teamId,
+                userId: value.userId
+            })),
+            [{ teamId: 'team-pre-provisioned', userId: 'admin-1' }]
+        );
+        assert.deepEqual(
+            env.getDoc('teams/team-pre-provisioned/notificationRecipients/admin-1')?.roles,
+            ['staff']
+        );
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('routine user writes immediately swap old and new Auth-email discovery and notifications', async () => {
+    const staleUser = {
+        displayName: 'Admin',
+        email: 'old-admin@example.com',
+        lastLogin: 'before'
+    };
+    const currentUser = {
+        ...staleUser,
+        lastLogin: 'after'
+    };
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-old': {
+                ownerId: 'owner-old',
+                adminEmails: ['old-admin@example.com']
+            },
+            'team-new': {
+                ownerId: 'owner-new',
+                adminEmails: ['NEW-ADMIN@example.com']
+            }
+        },
+        userDocs: {
+            'admin-1': currentUser
+        },
+        authUsersByUid: {
+            'admin-1': {
+                email: 'new-admin@example.com',
+                emailVerified: true,
+                displayName: 'Admin'
+            }
+        },
+        initialProjectionDocs: {
+            'publicUserProfiles/admin-1': {
+                displayName: 'Admin',
+                discoveryTeamIds: ['team-old']
+            },
+            'publicProfileAuthIdentities/admin-1': {
+                email: 'old-admin@example.com'
+            },
+            'publicProfileStaffMemberships/old-membership': {
+                teamId: 'team-old',
+                userId: 'admin-1'
+            }
+        },
+        initialRecipientDocs: {
+            'teams/team-old/notificationRecipients/admin-1': {
+                uid: 'admin-1',
+                teamId: 'team-old',
+                roles: ['staff'],
+                categories: { schedule: true },
+                tokens: []
+            }
+        }
+    });
+
+    try {
+        await env.moduleExports.syncPublicUserProfileOnUserWrite(
+            makeChange(
+                { id: 'admin-1', path: 'users/admin-1' },
+                staleUser,
+                currentUser
+            ),
+            { params: { uid: 'admin-1' } }
+        );
+
+        assert.deepEqual(
+            env.getDoc('publicUserProfiles/admin-1')?.discoveryTeamIds,
+            ['team-new']
+        );
+        assert.equal(env.getDoc('publicProfileAuthIdentities/admin-1')?.email, 'new-admin@example.com');
+        assert.deepEqual(
+            env.getDocs('publicProfileStaffMemberships/').map(([, value]) => value.teamId),
+            ['team-new']
+        );
+        assert.equal(env.getDoc('teams/team-old/notificationRecipients/admin-1'), undefined);
+        assert.deepEqual(
+            env.getDoc('teams/team-new/notificationRecipients/admin-1')?.roles,
+            ['staff']
+        );
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('device notification refresh cannot recreate a former Auth-email staff recipient', async () => {
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-old': {
+                ownerId: 'owner-old',
+                adminEmails: ['old-admin@example.com']
+            },
+            'team-new': {
+                ownerId: 'owner-new',
+                adminEmails: ['new-admin@example.com']
+            }
+        },
+        userDocs: {
+            'admin-1': { email: 'old-admin@example.com' }
+        },
+        authUsersByUid: {
+            'admin-1': {
+                email: 'new-admin@example.com',
+                emailVerified: true
+            }
+        },
+        deviceDocs: {
+            'admin-1': [{ id: 'device-1', token: 'token-1', platform: 'web' }]
+        },
+        initialProjectionDocs: {
+            'publicProfileAuthIdentities/admin-1': {
+                email: 'old-admin@example.com'
+            },
+            'publicProfileStaffMemberships/old-membership': {
+                teamId: 'team-old',
+                userId: 'admin-1'
+            }
+        },
+        initialRecipientDocs: {
+            'teams/team-old/notificationRecipients/admin-1': {
+                uid: 'admin-1',
+                teamId: 'team-old',
+                roles: ['staff'],
+                categories: { schedule: true },
+                tokens: []
+            }
+        }
+    });
+
+    try {
+        await env.moduleExports.syncTeamNotificationRecipientsOnDeviceWrite(
+            makeChange(
+                {
+                    id: 'device-1',
+                    path: 'users/admin-1/notificationDevices/device-1'
+                },
+                null,
+                { token: 'token-1', platform: 'web' }
+            ),
+            { params: { uid: 'admin-1', deviceId: 'device-1' } }
+        );
+
+        assert.equal(env.getDoc('teams/team-old/notificationRecipients/admin-1'), undefined);
+        assert.deepEqual(
+            env.getDoc('teams/team-new/notificationRecipients/admin-1')?.roles,
+            ['staff']
+        );
+        assert.equal(env.getDoc('publicProfileAuthIdentities/admin-1')?.email, 'new-admin@example.com');
     } finally {
         env.cleanup();
     }

@@ -187,11 +187,11 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('reconciliation.isIneligible');
         expect(functionsSource).toContain('? { forceRemove: true }');
         expect(functionsSource).toContain("authEmail: authIdentity.email || ''");
-        expect(functionsSource).toContain('if (!sourceChanged) return null;');
+        expect(functionsSource).not.toContain('if (!sourceChanged) return null;');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
     });
 
-    it('uses only the uid membership index for routine callable and user-write refreshes', () => {
+    it('reconciles Auth identity mismatches on routine callable and user-write refreshes', () => {
         const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
         const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
         const callableSource = functionsSource.slice(callableStart, callableEnd);
@@ -201,17 +201,23 @@ describe('public user profile sync', () => {
 
         for (const routineSyncSource of [callableSource, userWriteSource]) {
             expect(routineSyncSource).toContain('useIndexedStaffMemberships: true');
-            expect(routineSyncSource).not.toContain('updateAuthIdentityIndex: true');
-            expect(routineSyncSource).not.toContain('reconcilePublicProfileStaffMembershipsForAuthUser');
-            expect(routineSyncSource).not.toContain('loadCaseInsensitivePublicProfileStaffTeamIds');
         }
+        expect(functionsSource).toContain('async function reconcileRoutinePublicProfileAuthIdentity(');
+        expect(functionsSource).toContain('const indexedEmail = authIdentitySnap.exists');
+        expect(functionsSource).toContain('if (authIdentitySnap.exists && indexedEmail === currentEmail)');
+        expect(functionsSource).toContain('const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(');
+        expect(functionsSource).toContain('...previousIdentityStaffTeamIds');
+        expect(functionsSource).toContain('authEmail: currentEmail');
+        expect(functionsSource).toContain('await authIdentityRef.set({');
+        expect(userWriteSource).toContain('skipProjectionWriteIfIdentityCurrent: !sourceChanged');
+        expect(functionsSource).toContain('options.skipProjectionWriteIfIdentityCurrent === true');
     });
 
     it('keeps mixed-case coach and owner discovery membership in a normalized uid index', () => {
         expect(functionsSource).toContain('async function getPublicProfileStaffUserIdsForTeam(team = null)');
         expect(functionsSource).toContain('return resolvePublicProfileStaffUserIds(team, {');
         expect(functionsSource).toContain('getUserByEmail: (email) => admin.auth().getUserByEmail(email)');
-        expect(functionsSource).toContain('const emailCandidates = uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]);');
+        expect(functionsSource).toContain('async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = \'\')');
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForTeam({');
         expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForUser({');
