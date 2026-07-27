@@ -1542,13 +1542,14 @@ service cloud.firestore {
 
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let publicProfilePath = /databases/$(database)/documents/publicUserProfiles/$(request.auth.uid);
       let privateParentTeamIds = isSignedIn() && exists(userPath)
         ? get(userPath).data.get('parentTeamIds', [])
         : [];
-      let privateCoachTeamIds = isSignedIn() && exists(userPath)
-        ? get(userPath).data.get('coachOf', [])
+      let projectedTeamIds = isSignedIn() && exists(publicProfilePath)
+        ? get(publicProfilePath).data.get('discoveryTeamIds', [])
         : [];
-      return privateParentTeamIds.concat(privateCoachTeamIds);
+      return privateParentTeamIds.concat(projectedTeamIds);
     }
 
     function canReadPublicUserProfile(userId, data) {
@@ -1595,7 +1596,7 @@ service cloud.firestore {
     }
 
     function userMembershipFields() {
-      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
+      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];
     }
 
     function teamMediaUploadGrantFields() {
@@ -1603,7 +1604,7 @@ service cloud.firestore {
     }
 
     function serverManagedUserRoleGrantFields() {
-      return ['coachOf', 'roles'];
+      return ['roles'];
     }
 
     function isOwnerUserCreatePayloadValid(data) {

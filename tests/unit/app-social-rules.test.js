@@ -103,7 +103,7 @@ function isOwnerUserEmailUpdateValid({ affectedKeys, nextEmail, authEmail }) {
 }
 
 function isOwnerUserMembershipUpdateValid({ affectedKeys }) {
-    return !hasAny(affectedKeys, ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys']);
+    return !hasAny(affectedKeys, ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf']);
 }
 
 describe('React app social Firestore rules', () => {
@@ -402,8 +402,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /publicUserProfiles/{userId}');
         expect(source).toContain('function canReadPublicUserProfile(userId, data)');
         expect(source).toContain("data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())");
-        expect(source).toContain("get(userPath).data.get('coachOf', [])");
-        expect(source).toContain('return privateParentTeamIds.concat(privateCoachTeamIds);');
+        expect(source).toContain("get(publicProfilePath).data.get('discoveryTeamIds', [])");
+        expect(source).toContain('return privateParentTeamIds.concat(projectedTeamIds);');
         expect(source).not.toContain("get(authIdentityPath).data.get('email', '').lower() == request.auth.token.email.lower()");
         expect(source).toContain('isAcceptedFriendOf(userId)');
         expect(source).toContain("get(friendshipPath).data.get('status', '') == 'accepted'");
@@ -413,7 +413,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('allow read, write: if false;');
         expect(source).toContain('match /publicProfileAuthIdentities/{userId}');
         expect(source).toContain("function userMembershipFields()");
-        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
+        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];");
         expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(source).toContain('function isOwnerUserEmailAuthBound(data)');
@@ -446,6 +446,9 @@ describe('React app social Firestore rules', () => {
         })).toBe(false);
         expect(isOwnerUserMembershipUpdateValid({
             affectedKeys: ['parentTeamIds', 'parentPlayerKeys']
+        })).toBe(false);
+        expect(isOwnerUserMembershipUpdateValid({
+            affectedKeys: ['coachOf']
         })).toBe(false);
     });
 
@@ -600,28 +603,40 @@ describe('React app social Firestore rules', () => {
             await assertSucceeds(getDoc(profileRef('profile-friend', viewer)));
         });
 
-        it('allows staff-only viewers to query profiles sharing a projected team', async () => {
-            await seedPublicProfile('viewer-staff', { discoveryTeamIds: ['team-staff'] });
-            await seedPublicProfile('profile-team-parent', { discoveryTeamIds: ['team-staff'] });
+        it.each([
+            ['team owner', 'viewer-owner', 'team-owner'],
+            ['email-based admin', 'viewer-admin', 'team-admin']
+        ])('allows a %s without coachOf to query profiles sharing a projected team', async (
+            _role,
+            viewerId,
+            teamId
+        ) => {
+            await seedPublicProfile(viewerId, { discoveryTeamIds: [teamId] });
+            await seedPublicProfile(`profile-${teamId}`, { discoveryTeamIds: [teamId] });
             await testEnv.withSecurityRulesDisabled(async (context) => {
-                await setDoc(doc(context.firestore(), 'users', 'viewer-staff'), {
-                    coachOf: ['team-staff']
+                await setDoc(doc(context.firestore(), 'users', viewerId), {
+                    email: `${viewerId}@example.com`,
+                    displayName: 'Projected staff viewer',
+                    parentOf: [],
+                    parentTeamIds: [],
+                    parentPlayerKeys: [],
+                    playerKeys: []
                 });
             });
 
-            const viewer = testEnv.authenticatedContext('viewer-staff', {
-                email: 'viewer-staff@example.com'
+            const viewer = testEnv.authenticatedContext(viewerId, {
+                email: `${viewerId}@example.com`
             });
             const profiles = await assertSucceeds(getDocs(query(
                 collection(viewer.firestore(), 'publicUserProfiles'),
-                where('discoveryTeamIds', 'array-contains', 'team-staff'),
+                where('discoveryTeamIds', 'array-contains', teamId),
                 limit(20)
             )));
 
             expect(profiles.docs.map((entry) => entry.id).sort()).toEqual([
-                'profile-team-parent',
-                'viewer-staff'
-            ]);
+                `profile-${teamId}`,
+                viewerId
+            ].sort());
         });
 
         it('denies stale email-projected staff access to an already-issued old token', async () => {

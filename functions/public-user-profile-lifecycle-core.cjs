@@ -241,7 +241,7 @@ function createPublicProfileTeamWriteHandler({ firestore, syncTeam }) {
   };
 }
 
-function createPublicProfileAuthDeleteHandler({ firestore }) {
+function createPublicProfileAuthDeleteHandler({ firestore, syncAffectedTeam }) {
   if (!firestore) throw new TypeError('firestore is required');
 
   return async function cleanupPublicProfileOnAuthDelete(user) {
@@ -258,7 +258,13 @@ function createPublicProfileAuthDeleteHandler({ firestore }) {
       firestore.doc(`publicProfileAuthIdentities/${userId}`),
       ...(staffMembershipSnap.docs || []).map((entry) => entry.ref)
     ];
+    const affectedTeamIds = [...new Set((staffMembershipSnap.docs || [])
+      .map((entry) => String(entry.data()?.teamId || '').trim())
+      .filter(Boolean))];
     await Promise.all(refs.map((ref) => ref.delete()));
+    if (typeof syncAffectedTeam === 'function') {
+      await Promise.all(affectedTeamIds.map((teamId) => syncAffectedTeam(teamId, userId)));
+    }
     return null;
   };
 }
@@ -304,8 +310,7 @@ function createPublicProfileEligibilitySweepHandler({
             if (!isAuthUserNotFound(error)) throw error;
             authIdentity = { userMissing: true };
           }
-          const reconciledIdentity = authIdentity.userMissing !== true
-            && typeof reconcileAuthIdentity === 'function'
+          const reconciledIdentity = typeof reconcileAuthIdentity === 'function'
             ? await reconcileAuthIdentity(profileDoc.id, authIdentity)
             : undefined;
           if (

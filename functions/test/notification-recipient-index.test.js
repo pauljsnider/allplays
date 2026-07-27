@@ -642,6 +642,41 @@ test('Auth identity reconciliation removes former staff notifications despite a 
     }
 });
 
+test('ineligible Auth cleanup removes an owner recipient while team and user records remain', async () => {
+    const recipientPath = 'teams/team-1/notificationRecipients/owner-1';
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'owner-1', adminEmails: [] }
+        },
+        userDocs: {
+            'owner-1': { email: 'owner@example.com' }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: {
+                uid: 'owner-1',
+                teamId: 'team-1',
+                roles: ['staff'],
+                categories: { schedule: true },
+                tokens: []
+            }
+        }
+    });
+
+    try {
+        const result = await env.internals.syncNotificationRecipientForTeamUser(
+            'team-1',
+            'owner-1',
+            { forceRemove: true }
+        );
+
+        assert.equal(result, null);
+        assert.equal(env.getDoc(recipientPath), undefined);
+        assert.ok(env.deletedPaths.includes(recipientPath));
+    } finally {
+        env.cleanup();
+    }
+});
+
 test('device writes refresh token lists for every team the user belongs to', async () => {
     const env = loadNotificationRecipientIndexEnv({
         teamDocs: {

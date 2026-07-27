@@ -122,7 +122,7 @@ describe('public user profile sync', () => {
         const authCheck = callableSource.indexOf('if (!context.auth?.uid)');
         const ownershipCheck = callableSource.indexOf('if (userId !== context.auth.uid)');
         const ineligibleCleanup = callableSource.indexOf(
-            'await removePublicProfileForIneligibleAuth('
+            'await removePublicProfileAuthorizationForIneligibleAuth('
         );
         const verificationGuard = callableSource.indexOf(
             'await assertSensitiveEmailVerified({'
@@ -161,7 +161,9 @@ describe('public user profile sync', () => {
             syncStart
         );
         const syncSource = functionsSource.slice(syncStart, syncEnd);
-        const eligibilityCleanup = syncSource.indexOf('await removePublicProfileForIneligibleAuth(');
+        const eligibilityCleanup = syncSource.indexOf(
+            'await removePublicProfileAuthorizationForIneligibleAuth('
+        );
 
         expect(syncStart).toBeGreaterThanOrEqual(0);
         expect(syncEnd).toBeGreaterThan(syncStart);
@@ -169,18 +171,21 @@ describe('public user profile sync', () => {
         expect(functionsSource).toMatch(
             /exports\.cleanupPublicUserProfileOnAuthDelete = functions\.auth\s+\.user\(\)\s+\.onDelete/
         );
-        expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({ firestore })');
+        expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({');
+        expect(functionsSource).toContain('syncAffectedTeam: (teamId, userId) => (');
         expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
         expect(functionsSource).toContain("schedule('every 24 hours')");
         expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
-        expect(functionsSource).toContain('if (indexedEmail === currentEmail) return null;');
+        expect(functionsSource).toContain('if (!isIneligible && indexedEmail === currentEmail) return null;');
         expect(functionsSource).toContain('const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);');
-        expect(functionsSource).toContain('const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(');
+        expect(functionsSource).toContain('const discoveryTeamIds = isIneligible');
+        expect(functionsSource).toContain('currentStaffTeamIds: []');
         expect(functionsSource).toContain('syncReconciledIdentity: (userId, authIdentity, reconciliation) => (');
         expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
         expect(functionsSource).toContain('useIndexedStaffMemberships: true');
         expect(functionsSource).toContain('updateAuthIdentityIndex: true');
-        expect(functionsSource).toContain('syncNotificationRecipientForTeamUser(teamId, userId, {');
+        expect(functionsSource).toContain('reconciliation.isIneligible');
+        expect(functionsSource).toContain('? { forceRemove: true }');
         expect(functionsSource).toContain("authEmail: authIdentity.email || ''");
         expect(functionsSource).toContain('if (!sourceChanged) return null;');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');

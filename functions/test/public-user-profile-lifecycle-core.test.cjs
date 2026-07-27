@@ -36,15 +36,18 @@ test('removes a stale public profile when an Auth identity becomes unverified', 
   assert.equal(deleteCalls, 1);
 });
 
-test('Auth deletion removes the public profile and normalized staff memberships', async () => {
+test('Auth deletion removes profile state and resynchronizes every formerly authorized staff team', async () => {
   const deletedPaths = [];
+  const synchronizedTeams = [];
   const staffDocs = [
     {
+      data: () => ({ teamId: 'team-1' }),
       ref: {
         delete: async () => deletedPaths.push('publicProfileStaffMemberships/staff-1')
       }
     },
     {
+      data: () => ({ teamId: 'team-2' }),
       ref: {
         delete: async () => deletedPaths.push('publicProfileStaffMemberships/staff-2')
       }
@@ -65,13 +68,20 @@ test('Auth deletion removes the public profile and normalized staff memberships'
     })
   };
 
-  const handler = createPublicProfileAuthDeleteHandler({ firestore });
+  const handler = createPublicProfileAuthDeleteHandler({
+    firestore,
+    syncAffectedTeam: async (teamId, userId) => synchronizedTeams.push([teamId, userId])
+  });
   assert.equal(await handler({ uid: 'deleted-user' }), null);
   assert.deepEqual(deletedPaths.sort(), [
     'publicProfileAuthIdentities/deleted-user',
     'publicProfileStaffMemberships/staff-1',
     'publicProfileStaffMemberships/staff-2',
     'publicUserProfiles/deleted-user'
+  ]);
+  assert.deepEqual(synchronizedTeams.sort(), [
+    ['team-1', 'deleted-user'],
+    ['team-2', 'deleted-user']
   ]);
 });
 
@@ -86,7 +96,7 @@ test('Auth deletion ignores records without a uid', async () => {
   assert.equal(await handler({}), null);
 });
 
-test('scheduled eligibility sweep removes ineligible users and syncs each eligible user once', async () => {
+test('scheduled sweep reconciles unchanged-email revocation and a missed Auth-delete trigger', async () => {
   const deletedUserIds = [];
   const reconciledUserIds = [];
   const synchronizedIdentityUserIds = [];
@@ -108,7 +118,10 @@ test('scheduled eligibility sweep removes ineligible users and syncs each eligib
       if (userId === 'missing-user') {
         throw Object.assign(new Error('missing'), { code: 'auth/user-not-found' });
       }
-      return { emailVerified: userId === 'verified-user' };
+      return {
+        email: 'unchanged@example.com',
+        emailVerified: userId === 'verified-user'
+      };
     }
   };
   const handler = createPublicProfileEligibilitySweepHandler({
@@ -123,7 +136,10 @@ test('scheduled eligibility sweep removes ineligible users and syncs each eligib
     isAuthUserNotFound: (error) => error?.code === 'auth/user-not-found',
     reconcileAuthIdentity: async (userId, authIdentity) => {
       reconciledUserIds.push([userId, authIdentity]);
-      return { affectedStaffTeamIds: ['former-team', 'current-team'] };
+      return {
+        affectedStaffTeamIds: ['former-team', 'current-team'],
+        isIneligible: authIdentity.userMissing === true || authIdentity.emailVerified !== true
+      };
     },
     syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {
       synchronizedIdentityUserIds.push([userId, authIdentity, reconciliation]);
@@ -138,19 +154,26 @@ test('scheduled eligibility sweep removes ineligible users and syncs each eligib
   assert.deepEqual(deletedUserIds.sort(), ['missing-user', 'unverified-user']);
   assert.deepEqual(reconciledUserIds.map(([userId]) => userId), [
     'verified-user',
-    'unverified-user'
+    'unverified-user',
+    'missing-user'
   ]);
   assert.deepEqual(synchronizedIdentityUserIds.map(([userId]) => userId), [
     'verified-user',
-    'unverified-user'
+    'unverified-user',
+    'missing-user'
   ]);
+  assert.deepEqual(
+    synchronizedIdentityUserIds.map(([, , reconciliation]) => reconciliation.isIneligible),
+    [false, true, true]
+  );
   assert.deepEqual(syncedUserIds, [['verified-user', {
-    email: null,
+    email: 'unchanged@example.com',
     displayName: null,
     photoUrl: null,
     emailVerified: true
   }, {
-    affectedStaffTeamIds: ['former-team', 'current-team']
+    affectedStaffTeamIds: ['former-team', 'current-team'],
+    isIneligible: false
   }]]);
 });
 
