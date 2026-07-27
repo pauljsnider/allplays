@@ -188,14 +188,14 @@ concurrency:
             activate_firestore_ruleset_with_retry
           }
           if [[ "$deploy_label" == "firestore" ]]; then
-            echo "latest version of firestore.rules already up to date, skipping upload"
             echo "deployed indexes in firestore.indexes.json successfully"
+            grep -Eiq "$transient_pattern"
+            echo "latest version of firestore.rules already up to date, skipping upload"
             echo "rules file firestore.rules compiled successfully"
             echo "uploading rules firestore.rules"
-            echo "The active Firestore release exactly matches this commit and indexes deployed"
+            echo "The active Firestore release exactly matches this commit and indexes deployed; accepting the transient release failure as success."
             recover_firestore_release_after_duplicate
-            echo "Recovered the Firebase CLI release race by activating the exact uploaded ruleset"
-            echo "accepting the duplicate release 409 as success"
+            echo "Recovered the Firebase CLI release failure by activating the exact staged ruleset after indexes deployed."
             api_surface="Firestore Rules API (firebaserules.googleapis.com)"
             grep -Eio 'HTTP Error:[[:space:]]*(409|429|500|502|503|504)|(^|[^[:digit:]])(409|429|500|502|503|504)([^[:digit:]]|$)' "$deploy_log" \\
               | grep -Eo '(409|429|500|502|503|504)'
@@ -207,17 +207,13 @@ concurrency:
             echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
           } >> "$GITHUB_STEP_SUMMARY"
           fi
-          test_firestore_rules_api() {
-            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311:test"
-          }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             if verify_active_firestore_rules; then
               echo "The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write."
               retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20
             else
-              projects:test calls bounded to at most five per release run
-              test_firestore_rules_api 2 20
-              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+              instead of spending two calls on a duplicate preflight
+              retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20
             fi
           else
             :
@@ -318,9 +314,9 @@ concurrency:
             'docs/observability-runbook.md'
         ))).toThrow('Production Firestore retry-exhaustion recovery link');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20`,
+            `retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20`,
             `retry_firebase_deploy "hosting,functions" "application"
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20`
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20`
         ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 20',
@@ -343,11 +339,15 @@ concurrency:
             'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases"'
         ))).toThrow('Production Firestore release PATCH method');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'instead of spending two calls on a duplicate preflight',
+            'test_firestore_rules_api 2 20'
+        ))).toThrow('Production must not spend Firestore compilation attempts on a duplicate health preflight');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             `else
             :
           fi`,
             `else
-            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 3 20
+            retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore" 5 20
           fi`
         ))).toThrow('Production must not redeploy unchanged Firestore configuration');
     });
