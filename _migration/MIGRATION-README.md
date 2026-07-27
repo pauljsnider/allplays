@@ -1,13 +1,14 @@
 # Migration Scripts
 
 One-off Node.js scripts for Firestore data fixes and migrations. They run with
-the `firebase-admin` SDK against production using a service account key.
+the `firebase-admin` SDK against production using Application Default Credentials.
 
 ## Requirements
 
 - Node.js 18+
-- `./serviceAccountKey.json` in this directory (service account for
-  `game-flow-c6311`). Never commit this file.
+- Application Default Credentials for `game-flow-c6311`, such as a
+  `GOOGLE_APPLICATION_CREDENTIALS` path to a service account file outside the
+  repository or credentials provided by the Google Cloud runtime.
 
 ## Conventions
 
@@ -16,6 +17,25 @@ the `firebase-admin` SDK against production using a service account key.
   reviewed before applying.
 
 ## Scripts
+
+### backfill-public-user-profiles.js
+
+Rebuilds the `publicUserProfiles/{uid}` Friends-discovery projection for
+verified accounts from private user membership, Firebase Auth identity, and
+team owner/admin links. It also reconciles the server-owned normalized staff
+membership index used by runtime synchronization. Every run requires an
+explicit `--project` (or `FIREBASE_PROJECT_ID`). It is dry-run-only unless
+`--apply` and an exact `--confirm-project` are both provided. Apply mode also
+removes stale projections for unverified users, deleted Firebase Auth accounts,
+and public profiles whose private user record no longer exists.
+
+```bash
+node _migration/backfill-public-user-profiles.js --email parent@example.com \
+  --project game-flow-c6311
+node _migration/backfill-public-user-profiles.js --apply --email parent@example.com \
+  --project game-flow-c6311 --confirm-project game-flow-c6311
+node _migration/backfill-public-user-profiles.js --all --project game-flow-c6311
+```
 
 ### fix-orphaned-invite-redemptions.js
 
