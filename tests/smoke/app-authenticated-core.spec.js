@@ -10,7 +10,8 @@ import {
 } from './helpers/app-auth.js';
 
 const config = getAppSmokeConfig();
-const enabled = Boolean(config.appBaseUrl);
+const suite = process.env.SMOKE_SUITE || '';
+const enabled = Boolean(config.appBaseUrl) && ['production', 'extended-production'].includes(suite);
 const secretValues = [
     config.staffEmail,
     config.staffPassword,
@@ -18,7 +19,7 @@ const secretValues = [
     config.parentPassword
 ];
 
-test.skip(!enabled, 'SMOKE_APP_BASE_URL or SMOKE_APP_BOOT_URL is required');
+test.skip(!enabled, 'Credentialed core workflows run only in production or extended-production smoke');
 test.describe.configure({ mode: 'serial' });
 
 let staffStorageState;

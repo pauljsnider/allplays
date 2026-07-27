@@ -1,20 +1,29 @@
 import { test, expect } from '@playwright/test';
-import { buildUrl, createBootIssueCollector } from './helpers/boot-path.js';
+import { createBootIssueCollector } from './helpers/boot-path.js';
 
-test('login page survives real Firebase auth bootstrap', async ({ page, baseURL }) => {
-    const issues = createBootIssueCollector(page, { baseURL });
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || process.env.SMOKE_APP_BOOT_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL or SMOKE_APP_BOOT_URL is required');
 
-    await page.goto(buildUrl(baseURL, '/login.html'), { waitUntil: 'domcontentloaded' });
+function appUrl(route) {
+    const url = new URL(appBaseUrl);
+    url.hash = route;
+    return url.toString();
+}
 
-    await expect(page.locator('#login-form')).toBeVisible();
-    await expect(page.locator('#google-btn')).toBeVisible();
-    await expect(page).toHaveTitle(/Login - ALL PLAYS/i);
+test('canonical auth page survives real Firebase auth bootstrap', async ({ page }) => {
+    const issues = createBootIssueCollector(page, { baseURL: appBaseUrl });
+
+    await page.goto(appUrl('/auth'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+    await expect(page).toHaveTitle(/ALL PLAYS/i);
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
     expect(issues).toEqual([]);
 });
 
-test('reset-password page renders invalid-code state after real Firebase bootstrap', async ({ page, baseURL }) => {
+test('canonical reset-password route renders invalid-code state after real Firebase bootstrap', async ({ page }) => {
     await page.route('https://identitytoolkit.googleapis.com/**', async (route) => {
         const request = route.request();
         if (!request.url().includes('accounts:resetPassword')) {
@@ -41,22 +50,18 @@ test('reset-password page renders invalid-code state after real Firebase bootstr
     });
 
     const issues = createBootIssueCollector(page, {
-        baseURL,
+        baseURL: appBaseUrl,
         ignoredConsoleErrors: [
             /Error verifying reset code:/i,
             /INVALID_OOB_CODE/i
         ]
     });
 
-    await page.goto(
-        buildUrl(baseURL, '/reset-password.html?mode=resetPassword&oobCode=bad-code'),
-        { waitUntil: 'domcontentloaded' }
-    );
+    await page.goto(appUrl('/reset-password?mode=resetPassword&oobCode=bad-code'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#invalid-code-state')).toBeVisible();
-    await expect(page.locator('#invalid-code-message')).toContainText(/invalid|expired/i);
-    await expect(page.locator('#loading-state')).toBeHidden();
-    await expect(page).toHaveTitle(/Account Action - ALL PLAYS/i);
+    await expect(page.getByRole('heading', { name: 'Account action' })).toBeVisible();
+    await expect(page.getByText(/invalid|expired/i).first()).toBeVisible();
+    await expect(page).toHaveTitle(/ALL PLAYS/i);
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
     expect(issues).toEqual([]);

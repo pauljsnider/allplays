@@ -101,8 +101,8 @@ test.describe('help topic and workflow pages', () => {
         await bootWorkflowPage(page, baseURL, '/workflow-getting-started.html');
 
         const workflowBody = page.locator('.help-workflow-body');
-        await expect(workflowBody.getByRole('link', { name: 'Sign Up' })).toHaveAttribute('href', 'login.html#signup');
-        await expect(workflowBody.getByRole('link', { name: 'Sign In' })).toHaveAttribute('href', 'login.html');
+        await expect(workflowBody.getByRole('link', { name: 'Sign Up' })).toHaveAttribute('href', '/app/#/auth?mode=signup');
+        await expect(workflowBody.getByRole('link', { name: 'Sign In' })).toHaveAttribute('href', '/app/#/auth');
         await expect(page.getByText('Get Started Now')).toHaveCount(0);
     });
 

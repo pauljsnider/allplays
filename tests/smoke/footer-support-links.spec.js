@@ -52,11 +52,13 @@ test('homepage footer support links navigate to live support destinations', asyn
     await expect(page.getByRole('heading', { name: 'ALL PLAYS Help Center' })).toBeVisible();
 });
 
-test('shared footer support links stay wired on login page', async ({ page, baseURL }) => {
-    await page.goto(buildUrl(baseURL, '/login.html'), { waitUntil: 'domcontentloaded' });
+test('canonical auth entry keeps legal destinations wired', async ({ page }) => {
+    const appBaseUrl = process.env.SMOKE_APP_BASE_URL || process.env.SMOKE_APP_BOOT_URL || '';
+    test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL or SMOKE_APP_BOOT_URL is required');
+    const authUrl = new URL(appBaseUrl);
+    authUrl.hash = '/auth';
+    await page.goto(authUrl.toString(), { waitUntil: 'domcontentloaded' });
 
-    const { helpHref, contactHref } = await getFooterSupportLinks(page);
-
-    expectLiveSupportHref(helpHref, 'help.html');
-    expectLiveSupportHref(contactHref, 'mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support');
+    await expect(page.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', 'https://allplays.ai/terms.html');
+    await expect(page.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', 'https://allplays.ai/privacy.html');
 });

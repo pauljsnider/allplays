@@ -735,7 +735,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     const sharedInviteUrl = await page.evaluate(() => window.__appShareCalls[0]?.url || '');
-    expect(sharedInviteUrl).toContain('/app#/accept-invite?code=NEWMVP42');
+    expect(sharedInviteUrl).toContain('/app/#/accept-invite?code=NEWMVP42');
     expect(sharedInviteUrl).not.toContain('/login.html?code=');
 
     const recipientPage = await page.context().newPage();
@@ -791,8 +791,8 @@ test('profile exposes account, notification, invite, verification, password, upl
         shares: [expect.objectContaining({
             title: 'ALL PLAYS invite for friend@example.com',
             text: 'Use this ALL PLAYS invite link for friend@example.com.',
-            url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42'),
-            clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
+            url: expect.stringContaining('/app/#/accept-invite?code=NEWMVP42'),
+            clipboardText: expect.stringContaining('/app/#/accept-invite?code=NEWMVP42')
         })],
         password: ['new-password'],
         reset: ['parent@example.com'],
