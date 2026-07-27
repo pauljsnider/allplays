@@ -223,6 +223,22 @@ describe('roster profile fields', () => {
         ]);
     });
 
+    it('keeps linked parents with distinct user ids when they share household contact details', () => {
+        const linkedParents = [
+            { userId: 'parent-1', name: 'Pat Parent', email: 'family@example.com', phone: '555-0101', relation: 'Mother' },
+            { userId: 'parent-2', name: 'Robin Parent', email: 'family@example.com', phone: '555-0101', relation: 'Father' }
+        ];
+
+        expect(collectRosterParentContacts({ parents: linkedParents })).toEqual([
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+        expect(mergeRosterParentContacts(linkedParents, [])).toEqual([
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+    });
+
     it('carries identity aliases through duplicate contact projections', () => {
         const player = {
             parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],

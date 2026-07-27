@@ -3287,10 +3287,18 @@ function mergePrivateAiScheduleEventUpdateInput(
   const preserve = (key: string, value: unknown) => {
     if (!hasOwn(input, key)) input[key] = value;
   };
+  const requestedStartDate = hasOwn(input, 'startDate')
+    ? normalizeScheduleDate(input.startDate)
+    : null;
+  const shiftFromOriginalStart = (value: Date | null | undefined) => (
+    requestedStartDate && value
+      ? new Date(requestedStartDate.getTime() + (value.getTime() - event.date.getTime())).toISOString()
+      : value?.toISOString() || ''
+  );
   preserve('startDate', event.date.toISOString());
-  preserve('endDate', event.endDate?.toISOString() || '');
+  preserve('endDate', shiftFromOriginalStart(event.endDate));
   preserve('location', event.location || '');
-  preserve('arrivalTime', event.arrivalTime?.toISOString() || '');
+  preserve('arrivalTime', shiftFromOriginalStart(event.arrivalTime));
   preserve('notes', event.notes || '');
   if (event.type === 'practice') {
     preserve('title', event.title || 'Practice');
@@ -3307,6 +3315,27 @@ function mergePrivateAiScheduleEventUpdateInput(
   return input;
 }
 
+function applyPrivateAiScheduleEventUpdateInput(
+  event: ParentScheduleEvent,
+  input: Record<string, unknown>
+): ParentScheduleEvent {
+  return {
+    ...event,
+    date: normalizeScheduleDate(input.startDate) || event.date,
+    endDate: normalizeScheduleDate(input.endDate),
+    arrivalTime: normalizeScheduleDate(input.arrivalTime),
+    location: compactText(input.location),
+    notes: compactText(input.notes),
+    ...(event.type === 'practice'
+      ? { title: compactText(input.title) || 'Practice' }
+      : {
+          opponent: compactText(input.opponent),
+          isHome: typeof input.isHome === 'boolean' ? input.isHome : event.isHome,
+          competitionType: compactText(input.competitionType) || event.competitionType
+        })
+  };
+}
+
 async function prepareManagedScheduleEventUpdateAction(
   user: AuthUser,
   args: Record<string, unknown>,
@@ -3319,7 +3348,9 @@ async function prepareManagedScheduleEventUpdateAction(
   });
   if (!event) throw new Error('No matching schedule event was found for this account.');
   const requestedInput = isPlainObject(args.input) ? args.input : {};
-  const eventSummary = summarizeScheduleEvent(event);
+  const input = mergePrivateAiScheduleEventUpdateInput(event, requestedInput);
+  const proposedEvent = applyPrivateAiScheduleEventUpdateInput(event, input);
+  const eventSummary = summarizeScheduleEvent(proposedEvent);
   return {
     args: {
       ...args,
@@ -3327,9 +3358,9 @@ async function prepareManagedScheduleEventUpdateAction(
       eventId: event.id,
       eventType: event.type,
       childId: event.childId || '',
-      input: mergePrivateAiScheduleEventUpdateInput(event, requestedInput)
+      input
     },
-    summary: `${label} | ${event.teamName}: ${getScheduleTitle(event)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
+    summary: `${label} | ${event.teamName}: ${getScheduleTitle(proposedEvent)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
     previewSummary: {
       domain: 'team-management',
       action: label,
@@ -5803,6 +5834,32 @@ async function resolveAccessibleTeamId(
   const exactNamedTeams = teamName
     ? eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase() === teamName)
     : [];
+  if (exactNamedTeams.length > 1) {
+    throw new Error(`More than one accessible team matches "${compactText(args.teamName)}". Choose one team.`);
+  }
+  if (exactNamedTeams.length === 1) {
+    return exactNamedTeams[0].teamId;
+  }
+  const exactPromptTeams = !teamName && requestText
+    ? eligibleTeams.filter((team) => {
+        const name = compactText(team.teamName).toLowerCase();
+        return requestText.startsWith(`${name}:`)
+          || requestText.startsWith(`${name},`)
+          || requestText.startsWith(`in ${name},`)
+          || requestText.startsWith(`for ${name},`)
+          || requestText.startsWith(`on ${name},`);
+      })
+    : [];
+  if (exactPromptTeams.length > 1) {
+    throw new Error('More than one accessible team matches that request. Choose one team.');
+  }
+  if (exactPromptTeams.length === 1) {
+    return exactPromptTeams[0].teamId;
+  }
+  if (access.isPartial) {
+    if (access.partialError instanceof Error) throw access.partialError;
+    throw new Error('Could not verify all team access. Use an exact team name or team ID and try again.');
+  }
   const partiallyNamedTeams = teamName && !exactNamedTeams.length && teamName.length >= 3
     ? eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase().includes(teamName))
     : [];
@@ -5819,10 +5876,6 @@ async function resolveAccessibleTeamId(
   }
   if (explicitMatches.length === 1) {
     return explicitMatches[0].teamId;
-  }
-  if (access.isPartial) {
-    if (access.partialError instanceof Error) throw access.partialError;
-    throw new Error('Could not verify all team access. Try again before using team AI tools.');
   }
   if (teamName) {
     const exactMatches = eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase() === teamName);
@@ -5899,6 +5952,9 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
     managedTeams = managedTeams.filter((team) => team.teamId === requestedTeamId);
   } else if (requestedTeamName) {
     const exactTeams = managedTeams.filter((team) => compactText(team.teamName).toLowerCase() === requestedTeamName);
+    if (access.isPartial && !exactTeams.length) {
+      throw new Error(`Could not verify the managed team "${compactText(args.teamName)}". Use the exact team name or team ID and try again.`);
+    }
     const matchingTeams = exactTeams.length
       ? exactTeams
       : managedTeams.filter((team) => compactText(team.teamName).toLowerCase().includes(requestedTeamName));
@@ -6096,6 +6152,8 @@ function summarizeScheduleEvent(event: ParentScheduleEvent) {
     childId: event.childId,
     childName: event.childName,
     date: event.date.toISOString(),
+    endDate: event.endDate?.toISOString() || null,
+    arrivalTime: event.arrivalTime?.toISOString() || null,
     dateLabel: formatEventDateLabel(event.date),
     timeLabel: formatEventTimeLabel(event.date),
     location: event.location,
@@ -6329,9 +6387,11 @@ function normalizePrivateAiScheduleEventInput(args: Record<string, unknown>) {
   }
   if (input.endDate === undefined && source.endsAt !== undefined) input.endDate = source.endsAt;
   if (input.arrivalTime === undefined && source.arrival !== undefined) input.arrivalTime = source.arrival;
+  if (source.timeZone !== undefined || source.timezone !== undefined) {
+    input.timeZone = compactText(source.timeZone ?? source.timezone);
+  }
   delete input.time;
   delete input.startTime;
-  delete input.timeZone;
   delete input.timezone;
   return input;
 }
@@ -6393,10 +6453,12 @@ function looksLikeFunctionalHelpQuestion(question: string) {
 
 function looksLikeImperativePrivateAiWriteRequest(question: string) {
   const text = compactText(question).toLowerCase();
+  const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|reschedule|send|set|mark|record|assign|claim|release|save|import)';
   return /^(?:please\s+)?(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|reschedule|send|set|mark|record|assign|claim|release|save|import)\b/.test(text)
     || /^(?:can|could|would)\s+you\s+(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
     || /^(?:use|using)\b.{1,180}?(?:[.!;,:]\s*|\band\s+)(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
-    || /^(?:for|on)\b.{1,120}?,\s*(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text);
+    || /^(?:for|on)\b.{1,120}?,\s*(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
+    || new RegExp(`^(?:in\\s+)?[^,;:\\n]{1,120}[,:]\\s*(?:please\\s+)?${writeVerb}\\b`).test(text);
 }
 
 function hasPrivateAiWriteToolResult(toolResults: PrivateAiToolResult[]) {
