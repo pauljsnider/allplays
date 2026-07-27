@@ -153,7 +153,8 @@ concurrency:
               --config "$firebase_config"
               --non-interactive
             )
-            if [[ "$deploy_targets" != "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" ]]; then
+            retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+            if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
             deploy_args+=(--force)
@@ -221,7 +222,7 @@ concurrency:
             echo 'state: "success"'
           }
           record_component_deployment "production-firestore"
-          retry_firebase_deploy "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" "retry-enabled-functions" 3 15 true
+          retry_firebase_deploy "$retry_enabled_function_targets" "retry-enabled-functions" 3 15 true
           retry_firebase_deploy "hosting,functions" "application"
         `;
 
