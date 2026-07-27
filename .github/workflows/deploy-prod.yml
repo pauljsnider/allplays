@@ -885,6 +885,7 @@ jobs:
 
       - name: Validate Pages handoff identity
         env:
+          EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
           EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
         run: |
@@ -896,12 +897,26 @@ jobs:
           test -f "$bundle/site/index.html"
           test -f "$bundle/site/app/index.html"
           test -f "$bundle/site/.nojekyll"
-          [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]
-          jq -e \
-            --arg expected_site_key "$EXPECTED_APP_CHECK_SITE_KEY" \
-            '.appCheck.enabled == true and
-             .appCheck.recaptchaEnterpriseSiteKey == $expected_site_key' \
-            "$runtime_config" >/dev/null
+          case "${EXPECTED_APP_CHECK_ENFORCEMENT_READY,,}" in
+            true|1)
+              [[ "$EXPECTED_APP_CHECK_SITE_KEY" =~ ^[A-Za-z0-9_-]{10,200}$ ]]
+              jq -e \
+                --arg expected_site_key "$EXPECTED_APP_CHECK_SITE_KEY" \
+                '.appCheck.enabled == true
+                 and .appCheck.isTokenAutoRefreshEnabled == true
+                 and .appCheck.recaptchaEnterpriseSiteKey == $expected_site_key
+                 and (.appCheck | has("debugToken") | not)' \
+                "$runtime_config" >/dev/null
+              ;;
+            *)
+              jq -e \
+                '.appCheck.enabled == false
+                 and .appCheck.isTokenAutoRefreshEnabled == true
+                 and (.appCheck | has("recaptchaEnterpriseSiteKey") | not)
+                 and (.appCheck | has("debugToken") | not)' \
+                "$runtime_config" >/dev/null
+              ;;
+          esac
 
       - name: Upload exact-SHA Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3

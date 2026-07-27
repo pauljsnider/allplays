@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { assertNoUnpublishableRootDevelopmentArtifacts } from './public-site-artifact-policy.mjs';
+import { isAppCheckEnforcementReady } from './stage-pages-bundle.mjs';
 
 const runtimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
 const unpublishedMobileAssociationRelativePaths = [
@@ -17,7 +18,10 @@ function isValidPublicSiteKey(value) {
 export function verifyPagesDeployArtifact(
     artifactDir,
     {
-        expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY
+        expectedSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY,
+        expectedEnforcementReady = isAppCheckEnforcementReady(
+            process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+        )
     } = {}
 ) {
     if (!artifactDir) {
@@ -40,12 +44,6 @@ export function verifyPagesDeployArtifact(
         }
     }
 
-    if (!isValidPublicSiteKey(expectedSiteKey)) {
-        throw new Error(
-            'Pages deployment requires a valid expected public App Check site key.'
-        );
-    }
-
     const runtimeConfigPath = path.join(resolvedArtifactDir, runtimeConfigRelativePath);
     let runtimeConfig;
     try {
@@ -57,8 +55,38 @@ export function verifyPagesDeployArtifact(
     }
 
     const appCheck = runtimeConfig?.appCheck;
+    const hasSiteKey = Object.prototype.hasOwnProperty.call(
+        appCheck ?? {},
+        'recaptchaEnterpriseSiteKey'
+    );
+    const hasDebugToken = Object.prototype.hasOwnProperty.call(
+        appCheck ?? {},
+        'debugToken'
+    );
+
+    if (!isAppCheckEnforcementReady(expectedEnforcementReady)) {
+        if (
+            appCheck?.enabled !== false
+            || appCheck?.isTokenAutoRefreshEnabled !== true
+            || hasSiteKey
+            || hasDebugToken
+        ) {
+            throw new Error(
+                'Pages deployment artifact App Check runtime config must be paused without a site key or debug token.'
+            );
+        }
+        return;
+    }
+
+    if (!isValidPublicSiteKey(expectedSiteKey)) {
+        throw new Error(
+            'Pages deployment requires a valid expected public App Check site key.'
+        );
+    }
     if (
         appCheck?.enabled !== true
+        || appCheck?.isTokenAutoRefreshEnabled !== true
+        || hasDebugToken
         || !isValidPublicSiteKey(appCheck.recaptchaEnterpriseSiteKey)
         || appCheck.recaptchaEnterpriseSiteKey.trim() !== expectedSiteKey.trim()
     ) {

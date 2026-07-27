@@ -1,9 +1,15 @@
 import { expect, test } from '@playwright/test';
 import path from 'node:path';
 
-import { readPagesSecurityMetaPolicies } from '../../scripts/stage-pages-bundle.mjs';
+import {
+    isAppCheckEnforcementReady,
+    readPagesSecurityMetaPolicies
+} from '../../scripts/stage-pages-bundle.mjs';
 
 const stagedArtifactEnabled = process.env.SMOKE_PAGES_STAGED_ARTIFACT === 'true';
+const expectedEnforcementReady = isAppCheckEnforcementReady(
+    process.env.SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY
+);
 const expectedSiteKey = process.env.SMOKE_EXPECTED_APP_CHECK_SITE_KEY || '';
 const securityPolicies = readPagesSecurityMetaPolicies(path.resolve(import.meta.dirname, '../..'));
 
@@ -18,15 +24,23 @@ test.describe('exact staged GitHub Pages artifact', () => {
         const runtimeConfigResponse = await request.get('/.well-known/allplays-runtime-config.json');
         expect(runtimeConfigResponse.status()).toBe(200);
         const runtimeConfig = await runtimeConfigResponse.json();
-        expect(runtimeConfig).toMatchObject({
-            appCheck: {
-                enabled: true,
-                isTokenAutoRefreshEnabled: true
-            }
-        });
-        expect(runtimeConfig.appCheck.recaptchaEnterpriseSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
-        expect(expectedSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
-        expect(runtimeConfig.appCheck.recaptchaEnterpriseSiteKey === expectedSiteKey).toBe(true);
+        if (expectedEnforcementReady) {
+            expect(runtimeConfig).toEqual({
+                appCheck: {
+                    enabled: true,
+                    recaptchaEnterpriseSiteKey: expectedSiteKey,
+                    isTokenAutoRefreshEnabled: true
+                }
+            });
+            expect(expectedSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
+        } else {
+            expect(runtimeConfig).toEqual({
+                appCheck: {
+                    enabled: false,
+                    isTokenAutoRefreshEnabled: true
+                }
+            });
+        }
 
         for (const path of [
             '/.well-known/apple-app-site-association',
@@ -57,6 +71,7 @@ test.describe('exact staged GitHub Pages artifact', () => {
     test('boots the staged React production bundle without failed executable assets', async ({ page }) => {
         const fatalErrors = [];
         const failedAssets = [];
+        const externalAttestationRequests = [];
 
         page.on('pageerror', (error) => {
             fatalErrors.push(error.message);
@@ -66,6 +81,16 @@ test.describe('exact staged GitHub Pages artifact', () => {
                 failedAssets.push(
                     `${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`.trim()
                 );
+            }
+        });
+        page.on('request', (request) => {
+            const url = new URL(request.url());
+            if (
+                (url.hostname === 'www.google.com' && url.pathname.includes('/recaptcha/'))
+                || url.hostname === 'content-firebaseappcheck.googleapis.com'
+                || url.hostname === 'recaptchaenterprise.googleapis.com'
+            ) {
+                externalAttestationRequests.push(request.url());
             }
         });
 
@@ -79,6 +104,12 @@ test.describe('exact staged GitHub Pages artifact', () => {
 
         expect(fatalErrors).toEqual([]);
         expect(failedAssets).toEqual([]);
+        if (!expectedEnforcementReady) {
+            await expect.poll(() => page.evaluate(
+                () => globalThis.__ALLPLAYS_APP_CHECK_STATUS__?.state
+            )).toBe('disabled');
+            expect(externalAttestationRequests).toEqual([]);
+        }
     });
 
     for (const { name, path, widgetPolicy } of [
