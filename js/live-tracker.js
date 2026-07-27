@@ -2,7 +2,7 @@
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=127';
 import { db } from './firebase.js?v=22';
 import { getUrlParams, escapeHtml } from './utils.js?v=18';
-import { checkAuth } from './auth.js?v=134';
+import { checkAuth } from './auth.js?v=135';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=22';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
