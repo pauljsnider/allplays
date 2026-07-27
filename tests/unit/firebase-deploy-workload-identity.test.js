@@ -150,7 +150,9 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const componentMarker = production.indexOf('record_component_deployment', end);
         const applicationDeploy = production.lastIndexOf('retry_firebase_deploy "hosting,functions" "application"');
 
-        expect(changed.indexOf('"firestore"')).toBeGreaterThan(-1);
+        expect(changed).toContain('ensure_exact_firestore_ruleset');
+        expect(changed).toContain('activate_firestore_ruleset_with_retry');
+        expect(changed).toContain('"firestore-indexes"');
         expect(unchanged).not.toContain('"application"');
         expect(unchanged).not.toContain('"firestore"');
         expect(production).toContain('deployments: read');
