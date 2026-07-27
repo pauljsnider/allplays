@@ -44,6 +44,37 @@ async function loadPublicProfileStaffTeamIds(firestore, userId) {
     .filter(Boolean))];
 }
 
+async function loadAuthoritativePublicProfileStaffTeamIds(
+  firestore,
+  { userId, email, queriedTeamIds = [] } = {}
+) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return [];
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const teamIds = new Set(
+    (Array.isArray(queriedTeamIds) ? queriedTeamIds : [])
+      .map((teamId) => String(teamId || '').trim())
+      .filter(Boolean)
+  );
+  const indexedTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUserId);
+  await Promise.all(indexedTeamIds.map(async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    if (!teamSnap.exists) return;
+    const team = teamSnap.data() || {};
+    const ownerId = String(team.ownerId || '').trim();
+    const adminEmails = (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+      .map((adminEmail) => String(adminEmail || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (
+      ownerId === normalizedUserId ||
+      (normalizedEmail && adminEmails.includes(normalizedEmail))
+    ) {
+      teamIds.add(teamId);
+    }
+  }));
+  return [...teamIds];
+}
+
 async function reconcilePublicProfileStaffMembershipsForTeam({
   firestore,
   teamId,
@@ -261,6 +292,7 @@ module.exports = {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
+  loadAuthoritativePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,

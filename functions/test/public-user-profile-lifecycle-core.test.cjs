@@ -6,6 +6,7 @@ const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
+  loadAuthoritativePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -183,6 +184,112 @@ test('runtime profile resync reads normalized staff teams by uid without email m
     await loadPublicProfileStaffTeamIds(firestore, 'coach-user'),
     ['mixed-case-admin-team']
   );
+});
+
+test('mixed-case indexed admin remains authoritative through every profile synchronization path', async (t) => {
+  const synchronizationPaths = ['callable', 'user-write', 'scheduled-sweep'];
+
+  for (const synchronizationPath of synchronizationPaths) {
+    await t.test(synchronizationPath, async () => {
+      const memberships = new Map([['mixed-case-membership', {
+        teamId: 'mixed-case-admin-team',
+        userId: 'coach-user'
+      }]]);
+      const firestore = {
+        collection: (collectionName) => {
+          assert.equal(collectionName, 'publicProfileStaffMemberships');
+          return {
+            where: (field, operator, userId) => {
+              assert.deepEqual([field, operator, userId], ['userId', '==', 'coach-user']);
+              return {
+                get: async () => ({
+                  docs: [...memberships].map(([id, membership]) => ({
+                    id,
+                    data: () => membership,
+                    ref: {
+                      delete: async () => memberships.delete(id)
+                    }
+                  }))
+                })
+              };
+            }
+          };
+        },
+        doc: (path) => {
+          if (path.startsWith('publicProfileStaffMemberships/')) {
+            return {
+              set: async (membership) => {
+                memberships.set(path.split('/').at(-1), membership);
+              }
+            };
+          }
+          assert.equal(path, 'teams/mixed-case-admin-team');
+          return {
+            get: async () => ({
+              exists: true,
+              data: () => ({
+                ownerId: 'owner-user',
+                adminEmails: ['Coach@Example.com']
+              })
+            })
+          };
+        }
+      };
+
+      const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(
+        firestore,
+        {
+          userId: 'coach-user',
+          email: 'coach@example.com',
+          queriedTeamIds: []
+        }
+      );
+      await reconcilePublicProfileStaffMembershipsForUser({
+        firestore,
+        userId: 'coach-user',
+        currentStaffTeamIds: authoritativeTeamIds,
+        buildMembershipId: (teamId, userId) => `${teamId}-${userId}`,
+        updatedAt: 'server-time'
+      });
+
+      assert.deepEqual(authoritativeTeamIds, ['mixed-case-admin-team']);
+      assert.equal(memberships.size, 1);
+      assert.deepEqual([...memberships.values()][0], {
+        teamId: 'mixed-case-admin-team',
+        userId: 'coach-user',
+        updatedAt: 'server-time'
+      });
+    });
+  }
+});
+
+test('indexed membership is no longer authoritative after the admin email changes', async () => {
+  const firestore = {
+    collection: () => ({
+      where: () => ({
+        get: async () => ({
+          docs: [{ data: () => ({ teamId: 'former-admin-team' }) }]
+        })
+      })
+    }),
+    doc: () => ({
+      get: async () => ({
+        exists: true,
+        data: () => ({
+          ownerId: 'owner-user',
+          adminEmails: ['replacement@example.com']
+        })
+      })
+    })
+  };
+
+  assert.deepEqual(await loadAuthoritativePublicProfileStaffTeamIds(
+    firestore,
+    {
+      userId: 'former-admin-user',
+      email: 'former@example.com'
+    }
+  ), []);
 });
 
 test('team reconciliation removes a former admin after their Auth email changes', async () => {

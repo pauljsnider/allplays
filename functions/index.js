@@ -8,6 +8,7 @@ const {
   createPublicProfileAuthDeleteHandler,
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
+  loadAuthoritativePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -2911,16 +2912,24 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
   querySnaps.forEach((snap) => {
     (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
   });
+  const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(
+    firestore,
+    {
+      userId: normalizedUserId,
+      email: rawEmail,
+      queriedTeamIds: [...teamIds]
+    }
+  );
   await reconcilePublicProfileStaffMembershipsForUser({
     firestore,
     userId: normalizedUserId,
-    currentStaffTeamIds: [...teamIds],
+    currentStaffTeamIds: authoritativeTeamIds,
     buildMembershipId: publicUserProfileProjection.buildPublicProfileStaffMembershipId,
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   });
   return uniqueNonEmptyStrings([
     ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
-    ...teamIds
+    ...authoritativeTeamIds
   ]);
 }
 

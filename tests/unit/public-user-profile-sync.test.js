@@ -175,7 +175,8 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForTeam({');
         expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForUser({');
-        expect(functionsSource).toContain('currentStaffTeamIds: [...teamIds]');
+        expect(functionsSource).toContain('const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(');
+        expect(functionsSource).toContain('currentStaffTeamIds: authoritativeTeamIds');
         expect(functionsSource).toContain('...indexedUserIds');
         expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');
         expect(functionsSource).toMatch(
