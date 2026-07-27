@@ -17,6 +17,7 @@ function createAuthEmailCallableHandlers({
   queueDelivery,
   enqueuePasswordResetRequest,
   getActionSettings,
+  canonicalizeActionUrl = (url) => url,
   getInviteContinueUrl,
   findOwnedInviteCode,
   allowedInviteTypes,
@@ -105,10 +106,11 @@ function createAuthEmailCallableHandlers({
     }
 
     try {
-      const actionUrl = await auth.generateEmailVerificationLink(
+      const generatedActionUrl = await auth.generateEmailVerificationLink(
         email,
         getActionSettings(types.VERIFICATION)
       );
+      const actionUrl = canonicalizeActionUrl(generatedActionUrl, types.VERIFICATION);
       await queueDelivery({
         type: types.VERIFICATION,
         email,
@@ -172,10 +174,11 @@ function createAuthEmailCallableHandlers({
 
     try {
       const continueUrl = getInviteContinueUrl(code, inviteType);
-      const actionUrl = await auth.generateSignInWithEmailLink(
+      const generatedActionUrl = await auth.generateSignInWithEmailLink(
         email,
         getActionSettings(types.SIGN_IN, continueUrl)
       );
+      const actionUrl = canonicalizeActionUrl(generatedActionUrl, types.SIGN_IN);
       const { existingUser, displayName } = await getExistingInviteRecipient(email);
       await queueDelivery({
         type: types.SIGN_IN,

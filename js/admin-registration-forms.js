@@ -270,7 +270,8 @@ export function validateAdminRegistrationFormPayload(payload = {}) {
 
 export function getAdminRegistrationShareUrl(teamId, formId, origin = '') {
     const base = String(origin || '').replace(/\/$/, '');
-    return `${base}/registration.html?teamId=${encodeURIComponent(teamId)}&formId=${encodeURIComponent(formId)}`;
+    const params = new URLSearchParams({ teamId, formId });
+    return `${base}/app/#/registration?${params.toString()}`;
 }
 
 function inferFieldType(label) {

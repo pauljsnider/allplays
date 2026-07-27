@@ -92,7 +92,8 @@ class MockLocation {
 
 function extractAcceptInviteModule() {
     const html = readFileSync(new URL('../../accept-invite.html', import.meta.url), 'utf8');
-    const match = html.match(/<script type="module">([\s\S]*?)<\/script>/);
+    const match = [...html.matchAll(/<script type="module">([\s\S]*?)<\/script>/g)]
+        .find((candidate) => candidate[1].includes('createInviteProcessor'));
     if (!match) {
         throw new Error('Accept invite module script not found');
     }
@@ -366,7 +367,7 @@ describe('accept-invite page parent flow', () => {
         expect(loggedOut.elements.get('invite-link-state').classList.contains('hidden')).toBe(false);
         expect(loggedOut.elements.get('manual-code-state').classList.contains('hidden')).toBe(true);
         expect(loggedOut.elements.get('invite-code-confirmation').textContent).toBe('AB12CD34');
-        expect(loggedOut.elements.get('continue-invite-link').href).toBe('login.html?code=AB12CD34&type=parent');
+        expect(loggedOut.elements.get('continue-invite-link').href).toBe('/app/#/auth?mode=signup&code=AB12CD34&type=parent');
         expect(loggedOut.elements.get('code-input').value).toBe('');
     });
 
@@ -379,7 +380,7 @@ describe('accept-invite page parent flow', () => {
         loggedOut.elements.get('code-input').value = 'ab12cd34';
         await loggedOut.elements.get('code-form').dispatchEvent(new MockEvent('submit'));
 
-        expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=AB12CD34&type=parent');
+        expect(loggedOut.window.location.href).toBe('http://example.com/app/#/auth?mode=signup&code=AB12CD34&type=parent');
         expect(loggedOut.db.redeemParentInvite).not.toHaveBeenCalled();
 
         const authenticated = await bootAcceptInvite({
@@ -463,7 +464,7 @@ describe('accept-invite page admin flow', () => {
         });
 
         expect(loggedOut.elements.get('invite-link-state').classList.contains('hidden')).toBe(false);
-        expect(loggedOut.elements.get('continue-invite-link').href).toBe('login.html?code=EXIST111&type=admin');
+        expect(loggedOut.elements.get('continue-invite-link').href).toBe('/app/#/auth?mode=signup&code=EXIST111&type=admin');
     });
 
     it('preserves the admin invite type when a signed-out user submits a different manual code', async () => {
@@ -486,7 +487,7 @@ describe('accept-invite page admin flow', () => {
         loggedOut.elements.get('code-input').value = 'new11122';
         await loggedOut.elements.get('code-form').dispatchEvent(new MockEvent('submit'));
 
-        expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=NEW11122&type=admin');
+        expect(loggedOut.window.location.href).toBe('http://example.com/app/#/auth?mode=signup&code=NEW11122&type=admin');
     });
 
     it('routes same-device email-link reopen with an already-used invite code to the dashboard', async () => {

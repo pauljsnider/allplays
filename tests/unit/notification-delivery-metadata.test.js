@@ -8,6 +8,7 @@ const {
     WEB_PUSH_NOTIFICATION_ASSETS,
     buildNotificationDeliveryOptions
 } = require('../../functions/notification-delivery-metadata.cjs');
+const { buildAppUrl } = require('../../functions/app-links-core.cjs');
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const serviceWorkerSource = readFileSync(new URL('../../firebase-messaging-sw.js', import.meta.url), 'utf8');
@@ -26,8 +27,9 @@ const mergeNotificationWebpushOptions = new Function(
     `${extractChunk('function mergeNotificationWebpushOptions(', 'async function sendCategoryNotification(')}\nreturn mergeNotificationWebpushOptions;`
 )();
 const notificationRouteHelpers = new Function(
+    'buildAppUrl',
     `${extractChunk('function buildScheduleSectionQuery', 'function buildTeamMediaNotificationAudienceContext')}\nreturn { buildNotificationLink, buildNotificationAppRoute };`
-)();
+)(buildAppUrl);
 
 describe('notification delivery metadata', () => {
     it('defines the five Android channels used by app startup and backend sends', () => {
@@ -64,7 +66,7 @@ describe('notification delivery metadata', () => {
             conversationId: 'parents/thread 2'
         });
 
-        expect(mentionLink).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=parents%2Fthread%202');
+        expect(mentionLink).toBe('https://allplays.ai/app/#/messages/team%201?conversationId=parents%2Fthread+2');
         expect(appRoute).toBe('/messages/team%201?conversation=parents%2Fthread%202');
     });
 

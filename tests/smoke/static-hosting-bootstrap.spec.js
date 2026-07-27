@@ -8,13 +8,11 @@ import {
 } from './page-registry.js';
 
 async function loginWithPassword(page, baseURL, email, password) {
-    await page.goto(`${baseURL}/login.html`, { waitUntil: 'domcontentloaded' });
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill(password);
-    await Promise.all([
-        page.waitForURL((url) => !url.pathname.endsWith('/login.html'), { timeout: 20000 }),
-        page.locator('#submit-btn').click()
-    ]);
+    await page.goto(`${baseURL}/app/#/auth`, { waitUntil: 'domcontentloaded' });
+    await page.getByLabel('Email').fill(email);
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Sign in' }).last().click();
+    await page.waitForURL((url) => url.pathname === '/app/' && !url.hash.startsWith('#/auth'), { timeout: 20000 });
     await page.waitForTimeout(1000);
 }
 

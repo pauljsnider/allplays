@@ -19,7 +19,7 @@ jobs:
   post-deploy-smoke:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment:
       name: production-smoke
 
@@ -83,20 +83,40 @@ jobs:
         run: npx playwright test tests/smoke/candidate-host-auth.spec.js --config=playwright.smoke.config.js --reporter=line
         env:
           CANDIDATE_HOST_URL: https://game-flow-c6311.web.app
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 
       - name: Run production smoke
         id: canonical_prod
         continue-on-error: true
-        run: npx playwright test --config=playwright.smoke.config.js --reporter=line
+        run: >-
+          npx playwright test
+          tests/smoke/app-production-bootstrap.spec.js
+          tests/smoke/static-hosting-bootstrap.spec.js
+          tests/smoke/legacy-auth-redirects.spec.js
+          tests/smoke/app-authenticated-core.spec.js
+          --config=playwright.smoke.config.js
+          --project=smoke
+          --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: production
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
           SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_REGISTRATION_FORM_ID: ${{ vars.SMOKE_REGISTRATION_FORM_ID }}
+          SMOKE_CONVERSATION_ID: ${{ vars.SMOKE_CONVERSATION_ID }}
+          SMOKE_OPPORTUNITY_LISTING_ID: ${{ vars.SMOKE_OPPORTUNITY_LISTING_ID }}
+          SMOKE_OPPORTUNITY_INQUIRY_ID: ${{ vars.SMOKE_OPPORTUNITY_INQUIRY_ID }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 

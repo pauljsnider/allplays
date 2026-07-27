@@ -6,8 +6,8 @@ export function getSmokeContext() {
         teamId: process.env.SMOKE_TEAM_ID || DEFAULT_TEAM_ID,
         gameId: process.env.SMOKE_GAME_ID || '',
         playerId: process.env.SMOKE_PLAYER_ID || '',
-        authEmail: process.env.SMOKE_AUTH_EMAIL || '',
-        authPassword: process.env.SMOKE_AUTH_PASSWORD || ''
+        authEmail: process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '',
+        authPassword: process.env.SMOKE_STAFF_PASSWORD || process.env.SMOKE_AUTH_PASSWORD || ''
     };
 }
 
@@ -81,16 +81,22 @@ export function getPublicSmokePages() {
             readySelectors: ['body']
         },
         {
-            name: 'login',
-            path: '/login.html',
-            titlePatterns: [/Login - ALL PLAYS/i],
-            readySelectors: ['#login-form']
+            name: 'app authentication',
+            path: '/app/#/auth',
+            titlePatterns: [/ALL PLAYS APP/i],
+            readySelectors: ['#root']
         },
         {
             name: 'teams',
             path: '/teams.html',
             titlePatterns: [/Teams - ALL PLAYS/i],
             readySelectors: ['#teams-list']
+        },
+        {
+            name: 'scoreboard widget',
+            path: '/widget-scoreboard.html',
+            titlePatterns: [/ALL PLAYS Scoreboard Widget/i],
+            readySelectors: ['#scoreboard-widget']
         },
         {
             name: 'privacy policy',
@@ -126,26 +132,26 @@ export function getPreviewBootPages(context) {
         {
             name: 'dashboard boot',
             path: '/dashboard.html',
-            titlePatterns: [/My Teams/i, /Login - ALL PLAYS/i],
-            readySelectors: ['main', '#login-form']
+            titlePatterns: [/ALL PLAYS APP/i],
+            readySelectors: ['#root']
         },
         {
             name: 'parent dashboard boot',
             path: '/parent-dashboard.html',
-            titlePatterns: [/Parent Dashboard/i, /Login - ALL PLAYS/i],
-            readySelectors: ['main', '#login-form']
+            titlePatterns: [/ALL PLAYS APP/i],
+            readySelectors: ['#root']
         },
         {
             name: 'edit schedule boot',
             path: `/edit-schedule.html#teamId=${teamId}`,
-            titlePatterns: [/Edit Schedule - ALL PLAYS/i, /Login - ALL PLAYS/i],
-            readySelectors: ['#add-game-form', '#login-form']
+            titlePatterns: [/Edit Schedule - ALL PLAYS/i, /ALL PLAYS APP/i],
+            readySelectors: ['#add-game-form', '#root']
         },
         {
             name: 'team chat boot',
             path: `/team-chat.html#teamId=${teamId}`,
-            titlePatterns: [/Team Chat - ALL PLAYS/i, /Login - ALL PLAYS/i],
-            readySelectors: ['#messages-container', '#login-form']
+            titlePatterns: [/Team Chat - ALL PLAYS/i, /ALL PLAYS APP/i],
+            readySelectors: ['#messages-container', '#root']
         },
         {
             name: 'certificates demo boot',
@@ -163,15 +169,15 @@ export function getAuthenticatedSmokePages(context) {
     return [
         {
             name: 'dashboard',
-            path: '/dashboard.html',
-            titlePatterns: [/My Teams/i],
-            readySelectors: ['main h1']
+            path: '/app/#/teams',
+            titlePatterns: [/ALL PLAYS APP/i],
+            readySelectors: ['#root']
         },
         {
             name: 'parent dashboard',
-            path: '/parent-dashboard.html',
-            titlePatterns: [/Parent Dashboard/i],
-            readySelectors: ['#my-players-list', '#schedule-list']
+            path: '/app/#/home',
+            titlePatterns: [/ALL PLAYS APP/i],
+            readySelectors: ['#root']
         },
         {
             name: 'edit schedule',

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { buildAcceptInviteAppUrl, buildAppUrl } = require('./app-links-core.cjs');
 
 const ALLPLAYS_ORIGIN = 'https://allplays.ai';
 const AUTH_EMAIL_TYPES = Object.freeze({
@@ -41,13 +42,13 @@ function getAuthEmailActionSettings(type, continueUrl = '', origin = ALLPLAYS_OR
   }
   if (type === AUTH_EMAIL_TYPES.VERIFICATION) {
     return {
-      url: `${normalizedOrigin}/app/#/verify-pending`,
+      url: buildAppUrl('/verify-pending', {}, normalizedOrigin),
       handleCodeInApp: false
     };
   }
   if (type === AUTH_EMAIL_TYPES.PASSWORD_RESET) {
     return {
-      url: `${normalizedOrigin}/reset-password.html`,
+      url: buildAppUrl('/reset-password', {}, normalizedOrigin),
       handleCodeInApp: true
     };
   }
@@ -69,10 +70,78 @@ function getInviteContinueUrl(code, inviteType, origin = ALLPLAYS_ORIGIN) {
   if (!/^[A-Z0-9]{8}$/.test(normalizedCode) || !type) {
     throw new Error('A supported invite type and eight-character code are required.');
   }
-  const url = new URL('/accept-invite.html', origin);
-  url.searchParams.set('code', normalizedCode);
-  url.searchParams.set('type', type);
-  return url.toString();
+  return buildAcceptInviteAppUrl(normalizedCode, type, origin);
+}
+
+function readGeneratedFirebaseAction(actionUrl) {
+  let current = new URL(String(actionUrl || ''));
+  for (let depth = 0; depth < 3; depth += 1) {
+    const hashQuery = current.hash.includes('?') ? current.hash.slice(current.hash.indexOf('?') + 1) : '';
+    const hashParams = new URLSearchParams(hashQuery);
+    const mode = current.searchParams.get('mode') || hashParams.get('mode') || '';
+    const oobCode = current.searchParams.get('oobCode') || hashParams.get('oobCode') || '';
+    if (mode && oobCode) {
+      return {
+        mode,
+        oobCode,
+        apiKey: current.searchParams.get('apiKey') || hashParams.get('apiKey') || '',
+        lang: current.searchParams.get('lang') || hashParams.get('lang') || '',
+        tenantId: current.searchParams.get('tenantId') || hashParams.get('tenantId') || '',
+        continueUrl: current.searchParams.get('continueUrl') || hashParams.get('continueUrl') || ''
+      };
+    }
+    const nestedLink = current.searchParams.get('link') || current.searchParams.get('deep_link_id') || '';
+    if (!nestedLink) break;
+    current = new URL(nestedLink);
+  }
+  throw new Error('Firebase authentication action URL is missing required parameters.');
+}
+
+function readInviteContextFromContinueUrl(continueUrl, origin) {
+  if (!continueUrl) return {};
+  try {
+    const url = new URL(continueUrl);
+    if (url.origin !== new URL(origin).origin || !/^\/app\/?$/.test(url.pathname)) return {};
+    const [route, query = ''] = url.hash.replace(/^#/, '').split('?', 2);
+    if (route !== '/accept-invite') return {};
+    const params = new URLSearchParams(query);
+    return {
+      code: params.get('code') || '',
+      type: params.get('type') || ''
+    };
+  } catch {
+    return {};
+  }
+}
+
+function buildCanonicalAuthActionUrl(actionUrl, type, origin = ALLPLAYS_ORIGIN) {
+  const action = readGeneratedFirebaseAction(actionUrl);
+  const expectedModes = {
+    [AUTH_EMAIL_TYPES.VERIFICATION]: new Set(['verifyEmail', 'recoverEmail']),
+    [AUTH_EMAIL_TYPES.PASSWORD_RESET]: new Set(['resetPassword']),
+    [AUTH_EMAIL_TYPES.SIGN_IN]: new Set(['signIn'])
+  };
+  if (!expectedModes[type]?.has(action.mode)) {
+    throw new Error('Firebase authentication action mode does not match the email type.');
+  }
+
+  const actionParams = {
+    mode: action.mode,
+    oobCode: action.oobCode,
+    apiKey: action.apiKey,
+    lang: action.lang,
+    tenantId: action.tenantId
+  };
+  if (type === AUTH_EMAIL_TYPES.SIGN_IN) {
+    return buildAppUrl('/accept-invite', {
+      ...readInviteContextFromContinueUrl(action.continueUrl, origin),
+      ...actionParams
+    }, origin);
+  }
+  return buildAppUrl('/reset-password', {
+    ...actionParams,
+    next: type === AUTH_EMAIL_TYPES.VERIFICATION ? '/verify-pending' : ''
+  }, origin);
 }
 
 function buildAuthEmailMessage({ type, actionUrl, displayName = '', contextLabel = '' } = {}) {
@@ -178,6 +247,7 @@ function buildAuthEmailMailJob({ type, email, actionUrl, displayName = '', conte
 module.exports = {
   ALLPLAYS_ORIGIN,
   AUTH_EMAIL_TYPES,
+  buildCanonicalAuthActionUrl,
   buildAuthEmailMailDocId,
   buildAuthEmailMailJob,
   buildAuthEmailMessage,

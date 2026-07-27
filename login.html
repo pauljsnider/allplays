@@ -2,6 +2,10 @@
 <html lang="en">
 
 <head>
+    <script type="module">
+        import { redirectLegacyAuthPage } from './js/app-redirect.js?v=1';
+        redirectLegacyAuthPage('login');
+    </script>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
   <script>
@@ -353,7 +357,7 @@
                     }
                     await signup(email, password, activationCode);
                     // Signup - redirect to email verification page
-                    window.location.href = 'verify-pending.html';
+                    window.location.href = '/app/#/verify-pending';
                     return;
                 }
             } catch (error) {

@@ -283,10 +283,10 @@ describe('React app parent tools service', () => {
         expect(adapterSource).not.toContain("firebase.js?v=");
     });
 
-    it('builds legacy URLs used for current-site handoffs', () => {
+    it('builds canonical app URLs for supported handoffs and keeps public exceptions', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/app/#/family/token-1');
-        expect(getRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
+        expect(getRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
         expect(getAppRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
         expect(getCertificateUrl('team-1', 'cert-1')).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
     });
@@ -687,10 +687,10 @@ describe('React app parent tools service', () => {
             })
         ]));
         expect(cards.map((card) => card.url)).toEqual(expect.arrayContaining([
-            'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-open',
-            'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-legacy',
-            'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-open',
-            'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-legacy'
+            'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-open',
+            'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-legacy',
+            'https://allplays.ai/app/#/registration?teamId=team-coach&formId=team-coach-open',
+            'https://allplays.ai/app/#/registration?teamId=team-coach&formId=team-coach-legacy'
         ]));
         expect(cards.map((card) => card.appUrl)).toEqual(expect.arrayContaining([
             'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-open',
@@ -717,7 +717,7 @@ describe('React app parent tools service', () => {
             teamName: 'Bears',
             isPublished: true,
             onlineCheckout: true,
-            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
+            legacyUrl: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1',
             feeSnapshot: { finalAmountDueCents: 12000 },
             options: [{ id: 'opt-1', title: 'Full Day' }],
             paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
@@ -740,7 +740,7 @@ describe('React app parent tools service', () => {
         await expect(loadStaffRegistrationDetail(user, 'team-coach', 'form-review')).resolves.toMatchObject({
             teamName: 'Coach Wolves',
             isPublished: true,
-            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-coach&formId=form-review',
+            legacyUrl: 'https://allplays.ai/app/#/registration?teamId=team-coach&formId=form-review',
             options: [{ id: 'opt-1', title: 'Travel' }]
         });
         expect(dbMocks.getTeamRegistrationForm).toHaveBeenCalledWith('team-coach', 'form-review');
@@ -926,7 +926,7 @@ describe('React app parent tools service', () => {
         await expect(loadPublicRegistrationDetail('team-public', 'form-public')).resolves.toMatchObject({
             teamName: 'Public Bears',
             isPublished: true,
-            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-public&formId=form-public',
+            legacyUrl: 'https://allplays.ai/app/#/registration?teamId=team-public&formId=form-public',
             feeSnapshot: { finalAmountDueCents: 9900 },
             options: [{ id: 'opt-public', title: 'Clinic' }]
         });

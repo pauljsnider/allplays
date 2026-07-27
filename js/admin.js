@@ -289,7 +289,7 @@ function canCurrentUserDeactivateTeam(team) {
 
 checkAuth(async (user) => {
     if (!user) {
-        window.location.href = 'login.html';
+        window.location.href = '/app/#/auth';
         return;
     }
     // Check if user is admin

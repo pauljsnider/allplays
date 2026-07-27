@@ -122,9 +122,9 @@ describe('family plan helpers', () => {
         }));
         expect(updateDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'users/user-1/familyMemberships/member-1' }), expect.objectContaining({
             accessCodeId: expect.stringMatching(/^[A-Z2-9]{8}$/),
-            inviteUrl: expect.stringContaining('accept-invite.html?code=')
+            inviteUrl: expect.stringContaining('/app/#/accept-invite?code=')
         }));
-        expect(result.inviteUrl).toContain('accept-invite.html?code=');
+        expect(result.inviteUrl).toContain('/app/#/accept-invite?code=');
     });
 
     it('requires a selected player before creating a household invite', async () => {

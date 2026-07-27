@@ -145,7 +145,7 @@ describe('ResetPassword account actions', () => {
         await waitForText(container, 'Email verified. You can continue to ALL PLAYS.');
         expect(authServiceMocks.applyEmailActionCode).toHaveBeenCalledWith('verify-code');
         expect(
-            Array.from(container.querySelectorAll('a[href="/auth"]')).some((link) => link.textContent === 'Continue to login')
+            Array.from(container.querySelectorAll('a[href="/verify-pending"]')).some((link) => link.textContent === 'Continue after verification')
         ).toBe(true);
     });
 

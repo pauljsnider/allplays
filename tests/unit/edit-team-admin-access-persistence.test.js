@@ -402,8 +402,8 @@ function extractEditTeamModule() {
             'const { buildRosterRolloverPreviewRows } = deps.rosterRolloverPreview;'
         )
         .replace(
-            "import { buildLegacyJoinUrl } from './js/join-code.js?v=1';",
-            'const buildLegacyJoinUrl = deps.buildLegacyJoinUrl || (() => "");'
+            "import { buildAppJoinUrl } from './js/join-code.js?v=2';",
+            'const buildAppJoinUrl = deps.buildAppJoinUrl || (() => "");'
         );
 }
 

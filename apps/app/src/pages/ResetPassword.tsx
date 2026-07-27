@@ -9,6 +9,9 @@ export function ResetPassword() {
   const [searchParams] = useSearchParams();
   const mode = searchParams.get('mode') || '';
   const oobCode = searchParams.get('oobCode') || '';
+  const requestedNext = searchParams.get('next') || '';
+  const successRoute = mode === 'verifyEmail' ? '/verify-pending' : '/auth';
+  const successLabel = mode === 'verifyEmail' ? 'Continue after verification' : 'Continue to login';
   const [state, setState] = useState<'loading' | 'reset' | 'success' | 'invalid'>('loading');
   const [message, setMessage] = useState('Verifying account action...');
   const [newPassword, setNewPassword] = useState('');
@@ -111,7 +114,7 @@ export function ResetPassword() {
       {state === 'success' ? (
         <>
           <Message icon={CheckCircle2} text={message} tone="success" />
-          <Link to="/auth" className="primary-button mt-4 w-full justify-center">Continue to login</Link>
+          <Link to={requestedNext.startsWith('/') && !requestedNext.startsWith('//') ? requestedNext : successRoute} className="primary-button mt-4 w-full justify-center">{successLabel}</Link>
         </>
       ) : null}
 

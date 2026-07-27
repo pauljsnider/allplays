@@ -1,4 +1,4 @@
-import { buildLegacyJoinUrl } from './join-code.js?v=1';
+import { buildAppJoinUrl } from './join-code.js?v=2';
 
 export async function inviteExistingTeamAdmin({
     teamId,
@@ -183,7 +183,7 @@ export function buildAdminInviteFollowUp(summary, origin = '') {
 
         const canShareCode = (status === 'existing_user' || status === 'fallback_code') && Boolean(code);
         if (canShareCode) {
-            const acceptInviteUrl = buildLegacyJoinUrl(code, 'admin', normalizedOrigin);
+            const acceptInviteUrl = buildAppJoinUrl(code, 'admin', normalizedOrigin);
             shareableInvites.push({ email, code, acceptInviteUrl });
             continue;
         }

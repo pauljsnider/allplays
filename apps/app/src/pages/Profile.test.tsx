@@ -61,7 +61,7 @@ vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/profileService', () => profileServiceMocks);
 vi.mock('../lib/pushService', () => pushServiceMocks);
 vi.mock('../lib/inviteUrls', () => ({
-  buildAppAcceptInviteUrl: vi.fn((code: string) => `https://example.test/app#/accept-invite?code=${code}`)
+  buildAppAcceptInviteUrl: vi.fn((code: string) => `https://example.test/app/#/accept-invite?code=${code}`)
 }));
 vi.mock('../lib/publicActions', () => ({
   sharePublicUrl: vi.fn(async () => ({ shared: true }))

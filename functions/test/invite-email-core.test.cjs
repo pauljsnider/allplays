@@ -28,7 +28,7 @@ test('accepts normalized recipient emails and rejects malformed addresses', () =
 test('builds a parent signup link with the code and normalized invite type', () => {
   assert.equal(
     buildInviteSignupUrl(' abcd1234 ', 'parent_invite'),
-    'https://allplays.ai/accept-invite.html?code=ABCD1234&type=parent'
+    'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent'
   );
 });
 
@@ -44,7 +44,7 @@ test('builds coach parent invite email text and html with code and signup link',
   assert.match(message.subject, /Pat Star/);
   assert.match(message.text, /A coach invited you/);
   assert.match(message.text, /Invite code: PARENT12/);
-  assert.match(message.text, /accept-invite\.html\?code=PARENT12&type=parent/);
+  assert.match(message.text, /app\/#\/accept-invite\?code=PARENT12&type=parent/);
   assert.match(message.html, /Sign up or accept invite/);
   assert.match(message.html, /PARENT12/);
 });
@@ -73,7 +73,7 @@ test('builds co-parent invite copy through the canonical accept flow', () => {
 
   assert.match(message.subject, /co-parent Sam/);
   assert.match(message.text, /as a co-parent/);
-  assert.match(message.signupUrl, /accept-invite\.html\?code=COPA1234&type=coparent/);
+  assert.match(message.signupUrl, /app\/#\/accept-invite\?code=COPA1234&type=coparent/);
 });
 
 test('builds an auto-linked parent notification without a consumed acceptance link', () => {

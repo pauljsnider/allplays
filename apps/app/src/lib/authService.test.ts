@@ -117,6 +117,7 @@ import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
   describeAuthError,
+  getNativeAuthIdToken,
   getNativeAuthUserId,
   getRouteForUser,
   hydrateFirebaseUser,
@@ -132,6 +133,21 @@ import {
   signOut,
   signUpWithEmail
 } from './authService';
+
+describe('getNativeAuthIdToken', () => {
+  afterEach(() => {
+    authState.currentUser = null;
+  });
+
+  it('returns the Firebase SDK token for signed-in web users', async () => {
+    const getIdToken = vi.fn().mockResolvedValue('web-id-token');
+    authState.currentUser = { getIdToken } as any;
+
+    await expect(getNativeAuthIdToken(true)).resolves.toBe('web-id-token');
+
+    expect(getIdToken).toHaveBeenCalledWith(true);
+  });
+});
 
 describe('reloadCurrentUser', () => {
   beforeEach(() => {

@@ -591,7 +591,7 @@
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=5';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
-        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
+        import { buildAppJoinUrl } from './js/join-code.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1241,7 +1241,7 @@
 
         checkAuth(async (user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
                 return;
             }
             currentUser = user;
@@ -1860,7 +1860,7 @@
         // Copy admin signup link button
         document.getElementById('copy-admin-link-btn').addEventListener('click', async () => {
             const code = document.getElementById('admin-code-text').textContent;
-            const signupUrl = buildLegacyJoinUrl(code, 'admin', window.location.origin);
+            const signupUrl = buildAppJoinUrl(code, 'admin', window.location.origin);
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const btn = document.getElementById('copy-admin-link-btn');

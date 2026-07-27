@@ -117,7 +117,7 @@ vi.mock('../../../../js/team-access.js', () => ({
 }));
 vi.mock('../../../../js/team-staff-permissions.js', () => ({ buildTeamStaffPermissionsViewModel: vi.fn(() => ({ staff: [], pendingInvites: [], helperPermissions: [], hasAnyStaff: false })) }));
 vi.mock('./authService', () => authServiceMocks);
-vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app#/accept-invite') }));
+vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app/#/accept-invite') }));
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
 vi.mock('./scheduleService', () => scheduleServiceMocks);

@@ -52,7 +52,7 @@ Added `actionCodeSettings` to configure the reset flow:
 export function resetPassword(email) {
     const actionCodeSettings = {
         // URL to redirect back to after password reset
-        url: 'https://allplays.ai/reset-password.html',
+        url: 'https://allplays.ai/app/',
         handleCodeInApp: true
     };
 
@@ -157,7 +157,7 @@ After implementing all fixes:
 - [ ] **Check spam/junk folder** - Most important!
 - [ ] Test with Gmail account
 - [ ] Test with Outlook/Microsoft account (if applicable)
-- [ ] Verify reset link redirects to `reset-password.html`
+- [ ] Verify reset link redirects to `/app/#/reset-password`
 - [ ] Test error cases:
   - [ ] Invalid email format
   - [ ] Non-existent user email

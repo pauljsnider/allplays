@@ -167,6 +167,9 @@ describe('registrationFormAdminService', () => {
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).registrationOptions).toEqual([
       { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 }
     ]);
+    expect((firebaseMocks.setDoc.mock.calls[0][1] as any).registrationOptionCounts).toEqual({
+      'full-day': { enrolled: 0, waitlisted: 0 }
+    });
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).installmentPlan).toEqual({
       enabled: true,
       title: 'Installment plan',
@@ -177,6 +180,15 @@ describe('registrationFormAdminService', () => {
   });
 
   it('updates closed registration forms without reopening public submissions', async () => {
+    firebaseMocks.getDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({
+        registrationOptionCounts: {
+          travel: { enrolled: 7, waitlisted: 2, lastUpdatedBy: 'server' }
+        }
+      })
+    });
+
     const result = await saveRegistrationFormEditorForApp({
       user: coachUser,
       teamId: 'team-1',
@@ -222,6 +234,9 @@ describe('registrationFormAdminService', () => {
         updatedBy: 'coach-1'
       })
     );
+    expect((firebaseMocks.updateDoc.mock.calls[0][1] as any).registrationOptionCounts).toEqual({
+      travel: { enrolled: 7, waitlisted: 2, lastUpdatedBy: 'server' }
+    });
   });
 
   it('rejects invalid drafts before writing to Firestore', async () => {

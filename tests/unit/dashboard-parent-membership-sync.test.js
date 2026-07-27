@@ -53,7 +53,7 @@ describe('dashboard parent membership sync', () => {
         await expect(runRequireSyncedAuth(checkAuth, windowObject)).rejects.toBe('Not authenticated');
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
-        expect(windowObject.location.href).toBe('login.html');
+        expect(windowObject.location.href).toBe('/app/#/auth');
     });
 
     it('ignores duplicate auth emissions after settling', async () => {

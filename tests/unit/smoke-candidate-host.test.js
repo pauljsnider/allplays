@@ -13,7 +13,7 @@ import {
 const candidateOrigin = 'https://candidate.example.test';
 const successfulHtmlByPath = {
     '/': '<!doctype html><title>ALL PLAYS</title><body></body>',
-    '/login.html': '<!doctype html><title>Login - ALL PLAYS</title><form id="login-form"></form>',
+    '/app/': '<!doctype html><title>ALL PLAYS APP</title><main id="root"></main>',
     '/teams.html': '<!doctype html><title>Browse Teams - ALL PLAYS</title><div id="teams-list"></div>',
     '/privacy.html': '<!doctype html><title>Privacy Policy | ALL PLAYS</title><main><h1>Privacy Policy</h1></main>',
     '/terms.html': '<!doctype html><title>Terms of Use | ALL PLAYS</title><main><h1>Terms of Use</h1></main>',
@@ -23,7 +23,9 @@ const successfulHtmlByPath = {
 };
 
 function successfulResponse(path) {
-    const check = getCandidateHostChecks().find((candidate) => candidate.path === path);
+    const check = getCandidateHostChecks().find(
+        (candidate) => new URL(candidate.path, candidateOrigin).pathname === path
+    );
     if (!check) throw new Error(`Test setup error: path ${path} not found in checks`);
     const body = path === '/.well-known/allplays-runtime-config.json'
         ? JSON.stringify(getExpectedRuntimeConfig())
@@ -83,13 +85,13 @@ describe('candidate host public smoke', () => {
         expect(normalizeCandidateOrigin('https://candidate.example.test/')).toBe(candidateOrigin);
         expect(verifiedUrls).toEqual([
             `${candidateOrigin}/`,
-            `${candidateOrigin}/login.html`,
+            `${candidateOrigin}/app/#/auth`,
             `${candidateOrigin}/teams.html`,
+            `${candidateOrigin}/widget-scoreboard.html`,
             `${candidateOrigin}/privacy.html`,
             `${candidateOrigin}/terms.html`,
             `${candidateOrigin}/support.html`,
             `${candidateOrigin}/account-deletion.html`,
-            `${candidateOrigin}/widget-scoreboard.html`,
             `${candidateOrigin}/.well-known/allplays-runtime-config.json`
         ]);
         expect(fetchImpl.mock.calls.every(([url]) => new URL(url).origin === candidateOrigin)).toBe(true);
@@ -111,17 +113,17 @@ describe('candidate host public smoke', () => {
 
     it('fails with the requested URL when a route is unavailable', async () => {
         const fetchImpl = createFetch({
-            '/login.html': () => new Response('missing', { status: 404 })
+            '/app/': () => new Response('missing', { status: 404 })
         });
 
         await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
-            `${candidateOrigin}/login.html: expected HTTP 200 but observed HTTP 404`
+            `${candidateOrigin}/app/#/auth: expected HTTP 200 but observed HTTP 404`
         );
     });
 
     it('rejects a catch-all rewrite that serves homepage HTML for a public route', async () => {
         const fetchImpl = createFetch({
-            '/login.html': (path) => {
+            '/app/': (path) => {
                 const response = successfulResponse(path);
                 return new Response(successfulHtmlByPath['/'], {
                     status: 200,
@@ -131,7 +133,7 @@ describe('candidate host public smoke', () => {
         });
 
         await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
-            `${candidateOrigin}/login.html: title expected /Login - ALL PLAYS/i but observed "ALL PLAYS"`
+            `${candidateOrigin}/app/#/auth: title expected /ALL PLAYS APP/i but observed "ALL PLAYS"`
         );
     });
 

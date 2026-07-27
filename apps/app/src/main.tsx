@@ -11,8 +11,10 @@ import {
 import { startAppStartupTimer } from './lib/uxTiming';
 import { hideNativeSplashScreen, initializeNativeAppearance } from './lib/nativeAppearance';
 import { initializeWebVitalsMonitoring } from './lib/webVitals';
+import { normalizeInitialFirebaseActionLocation } from './lib/appLinks';
 import './styles/index.css';
 
+normalizeInitialFirebaseActionLocation();
 void initializeAppErrorTracking();
 installReactErrorTelemetry();
 void initializeWebVitalsMonitoring();

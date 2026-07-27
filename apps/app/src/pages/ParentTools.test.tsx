@@ -604,7 +604,7 @@ describe('ParentTools access', () => {
                 paymentNotice: '',
                 onlineCheckout: true,
                 options: [],
-                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
             }
         ]);
         parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([
@@ -1616,7 +1616,7 @@ describe('ParentTools access', () => {
                     paymentNotice: '',
                     onlineCheckout: true,
                     options: [],
-                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                    url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
                 }
             ]);
 
@@ -1661,7 +1661,7 @@ describe('ParentTools access', () => {
                     paymentNotice: '',
                     onlineCheckout: true,
                     options: [],
-                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                    url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
                 }
             ]);
 
@@ -1687,7 +1687,7 @@ describe('ParentTools access', () => {
                 paymentNotice: '',
                 onlineCheckout: true,
                 options: [],
-                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                url: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1'
             }
         ]);
         const nativeBackTarget = getNativeBackTarget('/parent-tools/registrations/team-1/form-1');

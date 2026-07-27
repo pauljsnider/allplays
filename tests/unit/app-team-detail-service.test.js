@@ -153,9 +153,9 @@ describe('React app team detail model', () => {
             status: 'sent',
             code: 'CODE 1',
             teamName: 'Bears',
-            acceptInviteUrl: 'http://localhost:3000/app#/accept-invite?code=CODE+1&type=admin'
+            acceptInviteUrl: 'http://localhost:3000/app/#/accept-invite?code=CODE+1&type=admin'
         });
-        expect(buildAdminAcceptInviteUrl('A&B', 'https://allplays.ai')).toBe('https://allplays.ai/app#/accept-invite?code=A%26B&type=admin');
+        expect(buildAdminAcceptInviteUrl('A&B', 'https://allplays.ai')).toBe('https://allplays.ai/app/#/accept-invite?code=A%26B&type=admin');
     });
 
     it('returns fallback invite code details when app email delivery fails', async () => {
@@ -172,7 +172,7 @@ describe('React app team detail model', () => {
 
         expect(result.status).toBe('fallback_code');
         expect(result.code).toBe('FALLBACK1');
-        expect(result.acceptInviteUrl).toBe('http://localhost:3000/app#/accept-invite?code=FALLBACK1&type=admin');
+        expect(result.acceptInviteUrl).toBe('http://localhost:3000/app/#/accept-invite?code=FALLBACK1&type=admin');
     });
 
     it('rejects missing team id or email before creating app admin invites', async () => {
@@ -249,7 +249,7 @@ describe('React app team detail model', () => {
         expect(inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '9', '', 'Parent');
         expect(result).toMatchObject({
             code: 'ABCD1234',
-            inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
+            inviteUrl: 'http://localhost:3000/app/#/accept-invite?code=ABCD1234&type=parent',
             status: 'pending',
             email: null,
             emailQueued: false,

@@ -3370,6 +3370,7 @@ function getScheduleSourceLabel(game: any) {
 function createScheduleEvent(input: {
   teamId: string;
   teamName: string;
+  sport?: string | null;
   teamNotificationEmail?: string | null;
   child: ParentScheduleChild;
   id: string;
@@ -3438,6 +3439,7 @@ function createScheduleEvent(input: {
     id: input.id,
     teamId: input.teamId,
     teamName: input.teamName || input.child.teamName || input.teamId,
+    sport: compactString(input.sport) || null,
     teamNotificationEmail: compactString(input.teamNotificationEmail) || null,
     type: input.type,
     date: input.date,
@@ -3573,6 +3575,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           events.push(createScheduleEvent({
             teamId,
             teamName,
+            sport: compactString(team.sport) || null,
             teamNotificationEmail: team.notificationEmail || null,
             child,
             id,
@@ -3629,6 +3632,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          sport: compactString(team.sport) || null,
           teamNotificationEmail: team.notificationEmail || null,
           child,
           id,
@@ -3714,6 +3718,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          sport: compactString(team.sport) || null,
           teamNotificationEmail: team.notificationEmail || null,
           child,
           id,
@@ -3748,6 +3753,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          sport: compactString(team.sport) || null,
           teamNotificationEmail: team.notificationEmail || null,
           child,
           id: compactString(session.eventId || session.id),
@@ -3853,6 +3859,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     return teamChildren.map((child) => createScheduleEvent({
       teamId,
       teamName,
+      sport: compactString(team.sport) || null,
       teamNotificationEmail: team.notificationEmail || null,
       child,
       id: eventId,
@@ -3908,6 +3915,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   return teamChildren.map((child) => createScheduleEvent({
     teamId,
     teamName,
+    sport: compactString(team.sport) || null,
     teamNotificationEmail: team.notificationEmail || null,
     child,
     id: normalizedId,

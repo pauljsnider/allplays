@@ -35,7 +35,7 @@ const Blob = deps.Blob;
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-dashboard-fees\.js\?v=\d+';/, 'const { handleParentTeamFeeCheckoutClick, renderParentTeamFees } = deps.parentDashboardFees;')
         .replace(/import\s*\{\s*initiateTeamFeeCheckout\s*\}\s*from '\.\/js\/stripe-service\.js\?v=\d+';/, 'const { initiateTeamFeeCheckout } = deps.stripeService;')
         .replace("import { renderFamilyPlanSection } from './js/family-plan.js?v=5';", 'const { renderFamilyPlanSection } = deps.familyPlan;')
-        .replace("import { buildLegacyJoinUrl } from './js/join-code.js?v=1';", 'const buildLegacyJoinUrl = deps.buildLegacyJoinUrl || (() => "");')
+        .replace("import { buildAppJoinUrl } from './js/join-code.js?v=2';", 'const buildAppJoinUrl = deps.buildAppJoinUrl || (() => "");')
         .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
         .replace(/\binit\(\);\s*$/, `
 window.__parentDashboardIcsTestHooks = {

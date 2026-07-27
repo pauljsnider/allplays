@@ -27,6 +27,7 @@ function createHarness(overrides = {}) {
     normalizeEmail: (value) => String(value || '').trim().toLowerCase(),
     isValidEmail: (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
     getActionSettings: (type) => ({ type }),
+    canonicalizeActionUrl: (url, type) => `${url}&canonical=${type}`,
     async queueDelivery(job) { calls.queued.push(job); },
     isAlreadyExistsError: (error) => error?.code === 'already-exists',
     now: () => 1_000,
@@ -47,7 +48,7 @@ test('worker resolves the account and creates one deterministic Resend mail job'
   assert.deepEqual(calls.queued, [{
     type: 'password_reset',
     email: 'coach@example.com',
-    actionUrl: 'https://identity.example/reset?email=coach%40example.com',
+    actionUrl: 'https://identity.example/reset?email=coach%40example.com&canonical=password_reset',
     displayName: 'Coach',
     uid: 'user-1',
     deliveryId: 'auth_password_reset_request-1'

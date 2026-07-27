@@ -1,3 +1,5 @@
+const { buildRegistrationAppUrl } = require('./app-links-core.cjs');
+
 const REGISTRATION_PAYMENT_REMINDER_CADENCE_DAYS = 3;
 
 function normalizeFirestoreId(value, label) {
@@ -13,14 +15,13 @@ function buildRegistrationPaymentRetryUrl(appUrl, input = {}) {
   if (!publicCheckoutCapability) {
     return '';
   }
-  const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
     teamId: normalizeFirestoreId(input.teamId, 'teamId'),
     formId: normalizeFirestoreId(input.formId, 'formId'),
     retryPayment: '1',
     publicCheckoutCapability
   });
-  return `${baseUrl}/registration.html?${params.toString()}`;
+  return buildRegistrationAppUrl(params, appUrl);
 }
 
 function formatRegistrationReminderAmount(amountCents, currency = 'USD') {

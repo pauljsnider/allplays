@@ -75,7 +75,7 @@ function registrationModel(overrides = {}) {
         teamName: 'Bears',
         isPublished: true,
         onlineCheckout: true,
-        legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
+        legacyUrl: 'https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1',
         form: {
             programName: 'Summer Camp',
             description: 'Skills week',
@@ -158,7 +158,7 @@ describe('React app registration detail', () => {
         expect(container.querySelector('legend')).toBeNull();
 
         await clickButton(container, 'Legacy form');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
     });
 
     it('shows retry and unpublished states without creating a registration', async () => {

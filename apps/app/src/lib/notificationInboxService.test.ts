@@ -23,8 +23,7 @@ import {
     limit,
     onSnapshot,
     orderBy,
-    query,
-    where
+    query
 } from './adapters/legacyNotificationInboxDb';
 import { subscribeToNotificationInbox, subscribeToUnreadNotificationCount } from './notificationInboxService';
 
@@ -32,33 +31,39 @@ describe('notificationInboxService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(collection).mockReturnValue({ kind: 'collection' } as never);
-        vi.mocked(where).mockReturnValue({ kind: 'where' } as never);
         vi.mocked(orderBy).mockReturnValue({ kind: 'orderBy' } as never);
         vi.mocked(limit).mockReturnValue({ kind: 'limit' } as never);
         vi.mocked(query).mockReturnValue({ kind: 'query' } as never);
         vi.mocked(onSnapshot).mockReturnValue(vi.fn());
     });
 
-    it('subscribes to unread notifications with a hard count cap without hydrating inbox items', () => {
+    it('subscribes to a bounded inbox query and counts null or missing readAt values', () => {
         const callback = vi.fn();
         vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
-            onNext({ size: 3 } as never);
+            onNext({
+                docs: [
+                    { data: () => ({ readAt: null }) },
+                    { data: () => ({}) },
+                    { data: () => ({ readAt: { seconds: 10 } }) }
+                ]
+            } as never);
             return vi.fn();
         });
 
         subscribeToUnreadNotificationCount('user-123', callback);
 
         expect(collection).toHaveBeenCalledWith(db, 'users/user-123/notificationInbox');
-        expect(where).toHaveBeenCalledWith('readAt', '==', null);
         expect(limit).toHaveBeenCalledWith(100);
-        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'where' }, { kind: 'limit' });
-        expect(callback).toHaveBeenCalledWith(3);
+        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'limit' });
+        expect(callback).toHaveBeenCalledWith(2);
     });
 
     it('reports the capped unread snapshot size so the shell can render 99+', () => {
         const callback = vi.fn();
         vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
-            onNext({ size: 100 } as never);
+            onNext({
+                docs: Array.from({ length: 100 }, () => ({ data: () => ({ readAt: null }) }))
+            } as never);
             return vi.fn();
         });
 
@@ -68,7 +73,7 @@ describe('notificationInboxService', () => {
         expect(callback).toHaveBeenCalledWith(100);
     });
 
-    it('does not attach a full inbox fallback when the unread query fails', () => {
+    it('reports bounded unread query failures without attaching another listener', () => {
         const callback = vi.fn();
         const onError = vi.fn();
         const primaryUnsubscribe = vi.fn();
@@ -84,7 +89,7 @@ describe('notificationInboxService', () => {
 
         const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
 
-        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'where' }, { kind: 'limit' });
+        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'limit' });
         expect(onSnapshot).toHaveBeenCalledTimes(1);
         expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
         expect(collection).toHaveBeenCalledTimes(1);

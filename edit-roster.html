@@ -562,7 +562,7 @@
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=18';
         import { checkAuth } from './js/auth.js?v=133';
         import { queueInviteEmail } from './js/invite-email.js?v=1';
-        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
+        import { buildAppJoinUrl } from './js/join-code.js?v=2';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=3';
@@ -699,7 +699,7 @@
 
         checkAuth((user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
                 return;
             }
             currentUser = user;
@@ -2022,7 +2022,7 @@
         function setupCopyLinkButton(buttonId, codeId) {
             document.getElementById(buttonId).addEventListener('click', async () => {
                 const code = document.getElementById(codeId).textContent;
-                const signupUrl = buildLegacyJoinUrl(code, 'parent', window.location.origin);
+                const signupUrl = buildAppJoinUrl(code, 'parent', window.location.origin);
                 try {
                     await navigator.clipboard.writeText(signupUrl);
                     const btn = document.getElementById(buttonId);

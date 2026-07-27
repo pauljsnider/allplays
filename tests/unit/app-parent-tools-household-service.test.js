@@ -105,7 +105,7 @@ describe('Parent Tools household invite service', () => {
 
         expect(model.linkedPlayers).toEqual([expect.objectContaining({ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' })]);
         expect(familyPlanMocks.readFamilyMembers).toHaveBeenCalledWith('user-1');
-        expect(model.members[0].inviteUrl).toBe('https://allplays.ai/accept-invite.html?code=HOME1234&type=household');
+        expect(model.members[0].inviteUrl).toBe('https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household');
     });
 
     it('validates required fields before creating a household member invite', async () => {
@@ -138,7 +138,7 @@ describe('Parent Tools household invite service', () => {
         }), { existingMembers: [{ id: 'member-1', email: 'old@example.com', status: 'pending' }] });
         expect(result).toEqual({
             code: 'HOME1234',
-            inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234&type=household',
+            inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=HOME1234&type=household',
             email: 'home@example.com',
             emailSent: true
         });

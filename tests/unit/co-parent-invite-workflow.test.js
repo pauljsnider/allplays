@@ -7,7 +7,8 @@ describe('co-parent invite workflow regression', () => {
         const dashboardSource = readFileSync(resolve(process.cwd(), 'parent-dashboard.html'), 'utf8');
 
         expect(dashboardSource).toContain('const invite = await inviteCoParentToAthlete');
-        expect(dashboardSource).toContain("buildLegacyJoinUrl(inviteCode, 'coparent'");
+        expect(dashboardSource).toContain("buildAppJoinUrl(inviteCode, 'coparent'");
+        expect(dashboardSource).toContain("import { buildAppJoinUrl } from './js/join-code.js?v=2'");
         expect(dashboardSource).toContain('Co-parent invite created and queued');
         expect(dashboardSource).not.toContain("await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);\n\n                if (statusEl) {\n                    statusEl.textContent = 'Invitation sent successfully!';");
     });

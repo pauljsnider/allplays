@@ -77,3 +77,25 @@ export function buildLegacyJoinUrl(code, type = '', origin = '') {
 
     return new URL(`/${path}`, String(origin).replace(/\/$/, '')).toString();
 }
+
+export function buildAppJoinUrl(code, type = '', origin = '') {
+    const normalizedCode = normalizeJoinCode(code);
+    if (!isValidJoinCode(normalizedCode)) {
+        return '';
+    }
+
+    const searchParams = new URLSearchParams({ code: normalizedCode });
+    const normalizedType = normalizeJoinCodeType(type);
+    if (normalizedType) {
+        searchParams.set('type', normalizedType);
+    }
+
+    const baseOrigin = origin
+        ? new URL(String(origin)).origin
+        : (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)
+            ? window.location.origin
+            : 'https://allplays.ai');
+    const url = new URL('/app/', baseOrigin);
+    url.hash = `/accept-invite?${searchParams.toString()}`;
+    return url.toString();
+}

@@ -400,7 +400,7 @@ test('bounce opens an alert and sends the Firebase password-reset fallback only 
   assert.deepEqual(JSON.parse(harness.fetches[0].request.body), {
     requestType: 'PASSWORD_RESET',
     email: 'coach@allplays.ai',
-    continueUrl: 'https://allplays.ai/reset-password.html',
+    continueUrl: 'https://allplays.ai/app/#/reset-password',
     canHandleCodeInApp: true
   });
   const delivery = harness.db.get('authEmailDeliveries/bounced-reset');

@@ -20,6 +20,28 @@ export type SaveRegistrationFormEditorForAppResult = RegistrationFormAdminPayloa
   created: boolean;
 };
 
+function getRegistrationOptionCountKey(optionId: unknown) {
+  return compactString(optionId).replace(/[^A-Za-z0-9_-]/g, '_') || 'option';
+}
+
+function buildRegistrationOptionCounts(
+  registrationOptions: Array<Record<string, unknown>>,
+  existingCounts: Record<string, any> = {}
+) {
+  const counts = { ...existingCounts };
+  registrationOptions.forEach((option) => {
+    const optionId = compactString(option.id);
+    const countKey = getRegistrationOptionCountKey(optionId);
+    const existing = existingCounts[countKey] || existingCounts[optionId] || {};
+    counts[countKey] = {
+      ...existing,
+      enrolled: Math.max(0, Number(existing.enrolled) || 0),
+      waitlisted: Math.max(0, Number(existing.waitlisted) || 0)
+    };
+  });
+  return counts;
+}
+
 export async function listRegistrationFormEditorsForApp(
   user: AuthUser | null,
   teamId: string
@@ -86,15 +108,25 @@ export async function saveRegistrationFormEditorForApp({
 
   const actorId = compactString(user?.uid) || null;
   const timestamp = serverTimestamp();
+  const formRef = normalizedFormId
+    ? doc(db, 'teams', normalizedTeamId, 'registrationForms', normalizedFormId)
+    : doc(collection(db, `teams/${normalizedTeamId}/registrationForms`));
+  const existingForm = normalizedFormId
+    ? await getDoc(formRef).then((snapshot: any) => snapshot?.exists?.() ? snapshot.data() || {} : {})
+    : {};
   const updatePayload = {
     ...result.payload,
     teamId: normalizedTeamId,
+    registrationOptionCounts: buildRegistrationOptionCounts(
+      Array.isArray(result.payload.registrationOptions) ? result.payload.registrationOptions : [],
+      existingForm.registrationOptionCounts || {}
+    ),
     updatedAt: timestamp,
     updatedBy: actorId
   };
 
   if (normalizedFormId) {
-    await updateDoc(doc(db, 'teams', normalizedTeamId, 'registrationForms', normalizedFormId), updatePayload);
+    await updateDoc(formRef, updatePayload);
     return {
       ...result,
       formId: normalizedFormId,
@@ -102,7 +134,6 @@ export async function saveRegistrationFormEditorForApp({
     };
   }
 
-  const formRef = doc(collection(db, `teams/${normalizedTeamId}/registrationForms`));
   await setDoc(formRef, {
     ...updatePayload,
     createdAt: timestamp,

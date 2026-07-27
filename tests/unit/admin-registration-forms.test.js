@@ -296,7 +296,7 @@ describe('admin registration form setup', () => {
 
     it('creates a shareable public registration URL for published forms', () => {
         expect(getAdminRegistrationShareUrl('team 1', 'form/2', 'https://allplays.example')).toBe(
-            'https://allplays.example/registration.html?teamId=team%201&formId=form%2F2'
+            'https://allplays.example/app/#/registration?teamId=team+1&formId=form%2F2'
         );
     });
 

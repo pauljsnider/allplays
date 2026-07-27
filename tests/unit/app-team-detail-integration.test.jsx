@@ -308,7 +308,7 @@ beforeEach(() => {
         emailSentCount: 0
     });
     teamDetailMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
-    teamDetailMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
+    teamDetailMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);

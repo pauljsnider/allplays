@@ -280,7 +280,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValue({ playerId: 'player-2' });
     teamDetailServiceMocks.archiveTeamTrackingItemForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.createStatTrackerConfigForApp.mockResolvedValue('config-new');
-    teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
+    teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
@@ -1764,7 +1764,7 @@ describe('TeamDetail', () => {
       .mockResolvedValueOnce([{ playerId: 'player-1', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1, latestPendingCode: 'ABCD1234' }]);
     teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValueOnce({
       code: 'ABCD1234',
-      inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent',
+      inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent',
       status: 'pending',
       email: 'parent@example.com',
       emailSent: true,
@@ -1811,7 +1811,7 @@ describe('TeamDetail', () => {
       .mockResolvedValueOnce([{ playerId: 'player-1', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1, latestPendingCode: 'ABCD1234' }]);
     teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValueOnce({
       code: 'ABCD1234',
-      inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent',
+      inviteUrl: 'https://allplays.ai/app/#/accept-invite?code=ABCD1234&type=parent',
       status: 'pending',
       email: 'parent@example.com',
       emailSent: false,
@@ -1864,7 +1864,7 @@ describe('TeamDetail', () => {
       status: 'fallback_code',
       code: 'CODE123',
       teamName: 'Bears',
-      acceptInviteUrl: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin'
+      acceptInviteUrl: 'https://allplays.ai/app/#/accept-invite?code=CODE123&type=admin'
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 
@@ -1889,8 +1889,8 @@ describe('TeamDetail', () => {
     expect(sharePublicUrl).toHaveBeenCalledWith({
       title: 'Bears staff invite',
       text: 'Join Bears staff on ALL PLAYS.',
-      url: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin',
-      clipboardText: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin'
+      url: 'https://allplays.ai/app/#/accept-invite?code=CODE123&type=admin',
+      clipboardText: 'https://allplays.ai/app/#/accept-invite?code=CODE123&type=admin'
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));

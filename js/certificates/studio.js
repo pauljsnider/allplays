@@ -2479,7 +2479,7 @@ async function initDemo(params) {
 async function initAuthenticated(params) {
     checkAuth(async (authUser) => {
         if (!authUser) {
-            window.location.href = 'login.html';
+            window.location.href = '/app/#/auth';
             return;
         }
 

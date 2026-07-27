@@ -447,7 +447,7 @@
         } from './js/db.js?v=126';
         import { normalizeTeamNotificationPreferences, NOTIFICATION_PREFERENCE_GROUPS } from './js/notification-preferences.js?v=2';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
-        import { buildLegacyJoinUrl } from './js/join-code.js?v=1';
+        import { buildAppJoinUrl } from './js/join-code.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -958,10 +958,11 @@
         function buildInviteLink(code, type = 'friend_invite') {
             const normalizedCode = String(code || '').trim().toUpperCase();
             const normalizedType = String(type || '').trim().toLowerCase();
-            if (normalizedType === 'friend_invite' || normalizedType === 'friend') {
-                return `${window.location.origin}/accept-invite.html?code=${encodeURIComponent(normalizedCode)}&type=friend`;
-            }
-            return buildLegacyJoinUrl(normalizedCode, normalizedType || 'standard', window.location.origin);
+            return buildAppJoinUrl(
+                normalizedCode,
+                normalizedType === 'friend_invite' ? 'friend' : normalizedType || 'standard',
+                window.location.origin
+            );
         }
 
         // Generate Friend Invite
@@ -1171,7 +1172,7 @@
         // Check for passwordless user after auth check
         checkAuth(async (user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = '/app/#/auth';
                 return;
             }
             currentUser = user;

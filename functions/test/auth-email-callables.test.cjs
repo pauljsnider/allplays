@@ -73,6 +73,7 @@ function createHarness(overrides = {}) {
       calls.passwordResetRequests.push(email);
     },
     getActionSettings: (type, url) => ({ type, url: url || null }),
+    canonicalizeActionUrl: (url, type) => `${url}&canonical=${type}`,
     getInviteContinueUrl: (code, inviteType) => `https://allplays.ai/accept-invite.html?code=${code}&type=${inviteType}`,
     async findOwnedInviteCode(...args) {
       calls.findOwned.push(args);
@@ -243,7 +244,7 @@ test('invite success queues server-generated link metadata and enforces ownershi
   assert.deepEqual(calls.queued[0], {
     type: types.SIGN_IN,
     email: 'recipient@example.com',
-    actionUrl: 'https://identity.example/sign-in?email=recipient%40example.com',
+    actionUrl: 'https://identity.example/sign-in?email=recipient%40example.com&canonical=sign_in',
     displayName: 'Recipient',
     contextLabel: 'Tigers',
     uid: null,

@@ -325,6 +325,10 @@ describe('preview deployment workflow trust boundary', () => {
             expect(workflow).toContain('persist-credentials: false');
             expect(workflow).toContain('SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}');
             expect(workflow).toContain('SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}');
+            expect(workflow).toContain('SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}');
+            expect(workflow).toContain('SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}');
+            expect(workflow).toContain('SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}');
+            expect(workflow).toContain('SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}');
             expect(workflow).not.toContain('pull_request:');
             expect(workflow).not.toMatch(/^\s+\w[\w-]*:\s+write\s*$/m);
         }
@@ -333,8 +337,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).toContain('ref: master');
     });
 
-    it('limits scheduled production browser smoke to four runs per day', () => {
-        expect(scheduledProdSmokeWorkflow).toContain("cron: '23 */6 * * *'");
+    it('limits scheduled production browser smoke to one nightly run', () => {
+        expect(scheduledProdSmokeWorkflow).toContain("cron: '23 7 * * *'");
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
     });
 

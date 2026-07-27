@@ -20,6 +20,7 @@ function createPasswordResetEmailWorker({
   normalizeEmail,
   isValidEmail,
   getActionSettings,
+  canonicalizeActionUrl = (url) => url,
   queueDelivery,
   isAlreadyExistsError,
   now = Date.now
@@ -47,10 +48,11 @@ function createPasswordResetEmailWorker({
 
     try {
       const user = await auth.getUserByEmail(email);
-      const actionUrl = await auth.generatePasswordResetLink(
+      const generatedActionUrl = await auth.generatePasswordResetLink(
         email,
         getActionSettings(types.PASSWORD_RESET)
       );
+      const actionUrl = canonicalizeActionUrl(generatedActionUrl, types.PASSWORD_RESET);
       try {
         await queueDelivery({
           type: types.PASSWORD_RESET,

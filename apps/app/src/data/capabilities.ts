@@ -21,10 +21,10 @@ function capability(
 
 export const capabilities: Capability[] = [
   capability('home-entry', 'Homepage and product entry', 'index.html', 'Entry', 'Public product entry with live games, upcoming games, recent replays, and navigation.', ['Homepage', 'Product entry', 'Live games', 'Upcoming games', 'Recent replays', 'Navigation']),
-  capability('login', 'Login and signup', 'login.html', 'Auth', 'Sign in, sign up, Google auth, activation code, and password reset entry.', ['Sign in', 'Sign up', 'Google auth', 'Activation code', 'Password reset']),
-  capability('accept-invite', 'Accept invite', 'accept-invite.html', 'Auth', 'Invite redemption, invite code entry, account linking, and role-based redirect.', ['Invite redemption', 'Invite code entry', 'Account linking', 'Role redirect']),
-  capability('reset-password', 'Reset password', 'reset-password.html', 'Auth', 'Password reset and account action handling.', ['Password reset', 'Account actions', 'Login redirect']),
-  capability('verify-pending', 'Email verification', 'verify-pending.html', 'Auth', 'Email verification status, resend verification, and continue to dashboard.', ['Verification status', 'Resend email', 'Continue to dashboard']),
+  capability('login', 'Login and signup', 'login.html', 'Auth', 'Sign in, sign up, Google auth, activation code, and password reset entry.', ['Sign in', 'Sign up', 'Google auth', 'Activation code', 'Password reset'], '/auth', 'native-shell'),
+  capability('accept-invite', 'Accept invite', 'accept-invite.html', 'Auth', 'Invite redemption, invite code entry, account linking, and role-based redirect.', ['Invite redemption', 'Invite code entry', 'Account linking', 'Role redirect'], '/accept-invite', 'native-shell'),
+  capability('reset-password', 'Reset password', 'reset-password.html', 'Auth', 'Password reset and account action handling.', ['Password reset', 'Account actions', 'Login redirect'], '/reset-password', 'native-shell'),
+  capability('verify-pending', 'Email verification', 'verify-pending.html', 'Auth', 'Email verification status, resend verification, and continue to dashboard.', ['Verification status', 'Resend email', 'Continue to dashboard'], '/verify-pending', 'native-shell'),
   capability('profile', 'Account profile', 'profile.html', 'Account', 'Account profile, email verification, notification preferences, and settings.', ['Profile photo', 'Email verification', 'Notification preferences', 'Account settings'], '/profile/settings', 'native-shell'),
 
   capability('dashboard', 'My Teams dashboard', 'dashboard.html', 'Teams', 'My teams, create team, manage teams, unread chat counts, and role routing.', ['My teams', 'Create team', 'Manage teams', 'Unread chat counts', 'Role routing'], '/teams', 'native-shell', parentRoles),

@@ -104,22 +104,22 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       id: 'team-settings',
       label: 'Team settings',
       detail: 'Sport, visibility, stream, registration, permissions',
-      href: getTeamWebsiteHashHref('edit-team.html', teamId),
-      kind: 'website'
+      href: `/teams/${encodeURIComponent(teamId)}/edit`,
+      kind: 'native'
     },
     {
       id: 'manage-roster',
       label: 'Manage roster',
       detail: 'Players, parent invites, custom fields, imports',
-      href: getTeamWebsiteHashHref('edit-roster.html', teamId),
-      kind: 'website'
+      href: `/teams/${encodeURIComponent(teamId)}?tab=roster`,
+      kind: 'native'
     },
     {
       id: 'manage-schedule',
       label: 'Manage schedule',
       detail: 'Games, practices, reminders, cancellations',
-      href: getTeamWebsiteHashHref('edit-schedule.html', teamId),
-      kind: 'website'
+      href: `/schedule?teamId=${encodeURIComponent(teamId)}`,
+      kind: 'native'
     },
     {
       id: 'fees',
@@ -146,8 +146,8 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       id: 'game-day',
       label: 'Game day',
       detail: 'RSVP breakdown, lineup, live logs, wrap-up',
-      href: getTeamWebsiteQueryHref('game-day.html', { teamId }),
-      kind: 'website'
+      href: `/schedule?teamId=${encodeURIComponent(teamId)}`,
+      kind: 'native'
     },
     {
       id: 'tracking',

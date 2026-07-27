@@ -2880,7 +2880,7 @@ function playerName(id) {
 
 checkAuth(async (user) => {
   if (!user) {
-    window.location.href = 'login.html';
+    window.location.href = '/app/#/auth';
     return;
   }
   currentUser = user;

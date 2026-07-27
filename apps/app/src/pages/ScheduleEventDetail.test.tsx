@@ -1873,6 +1873,28 @@ describe('ScheduleEventDetail assignments', () => {
     expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
   });
 
+  it('keeps generic score controls but hides basketball-only game tools for soccer teams', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        sport: 'Soccer',
+        liveStatus: 'live',
+        canUpdateScore: true
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-score-editor')).toBeTruthy();
+    });
+
+    expect(screen.getByRole('button', { name: 'Home score up' })).toBeTruthy();
+    expect(screen.queryByText('Team player +2')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Foul tracker' })).toBeNull();
+    expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
+  });
+
   it('uses a single live clock ticker while sibling game-day panels stay stable', async () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const updatedAt = new Date(Date.now() - 60_000);
@@ -2144,6 +2166,25 @@ describe('ScheduleEventDetail assignments', () => {
 
     expect(launchLink.textContent).toContain('Standard tracker');
     expect(launchLink.getAttribute('href')).toBe('/schedule/team-1/game-1/track');
+  });
+
+  it('does not offer a broken standard tracker launch when the game has no tracker config', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: null
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    expect(await screen.findByText('Assign a tracker config in Edit game before opening the standard tracker.')).toBeTruthy();
+    expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
   });
 
   it('starts the live clock and advances the period from the app game hub', async () => {
