@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
     injectPagesSecurityMeta,
+    isAppCheckEnforcementReady,
     readPagesSecurityMetaPolicies,
     stagePagesBundle,
     toPagesMetaCsp,
@@ -305,6 +306,15 @@ describe('pages bundle staging', () => {
         ]) {
             expect(fs.existsSync(path.join(destinationDir, relativePath))).toBe(true);
         }
+        expect(JSON.parse(fs.readFileSync(
+            path.join(destinationDir, '.well-known', 'allplays-runtime-config.json'),
+            'utf8'
+        ))).toEqual({
+            appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        });
 
         expect(config.hosting.public).toBe(path.resolve(destinationDir));
         expect(config.hosting.ignore).not.toContain('**/.*');
@@ -355,7 +365,7 @@ describe('pages bundle staging', () => {
             .toThrow(/Firebase Hosting public directory must not publish development artifacts: test-manual\.html/);
     });
 
-    it('stages only a public App Check site key in well-known runtime config', () => {
+    it('pauses App Check when a site key exists but the rollout-ready gate is false', () => {
         const destinationDir = makeTempDir();
 
         const outputPath = writeAppCheckRuntimeConfig(destinationDir, 'public-enterprise-site-key_123');
@@ -364,24 +374,82 @@ describe('pages bundle staging', () => {
         expect(outputPath).toBe(path.join(destinationDir, '.well-known', 'allplays-runtime-config.json'));
         expect(config).toEqual({
             appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        });
+        expect(config.appCheck).not.toHaveProperty('recaptchaEnterpriseSiteKey');
+        expect(config.appCheck).not.toHaveProperty('debugToken');
+    });
+
+    it('recognizes only explicit rollout-ready values', () => {
+        expect(isAppCheckEnforcementReady(true)).toBe(true);
+        expect(isAppCheckEnforcementReady(' TRUE ')).toBe(true);
+        expect(isAppCheckEnforcementReady('1')).toBe(true);
+        expect(isAppCheckEnforcementReady(false)).toBe(false);
+        expect(isAppCheckEnforcementReady('false')).toBe(false);
+        expect(isAppCheckEnforcementReady('yes')).toBe(false);
+        expect(isAppCheckEnforcementReady(undefined)).toBe(false);
+    });
+
+    it('enables App Check only when the rollout-ready gate has a valid site key', () => {
+        const destinationDir = makeTempDir();
+
+        const outputPath = writeAppCheckRuntimeConfig(
+            destinationDir,
+            'public-enterprise-site-key_123',
+            { enforcementReady: true }
+        );
+        const config = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+
+        expect(config).toEqual({
+            appCheck: {
                 enabled: true,
                 recaptchaEnterpriseSiteKey: 'public-enterprise-site-key_123',
                 isTokenAutoRefreshEnabled: true
             }
         });
-        expect(writeAppCheckRuntimeConfig(destinationDir, 'not a valid key')).toBeNull();
+        expect(config.appCheck).not.toHaveProperty('debugToken');
     });
 
     it('fails staging on a missing or invalid site key only after the rollout-ready gate', () => {
         const destinationDir = makeTempDir();
 
-        expect(writeAppCheckRuntimeConfig(destinationDir, undefined)).toBeNull();
         expect(() => writeAppCheckRuntimeConfig(destinationDir, undefined, {
-            requireValidSiteKey: true
+            enforcementReady: true
         })).toThrow(/enforcement-ready staging requires a valid/);
         expect(() => writeAppCheckRuntimeConfig(destinationDir, 'not a valid key', {
-            requireValidSiteKey: true
+            enforcementReady: true
         })).toThrow(/enforcement-ready staging requires a valid/);
+    });
+
+    it('overwrites stale enabled App Check config while the rollout-ready gate is false', () => {
+        const destinationDir = makeTempDir();
+        const runtimeConfigPath = path.join(
+            destinationDir,
+            '.well-known',
+            'allplays-runtime-config.json'
+        );
+        writeFile(runtimeConfigPath, JSON.stringify({
+            appCheck: {
+                enabled: true,
+                recaptchaEnterpriseSiteKey: 'stale-public-site-key_123',
+                debugToken: 'must-not-survive'
+            }
+        }));
+
+        const outputPath = writeAppCheckRuntimeConfig(
+            destinationDir,
+            'current-public-site-key_456'
+        );
+
+        expect(outputPath).toBe(runtimeConfigPath);
+        expect(JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'))).toEqual({
+            appCheck: {
+                enabled: false,
+                isTokenAutoRefreshEnabled: true
+            }
+        });
     });
 
     it('enforces the rollout-ready key gate during full bundle staging', () => {
@@ -446,28 +514,33 @@ describe('pages bundle staging', () => {
             .toThrow(/must not allow unsafe-eval/);
     });
 
-    it('wires production, Pages, and preview staging to explicit repository variables', () => {
+    it('wires every production-equivalent staging path to the rollout-ready gate', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
-        const productionWorkflow = fs.readFileSync(
-            path.join(repoRoot, '.github', 'workflows', 'deploy-prod.yml'),
+        const readWorkflow = (name) => fs.readFileSync(
+            path.join(repoRoot, '.github', 'workflows', name),
             'utf8'
         );
-        const pagesWorkflow = fs.readFileSync(
-            path.join(repoRoot, '.github', 'workflows', 'app-github-pages.yml'),
-            'utf8'
-        );
-        const previewWorkflow = fs.readFileSync(
-            path.join(repoRoot, '.github', 'workflows', 'deploy-preview.yml'),
-            'utf8'
-        );
+        const productionWorkflow = readWorkflow('deploy-prod.yml');
+        const pagesWorkflow = readWorkflow('app-github-pages.yml');
+        const candidateWorkflow = readWorkflow('deploy-candidate-host.yml');
+        const previewArtifactWorkflow = readWorkflow('deploy-preview.yml');
+        const previewSmokeWorkflow = readWorkflow('preview-smoke.yml');
 
-        for (const workflow of [productionWorkflow, pagesWorkflow, previewWorkflow]) {
+        for (const workflow of [
+            productionWorkflow,
+            pagesWorkflow,
+            candidateWorkflow,
+            previewArtifactWorkflow,
+            previewSmokeWorkflow
+        ]) {
             expect(workflow).toContain('ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
         }
         expect(productionWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
         expect(pagesWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
-        expect(previewWorkflow).toContain('vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY');
-        expect(previewWorkflow).not.toContain('APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY ||');
+        expect(candidateWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
+        expect(previewArtifactWorkflow).toContain('vars.APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY');
+        expect(previewArtifactWorkflow).not.toContain('APP_CHECK_PREVIEW_RECAPTCHA_ENTERPRISE_SITE_KEY ||');
+        expect(previewSmokeWorkflow).toContain('vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY');
     });
 
     it('keeps Pages publication inside the exact-SHA production release train', () => {
@@ -491,10 +564,13 @@ describe('pages bundle staging', () => {
         expect(pagesWorkflow).not.toContain('\n  deploy:');
         expect(deployJob).toContain("vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'");
         expect(deployJob).toContain('grep -Fxq "$GITHUB_SHA" "$bundle/head-sha"');
+        expect(deployJob).toContain('EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
         expect(deployJob).toContain('EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
         expect(deployJob).toContain('test -f "$bundle/site/.nojekyll"');
-        expect(deployJob).toContain('.appCheck.enabled == true');
-        expect(deployJob).toContain('.appCheck.recaptchaEnterpriseSiteKey == $expected_site_key');
+        expect(deployJob).toContain('case "${EXPECTED_APP_CHECK_ENFORCEMENT_READY,,}" in');
+        expect(deployJob).toContain('.appCheck.enabled == false');
+        expect(deployJob).toContain('has("recaptchaEnterpriseSiteKey") | not');
+        expect(deployJob).toContain('has("debugToken") | not');
         expect(downloadIndex).toBeGreaterThan(-1);
         expect(verifyIndex).toBeGreaterThan(downloadIndex);
         expect(pagesUploadIndex).toBeGreaterThan(verifyIndex);
@@ -517,7 +593,7 @@ describe('pages bundle staging', () => {
         expect(previewWorkflow).toContain('python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages"');
         expect(previewWorkflow).toContain("SMOKE_PAGES_STAGED_ARTIFACT: 'true'");
         expect(previewWorkflow).toContain('SMOKE_APP_BOOT_URL: http://127.0.0.1:4173/app/');
-        expect(previewWorkflow).toContain('SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}');
+        expect(previewWorkflow).toContain('SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}');
     });
 
     it('adds immutable headers only for concrete staged app asset files', () => {
