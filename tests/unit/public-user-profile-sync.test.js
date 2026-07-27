@@ -95,13 +95,21 @@ describe('public user profile sync', () => {
         expect(source.match(/await syncPublicUserProfile\(userId\);/g)?.length || 0).toBeGreaterThanOrEqual(4);
     });
 
-    it('exposes an authenticated server projection sync for owner membership changes', () => {
+    it('reconciles an email change from Admin Auth even while the callable token is stale', () => {
+        const callableStart = functionsSource.indexOf('exports.syncPublicUserProfileProjection = functions.https.onCall');
+        const callableEnd = functionsSource.indexOf('exports.confirmParentAccountMerge', callableStart);
+        const callableSource = functionsSource.slice(callableStart, callableEnd);
+
         expect(functionsSource).toContain('exports.syncPublicUserProfileProjection = functions.https.onCall');
         expect(functionsSource).toContain("const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');");
         expect(functionsSource).toContain("if (userId !== context.auth.uid)");
-        expect(functionsSource).toContain('email: context.auth.token?.email || null');
+        expect(callableSource).toContain('const currentAuthIdentity = await loadPublicUserProfileAuthIdentity(userId);');
         expect(functionsSource).toContain('await syncPublicUserProfileProjectionForUser(userId, {');
-        expect(functionsSource).toContain('emailVerified: context.auth.token?.email_verified === true');
+        expect(callableSource).toContain('authIdentity: currentAuthIdentity');
+        expect(callableSource).toContain('email: currentAuthIdentity.email || null');
+        expect(callableSource).toContain('email_verified: currentAuthIdentity.emailVerified === true');
+        expect(callableSource).not.toContain('email: context.auth.token?.email || null');
+        expect(callableSource).not.toContain('const callableAuthIdentity = {');
     });
 
     it('enforces verified-email policy before the callable reads private profile data', () => {
@@ -114,7 +122,7 @@ describe('public user profile sync', () => {
             'await removePublicProfileForIneligibleAuth('
         );
         const verificationGuard = callableSource.indexOf(
-            "await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');"
+            'await assertSensitiveEmailVerified({'
         );
         const privateProfileRead = callableSource.indexOf('const userSnap = await firestore.doc(`users/${userId}`).get();');
         const projectionSync = callableSource.indexOf('await syncPublicUserProfileProjectionForUser(userId, {');
@@ -176,6 +184,8 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain("currentStaffUserIds: afterUserIds");
         expect(functionsSource).toContain('await reconcilePublicProfileStaffMembershipsForUser({');
         expect(functionsSource).toContain('const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(');
+        expect(functionsSource).toContain('loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {');
+        expect(functionsSource).toContain('documentIdField: admin.firestore.FieldPath.documentId()');
         expect(functionsSource).toContain('currentStaffTeamIds: authoritativeTeamIds');
         expect(functionsSource).toContain('...indexedUserIds');
         expect(functionsSource).toContain('loadPublicProfileStaffTeamIds(firestore, normalizedUid)');

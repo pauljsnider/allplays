@@ -9,6 +9,7 @@ const {
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
+  loadCaseInsensitivePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -2901,17 +2902,17 @@ async function reconcilePublicProfileStaffMembershipsForAuthUser(
 ) {
   const normalizedUserId = String(userId || '').trim();
   const teamIds = new Set();
-  const queries = [
-    firestore.collection('teams').where('ownerId', '==', normalizedUserId).get()
-  ];
   const rawEmail = String(authIdentity.email || '').trim();
-  uniqueNonEmptyStrings([rawEmail, rawEmail.toLowerCase()]).forEach((email) => {
-    queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
-  });
-  const querySnaps = await Promise.all(queries);
-  querySnaps.forEach((snap) => {
-    (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
-  });
+  const [ownedTeamSnap, caseInsensitiveAdminTeamIds] = await Promise.all([
+    firestore.collection('teams').where('ownerId', '==', normalizedUserId).get(),
+    loadCaseInsensitivePublicProfileStaffTeamIds(firestore, {
+      email: rawEmail,
+      documentIdField: admin.firestore.FieldPath.documentId()
+    })
+  ]);
+  (ownedTeamSnap.docs || [])
+    .forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
+  caseInsensitiveAdminTeamIds.forEach((teamId) => teamIds.add(teamId));
   const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(
     firestore,
     {
@@ -3309,17 +3310,22 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   if (userId !== context.auth.uid) {
     throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
   }
-  const callableAuthIdentity = {
-    email: context.auth.token?.email || null,
-    displayName: context.auth.token?.name || null,
-    photoUrl: context.auth.token?.picture || null,
-    emailVerified: context.auth.token?.email_verified === true
-  };
+  const currentAuthIdentity = await loadPublicUserProfileAuthIdentity(userId);
   await removePublicProfileForIneligibleAuth(
     firestore.doc(`publicUserProfiles/${userId}`),
-    callableAuthIdentity
+    currentAuthIdentity
   );
-  await assertSensitiveEmailVerified(context, 'sync-public-user-profile-projection');
+  await assertSensitiveEmailVerified({
+    ...context,
+    auth: {
+      ...context.auth,
+      token: {
+        ...context.auth.token,
+        email: currentAuthIdentity.email || null,
+        email_verified: currentAuthIdentity.emailVerified === true
+      }
+    }
+  }, 'sync-public-user-profile-projection');
 
   const userSnap = await firestore.doc(`users/${userId}`).get();
   if (!userSnap.exists) {
@@ -3328,7 +3334,7 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
 
   await syncPublicUserProfileProjectionForUser(userId, {
     userSnap,
-    authIdentity: callableAuthIdentity
+    authIdentity: currentAuthIdentity
   });
 
   return { success: true };

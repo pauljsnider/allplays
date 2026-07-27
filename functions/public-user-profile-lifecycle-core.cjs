@@ -44,6 +44,42 @@ async function loadPublicProfileStaffTeamIds(firestore, userId) {
     .filter(Boolean))];
 }
 
+async function loadCaseInsensitivePublicProfileStaffTeamIds(
+  firestore,
+  { email, documentIdField, batchSize = 200 } = {}
+) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail) return [];
+  if (!documentIdField) throw new TypeError('documentIdField is required');
+
+  const teamIds = new Set();
+  let cursor = null;
+  do {
+    let query = firestore.collection('teams')
+      .select('adminEmails')
+      .orderBy(documentIdField)
+      .limit(batchSize);
+    if (cursor) query = query.startAfter(cursor);
+    const teamSnap = await query.get();
+    const teamDocs = teamSnap.docs || [];
+    teamDocs.forEach((teamDoc) => {
+      const team = teamDoc.data() || {};
+      const adminEmails = (Array.isArray(team.adminEmails)
+        ? team.adminEmails
+        : [])
+        .map((adminEmail) => String(adminEmail || '').trim().toLowerCase())
+        .filter(Boolean);
+      if (adminEmails.includes(normalizedEmail)) {
+        teamIds.add(String(teamDoc.id || '').trim());
+      }
+    });
+    cursor = teamDocs.at(-1) || null;
+    if (teamDocs.length < batchSize) break;
+  } while (cursor);
+
+  return [...teamIds].filter(Boolean);
+}
+
 async function loadAuthoritativePublicProfileStaffTeamIds(
   firestore,
   { userId, email, queriedTeamIds = [] } = {}
@@ -293,6 +329,7 @@ module.exports = {
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
+  loadCaseInsensitivePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,

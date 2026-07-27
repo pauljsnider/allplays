@@ -7,6 +7,7 @@ const {
   createPublicProfileEligibilitySweepHandler,
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
+  loadCaseInsensitivePublicProfileStaffTeamIds,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -186,17 +187,41 @@ test('runtime profile resync reads normalized staff teams by uid without email m
   );
 });
 
-test('mixed-case indexed admin remains authoritative through every profile synchronization path', async (t) => {
+test('unindexed mixed-case admin is discovered through every profile synchronization path', async (t) => {
   const synchronizationPaths = ['callable', 'user-write', 'scheduled-sweep'];
 
   for (const synchronizationPath of synchronizationPaths) {
     await t.test(synchronizationPath, async () => {
-      const memberships = new Map([['mixed-case-membership', {
-        teamId: 'mixed-case-admin-team',
-        userId: 'coach-user'
-      }]]);
+      const memberships = new Map();
+      const teamDocs = [
+        {
+          id: 'unrelated-team',
+          data: () => ({ adminEmails: ['other@example.com'] })
+        },
+        {
+          id: 'mixed-case-admin-team',
+          data: () => ({ adminEmails: ['Coach@Example.com'] })
+        }
+      ];
+      const teamQuery = {
+        select: (field) => {
+          assert.equal(field, 'adminEmails');
+          return teamQuery;
+        },
+        orderBy: (field) => {
+          assert.equal(field, 'document-id');
+          return teamQuery;
+        },
+        limit: (value) => {
+          assert.equal(value, 200);
+          return teamQuery;
+        },
+        startAfter: () => teamQuery,
+        get: async () => ({ docs: teamDocs })
+      };
       const firestore = {
         collection: (collectionName) => {
+          if (collectionName === 'teams') return teamQuery;
           assert.equal(collectionName, 'publicProfileStaffMemberships');
           return {
             where: (field, operator, userId) => {
@@ -236,12 +261,19 @@ test('mixed-case indexed admin remains authoritative through every profile synch
         }
       };
 
+      const discoveredTeamIds = await loadCaseInsensitivePublicProfileStaffTeamIds(
+        firestore,
+        {
+          email: 'coach@example.com',
+          documentIdField: 'document-id'
+        }
+      );
       const authoritativeTeamIds = await loadAuthoritativePublicProfileStaffTeamIds(
         firestore,
         {
           userId: 'coach-user',
           email: 'coach@example.com',
-          queriedTeamIds: []
+          queriedTeamIds: discoveredTeamIds
         }
       );
       await reconcilePublicProfileStaffMembershipsForUser({
