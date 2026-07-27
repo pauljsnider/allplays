@@ -621,7 +621,7 @@ function isDuplicateRosterParentContact(contact, seenUserIds, seenContactKeys) {
     if (seenUserIds.has(userId)) return true;
     return contactKeys.some((key) => {
         const identities = seenContactKeys.get(key);
-        return identities?.has(userId) || identities?.has('');
+        return identities?.has(userId);
     });
 }
 

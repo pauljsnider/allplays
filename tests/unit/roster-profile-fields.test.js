@@ -239,6 +239,20 @@ describe('roster profile fields', () => {
         ]);
     });
 
+    it('does not let an earlier unlinked contact suppress a later linked household parent', () => {
+        const contacts = [
+            { name: 'Household email', email: 'family@example.com', relation: 'Parent' },
+            { userId: 'parent-1', name: 'Pat Parent', email: 'family@example.com', relation: 'Mother' },
+            { userId: 'parent-2', name: 'Robin Parent', email: 'family@example.com', relation: 'Father' }
+        ];
+
+        expect(mergeRosterParentContacts(contacts, [])).toEqual([
+            expect.objectContaining({ name: 'Household email', email: 'family@example.com' }),
+            expect.objectContaining({ userId: 'parent-1', name: 'Pat Parent' }),
+            expect.objectContaining({ userId: 'parent-2', name: 'Robin Parent' })
+        ]);
+    });
+
     it('carries identity aliases through duplicate contact projections', () => {
         const player = {
             parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],
