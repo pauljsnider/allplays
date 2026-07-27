@@ -53,7 +53,8 @@ test('canonical reset-password route renders invalid-code state after real Fireb
         baseURL: appBaseUrl,
         ignoredConsoleErrors: [
             /Error verifying reset code:/i,
-            /INVALID_OOB_CODE/i
+            /INVALID_OOB_CODE/i,
+            /invalid-action-code/i
         ]
     });
 
