@@ -55,8 +55,14 @@ if (FALLBACK_BEARER) {
 let oauthStore = null;
 if (process.env.OAUTH_STORE_FIRESTORE === '1') {
     oauthStore = createFirestoreStore({ projectId: PROJECT_ID });
-    await oauthStore.warmup();
-    console.log('[chatgpt-mcp] OAuth state persisted to Firestore (oauthBrokerState/state)');
+    // A store hiccup at boot must not crash the service — degrade to an empty
+    // mirror; existing grants reload on the next successful read/write.
+    try {
+        await oauthStore.warmup();
+        console.log('[chatgpt-mcp] OAuth state persisted to Firestore (oauthBrokerState/state)');
+    } catch (error) {
+        console.error('[chatgpt-mcp] OAuth store warmup failed; continuing with empty state:', error.message);
+    }
 } else if (process.env.OAUTH_STORE_PATH) {
     oauthStore = createFileStore(process.env.OAUTH_STORE_PATH);
     console.log(`[chatgpt-mcp] OAuth state persisted to ${process.env.OAUTH_STORE_PATH}`);
@@ -93,6 +99,12 @@ function escapeHtml(value) {
     ));
 }
 
+// ALL PLAYS logo, inlined so the sign-in page is fully self-contained.
+const LOGO_DATA_URI = `data:image/png;base64,${readFileSync(new URL('./ui/logo.png', import.meta.url)).toString('base64')}`;
+
+// Sign-in page styled to match the AllPlays app auth screen
+// (apps/app/src/pages/AuthPage.tsx + components/AuthFrame.tsx): light theme,
+// indigo primary (#4f46e5→#4338ca), app-card / auth-input / primary-button.
 function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, error }) {
     const hidden = { client_id: clientId, redirect_uri: redirectUri, code_challenge: codeChallenge, state, scope };
     const hiddenInputs = Object.entries(hidden)
@@ -106,29 +118,57 @@ function renderSignInPage({ clientId, redirectUri, codeChallenge, state, scope, 
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Sign in to ALL PLAYS</title>
     <style>
-        body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; justify-content: center; padding: 3rem 1rem; }
-        .card { background: #1e293b; border-radius: 12px; padding: 2rem; max-width: 22rem; width: 100%; }
-        h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
-        p { color: #94a3b8; font-size: 0.875rem; margin: 0 0 1.25rem; }
-        label { display: block; font-size: 0.8rem; margin: 0.75rem 0 0.25rem; color: #cbd5e1; }
-        input[type=email], input[type=password] { width: 100%; box-sizing: border-box; padding: 0.6rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
-        button { margin-top: 1.25rem; width: 100%; padding: 0.7rem; border: 0; border-radius: 8px; background: #38bdf8; color: #0f172a; font-weight: 600; cursor: pointer; }
-        .error { background: #7f1d1d; color: #fecaca; padding: 0.6rem; border-radius: 8px; font-size: 0.8rem; margin-bottom: 0.5rem; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: #f9fafb; color: #030712; -webkit-font-smoothing: antialiased; }
+        .wrap { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 24px 16px; }
+        .brand { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 28rem; margin-bottom: 20px; }
+        .brand img { height: 44px; width: 44px; border-radius: 12px; box-shadow: 0 1px 2px rgba(16,24,40,0.08); }
+        .brand .name { display: block; font-size: 1.125rem; font-weight: 900; line-height: 1.15; color: #030712; }
+        .brand .eyebrow { display: block; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #4338ca; }
+        .card { width: 100%; max-width: 28rem; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 10px 24px rgba(16,24,40,0.07); padding: 22px; }
+        .head { display: flex; align-items: flex-start; gap: 12px; }
+        .head .icon { flex: none; height: 44px; width: 44px; border-radius: 12px; background: #eef2ff; color: #4338ca; display: flex; align-items: center; justify-content: center; }
+        h1 { font-size: 1.4rem; font-weight: 900; color: #030712; margin: 0; }
+        .sub { margin: 4px 0 0; font-size: 0.875rem; font-weight: 600; line-height: 1.5; color: #4b5563; }
+        label { display: block; margin-top: 14px; margin-bottom: 6px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+        input[type=email], input[type=password] { width: 100%; min-height: 44px; border: 1px solid #d0d5dd; border-radius: 10px; background: #ffffff; padding: 10px 12px; color: #111827; font-size: 1rem; font-weight: 600; outline: none; }
+        input:focus { border-color: #818cf8; box-shadow: 0 0 0 3px #e0e7ff; }
+        button { margin-top: 20px; width: 100%; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 10px; background: linear-gradient(90deg, #4f46e5, #4338ca); padding: 10px 14px; color: #ffffff; font-size: 0.95rem; font-weight: 800; cursor: pointer; box-shadow: 0 10px 20px rgba(79,70,229,0.22); }
+        button:hover { filter: brightness(1.05); }
+        .error { margin-top: 16px; border: 1px solid #fecdd3; background: #fff1f2; color: #be123c; border-radius: 12px; padding: 12px; font-size: 0.85rem; font-weight: 700; }
+        .foot { margin-top: 16px; text-align: center; font-size: 0.75rem; font-weight: 600; color: #6b7280; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>ALL PLAYS</h1>
-        <p>Sign in to connect your AllPlays account to ChatGPT. ChatGPT will be able to read your teams, schedule, and game summaries.</p>
-        ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
-        <form method="POST" action="/oauth/authorize">
-            ${hiddenInputs}
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="username" required>
-            <label for="password">Password</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required>
-            <button type="submit">Sign in &amp; approve</button>
-        </form>
+    <div class="wrap">
+        <div class="brand">
+            <img src="${LOGO_DATA_URI}" alt="ALL PLAYS">
+            <span>
+                <span class="name">ALL PLAYS</span>
+                <span class="eyebrow">Connect to ChatGPT</span>
+            </span>
+        </div>
+        <div class="card">
+            <div class="head">
+                <div class="icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                </div>
+                <div>
+                    <h1>Sign in</h1>
+                    <p class="sub">Connect your ALL PLAYS account to ChatGPT. It will be able to read your teams, schedule, and game summaries.</p>
+                </div>
+            </div>
+            ${error ? `<div class="error">${escapeHtml(error)}</div>` : ''}
+            <form method="POST" action="/oauth/authorize">
+                ${hiddenInputs}
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" autocomplete="username" placeholder="you@example.com" required>
+                <label for="password">Password</label>
+                <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+                <button type="submit">Sign in &amp; approve</button>
+            </form>
+            <div class="foot">Uses your existing ALL PLAYS login.</div>
+        </div>
     </div>
 </body>
 </html>`;

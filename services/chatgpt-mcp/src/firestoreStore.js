@@ -18,6 +18,11 @@
 
 import { encodeValue, decodeFields } from './firestoreRest.js';
 
+// Request the datastore scope explicitly. Without it the runtime SA token is
+// treated by Firestore as a client credential (subject to Security Rules,
+// which deny this collection) rather than an IAM-authorized admin call. With
+// it, access is authorized by IAM (the runtime SA's roles/editor), bypassing
+// rules — the correct posture for the broker's own bookkeeping.
 const METADATA_TOKEN_URL = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token';
 const TOKEN_MARGIN_MS = 60 * 1000;
 
@@ -47,9 +52,12 @@ export function createFirestoreStore({ projectId, docPath = 'oauthBrokerState/st
 
     async function readState() {
         const token = await tokenSource();
-        const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}`, 'x-goog-user-project': projectId } });
         if (response.status === 404) return { clients: {}, refreshTokens: {} };
-        if (!response.ok) throw new Error(`OAuth store read failed (${response.status}).`);
+        if (!response.ok) {
+            const detail = await response.text().catch(() => '');
+            throw new Error(`OAuth store read failed (${response.status}): ${detail.slice(0, 300)}`);
+        }
         const body = await response.json();
         const fields = decodeFields(body.fields);
         return {
@@ -62,7 +70,7 @@ export function createFirestoreStore({ projectId, docPath = 'oauthBrokerState/st
         const token = await tokenSource();
         const response = await fetchImpl(url, {
             method: 'PATCH',
-            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'x-goog-user-project': projectId },
             body: JSON.stringify({
                 fields: {
                     clients: encodeValue(state.clients || {}),
