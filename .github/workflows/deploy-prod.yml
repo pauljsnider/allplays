@@ -482,6 +482,7 @@ jobs:
           firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
+          retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
 
           verify_active_firestore_rules() {
             local release_json ruleset_json ruleset_name local_rules_b64 active_rules_b64
@@ -804,7 +805,7 @@ jobs:
             )
 
             if [[ "$acknowledge_failure_policy" == "true" ]]; then
-              if [[ "$deploy_targets" != "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" ]]; then
+              if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
                 echo "Refusing --force outside the reviewed retry-enabled function allowlist." >&2
                 return 1
               fi
@@ -941,12 +942,13 @@ jobs:
             echo "::warning::Firestore is current, but its component marker could not be recorded. A future failed production retry may conservatively redeploy it."
           fi
 
-          # These two event handlers intentionally enable automatic retries and
-          # have idempotency coverage. A targeted --force acknowledges only that
-          # failure policy; the subsequent full-fleet deploy remains unforced so
-          # deletions and unsafe trigger migrations still fail closed.
+          # These event handlers intentionally enable automatic retries and have
+          # deterministic-write, retry-anchor, or convergence coverage. A targeted
+          # --force acknowledges only their reviewed failure policies; the
+          # subsequent full-fleet deploy remains unforced so deletions and unsafe
+          # trigger migrations still fail closed.
           retry_firebase_deploy \
-            "functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate" \
+            "$retry_enabled_function_targets" \
             "retry-enabled-functions" \
             3 \
             15 \

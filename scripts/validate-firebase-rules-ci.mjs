@@ -287,13 +287,18 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(
         deployProd,
-        '"functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate"',
+        'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
         'Production retry-enabled function allowlist'
+    );
+    assertIncludes(
+        deployProd,
+        'if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then',
+        'Production force-deploy exact allowlist guard'
     );
     assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
     assertMatches(
         deployProd,
-        /retry_firebase_deploy\s+\\?\s*"functions:processAccountDeletionRequest,functions:syncTeamOwnerAccessOnCreate"\s+\\?\s*"retry-enabled-functions"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_function_targets"\s+\\?\s*"retry-enabled-functions"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
         'Production retry-enabled function failure-policy acknowledgement call'
     );
     assertIncludes(
