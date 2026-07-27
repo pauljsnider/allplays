@@ -2767,16 +2767,11 @@ exports.sweepIneligiblePublicUserProfiles = functions
       auth: admin.auth(),
       documentIdField: admin.firestore.FieldPath.documentId(),
       isAuthUserNotFound: publicUserProfileProjection.isPublicProfileAuthUserNotFound,
-      reconcileAuthIdentity: async (userId, authIdentity) => {
-        const userSnap = await firestore.doc(`users/${userId}`).get();
-        await reconcilePublicProfileStaffMembershipsForAuthUser(
-          userId,
-          authIdentity,
-          userSnap.exists ? (userSnap.data() || {}) : {}
-        );
-      },
       syncEligibleProfile: (userId, authIdentity) => (
-        syncPublicUserProfileProjectionForUser(userId, { authIdentity })
+        syncPublicUserProfileProjectionForUser(userId, {
+          authIdentity,
+          useIndexedStaffMemberships: true
+        })
       )
     });
     const result = await publicProfileEligibilitySweepHandler();
@@ -2854,11 +2849,21 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
 
   const userData = userSnap.data() || {};
   const authIdentity = options.authIdentity || await loadPublicUserProfileAuthIdentity(normalizedUserId);
-  const discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
-    normalizedUserId,
-    authIdentity,
-    userData
-  );
+  let discoveryTeamIds;
+  if (Array.isArray(options.discoveryTeamIds)) {
+    discoveryTeamIds = options.discoveryTeamIds;
+  } else if (options.useIndexedStaffMemberships === true) {
+    discoveryTeamIds = uniqueNonEmptyStrings([
+      ...publicUserProfileProjection.derivePublicProfileTeamIds(userData),
+      ...await loadPublicProfileStaffTeamIds(firestore, normalizedUserId)
+    ]);
+  } else {
+    discoveryTeamIds = await reconcilePublicProfileStaffMembershipsForAuthUser(
+      normalizedUserId,
+      authIdentity,
+      userData
+    );
+  }
   const removedForIneligibleAuth = await removePublicProfileForIneligibleAuth(
     publicProfileRef,
     authIdentity
@@ -2957,7 +2962,9 @@ async function syncPublicUserProfilesForTeamChange(teamId, beforeTeam, afterTeam
   ]);
   await Promise.all(
     Array.from(candidateUserIds).map((candidateUserId) => (
-      syncPublicUserProfileProjectionForUser(candidateUserId)
+      syncPublicUserProfileProjectionForUser(candidateUserId, {
+        useIndexedStaffMemberships: true
+      })
     ))
   );
   const latestTeamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -7406,13 +7413,9 @@ exports.syncPublicUserProfileOnUserWrite = functions
     const after = change.after.data() || {};
     const sourceChanged = publicUserProfileProjection.buildPublicProfileUserSourceKey(before)
       !== publicUserProfileProjection.buildPublicProfileUserSourceKey(after);
-    let authIdentity;
-    if (!sourceChanged) {
-      authIdentity = await loadPublicUserProfileAuthIdentity(context.params.uid);
-    }
+    if (!sourceChanged) return null;
     await syncPublicUserProfileProjectionForUser(context.params.uid, {
-      userSnap: change.after,
-      ...(authIdentity ? { authIdentity } : {})
+      userSnap: change.after
     });
     return null;
   });

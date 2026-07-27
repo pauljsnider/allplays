@@ -86,7 +86,7 @@ test('Auth deletion ignores records without a uid', async () => {
   assert.equal(await handler({}), null);
 });
 
-test('scheduled eligibility sweep removes newly unverified and missing Auth users', async () => {
+test('scheduled eligibility sweep removes ineligible users and syncs each eligible user once', async () => {
   const deletedUserIds = [];
   const reconciledUserIds = [];
   const syncedUserIds = [];
@@ -123,25 +123,21 @@ test('scheduled eligibility sweep removes newly unverified and missing Auth user
     reconcileAuthIdentity: async (userId, authIdentity) => {
       reconciledUserIds.push([userId, authIdentity]);
     },
-    syncEligibleProfile: async (userId, authIdentity) => {
-      syncedUserIds.push([userId, authIdentity]);
+    syncEligibleProfile: async (userId, authIdentity, discoveryTeamIds) => {
+      syncedUserIds.push([userId, authIdentity, discoveryTeamIds]);
     },
     batchSize: 10
   });
 
   assert.deepEqual(await handler(), { scanned: 3, removed: 2 });
   assert.deepEqual(deletedUserIds.sort(), ['missing-user', 'unverified-user']);
-  assert.deepEqual(reconciledUserIds.map(([userId]) => userId), [
-    'verified-user',
-    'unverified-user',
-    'missing-user'
-  ]);
+  assert.deepEqual(reconciledUserIds.map(([userId]) => userId), ['verified-user']);
   assert.deepEqual(syncedUserIds, [['verified-user', {
     email: null,
     displayName: null,
     photoUrl: null,
     emailVerified: true
-  }]]);
+  }, undefined]]);
 });
 
 test('mixed-case admin emails resolve once to a stable uid-based staff membership', async () => {
@@ -187,8 +183,8 @@ test('runtime profile resync reads normalized staff teams by uid without email m
   );
 });
 
-test('unindexed mixed-case admin is discovered through every profile synchronization path', async (t) => {
-  const synchronizationPaths = ['callable', 'user-write', 'scheduled-sweep'];
+test('unindexed mixed-case admin is discovered through full-reconciliation paths', async (t) => {
+  const synchronizationPaths = ['callable', 'changed-user-write'];
 
   for (const synchronizationPath of synchronizationPaths) {
     await t.test(synchronizationPath, async () => {

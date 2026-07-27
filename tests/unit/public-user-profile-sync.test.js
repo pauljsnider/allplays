@@ -169,9 +169,10 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('createPublicProfileAuthDeleteHandler({ firestore })');
         expect(functionsSource).toContain('exports.sweepIneligiblePublicUserProfiles = functions');
         expect(functionsSource).toContain("schedule('every 24 hours')");
-        expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
         expect(functionsSource).toContain('syncEligibleProfile: (userId, authIdentity) => (');
-        expect(functionsSource).toContain('loadPublicUserProfileAuthIdentity(context.params.uid)');
+        expect(functionsSource).toContain('useIndexedStaffMemberships: true');
+        expect(functionsSource).not.toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
+        expect(functionsSource).toContain('if (!sourceChanged) return null;');
         expect(functionsSource).not.toContain('if (publicProfileSnap.exists) return null;');
     });
 
@@ -194,6 +195,7 @@ describe('public user profile sync', () => {
         );
         expect(functionsSource).toContain('createPublicProfileTeamWriteHandler({');
         expect(functionsSource).toContain('syncTeam: syncPublicUserProfilesForTeamChange');
+        expect(functionsSource).toContain('useIndexedStaffMemberships: true');
         expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
         expect(functionsSource).toContain('throw error;');
         expect(functionsSource).toContain("reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'");

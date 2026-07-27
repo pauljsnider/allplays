@@ -26,14 +26,14 @@ test('builds stable opaque staff membership ids from normalized team and user id
   );
 });
 
-test('combines parent, coach, and server-resolved staff teams without duplicates', () => {
+test('combines parent and server-resolved staff teams without trusting coachOf', () => {
   assert.deepEqual(
     derivePublicProfileTeamIds({
       parentOf: [{ teamId: 'team-parent' }, { teamId: 'team-shared' }],
       parentTeamIds: ['team-shared'],
       coachOf: ['team-coach-of', 'team-shared']
     }, ['team-coach', 'team-parent']),
-    ['team-parent', 'team-shared', 'team-coach-of', 'team-coach']
+    ['team-parent', 'team-shared', 'team-coach']
   );
 });
 

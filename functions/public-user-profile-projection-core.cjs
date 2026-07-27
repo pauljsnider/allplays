@@ -33,13 +33,9 @@ function derivePublicProfileTeamIds(userData = {}, extraTeamIds = []) {
   const parentTeamIds = Array.isArray(userData.parentTeamIds)
     ? userData.parentTeamIds
     : [];
-  const coachTeamIds = Array.isArray(userData.coachOf)
-    ? userData.coachOf
-    : [];
   return uniquePublicProfileStrings([
     ...parentOfTeamIds,
     ...parentTeamIds,
-    ...coachTeamIds,
     ...(Array.isArray(extraTeamIds) ? extraTeamIds : [])
   ]).filter(isValidPublicProfileTeamId);
 }

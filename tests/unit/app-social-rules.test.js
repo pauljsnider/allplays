@@ -402,10 +402,9 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /publicUserProfiles/{userId}');
         expect(source).toContain('function canReadPublicUserProfile(userId, data)');
         expect(source).toContain("data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())");
-        expect(source).toContain("get(publicProfilePath).data.get('discoveryTeamIds', [])");
-        expect(source).toContain("get(authIdentityPath).data.get('email', '').lower() == request.auth.token.email.lower()");
-        expect(source).toContain('let projectedTeamIds = projectedAuthIdentityIsCurrent && exists(publicProfilePath)');
-        expect(source).toContain('return projectedTeamIds.concat(privateParentTeamIds);');
+        expect(source).toContain("get(userPath).data.get('coachOf', [])");
+        expect(source).toContain('return privateParentTeamIds.concat(privateCoachTeamIds);');
+        expect(source).not.toContain("get(authIdentityPath).data.get('email', '').lower() == request.auth.token.email.lower()");
         expect(source).toContain('isAcceptedFriendOf(userId)');
         expect(source).toContain("get(friendshipPath).data.get('status', '') == 'accepted'");
         expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
@@ -605,8 +604,8 @@ describe('React app social Firestore rules', () => {
             await seedPublicProfile('viewer-staff', { discoveryTeamIds: ['team-staff'] });
             await seedPublicProfile('profile-team-parent', { discoveryTeamIds: ['team-staff'] });
             await testEnv.withSecurityRulesDisabled(async (context) => {
-                await setDoc(doc(context.firestore(), 'publicProfileAuthIdentities', 'viewer-staff'), {
-                    email: 'viewer-staff@example.com'
+                await setDoc(doc(context.firestore(), 'users', 'viewer-staff'), {
+                    coachOf: ['team-staff']
                 });
             });
 
@@ -625,7 +624,7 @@ describe('React app social Firestore rules', () => {
             ]);
         });
 
-        it('denies stale projected staff access immediately after an Auth email change', async () => {
+        it('denies stale email-projected staff access to an already-issued old token', async () => {
             await seedPublicProfile('viewer-staff', { discoveryTeamIds: ['team-staff'] });
             await seedPublicProfile('profile-team-parent', { discoveryTeamIds: ['team-staff'] });
             await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -637,11 +636,7 @@ describe('React app social Firestore rules', () => {
             const oldIdentity = testEnv.authenticatedContext('viewer-staff', {
                 email: 'old-admin@example.com'
             });
-            const changedIdentity = testEnv.authenticatedContext('viewer-staff', {
-                email: 'new-admin@example.com'
-            });
-            await assertSucceeds(getDoc(profileRef('profile-team-parent', oldIdentity)));
-            await assertFails(getDoc(profileRef('profile-team-parent', changedIdentity)));
+            await assertFails(getDoc(profileRef('profile-team-parent', oldIdentity)));
         });
 
         it('denies pending friends and unrelated users without a shared team', async () => {
@@ -720,6 +715,9 @@ describe('React app social Firestore rules', () => {
             await assertFails(updateDoc(userRef, {
                 parentTeamIds: ['team-1'],
                 parentPlayerKeys: ['team-1::player-1']
+            }));
+            await assertFails(updateDoc(userRef, {
+                coachOf: ['team-1']
             }));
         });
     });

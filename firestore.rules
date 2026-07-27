@@ -1542,20 +1542,13 @@ service cloud.firestore {
 
     function currentUserPublicProfileTeamIds() {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      let publicProfilePath = /databases/$(database)/documents/publicUserProfiles/$(request.auth.uid);
-      let authIdentityPath = /databases/$(database)/documents/publicProfileAuthIdentities/$(request.auth.uid);
       let privateParentTeamIds = isSignedIn() && exists(userPath)
         ? get(userPath).data.get('parentTeamIds', [])
         : [];
-      let projectedAuthIdentityIsCurrent = isSignedIn() &&
-        request.auth.token.email != null &&
-        exists(authIdentityPath) &&
-        get(authIdentityPath).data.get('email', '') is string &&
-        get(authIdentityPath).data.get('email', '').lower() == request.auth.token.email.lower();
-      let projectedTeamIds = projectedAuthIdentityIsCurrent && exists(publicProfilePath)
-        ? get(publicProfilePath).data.get('discoveryTeamIds', [])
+      let privateCoachTeamIds = isSignedIn() && exists(userPath)
+        ? get(userPath).data.get('coachOf', [])
         : [];
-      return projectedTeamIds.concat(privateParentTeamIds);
+      return privateParentTeamIds.concat(privateCoachTeamIds);
     }
 
     function canReadPublicUserProfile(userId, data) {

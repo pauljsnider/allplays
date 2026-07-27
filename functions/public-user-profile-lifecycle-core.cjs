@@ -303,14 +303,15 @@ function createPublicProfileEligibilitySweepHandler({
             if (!isAuthUserNotFound(error)) throw error;
             authIdentity = { userMissing: true };
           }
-          if (typeof reconcileAuthIdentity === 'function') {
-            await reconcileAuthIdentity(profileDoc.id, authIdentity);
-          }
           const removed = await removePublicProfileForIneligibleAuth(profileDoc.ref, authIdentity);
-          if (!removed && typeof syncEligibleProfile === 'function') {
-            await syncEligibleProfile(profileDoc.id, authIdentity);
+          if (removed) return true;
+          const reconciledIdentity = typeof reconcileAuthIdentity === 'function'
+            ? await reconcileAuthIdentity(profileDoc.id, authIdentity)
+            : undefined;
+          if (typeof syncEligibleProfile === 'function') {
+            await syncEligibleProfile(profileDoc.id, authIdentity, reconciledIdentity);
           }
-          return removed;
+          return false;
         }));
         removed += results.filter(Boolean).length;
       }
