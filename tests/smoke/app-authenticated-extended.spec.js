@@ -141,6 +141,18 @@ test('staff smoke writes are deterministic and removed after validation', async 
                 `teams/${config.teamId}/mediaItems`,
                 mediaName
             )
+        },
+        {
+            recordType: 'chat-notification',
+            cleanup: () => deleteFirestoreDocumentsByStringFields(
+                parentRestSession,
+                `users/${parentRestSession.localId}/notificationInbox`,
+                {
+                    category: 'liveChat',
+                    teamId: config.teamId,
+                    body: chatText
+                }
+            )
         }
     ];
 
@@ -242,6 +254,20 @@ test('staff smoke writes are deterministic and removed after validation', async 
             page.once('dialog', (dialog) => dialog.accept());
             await deleteMedia.click();
             await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
+        });
+
+        await withAuthenticatedPage(browser, parentStorageState, async (page) => {
+            await openRoute(page, '/home');
+            await page.getByRole('button', { name: 'Notifications' }).first().click();
+            const inbox = page.getByRole('dialog', { name: 'Notifications' });
+            await expect(inbox).toBeVisible();
+            const messageDeepLink = inbox.locator('li').filter({ hasText: chatText }).first();
+            await expect(
+                messageDeepLink,
+                'The new smoke chat message must create a notification for the parent account'
+            ).toBeVisible({ timeout: 25_000 });
+            await messageDeepLink.getByRole('button').click();
+            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/messages(?:\/|\?)/);
         });
     } finally {
         await runSmokeCleanup(runId, cleanupTasks);
@@ -361,13 +387,6 @@ test('read-only fixtures cover registrations, fees, opportunities, and notificat
         await page.getByRole('button', { name: 'Notifications' }).first().click();
         const inbox = page.getByRole('dialog', { name: 'Notifications' });
         await expect(inbox).toBeVisible();
-        const messageDeepLink = inbox.locator('li').filter({ hasText: smokePrefix }).first();
-        await expect(
-            messageDeepLink,
-            'The new smoke chat message must create a notification for the parent account'
-        ).toBeVisible({ timeout: 25_000 });
-        await messageDeepLink.getByRole('button').click();
-        await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/messages(?:\/|\?)/);
 
         if (config.opportunityInquiryId) {
             await page.getByRole('button', { name: 'Notifications' }).first().click();
