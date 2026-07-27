@@ -42,7 +42,7 @@ async function signIn(page, baseURL) {
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
 
     const emailField = page.getByLabel('Email');
-    const passwordField = page.getByLabel('Password');
+    const passwordField = page.getByLabel('Password', { exact: true });
     await expect(emailField).toBeVisible({ timeout: 10000 });
     await emailField.fill(parentEmail);
     await passwordField.fill(parentPassword);

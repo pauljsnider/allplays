@@ -86,14 +86,14 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await page.goto(buildAppSmokeUrl(appBaseUrl, '/auth'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
     await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Password').fill(password);
+    await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in' }).last().click();
     await expect.poll(() => new URL(page.url()).hash, {
         message: `${roleLabel} remained in the authentication flow`,
         timeout: 25_000
     }).not.toMatch(/^#\/(?:auth|verify-pending)(?:\?|$)/);
     await expect(page.locator('main')).toBeVisible({ timeout: 15_000 });
-    await page.getByLabel('Password').fill('').catch(() => {});
+    await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
     await page.getByLabel('Email').fill('').catch(() => {});
 }
 

@@ -53,7 +53,7 @@ test('candidate host accepts authentication and loads a protected landing page',
             await expect(page.getByRole('heading', { name: 'Sign in' }), `Authentication form did not load at candidate URL ${candidateHostUrl}`)
                 .toBeVisible({ timeout: 10_000 });
             await page.getByLabel('Email').fill(authEmail);
-            await page.getByLabel('Password').fill(authPassword);
+            await page.getByLabel('Password', { exact: true }).fill(authPassword);
             const submitButton = page.getByRole('button', { name: 'Sign in' }).last();
             const errorMessage = page.locator('[role="alert"]').first();
             await submitButton.click();
@@ -100,7 +100,7 @@ test('candidate host accepts authentication and loads a protected landing page',
             ).toContainText(/Your day|Your teams|Team/, { timeout: 10_000 });
         });
     } catch (error) {
-        await page.getByLabel('Password').fill('').catch(() => {});
+        await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
         await page.getByLabel('Email').fill('').catch(() => {});
         await writeRedactedDiagnostic(page, testInfo, error);
         throw new Error(
