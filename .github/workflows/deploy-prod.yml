@@ -528,6 +528,168 @@ jobs:
             [[ -n "$active_rules_b64" && "$active_rules_b64" == "$local_rules_b64" ]]
           }
 
+          find_recent_matching_firestore_ruleset() {
+            local list_file ruleset_file ruleset_name local_rules_b64 candidate_rules_b64
+            local attempt curl_status http_status list_succeeded
+            list_file="$(mktemp "$RUNNER_TEMP/firestore-rulesets.XXXXXX.json")"
+            ruleset_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-candidate.XXXXXX.json")"
+            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            list_succeeded="false"
+
+            for attempt in 1 2 3; do
+              set +e
+              http_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
+                  --output "$list_file" \
+                  --write-out '%{http_code}' \
+                  --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+                  "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
+              )"
+              curl_status="$?"
+              set -e
+              if (( curl_status == 0 )) && [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+                list_succeeded="true"
+                break
+              fi
+              if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|429|500|502|503|504)$ ]]; then
+                break
+              fi
+              if (( attempt < 3 )); then
+                sleep $((10 * attempt))
+              fi
+            done
+
+            if [[ "$list_succeeded" != "true" ]]; then
+              rm -f "$list_file" "$ruleset_file"
+              return 1
+            fi
+
+            while IFS= read -r ruleset_name; do
+              [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || continue
+              for attempt in 1 2 3; do
+                set +e
+                http_status="$(
+                  curl --silent --show-error \
+                    --connect-timeout 10 \
+                    --max-time 30 \
+                    --output "$ruleset_file" \
+                    --write-out '%{http_code}' \
+                    --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+                    "https://firebaserules.googleapis.com/v1/${ruleset_name}"
+                )"
+                curl_status="$?"
+                set -e
+                if (( curl_status == 0 )) && [[ "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+                  break
+                fi
+                if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|429|500|502|503|504)$ ]]; then
+                  break
+                fi
+                if (( attempt < 3 )); then
+                  sleep $((5 * attempt))
+                fi
+              done
+              if (( curl_status != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+                continue
+              fi
+              candidate_rules_b64="$(
+                jq -er '
+                  (.source.files // [])
+                  | if length == 1 and .[0].name == "firestore.rules"
+                    then (.[0].content | @base64)
+                    else error("expected exactly one firestore.rules source file")
+                    end
+                ' "$ruleset_file" 2>/dev/null || true
+              )"
+              if [[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]; then
+                rm -f "$list_file" "$ruleset_file"
+                printf '%s\n' "$ruleset_name"
+                return 0
+              fi
+            done < <(
+              jq -r '
+                (.rulesets // [])
+                | sort_by(.createTime)
+                | reverse
+                | .[].name
+              ' "$list_file"
+            )
+
+            rm -f "$list_file" "$ruleset_file"
+            return 1
+          }
+
+          activate_firestore_ruleset_with_retry() {
+            local ruleset_name="$1"
+            local payload_file response_file attempt verify_attempt curl_status http_status retry_delay_seconds
+            [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
+            payload_file="$(mktemp "$RUNNER_TEMP/firestore-release-patch.XXXXXX.json")"
+            response_file="$(mktemp "$RUNNER_TEMP/firestore-release-patch-response.XXXXXX.json")"
+            jq -n \
+              --arg release_name "projects/game-flow-c6311/releases/cloud.firestore" \
+              --arg ruleset_name "$ruleset_name" \
+              '{
+                release:{
+                  name:$release_name,
+                  rulesetName:$ruleset_name
+                },
+                updateMask:"rulesetName"
+              }' > "$payload_file"
+
+            for attempt in 1 2 3 4 5; do
+              set +e
+              http_status="$(
+                curl --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 60 \
+                  --output "$response_file" \
+                  --write-out '%{http_code}' \
+                  --request PATCH \
+                  --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+                  --header "Content-Type: application/json" \
+                  --data-binary "@${payload_file}" \
+                  "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
+              )"
+              curl_status="$?"
+              set -e
+
+              if (( curl_status == 0 )) \
+                && [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
+                && [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]; then
+                for verify_attempt in 1 2 3 4 5; do
+                  if verify_active_firestore_rules; then
+                    rm -f "$payload_file" "$response_file"
+                    return 0
+                  fi
+                  if (( verify_attempt < 5 )); then
+                    sleep $((5 * verify_attempt))
+                  fi
+                done
+                break
+              fi
+
+              if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|409|429|500|502|503|504)$ ]]; then
+                break
+              fi
+              if (( attempt < 5 )); then
+                retry_delay_seconds=$((15 * attempt))
+                echo "Transient Firestore release update failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/5)." >&2
+                sleep "$retry_delay_seconds"
+              fi
+            done
+
+            rm -f "$payload_file" "$response_file"
+            return 1
+          }
+
+          recover_firestore_release_after_duplicate() {
+            local ruleset_name
+            ruleset_name="$(find_recent_matching_firestore_ruleset)" || return 1
+            activate_firestore_ruleset_with_retry "$ruleset_name"
+          }
+
           retry_firebase_deploy() {
             local deploy_targets="$1"
             local deploy_label="$2"
@@ -581,6 +743,12 @@ jobs:
                     && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log" \
                     && verify_active_firestore_rules; then
                     echo "::notice::The active Firestore release exactly matches this commit and indexes deployed; accepting the duplicate release 409 as success."
+                    return 0
+                  fi
+                  if grep -Fq "rules file firestore.rules compiled successfully" "$deploy_plain_log" \
+                    && grep -Fq "uploading rules firestore.rules" "$deploy_plain_log" \
+                    && recover_firestore_release_after_duplicate; then
+                    echo "::notice::Recovered the Firebase CLI release race by activating the exact uploaded ruleset; accepting the duplicate release 409 as success."
                     return 0
                   fi
                 fi

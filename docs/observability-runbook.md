@@ -73,6 +73,8 @@ The serialized production release train allows at most five Firestore Rules API 
 
 Application deployment remains fail-closed. When Rules or indexes differ from the last successful production deployment, Hosting and Functions do not deploy until the combined Firestore configuration command succeeds. The Firebase CLI may apply indexes before a later Rules API failure, so treat the Rules and index state as potentially partial and verify both before retrying. Existing Hosting and Functions production remains active; do not bypass the workflow or deploy application surfaces separately.
 
+The Firebase CLI can turn a transient release `PATCH` failure into a misleading duplicate-release `409` by falling back to release creation. Recovery is allowed only after the same attempt compiled and uploaded `firestore.rules` and successfully deployed indexes. The workflow searches at most the 20 most recent immutable rulesets, compares the full single-file source with the staged commit-bound rules, retries an idempotent `PATCH` of only `rulesetName`, and then verifies that the active release resolves to those exact bytes. A matching name, a `409`, or a successful index deploy alone is never sufficient to continue to Hosting or Functions.
+
 Safe manual retry:
 
 1. Confirm the failed run targeted `master` and that its summary reports a transient Google API failure rather than a configuration or authorization error. Check the Firebase deploy log or console to determine whether Rules or indexes were already applied.

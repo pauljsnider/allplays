@@ -324,11 +324,10 @@ export function validateProductionDeployCommand(deployProd) {
         'Production Firestore active release lookup'
     );
     assertIncludes(deployProd, '(.source.files // [])', 'Production Firestore active source lookup');
-    assertIncludes(
-        deployProd,
-        'if length == 1 and .[0].name == "firestore.rules"',
-        'Production Firestore active source must contain only firestore.rules'
-    );
+    const exactSingleRulesFileGuard = 'if length == 1 and .[0].name == "firestore.rules"';
+    if (deployProd.split(exactSingleRulesFileGuard).length - 1 < 2) {
+        throw new Error('Production Firestore active source must contain only firestore.rules.');
+    }
     assertIncludes(
         deployProd,
         'The active Firestore rules exactly match this commit; deploying indexes without a redundant ruleset write.',
@@ -343,6 +342,63 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         'The active Firestore release exactly matches this commit and indexes deployed',
         'Production Firestore exact-source duplicate-release recovery'
+    );
+    assertIncludes(
+        deployProd,
+        'find_recent_matching_firestore_ruleset()',
+        'Production Firestore exact uploaded-ruleset lookup'
+    );
+    assertIncludes(
+        deployProd,
+        'rulesets?pageSize=20',
+        'Production Firestore bounded recent-ruleset lookup'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
+        'Production Firestore recent-ruleset exact-source comparison'
+    );
+    assertMatches(
+        deployProd,
+        /\(\.rulesets \/\/ \[\]\)\s*\|\s*sort_by\(\.createTime\)\s*\|\s*reverse\s*\|\s*\.\[\]\.name/,
+        'Production Firestore newest-ruleset-first lookup'
+    );
+    assertIncludes(
+        deployProd,
+        'activate_firestore_ruleset_with_retry()',
+        'Production Firestore idempotent release updater'
+    );
+    assertIncludes(deployProd, '--request PATCH', 'Production Firestore release PATCH method');
+    assertIncludes(
+        deployProd,
+        '[[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1',
+        'Production Firestore release PATCH ruleset-name validation'
+    );
+    assertIncludes(
+        deployProd,
+        '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"',
+        'Production Firestore release PATCH endpoint'
+    );
+    assertIncludes(deployProd, 'updateMask:"rulesetName"', 'Production Firestore release PATCH field restriction');
+    assertIncludes(
+        deployProd,
+        '[[ "$(jq -r \'.rulesetName // ""\' "$response_file")" == "$ruleset_name" ]]',
+        'Production Firestore release PATCH response validation'
+    );
+    assertIncludes(
+        deployProd,
+        'recover_firestore_release_after_duplicate',
+        'Production Firestore duplicate-release recovery call'
+    );
+    assertIncludes(
+        deployProd,
+        'Recovered the Firebase CLI release race by activating the exact uploaded ruleset',
+        'Production Firestore duplicate-release recovery evidence'
+    );
+    assertMatches(
+        deployProd,
+        /deployed indexes in firestore\.indexes\.json successfully[\s\S]{0,2500}rules file firestore\.rules compiled successfully[\s\S]{0,500}uploading rules firestore\.rules[\s\S]{0,500}recover_firestore_release_after_duplicate/,
+        'Production Firestore release recovery safety gates'
     );
     assertIncludes(deployProd, 'accepting the duplicate release 409 as success', 'Production Firestore verified duplicate-release recovery');
     assertIncludes(deployProd, 'if [[ "$deploy_label" == "firestore" ]]; then', 'Production Firestore retry-exhaustion summary scope');
