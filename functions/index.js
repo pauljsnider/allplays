@@ -10,6 +10,7 @@ const {
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
   loadCaseInsensitivePublicProfileStaffTeamIds,
+  loadPublicProfileNotificationCleanupScope,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -2782,14 +2783,20 @@ exports.sweepIneligiblePublicUserProfiles = functions
           || authIdentity.emailVerified !== true;
         if (!isIneligible && indexedEmail === currentEmail) return null;
 
-        const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);
+        const [previousStaffTeamIds, cleanupScope] = await Promise.all([
+          loadPublicProfileStaffTeamIds(firestore, userId),
+          isIneligible
+            ? loadPublicProfileNotificationCleanupScope(firestore, userId)
+            : Promise.resolve({ teamIds: [] })
+        ]);
         const discoveryTeamIds = isIneligible
           ? await loadPublicProfileStaffTeamIdsForIdentity(userId, indexedEmail)
           : await reconcilePublicProfileStaffMembershipsForAuthUser(userId, authIdentity);
         return {
           affectedStaffTeamIds: uniqueNonEmptyStrings([
             ...previousStaffTeamIds,
-            ...discoveryTeamIds
+            ...discoveryTeamIds,
+            ...cleanupScope.teamIds
           ]),
           isIneligible
         };
@@ -2903,8 +2910,8 @@ async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIde
   if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) return false;
 
   const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
-  const [indexedStaffTeamIds, indexedAuthIdentitySnap] = await Promise.all([
-    loadPublicProfileStaffTeamIds(firestore, normalizedUserId),
+  const [cleanupScope, indexedAuthIdentitySnap] = await Promise.all([
+    loadPublicProfileNotificationCleanupScope(firestore, normalizedUserId),
     authIdentityRef.get()
   ]);
   const indexedEmail = indexedAuthIdentitySnap.exists
@@ -2916,7 +2923,7 @@ async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIde
       .map((email) => loadPublicProfileStaffTeamIdsForIdentity(normalizedUserId, email))
   );
   const affectedStaffTeamIds = uniqueNonEmptyStrings([
-    ...indexedStaffTeamIds,
+    ...cleanupScope.teamIds,
     ...identityStaffTeamIds.flat()
   ]);
   // Do this before removing either recovery index. Callers such as the

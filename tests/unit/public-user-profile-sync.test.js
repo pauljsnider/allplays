@@ -177,7 +177,9 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain("schedule('every 24 hours')");
         expect(functionsSource).toContain('reconcileAuthIdentity: async (userId, authIdentity) => {');
         expect(functionsSource).toContain('if (!isIneligible && indexedEmail === currentEmail) return null;');
-        expect(functionsSource).toContain('const previousStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, userId);');
+        expect(functionsSource).toContain('const [previousStaffTeamIds, cleanupScope] = await Promise.all([');
+        expect(functionsSource).toContain('loadPublicProfileNotificationCleanupScope(firestore, userId)');
+        expect(functionsSource).toContain('...cleanupScope.teamIds');
         expect(functionsSource).toContain('const discoveryTeamIds = isIneligible');
         expect(functionsSource).toContain('loadPublicProfileStaffTeamIdsForIdentity(userId, indexedEmail)');
         expect(functionsSource).toContain('syncReconciledIdentity: async (userId, authIdentity, reconciliation) => {');

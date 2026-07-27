@@ -273,6 +273,31 @@ function loadNotificationRecipientIndexEnv({
             };
         }
 
+        if (path === 'publicUserProfiles') {
+            const query = {
+                orderBy() {
+                    return query;
+                },
+                limit() {
+                    return query;
+                },
+                startAfter() {
+                    return query;
+                },
+                async get() {
+                    const prefix = `${path}/`;
+                    return makeQuerySnapshot(
+                        [...docStore.entries()]
+                            .filter(([storedPath]) => storedPath.startsWith(prefix))
+                            .map(([storedPath, value]) => (
+                                makeDocSnapshot(doc(storedPath), value, true)
+                            ))
+                    );
+                }
+            };
+            return query;
+        }
+
         if (path === 'users') {
             return {
                 where(field, op, value) {
@@ -399,9 +424,44 @@ function loadNotificationRecipientIndexEnv({
         };
     }
 
+    function collectionGroup(collectionName) {
+        if (collectionName !== 'notificationRecipients') {
+            return {
+                where() {
+                    return {
+                        async get() {
+                            return makeQuerySnapshot([]);
+                        }
+                    };
+                }
+            };
+        }
+
+        return {
+            where(field, op, value) {
+                return {
+                    async get() {
+                        const docs = [...docStore.entries()]
+                            .filter(([storedPath, recipient]) => (
+                                /^teams\/[^/]+\/notificationRecipients\/[^/]+$/.test(storedPath)
+                                && field === 'uid'
+                                && op === '=='
+                                && String(recipient?.uid || '').trim() === String(value || '').trim()
+                            ))
+                            .map(([storedPath, recipient]) => (
+                                makeDocSnapshot(doc(storedPath), recipient, true)
+                            ));
+                        return makeQuerySnapshot(docs);
+                    }
+                };
+            }
+        };
+    }
+
     const firestoreState = {
         doc,
         collection,
+        collectionGroup,
         async getAll(...refs) {
             return Promise.all(refs.map((ref) => ref.get()));
         },
@@ -748,15 +808,20 @@ test('ineligible Auth cleanup removes an owner recipient while team and user rec
     }
 });
 
-test('callable ineligible cleanup keeps its projection and indexes when recipient deletion fails', async () => {
+test('callable ineligible cleanup removes parent recipients before its retry anchors', async () => {
     const userId = 'owner-1';
     const recipientPath = `teams/team-1/notificationRecipients/${userId}`;
+    const parentRecipientPath = `teams/team-parent/notificationRecipients/${userId}`;
     const env = loadNotificationRecipientIndexEnv({
         teamDocs: {
-            'team-1': { ownerId: userId, adminEmails: [] }
+            'team-1': { ownerId: userId, adminEmails: [] },
+            'team-parent': { ownerId: 'other-owner', adminEmails: [] }
         },
         userDocs: {
-            [userId]: { email: 'owner@example.com' }
+            [userId]: {
+                email: 'owner@example.com',
+                parentTeamIds: ['team-parent']
+            }
         },
         authUsersByUid: {
             [userId]: { email: 'owner@example.com', emailVerified: false }
@@ -767,10 +832,11 @@ test('callable ineligible cleanup keeps its projection and indexes when recipien
             [`publicProfileStaffMemberships/team-1-owner-1`]: { teamId: 'team-1', userId }
         },
         initialRecipientDocs: {
-            [recipientPath]: { uid: userId, teamId: 'team-1', roles: ['staff'], tokens: [] }
+            [recipientPath]: { uid: userId, teamId: 'team-1', roles: ['staff'], tokens: [] },
+            [parentRecipientPath]: { uid: userId, teamId: 'team-parent', roles: ['parent'], tokens: [] }
         },
         deleteFailuresByPath: {
-            [recipientPath]: 1
+            [parentRecipientPath]: 1
         }
     });
 
@@ -785,13 +851,114 @@ test('callable ineligible cleanup keeps its projection and indexes when recipien
         assert.ok(env.getDoc(`publicUserProfiles/${userId}`));
         assert.ok(env.getDoc(`publicProfileAuthIdentities/${userId}`));
         assert.ok(env.getDoc(`publicProfileStaffMemberships/team-1-owner-1`));
+        assert.ok(env.getDoc(parentRecipientPath));
 
         await env.moduleExports.syncPublicUserProfileProjection(
             { userId },
             { auth: { uid: userId, token: {} } }
         );
         assert.equal(env.getDoc(recipientPath), undefined);
+        assert.equal(env.getDoc(parentRecipientPath), undefined);
         assert.equal(env.getDoc(`publicProfileStaffMemberships/team-1-owner-1`), undefined);
+        assert.equal(env.getDoc(`publicProfileAuthIdentities/${userId}`), undefined);
+        assert.equal(env.getDoc(`publicUserProfiles/${userId}`), undefined);
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('scheduled ineligible sweep retries parent-recipient cleanup before deleting its profile anchor', async () => {
+    const userId = 'parent-1';
+    const recipientPath = `teams/team-parent/notificationRecipients/${userId}`;
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-parent': { ownerId: 'other-owner', adminEmails: [] }
+        },
+        userDocs: {
+            [userId]: {
+                email: 'parent@example.com',
+                parentTeamIds: ['team-parent']
+            }
+        },
+        authUsersByUid: {
+            [userId]: {
+                email: 'parent@example.com',
+                emailVerified: false
+            }
+        },
+        initialProjectionDocs: {
+            [`publicUserProfiles/${userId}`]: { discoveryTeamIds: ['team-parent'] },
+            [`publicProfileAuthIdentities/${userId}`]: { email: 'parent@example.com' }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: {
+                uid: userId,
+                teamId: 'team-parent',
+                roles: ['parent'],
+                tokens: [{ deviceId: 'device-a', token: 'token-a' }]
+            }
+        },
+        deleteFailuresByPath: {
+            [recipientPath]: 1
+        }
+    });
+
+    try {
+        await assert.rejects(
+            env.moduleExports.sweepIneligiblePublicUserProfiles(),
+            /temporary delete failure/
+        );
+        assert.ok(env.getDoc(`publicUserProfiles/${userId}`));
+        assert.ok(env.getDoc(`publicProfileAuthIdentities/${userId}`));
+        assert.ok(env.getDoc(recipientPath));
+
+        await env.moduleExports.sweepIneligiblePublicUserProfiles();
+        assert.equal(env.getDoc(recipientPath), undefined);
+        assert.equal(env.getDoc(`publicProfileAuthIdentities/${userId}`), undefined);
+        assert.equal(env.getDoc(`publicUserProfiles/${userId}`), undefined);
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('Auth-delete cleanup retries indexed parent recipients before deleting profile state', async () => {
+    const userId = 'parent-1';
+    const recipientPath = `teams/team-parent/notificationRecipients/${userId}`;
+    const env = loadNotificationRecipientIndexEnv({
+        userDocs: {
+            [userId]: {
+                email: 'parent@example.com',
+                parentTeamIds: ['team-parent']
+            }
+        },
+        initialProjectionDocs: {
+            [`publicUserProfiles/${userId}`]: { discoveryTeamIds: ['team-parent'] },
+            [`publicProfileAuthIdentities/${userId}`]: { email: 'parent@example.com' }
+        },
+        initialRecipientDocs: {
+            [recipientPath]: {
+                uid: userId,
+                teamId: 'team-parent',
+                roles: ['parent'],
+                tokens: [{ deviceId: 'device-a', token: 'token-a' }]
+            }
+        },
+        deleteFailuresByPath: {
+            [recipientPath]: 1
+        }
+    });
+
+    try {
+        await assert.rejects(
+            env.moduleExports.cleanupPublicUserProfileOnAuthDelete({ uid: userId }),
+            /temporary delete failure/
+        );
+        assert.ok(env.getDoc(`publicUserProfiles/${userId}`));
+        assert.ok(env.getDoc(`publicProfileAuthIdentities/${userId}`));
+        assert.ok(env.getDoc(recipientPath));
+
+        await env.moduleExports.cleanupPublicUserProfileOnAuthDelete({ uid: userId });
+        assert.equal(env.getDoc(recipientPath), undefined);
         assert.equal(env.getDoc(`publicProfileAuthIdentities/${userId}`), undefined);
         assert.equal(env.getDoc(`publicUserProfiles/${userId}`), undefined);
     } finally {
@@ -1262,4 +1429,17 @@ test('getTargetsForCategory expands aggregated recipient token lists', async () 
 test('firestore rules explicitly deny client access to notificationRecipients', () => {
     const rules = readFileSync('firestore.rules', 'utf8');
     assert.match(rules, /match \/notificationRecipients\/\{uid\} \{[\s\S]*allow read, write: if false;/);
+});
+
+test('notificationRecipients uid remains indexed for collection-group cleanup', () => {
+    const indexes = JSON.parse(readFileSync('firestore.indexes.json', 'utf8'));
+    const uidOverride = indexes.fieldOverrides.find((entry) => (
+        entry.collectionGroup === 'notificationRecipients'
+        && entry.fieldPath === 'uid'
+    ));
+    assert.ok(uidOverride);
+    assert.ok(uidOverride.indexes.some((entry) => (
+        entry.order === 'ASCENDING'
+        && entry.queryScope === 'COLLECTION_GROUP'
+    )));
 });

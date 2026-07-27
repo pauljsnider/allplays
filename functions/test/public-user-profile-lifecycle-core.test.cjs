@@ -8,6 +8,7 @@ const {
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
   loadCaseInsensitivePublicProfileStaffTeamIds,
+  loadPublicProfileNotificationCleanupScope,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
@@ -36,7 +37,7 @@ test('removes a stale public profile when an Auth identity becomes unverified', 
   assert.equal(deleteCalls, 1);
 });
 
-test('Auth deletion removes profile state and resynchronizes every formerly authorized staff team', async () => {
+test('Auth deletion removes profile state and every indexed staff or parent recipient', async () => {
   const deletedPaths = [];
   const synchronizedTeams = [];
   const staffDocs = [
@@ -63,9 +64,35 @@ test('Auth deletion removes profile state and resynchronizes every formerly auth
         }
       };
     },
-    doc: (path) => ({
-      delete: async () => deletedPaths.push(path)
-    })
+    collectionGroup: (collectionName) => {
+      assert.equal(collectionName, 'notificationRecipients');
+      return {
+        where: (field, operator, userId) => {
+          assert.deepEqual([field, operator, userId], ['uid', '==', 'deleted-user']);
+          return {
+            get: async () => ({
+              docs: [
+                { data: () => ({ uid: userId, teamId: 'team-indexed-parent' }) },
+                { data: () => ({ uid: userId, teamId: 'team-1' }) }
+              ]
+            })
+          };
+        }
+      };
+    },
+    doc: (path) => {
+      if (path === 'users/deleted-user') {
+        return {
+          get: async () => ({
+            exists: true,
+            data: () => ({ parentTeamIds: ['team-parent', 'team-2'] })
+          })
+        };
+      }
+      return {
+        delete: async () => deletedPaths.push(path)
+      };
+    }
   };
 
   const handler = createPublicProfileAuthDeleteHandler({
@@ -81,7 +108,9 @@ test('Auth deletion removes profile state and resynchronizes every formerly auth
   ]);
   assert.deepEqual(synchronizedTeams.sort(), [
     ['team-1', 'deleted-user'],
-    ['team-2', 'deleted-user']
+    ['team-2', 'deleted-user'],
+    ['team-indexed-parent', 'deleted-user'],
+    ['team-parent', 'deleted-user']
   ]);
 });
 
@@ -107,27 +136,99 @@ test('Auth deletion retains the projection and indexes when recipient cleanup fa
     collection: () => ({
       where: () => ({ get: async () => ({ docs: [staffDoc] }) })
     }),
-    doc: (path) => ({ delete: async () => events.push(`delete:${path}`) })
+    collectionGroup: () => ({
+      where: () => ({
+        get: async () => ({
+          docs: [{
+            data: () => ({
+              uid: 'deleted-user',
+              teamId: 'parent-team'
+            })
+          }]
+        })
+      })
+    }),
+    doc: (path) => {
+      if (path === 'users/deleted-user') {
+        return {
+          get: async () => ({
+            exists: true,
+            data: () => ({ parentTeamIds: ['parent-team'] })
+          })
+        };
+      }
+      return { delete: async () => events.push(`delete:${path}`) };
+    }
   };
   const handler = createPublicProfileAuthDeleteHandler({
     firestore,
-    syncAffectedTeam: async () => {
-      events.push('sync-recipient');
-      if (failRecipientCleanup) throw new Error('temporary recipient cleanup failure');
+    syncAffectedTeam: async (teamId) => {
+      events.push(`sync-recipient:${teamId}`);
+      if (failRecipientCleanup && teamId === 'parent-team') {
+        throw new Error('temporary recipient cleanup failure');
+      }
     }
   });
 
   await assert.rejects(handler({ uid: 'deleted-user' }), /temporary recipient cleanup failure/);
-  assert.deepEqual(events, ['sync-recipient']);
+  assert.deepEqual(events.sort(), [
+    'sync-recipient:parent-team',
+    'sync-recipient:team-1'
+  ]);
 
   failRecipientCleanup = false;
   await handler({ uid: 'deleted-user' });
-  assert.deepEqual(events, [
-    'sync-recipient',
-    'sync-recipient',
-    'delete:publicProfileAuthIdentities/deleted-user',
+  assert.deepEqual(events.slice(2).sort(), [
     'delete-membership',
-    'delete:publicUserProfiles/deleted-user'
+    'delete:publicProfileAuthIdentities/deleted-user',
+    'delete:publicUserProfiles/deleted-user',
+    'sync-recipient:parent-team',
+    'sync-recipient:team-1'
+  ]);
+});
+
+test('notification cleanup scope includes parent links and existing recipient documents', async () => {
+  const firestore = {
+    collection: () => ({
+      where: () => ({
+        get: async () => ({
+          docs: [{ data: () => ({ teamId: 'staff-team' }) }]
+        })
+      })
+    }),
+    collectionGroup: () => ({
+      where: () => ({
+        get: async () => ({
+          docs: [
+            { data: () => ({ teamId: 'recipient-team' }) },
+            { data: () => ({ teamId: 'parent-team' }) },
+            {
+              data: () => ({ uid: 'user-1' }),
+              ref: {
+                path: 'teams/path-indexed-team/notificationRecipients/user-1'
+              }
+            }
+          ]
+        })
+      })
+    }),
+    doc: () => ({
+      get: async () => ({
+        exists: true,
+        data: () => ({ parentTeamIds: ['parent-team', 'bad/team'] })
+      })
+    })
+  };
+
+  const scope = await loadPublicProfileNotificationCleanupScope(
+    firestore,
+    'user-1'
+  );
+  assert.deepEqual(scope.teamIds.sort(), [
+    'parent-team',
+    'path-indexed-team',
+    'recipient-team',
+    'staff-team'
   ]);
 });
 

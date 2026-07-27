@@ -1,5 +1,10 @@
 'use strict';
 
+function normalizePublicProfileCleanupTeamId(value) {
+  const teamId = String(value || '').trim();
+  return teamId && !teamId.includes('/') ? teamId : '';
+}
+
 async function removePublicProfileForIneligibleAuth(publicProfileRef, authIdentity = {}) {
   if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) {
     return false;
@@ -42,6 +47,51 @@ async function loadPublicProfileStaffTeamIds(firestore, userId) {
   return [...new Set((staffMembershipSnap.docs || [])
     .map((entry) => String(entry.data()?.teamId || '').trim())
     .filter(Boolean))];
+}
+
+async function loadPublicProfileNotificationCleanupScope(firestore, userId) {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) {
+    return {
+      staffMembershipDocs: [],
+      teamIds: []
+    };
+  }
+
+  const [staffMembershipSnap, userSnap, recipientSnap] = await Promise.all([
+    firestore.collection('publicProfileStaffMemberships')
+      .where('userId', '==', normalizedUserId)
+      .get(),
+    firestore.doc(`users/${normalizedUserId}`).get(),
+    firestore.collectionGroup('notificationRecipients')
+      .where('uid', '==', normalizedUserId)
+      .get()
+  ]);
+  const staffMembershipDocs = staffMembershipSnap.docs || [];
+  const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+  const teamIds = new Set(
+    (Array.isArray(userData.parentTeamIds) ? userData.parentTeamIds : [])
+      .map(normalizePublicProfileCleanupTeamId)
+      .filter(Boolean)
+  );
+
+  staffMembershipDocs.forEach((entry) => {
+    const teamId = normalizePublicProfileCleanupTeamId(entry.data()?.teamId);
+    if (teamId) teamIds.add(teamId);
+  });
+  (recipientSnap.docs || []).forEach((entry) => {
+    const storedTeamId = normalizePublicProfileCleanupTeamId(entry.data()?.teamId);
+    const pathTeamId = String(entry.ref?.path || '')
+      .match(/^teams\/([^/]+)\/notificationRecipients\/[^/]+$/)?.[1];
+    const teamId = storedTeamId
+      || normalizePublicProfileCleanupTeamId(pathTeamId);
+    if (teamId) teamIds.add(teamId);
+  });
+
+  return {
+    staffMembershipDocs,
+    teamIds: [...teamIds]
+  };
 }
 
 async function loadCaseInsensitivePublicProfileStaffTeamIds(
@@ -248,21 +298,19 @@ function createPublicProfileAuthDeleteHandler({ firestore, syncAffectedTeam }) {
     const userId = String(user?.uid || '').trim();
     if (!userId) return null;
 
-    const [staffMembershipSnap] = await Promise.all([
-      firestore.collection('publicProfileStaffMemberships')
-        .where('userId', '==', userId)
-        .get()
-    ]);
+    const cleanupScope = await loadPublicProfileNotificationCleanupScope(
+      firestore,
+      userId
+    );
     const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);
     const cleanupRefs = [
       firestore.doc(`publicProfileAuthIdentities/${userId}`),
-      ...(staffMembershipSnap.docs || []).map((entry) => entry.ref)
+      ...cleanupScope.staffMembershipDocs.map((entry) => entry.ref)
     ];
-    const affectedTeamIds = [...new Set((staffMembershipSnap.docs || [])
-      .map((entry) => String(entry.data()?.teamId || '').trim())
-      .filter(Boolean))];
     if (typeof syncAffectedTeam === 'function') {
-      await Promise.all(affectedTeamIds.map((teamId) => syncAffectedTeam(teamId, userId)));
+      await Promise.all(
+        cleanupScope.teamIds.map((teamId) => syncAffectedTeam(teamId, userId))
+      );
     }
     // Keep the projection and staff index as the retry anchor until all
     // notification recipients have been removed. Auth deletion does not have
@@ -349,6 +397,7 @@ module.exports = {
   createPublicProfileTeamWriteHandler,
   loadAuthoritativePublicProfileStaffTeamIds,
   loadCaseInsensitivePublicProfileStaffTeamIds,
+  loadPublicProfileNotificationCleanupScope,
   loadPublicProfileStaffTeamIds,
   reconcilePublicProfileStaffMembershipsForTeam,
   reconcilePublicProfileStaffMembershipsForUser,
