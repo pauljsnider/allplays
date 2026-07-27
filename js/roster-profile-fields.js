@@ -594,11 +594,14 @@ export function normalizeRosterParentContact(contact = {}, options = {}) {
     };
 }
 
-function getRosterParentContactDedupeKey(contact = {}) {
-    if (contact.userId) return `user:${contact.userId}`;
-    if (contact.email) return `email:${contact.email}`;
-    if (contact.phone) return `phone:${contact.phone}`;
-    return `name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`;
+function getRosterParentContactDedupeKeys(contact = {}) {
+    const keys = [
+        contact.userId ? `user:${contact.userId}` : '',
+        contact.email ? `email:${contact.email}` : '',
+        contact.phone ? `phone:${contact.phone}` : ''
+    ].filter(Boolean);
+    if (keys.length > 0) return keys;
+    return [`name:${normalizeRosterContactString(contact.name).toLowerCase()}:${normalizeRosterContactString(contact.relation).toLowerCase()}`];
 }
 
 export function mergeRosterParentContacts(existingContacts = [], importedContacts = [], options = {}) {
@@ -610,9 +613,10 @@ export function mergeRosterParentContacts(existingContacts = [], importedContact
     ].forEach((contact) => {
         const normalized = normalizeRosterParentContact(contact, options);
         if (!normalized) return;
-        const key = getRosterParentContactDedupeKey(normalized);
-        if (seen.has(key)) return;
-        seen.add(key);
+        const keys = getRosterParentContactDedupeKeys(normalized);
+        const isDuplicate = keys.some((key) => seen.has(key));
+        keys.forEach((key) => seen.add(key));
+        if (isDuplicate) return;
         merged.push({
             ...(contact && typeof contact === 'object' ? contact : {}),
             ...normalized
@@ -651,9 +655,10 @@ export function collectRosterParentContacts(player = {}, options = {}) {
             contact?.invitedByUserId ||
             contact?.inviterUserId;
         if (!includeHousehold && isHousehold) return;
-        const key = getRosterParentContactDedupeKey(normalized);
-        if (seen.has(key)) return;
-        seen.add(key);
+        const keys = getRosterParentContactDedupeKeys(normalized);
+        const isDuplicate = keys.some((key) => seen.has(key));
+        keys.forEach((key) => seen.add(key));
+        if (isDuplicate) return;
         contacts.push(normalized);
     });
     return contacts;

@@ -208,6 +208,37 @@ describe('roster profile fields', () => {
         ]);
     });
 
+    it('deduplicates the same parent across linked and private projections when only one copy has a user id', () => {
+        const player = {
+            parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],
+            privateProfileParents: [{ email: 'mom@example.com', relation: 'Mother', source: 'roster-ai' }]
+        };
+
+        expect(collectRosterParentContacts(player, { includeFamilyContacts: true })).toEqual([
+            expect.objectContaining({
+                userId: 'parent-1',
+                email: 'mom@example.com',
+                relation: 'Mother'
+            })
+        ]);
+    });
+
+    it('carries identity aliases through duplicate contact projections', () => {
+        const player = {
+            parents: [{ userId: 'parent-1', email: 'mom@example.com', relation: 'Mother', source: 'parent_invite' }],
+            privateProfileParents: [{ email: 'mom@example.com', phone: '555-0199', relation: 'Mother', source: 'roster-ai' }],
+            privateProfileContacts: [{ phone: '555-0199', relation: 'Mother', source: 'roster-csv' }]
+        };
+
+        expect(collectRosterParentContacts(player, { includeFamilyContacts: true })).toEqual([
+            expect.objectContaining({
+                userId: 'parent-1',
+                email: 'mom@example.com',
+                relation: 'Mother'
+            })
+        ]);
+    });
+
     it('merges imported parent contacts without dropping existing private metadata', () => {
         const merged = mergeRosterParentContacts(
             [

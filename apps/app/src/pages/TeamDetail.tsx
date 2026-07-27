@@ -997,6 +997,7 @@ function ScheduleTab({ model, auth, onScheduleLoaded, onOpenStatTrackerConfigs }
         const result = await loadParentSchedule(auth.user, {
           hydrateDetails: false,
           expandStaffPlayers: false,
+          targetTeamId: model.team.id,
           includePastGames: true
         });
         if (result.isPartial === true) {

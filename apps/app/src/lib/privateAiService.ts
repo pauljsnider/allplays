@@ -1271,7 +1271,10 @@ export async function sendPrivateAiRosterImportMessage(
           toolResults: [toolResult]
         });
       }
-      assistantText = `I prepared ${summary.total} roster operation${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.add} add, ${summary.update} update, ${summary.deactivate} deactivate, ${summary.reactivate} reactivate, and ${summary.invitations} family invitation${summary.invitations === 1 ? '' : 's'}. Reply yes to import these players and email these contacts.`;
+      const confirmationInstruction = summary.invitations
+        ? 'Reply yes to import these players and email these contacts.'
+        : 'Reply yes to apply these roster changes.';
+      assistantText = `I prepared ${summary.total} roster operation${summary.total === 1 ? '' : 's'} for ${teamName}: ${summary.add} add, ${summary.update} update, ${summary.deactivate} deactivate, ${summary.reactivate} reactivate, and ${summary.invitations} family invitation${summary.invitations === 1 ? '' : 's'}. ${confirmationInstruction}`;
     }
 
     const artifact: PrivateAiArtifactReference = {
@@ -1706,12 +1709,14 @@ export async function generatePrivateAiAnswer(
   const roleCapabilities = await loadPrivateAiRoleCapabilities(user);
   const history = summarizeChatHistory(priorMessages);
   const toolResults: PrivateAiToolResult[] = [];
+  const plannerToolCallKeys = new Set<string>();
   const confirmationGroupId = createConfirmationGroupId();
   const toolContext = {
     ...context,
     confirmationGroupId
   };
-  if (looksLikeFunctionalHelpQuestion(question)) {
+  const imperativeWriteRequest = looksLikeImperativePrivateAiWriteRequest(question);
+  if (looksLikeFunctionalHelpQuestion(question) && !looksLikeImperativePrivateAiWriteRequest(question)) {
     toolResults.push(await runPrivateAiTool(user, {
       name: 'get_help',
       args: {
@@ -1733,6 +1738,13 @@ export async function generatePrivateAiAnswer(
     const planner = parsePrivateAiPlannerResponse(plannerText);
 
     if (planner.answer && !planner.toolCalls.length) {
+      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+        plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
+          `CORRECTION: Your prior response claimed or described a change without calling a write tool. ` +
+          `Do not say a change is prepared, reviewed, staged, confirmed, or completed unless the matching write tool returned that result. ` +
+          `Return toolCalls now for this imperative request.\n`;
+        continue;
+      }
       return {
         answer: clampAnswer(planner.answer),
         toolResults
@@ -1743,12 +1755,23 @@ export async function generatePrivateAiAnswer(
     const allowedToolNames = context.allowedToolNames?.length
       ? new Set(context.allowedToolNames.map(compactText).filter(Boolean))
       : null;
-    const calls = allowedToolNames
+    const allowedCalls = allowedToolNames
       ? requestedCalls.filter((call) => allowedToolNames.has(compactText(call.name)))
       : requestedCalls;
     const blockedCalls = allowedToolNames
       ? requestedCalls.filter((call) => !allowedToolNames.has(compactText(call.name)))
       : [];
+    const calls: PrivateAiToolCall[] = [];
+    const duplicateCalls: PrivateAiToolCall[] = [];
+    allowedCalls.forEach((call) => {
+      const key = getPrivateAiPlannerToolCallKey(call);
+      if (plannerToolCallKeys.has(key)) {
+        duplicateCalls.push(call);
+      } else {
+        plannerToolCallKeys.add(key);
+        calls.push(call);
+      }
+    });
     blockedCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
@@ -1757,6 +1780,12 @@ export async function generatePrivateAiAnswer(
     if (!calls.length) {
       if (blockedCalls.length) {
         plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
+        continue;
+      }
+      if (duplicateCalls.length) break;
+      if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+        plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
+          `CORRECTION: This is an imperative write request. Return the matching write toolCall; do not claim that a preview exists without one.\n`;
         continue;
       }
       return {
@@ -1768,6 +1797,13 @@ export async function generatePrivateAiAnswer(
     const roundResults = await Promise.all(calls.map((call) => runPrivateAiTool(user, call, toolContext)));
     toolResults.push(...roundResults);
     plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
+  }
+
+  if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(toolResults)) {
+    return {
+      answer: 'I could not prepare that change because no reviewed action was staged. Please try the request again.',
+      toolResults
+    };
   }
 
   const finalPrompt = buildFinalAnswerPrompt({ user, question, history, toolResults, roleCapabilities });
@@ -2154,7 +2190,7 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'write',
     domain: 'roster-and-invites',
     audience: 'manager',
-    description: 'Prepare a grouped roster import for a managed team. Supports add, update, deactivate/reactivate, all roster fields, address, family contacts, and mandatory contact invitations. Args: teamId/teamName and operations.',
+    description: 'Prepare a grouped roster import for a managed team. Supports name-only player adds plus update, deactivate/reactivate, all roster fields, address, and optional family contacts. Supplied family-contact emails create invitations; player adds do not require contact details. Args: teamId/teamName and operations.',
     aliases: ['bulk_import_roster', 'manage_roster_players'],
     prepare: async (user, args) => {
       const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
@@ -2822,12 +2858,12 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       name: 'create_schedule_event',
       mode: 'write',
       domain: 'schedule-attendance-planning',
-      description: 'Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with dates, location, opponent/title, notifications, recurrence, and tracker config.',
-      prepare: (user, args) => prepareManagedTeamAction(user, args, 'Create schedule event'),
+      description: 'Create a managed-team game or practice. Args: teamId/teamName, eventType game|practice, and input with startDate as an ISO 8601 date-time including the requested time and UTC offset, location, opponent/title, notifications, recurrence, and tracker config. If date, time, and timeZone are supplied separately, they are combined without dropping the time.',
+      prepare: (user, args) => prepareManagedScheduleEventCreateAction(user, args, 'Create schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const service = await import('./scheduleService');
-        const input = (isPlainObject(args.input) ? args.input : args) as any;
+        const input = normalizePrivateAiScheduleEventInput(args) as any;
         return compactText(args.eventType || args.type).toLowerCase() === 'practice'
           ? service.createScheduledPracticeForApp(teamId, input, user)
           : service.createScheduledGameForApp(teamId, input, user);
@@ -2837,12 +2873,15 @@ function buildCoachAdminPrivateAiToolDefinitions(): PrivateAiToolDefinition[] {
       name: 'update_schedule_event',
       mode: 'write',
       domain: 'schedule-attendance-planning',
-      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, input, and practice scope occurrence|series.',
-      prepare: (user, args) => prepareManagedScheduleEventAction(user, args, 'Update schedule event'),
+      description: 'Update a managed-team game or practice. Args: teamId, eventId, eventType, partial input fields to change, and practice scope occurrence|series.',
+      prepare: (user, args) => prepareManagedScheduleEventUpdateAction(user, {
+        ...args,
+        input: normalizePrivateAiScheduleEventInput(args)
+      }, 'Update schedule event'),
       resolve: async (user, args) => {
         const teamId = await requireManagedTeamId(user, args);
         const service = await import('./scheduleService');
-        const input = (isPlainObject(args.input) ? args.input : args) as any;
+        const input = normalizePrivateAiScheduleEventInput(args) as any;
         const eventId = compactText(args.eventId || args.gameId);
         return compactText(args.eventType || args.type).toLowerCase() === 'practice'
           ? service.updateScheduledPracticeForApp(teamId, input, user, {
@@ -3195,6 +3234,106 @@ async function prepareManagedScheduleEventAction(
     previewSummary: {
       ...prepared.previewSummary,
       domain: 'team-management'
+    }
+  };
+}
+
+async function prepareManagedScheduleEventCreateAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string
+) {
+  const teamId = await requireManagedTeamId(user, args);
+  const sourceInput = isPlainObject(args.input) ? args.input : args;
+  const input = normalizePrivateAiScheduleEventInput(args);
+  const eventType = compactText(args.eventType || args.type).toLowerCase() === 'practice'
+    ? 'practice'
+    : 'game';
+  const teamName = compactText(args.teamName) || teamId;
+  const title = eventType === 'practice'
+    ? compactText(input.title) || 'Practice'
+    : compactText(input.opponent)
+      ? `vs ${compactText(input.opponent)}`
+      : 'Game';
+  return {
+    args: {
+      ...args,
+      teamId,
+      eventType,
+      input
+    },
+    summary: `${label} | ${teamName}: ${title}`,
+    previewSummary: {
+      domain: 'team-management',
+      action: label,
+      teamId,
+      teamName,
+      eventType,
+      title,
+      startDate: compactText(input.startDate),
+      endDate: compactText(input.endDate),
+      timeZone: compactText(sourceInput.timeZone || sourceInput.timezone),
+      location: compactText(input.location),
+      opponent: compactText(input.opponent)
+    }
+  };
+}
+
+function mergePrivateAiScheduleEventUpdateInput(
+  event: ParentScheduleEvent,
+  requestedInput: Record<string, unknown>
+) {
+  const input = { ...requestedInput };
+  const preserve = (key: string, value: unknown) => {
+    if (!hasOwn(input, key)) input[key] = value;
+  };
+  preserve('startDate', event.date.toISOString());
+  preserve('endDate', event.endDate?.toISOString() || '');
+  preserve('location', event.location || '');
+  preserve('arrivalTime', event.arrivalTime?.toISOString() || '');
+  preserve('notes', event.notes || '');
+  if (event.type === 'practice') {
+    preserve('title', event.title || 'Practice');
+  } else {
+    preserve('opponent', event.opponent || '');
+    preserve('isHome', event.isHome ?? null);
+    preserve('competitionType', event.competitionType || 'league');
+    preserve('countsTowardSeasonRecord', event.countsTowardSeasonRecord !== false);
+    preserve('statTrackerConfigId', event.statTrackerConfigId || '');
+    preserve('opponentTeamId', event.opponentTeamId || '');
+    preserve('opponentTeamName', event.opponentTeamName || '');
+    preserve('opponentTeamPhoto', event.opponentTeamPhoto || '');
+  }
+  return input;
+}
+
+async function prepareManagedScheduleEventUpdateAction(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  label: string
+) {
+  const teamId = await requireManagedTeamId(user, args);
+  const event = await resolveAccessibleScheduleEvent(user, {
+    ...args,
+    teamId
+  });
+  if (!event) throw new Error('No matching schedule event was found for this account.');
+  const requestedInput = isPlainObject(args.input) ? args.input : {};
+  const eventSummary = summarizeScheduleEvent(event);
+  return {
+    args: {
+      ...args,
+      teamId: event.teamId,
+      eventId: event.id,
+      eventType: event.type,
+      childId: event.childId || '',
+      input: mergePrivateAiScheduleEventUpdateInput(event, requestedInput)
+    },
+    summary: `${label} | ${event.teamName}: ${getScheduleTitle(event)}${event.childName ? ` | Player: ${event.childName}` : ''}`,
+    previewSummary: {
+      domain: 'team-management',
+      action: label,
+      event: eventSummary
     }
   };
 }
@@ -3759,7 +3898,7 @@ async function claimPrivateAiPendingAction(
 
 async function executeConfirmedPrivateAiAction(user: AuthUser, confirmationId: string): Promise<PrivateAiToolResult> {
   const id = compactText(confirmationId);
-  const pending = await loadPrivateAiPendingAction(user, id);
+  const pending = await loadPrivateAiPendingAction(user, id, { allowTeamMemoryCandidate: true });
   if (!pending) {
     return { name: 'confirm_action', ok: false, error: 'No pending AI action matched that confirmation code.' };
   }
@@ -3987,10 +4126,20 @@ async function clearTeamScopedPrivateAiPayload(
   });
 }
 
-async function loadPrivateAiPendingAction(user: AuthUser, confirmationId: string): Promise<PrivateAiPendingAction | null> {
+async function loadPrivateAiPendingAction(
+  user: AuthUser,
+  confirmationId: string,
+  options: { allowTeamMemoryCandidate?: boolean } = {}
+): Promise<PrivateAiPendingAction | null> {
   const memoryKey = `${user.uid}:${confirmationId}`;
   const fromMemory = pendingActionMemory.get(memoryKey);
-  if (fromMemory?.status === 'pending' && fromMemory.payloadScope !== 'team') return fromMemory;
+  // The claim transaction below re-reads both durable records and revalidates
+  // their status. Keeping the just-staged team action as a candidate avoids an
+  // unnecessary pre-claim read failure without allowing memory-only execution.
+  if (
+    fromMemory?.status === 'pending'
+    && (fromMemory.payloadScope !== 'team' || options.allowTeamMemoryCandidate === true)
+  ) return fromMemory;
 
   const snapshot = await getDoc(doc(db, 'users', user.uid, privateAiPendingActionCollectionName, confirmationId)).catch(() => null);
   const data = typeof snapshot?.data === 'function' ? snapshot.data() : null;
@@ -5059,7 +5208,11 @@ function buildPlannerPrompt({
     `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
     `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
-    `For a parent/guardian roster invitation, call invite_roster_parent with the player name and email even when the team was not stated. The tool searches every managed roster, resolves a unique player automatically, and reports ambiguity when a team choice is genuinely required.\n` +
+    `Imperative requests that ask to add, invite, create, update, remove, cancel, or send something are write requests, not help questions. Call the matching write tool instead of get_help.\n` +
+    (roleCapabilities.isTeamManager
+      ? `Adding roster players does not require parent or guardian email addresses. If the user asks to add players only, call apply_roster_import with name-only add operations and no familyContacts. Do not ask for contact details or call invite_roster_parent unless the user explicitly asks to invite a parent or guardian.\n`
+      : '') +
+    `For a parent/guardian roster invitation, call invite_roster_parent with the player name and email. When the user states a team, include that exact teamName; otherwise the tool searches every managed roster, resolves a unique player automatically, and reports ambiguity when a team choice is genuinely required.\n` +
     `If the user asks to retry a failed parent invitation email, call resend_roster_parent_invite with the player name and email from the recent chat.\n` +
     `If you have enough information, return {"answer":"..."}.\n\n` +
     `AVAILABLE ROLE-AUTHORIZED TOOLS (family/player and coach/admin capabilities are combined):\n` +
@@ -5089,6 +5242,7 @@ function buildFinalAnswerPrompt({
     `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
     `For product/how-to questions, use help documentation results and include the relevant help page when useful.\n` +
     `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
+    `For schedule confirmations, restate the team, game or practice, date and time, time zone, opponent or title, and location when those details are present. Never answer with only a confirmation instruction.\n` +
     `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
@@ -5645,6 +5799,27 @@ async function resolveAccessibleTeamId(
     if (directDetail?.team && directDetail.canManageTeam === true) return teamId;
   }
   if (teamId) return null;
+  const requestText = compactText(args.text || args.prompt || args.query).toLowerCase();
+  const exactNamedTeams = teamName
+    ? eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase() === teamName)
+    : [];
+  const partiallyNamedTeams = teamName && !exactNamedTeams.length && teamName.length >= 3
+    ? eligibleTeams.filter((team) => compactText(team.teamName).toLowerCase().includes(teamName))
+    : [];
+  const explicitlyMentionedTeams = !teamName && requestText
+    ? eligibleTeams.filter((team) => scoreTeamNameMention(requestText, compactText(team.teamName)) > 0)
+    : [];
+  const explicitMatches = exactNamedTeams.length
+    ? exactNamedTeams
+    : partiallyNamedTeams.length
+      ? partiallyNamedTeams
+      : explicitlyMentionedTeams;
+  if (explicitMatches.length > 1) {
+    throw new Error(`More than one accessible team matches "${compactText(args.teamName) || 'that request'}". Choose one team.`);
+  }
+  if (explicitMatches.length === 1) {
+    return explicitMatches[0].teamId;
+  }
   if (access.isPartial) {
     if (access.partialError instanceof Error) throw access.partialError;
     throw new Error('Could not verify all team access. Try again before using team AI tools.');
@@ -5659,7 +5834,6 @@ async function resolveAccessibleTeamId(
     }
     return matchingTeams[0]?.teamId || null;
   }
-  const requestText = compactText(args.text || args.prompt || args.query).toLowerCase();
   if (requestText) {
     const scoredTeams = eligibleTeams
       .map((team) => ({
@@ -5679,7 +5853,7 @@ function scoreTeamNameMention(requestText: string, teamName: string): number {
   const normalizedName = compactText(teamName).toLowerCase();
   if (!normalizedName) return 0;
   if (requestText.includes(normalizedName)) return 1000 + normalizedName.length;
-  const ignoredTokens = new Set(['team', 'club', 'soccer', 'football', 'baseball', 'basketball']);
+  const ignoredTokens = new Set(['team', 'club', 'soccer', 'football', 'baseball', 'basketball', 'current']);
   return normalizedName
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length >= 3 && !ignoredTokens.has(token))
@@ -5721,10 +5895,6 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
       });
     }
   }
-  if (access.isPartial && !requestedTeamId) {
-    throw new Error('Could not verify all managed teams. Choose a specific team and try again.');
-  }
-
   if (requestedTeamId) {
     managedTeams = managedTeams.filter((team) => team.teamId === requestedTeamId);
   } else if (requestedTeamName) {
@@ -5736,6 +5906,12 @@ async function resolveManagedRosterPlayer(user: AuthUser, args: Record<string, u
       throw new Error(`More than one managed team matches "${compactText(args.teamName)}". Choose one team.`);
     }
     managedTeams = matchingTeams;
+  }
+  if (access.isPartial && !requestedTeamId && !requestedTeamName) {
+    throw new Error('Could not verify all managed teams. Choose a specific team and try again.');
+  }
+  if (access.isPartial && requestedTeamName && !managedTeams.length) {
+    throw new Error(`Could not verify the managed team "${compactText(args.teamName)}". Choose the exact team and try again.`);
   }
   if (!managedTeams.length) {
     throw new Error('No managed team matched that parent invitation.');
@@ -6046,6 +6222,120 @@ function compactText(value: unknown) {
   return String(value || '').trim();
 }
 
+function parsePrivateAiClockTime(value: unknown) {
+  const match = compactText(value).toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const meridiem = match[4];
+  if (minutes > 59 || seconds > 59 || (meridiem ? hours < 1 || hours > 12 : hours > 23)) return null;
+  if (meridiem === 'am' && hours === 12) hours = 0;
+  if (meridiem === 'pm' && hours !== 12) hours += 12;
+  return { hours, minutes, seconds };
+}
+
+function formatPrivateAiLocalDateTime(
+  datePart: string,
+  timeValue: unknown,
+  timeZoneValue: unknown
+) {
+  const clock = parsePrivateAiClockTime(timeValue);
+  if (!clock) throw new Error('The schedule event time is invalid.');
+  const [year, month, day] = datePart.split('-').map(Number);
+  const desiredLocalEpoch = Date.UTC(year, month - 1, day, clock.hours, clock.minutes, clock.seconds);
+  const desiredLocalDate = new Date(desiredLocalEpoch);
+  if (
+    desiredLocalDate.getUTCFullYear() !== year
+    || desiredLocalDate.getUTCMonth() !== month - 1
+    || desiredLocalDate.getUTCDate() !== day
+  ) {
+    throw new Error('The schedule event date is invalid.');
+  }
+  const timeZone = compactText(timeZoneValue);
+  if (!timeZone) {
+    return `${datePart}T${String(clock.hours).padStart(2, '0')}:${String(clock.minutes).padStart(2, '0')}:${String(clock.seconds).padStart(2, '0')}`;
+  }
+
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    });
+  } catch {
+    throw new Error(`The schedule time zone "${timeZone}" is invalid.`);
+  }
+
+  let utcEpoch = desiredLocalEpoch;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(utcEpoch))
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value])
+    );
+    const actualLocalEpoch = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    const adjustment = desiredLocalEpoch - actualLocalEpoch;
+    utcEpoch += adjustment;
+    if (adjustment === 0) break;
+  }
+  const resolvedParts = Object.fromEntries(
+    formatter.formatToParts(new Date(utcEpoch))
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  );
+  const resolvedLocalEpoch = Date.UTC(
+    Number(resolvedParts.year),
+    Number(resolvedParts.month) - 1,
+    Number(resolvedParts.day),
+    Number(resolvedParts.hour),
+    Number(resolvedParts.minute),
+    Number(resolvedParts.second)
+  );
+  if (resolvedLocalEpoch !== desiredLocalEpoch) {
+    throw new Error(`The schedule event time does not exist in "${timeZone}" because of daylight saving time.`);
+  }
+  return new Date(utcEpoch).toISOString();
+}
+
+function normalizePrivateAiScheduleEventInput(args: Record<string, unknown>) {
+  const source = isPlainObject(args.input) ? args.input : args;
+  const input = { ...source };
+  const rawStartDate = source.startDate ?? source.startsAt ?? source.date;
+  const startDateText = compactText(rawStartDate);
+  const separateTime = source.time ?? source.startTime;
+  const datePart = startDateText.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '';
+  if (datePart && compactText(separateTime)) {
+    input.startDate = formatPrivateAiLocalDateTime(
+      datePart,
+      separateTime,
+      source.timeZone ?? source.timezone
+    );
+  } else if (rawStartDate !== undefined) {
+    input.startDate = rawStartDate;
+  }
+  if (input.endDate === undefined && source.endsAt !== undefined) input.endDate = source.endsAt;
+  if (input.arrivalTime === undefined && source.arrival !== undefined) input.arrivalTime = source.arrival;
+  delete input.time;
+  delete input.startTime;
+  delete input.timeZone;
+  delete input.timezone;
+  return input;
+}
+
 function buildConversationTitle(prompt: string) {
   const compact = compactText(prompt).replace(/\s+/g, ' ');
   return compact.length > 52 ? `${compact.slice(0, 49)}...` : compact || 'New chat';
@@ -6099,6 +6389,31 @@ function looksLikeFunctionalHelpQuestion(question: string) {
     'replay',
     'match report'
   ].some((term) => text.includes(term));
+}
+
+function looksLikeImperativePrivateAiWriteRequest(question: string) {
+  const text = compactText(question).toLowerCase();
+  return /^(?:please\s+)?(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|reschedule|send|set|mark|record|assign|claim|release|save|import)\b/.test(text)
+    || /^(?:can|could|would)\s+you\s+(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
+    || /^(?:use|using)\b.{1,180}?(?:[.!;,:]\s*|\band\s+)(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text)
+    || /^(?:for|on)\b.{1,120}?,\s*(?:please\s+)?(?:add|invite|create|update|change|remove|delete|cancel|reschedule|send|set|mark|record|assign|save|import)\b/.test(text);
+}
+
+function hasPrivateAiWriteToolResult(toolResults: PrivateAiToolResult[]) {
+  return toolResults.some((result) => getPrivateAiToolDefinition(result.name)?.mode === 'write');
+}
+
+function getPrivateAiPlannerToolCallKey(call: PrivateAiToolCall) {
+  const normalizeValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalizeValue);
+    if (!isPlainObject(value)) return value;
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, normalizeValue(value[key])])
+    );
+  };
+  return `${compactText(call.name)}:${JSON.stringify(normalizeValue(call.args))}`;
 }
 
 function looksLikeLastGameQuestion(question: string) {

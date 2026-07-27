@@ -1462,7 +1462,9 @@ function PrivateAiBubble({
               <div className="mt-2 text-[11px] font-semibold text-primary-900">
                 {artifact.summary.errors
                   ? 'Fix the highlighted errors before confirming.'
-                  : 'Reply yes to import these players and email these contacts.'}
+                  : artifact.summary.invitations
+                    ? 'Reply yes to import these players and email these contacts.'
+                    : 'Reply yes to apply these roster changes.'}
                 {' '}A newer proposal in this chat replaces it.
               </div>
             </section>
