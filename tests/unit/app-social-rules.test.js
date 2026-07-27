@@ -639,8 +639,8 @@ describe('React app social Firestore rules', () => {
             ].sort());
         });
 
-        it('denies stale email-projected staff access to an already-issued old token', async () => {
-            await seedPublicProfile('viewer-staff', { discoveryTeamIds: ['team-staff'] });
+        it('denies revoked staff access despite a stale identity record and old token', async () => {
+            await seedPublicProfile('viewer-staff', { discoveryTeamIds: [] });
             await seedPublicProfile('profile-team-parent', { discoveryTeamIds: ['team-staff'] });
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await setDoc(doc(context.firestore(), 'publicProfileAuthIdentities', 'viewer-staff'), {
