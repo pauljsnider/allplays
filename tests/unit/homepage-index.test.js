@@ -125,7 +125,9 @@ describe('homepage index workflow', () => {
         expect(homepageHtml).not.toContain('login.html#signup');
         expect(homepageHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
         expect(homepageHtml).toContain('Request Access');
-        expect(homepageHtml).toContain("./js/homepage.js?v=4");
+        expect(homepageHtml).toContain("./js/homepage.js?v=5");
+        expect(homepageHtml).toContain("./js/public-homepage-games.js?v=1");
+        expect(homepageHtml).not.toMatch(/import\s+\{[^}]*getLiveGamesNow[^}]*\}\s+from\s+'\.\/js\/db\.js/);
     });
 
     it('routes coach users to the team dashboard CTA, deduplicates live and upcoming games, and preserves replay links', async () => {

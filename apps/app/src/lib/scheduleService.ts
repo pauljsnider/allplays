@@ -1683,8 +1683,7 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
       const staffTeamResult = await getStaffTeams({
         userId: user.uid,
         email: user.email,
-        coachTeamIds,
-        includeAll: (user as any).isAdmin === true
+        coachTeamIds
       });
       const teamsById = new Map<string, any>();
       staffTeamResult.teams.filter(Boolean).forEach((team: any) => {

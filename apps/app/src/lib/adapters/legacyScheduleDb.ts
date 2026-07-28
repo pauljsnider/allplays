@@ -160,7 +160,6 @@ export type StaffTeamsQuery = {
     userId: string;
     email?: string | null;
     coachTeamIds?: string[];
-    includeAll?: boolean;
 };
 
 export type StaffTeamsResult = {
@@ -168,14 +167,7 @@ export type StaffTeamsResult = {
     isPartial: boolean;
 };
 
-export async function getStaffTeams({ userId, email, coachTeamIds = [], includeAll = false }: StaffTeamsQuery) {
-    if (includeAll) {
-        return {
-            teams: await Promise.resolve(legacyGetTeams({ includePrivate: true })),
-            isPartial: false
-        };
-    }
-
+export async function getStaffTeams({ userId, email, coachTeamIds = [] }: StaffTeamsQuery) {
     const teamsRef = legacyFirebaseCollection(legacyFirebaseDb, 'teams');
     const staffEmail = String(email || '').trim();
     const normalizedEmail = staffEmail.toLowerCase();

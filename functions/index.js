@@ -107,6 +107,11 @@ const {
   serializePublicGame
 } = require('./public-team-api-core.cjs');
 const {
+  PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  buildPublicHomepageGamesResponse,
+  serializeHomepageGame
+} = require('./public-homepage-games-core.cjs');
+const {
   buildCalendarFeedGamesQuery,
   buildCalendarFeedRecurringMastersQuery
 } = require('./calendar-feed-window-core.cjs');
@@ -6425,6 +6430,135 @@ function sendPublicTeamApiSuccess(req, res, body) {
   }
   res.status(200).json(body);
 }
+
+function beginPublicHomepageGamesRequest(req, res) {
+  setPublicTeamApiCorsHeaders(res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return { complete: true };
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendPublicTeamApiError(res, 405, 'method_not_allowed', 'Use GET or HEAD for this endpoint.');
+    return { complete: true };
+  }
+
+  const rateLimit = checkPublicTeamApiRateLimit(req);
+  res.set('X-RateLimit-Remaining', String(rateLimit.remaining));
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    sendPublicTeamApiError(res, 429, 'rate_limited', 'Too many requests. Please try again shortly.');
+    return { complete: true };
+  }
+  return { complete: false };
+}
+
+function buildPublicHomepageCandidateQuery(collectionName, category, now = new Date()) {
+  let query = firestore.collectionGroup(collectionName);
+  if (category === 'live') {
+    query = query.where('liveStatus', '==', 'live');
+  } else if (category === 'upcoming') {
+    const start = new Date(now);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+    query = query
+      .where('date', '>=', start)
+      .where('date', '<=', end)
+      .orderBy('date', 'asc');
+  } else {
+    const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    query = query
+      .where('liveStatus', '==', 'completed')
+      .where('date', '>=', start)
+      .orderBy('date', 'desc');
+  }
+  return query.limit(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY + 1);
+}
+
+async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
+  const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
+  if (snapshot.size > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY) {
+    throw new Error(`Public homepage ${category} candidate scan limit exceeded.`);
+  }
+  return snapshot.docs.map((docSnap) => ({
+    id: docSnap.id,
+    ...(docSnap.data() || {}),
+    _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
+    _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
+    isSharedGame: collectionName === 'sharedGames'
+  }));
+}
+
+function getPublicHomepageTeamIds(game = {}) {
+  if (!game.isSharedGame) return game._teamId ? [game._teamId] : [];
+  return [...new Set([
+    game.homeTeamId,
+    game.awayTeamId,
+    ...(Array.isArray(game.teamIds) ? game.teamIds : [])
+  ].map(normalizeTeamId).filter(Boolean))];
+}
+
+async function serializePublicHomepageCandidates(candidates, teamCache, category) {
+  const serialized = [];
+  for (const candidate of candidates) {
+    const teamIds = getPublicHomepageTeamIds(candidate);
+    for (const teamId of teamIds) {
+      if (!teamCache.has(teamId)) {
+        teamCache.set(teamId, getStrictPublicTeam(teamId).catch((error) => {
+          functions.logger.warn('Skipping a public homepage team that could not be resolved.', {
+            teamId,
+            error: error?.message || String(error)
+          });
+          return null;
+        }));
+      }
+      const team = await teamCache.get(teamId);
+      const game = team ? serializeHomepageGame(candidate, teamId, team) : null;
+      const categoryMatches = game && (
+        category === 'live'
+          ? game.status === 'live'
+          : category === 'replays'
+            ? game.status === 'completed'
+            : !['live', 'completed', 'cancelled'].includes(game.status)
+      );
+      if (categoryMatches) {
+        serialized.push(game);
+        break;
+      }
+    }
+  }
+  return serialized;
+}
+
+exports.publicHomepageGamesV1 = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    const request = beginPublicHomepageGamesRequest(req, res);
+    if (request.complete) return;
+
+    try {
+      const now = new Date();
+      const categories = ['live', 'upcoming', 'replays'];
+      const queryResults = await Promise.all(categories.flatMap((category) => [
+        getPublicHomepageCandidateDocuments('games', category, now),
+        getPublicHomepageCandidateDocuments('sharedGames', category, now)
+      ]));
+      const teamCache = new Map();
+      const [live, upcoming, replays] = await Promise.all(categories.map((category, index) => (
+        serializePublicHomepageCandidates([
+          ...queryResults[index * 2],
+          ...queryResults[index * 2 + 1]
+        ], teamCache, category)
+      )));
+      const body = buildPublicHomepageGamesResponse({ live, upcoming, replays, now });
+      sendPublicTeamApiSuccess(req, res, body);
+    } catch (error) {
+      functions.logger.error('Failed to build public homepage games response.', {
+        error: error?.message || String(error)
+      });
+      sendPublicTeamApiError(res, 500, 'unavailable', 'Public homepage games are temporarily unavailable.');
+    }
+  });
 
 exports.publicTeamRosterV1 = functions
   .runWith(fetchCalendarRuntime)

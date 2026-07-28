@@ -28,48 +28,43 @@ async function installHomepageModuleMocks(page) {
             return;
         }
 
-        if (url.pathname.endsWith('/js/db.js')) {
+        if (url.pathname.endsWith('/js/public-homepage-games.js')) {
             await route.fulfill({
                 contentType: 'application/javascript',
                 body: `
-                    function timestamp(isoValue) {
-                        return { toDate() { return new Date(isoValue); } };
-                    }
-                    export async function getLiveGamesNow() {
-                        return [{
+                    export async function getPublicHomepageGames() {
+                        return {
+                          live: [{
                             id: 'smoke-live-1',
                             teamId: 'smoke-team-live',
                             opponent: 'Falcons',
-                            date: timestamp('2026-04-10T23:00:00.000Z'),
+                            date: '2026-04-10T23:00:00.000Z',
                             homeScore: 21,
                             awayScore: 17,
                             liveViewerCount: 3,
                             liveStatus: 'live',
                             team: { id: 'smoke-team-live', name: 'Smoke Tigers', photoUrl: '' }
-                        }];
-                    }
-                    export async function getUpcomingLiveGames() {
-                        return [{
+                          }],
+                          upcoming: [{
                             id: 'smoke-upcoming-1',
                             teamId: 'smoke-team-upcoming',
                             opponent: 'Owls',
-                            date: timestamp('2026-04-11T20:30:00.000Z'),
+                            date: '2026-04-11T20:30:00.000Z',
                             status: 'scheduled',
                             liveStatus: 'scheduled',
                             team: { id: 'smoke-team-upcoming', name: 'Smoke Panthers', photoUrl: '' }
-                        }];
-                    }
-                    export async function getRecentLiveTrackedGames() {
-                        return [{
+                          }],
+                          replays: [{
                             id: 'smoke-replay-1',
                             teamId: 'smoke-team-replay',
                             opponent: 'Bears',
-                            date: timestamp('2026-04-09T01:15:00.000Z'),
+                            date: '2026-04-09T01:15:00.000Z',
                             homeScore: 44,
                             awayScore: 41,
                             liveStatus: 'completed',
                             team: { id: 'smoke-team-replay', name: 'Smoke Wolves', photoUrl: '' }
-                        }];
+                          }]
+                        };
                     }
                 `
             });

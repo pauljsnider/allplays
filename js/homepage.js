@@ -200,11 +200,24 @@ export async function initHomepage({
     getLiveGamesNow,
     getUpcomingLiveGames,
     getRecentLiveTrackedGames,
+    getHomepageGames,
     formatDate,
     formatTime,
     logger = console
 }) {
     const heroCta = document.getElementById('hero-cta');
+    const homepageGamesPromise = typeof getHomepageGames === 'function'
+        ? Promise.resolve().then(() => getHomepageGames())
+        : null;
+    const liveGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.live || [])
+        : getLiveGamesNow;
+    const upcomingGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.upcoming || [])
+        : getUpcomingLiveGames;
+    const replayGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.replays || [])
+        : getRecentLiveTrackedGames;
 
     checkAuth((user) => {
         renderHeader(document.getElementById('header-container'), user);
@@ -215,15 +228,15 @@ export async function initHomepage({
     await Promise.all([
         loadLiveGames({
             container: document.getElementById('live-games-list'),
-            getLiveGamesNow,
-            getUpcomingLiveGames,
+            getLiveGamesNow: liveGamesLoader,
+            getUpcomingLiveGames: upcomingGamesLoader,
             formatDate,
             formatTime,
             logger
         }),
         loadPastGames({
             container: document.getElementById('past-games-list'),
-            getRecentLiveTrackedGames,
+            getRecentLiveTrackedGames: replayGamesLoader,
             formatDate,
             logger
         })
