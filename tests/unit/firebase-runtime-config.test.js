@@ -117,7 +117,7 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps the bundled fallback when local hosting and runtime config are unavailable', async () => {
+    it('fails closed when local hosting and runtime config are unavailable', async () => {
         resetGlobals();
         globalThis.window.location = {
             origin: 'http://localhost:3000',
@@ -130,9 +130,41 @@ describe('firebase runtime config', () => {
             status: 404
         });
 
-        const config = await resolvePrimaryFirebaseConfig();
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
 
-        expect(config.projectId).toBe('game-flow-c6311');
+    it('fails closed when localhost runtime config points at production Firebase', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://127.0.0.1:4173',
+            protocol: 'http:',
+            hostname: '127.0.0.1',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/__/firebase/init.json')) {
+                return { ok: false, status: 404 };
+            }
+            return {
+                ok: true,
+                json: async () => ({
+                    firebase: {
+                        apiKey: 'production-key',
+                        authDomain: 'game-flow-c6311.firebaseapp.com',
+                        projectId: 'game-flow-c6311',
+                        messagingSenderId: '982493478258',
+                        appId: 'production-app'
+                    }
+                })
+            };
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.'
+        );
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 

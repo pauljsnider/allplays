@@ -257,8 +257,11 @@ export async function resolvePrimaryFirebaseConfig() {
             ) {
                 return remoteFirebaseConfig;
             }
-            if (!runtimeHostname || localDevelopmentHost) {
+            if (!runtimeHostname) {
                 return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+            }
+            if (localDevelopmentHost) {
+                throw new Error('Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.');
             }
             throw hostingError;
         }
