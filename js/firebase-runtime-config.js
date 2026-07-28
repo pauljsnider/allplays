@@ -257,6 +257,9 @@ export async function resolvePrimaryFirebaseConfig() {
             ) {
                 return remoteFirebaseConfig;
             }
+            if (!runtimeHostname || localDevelopmentHost) {
+                return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+            }
             throw hostingError;
         }
     }

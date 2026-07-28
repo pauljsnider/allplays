@@ -117,6 +117,25 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps the bundled fallback when local hosting and runtime config are unavailable', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:3000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            pathname: '/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 404
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('game-flow-c6311');
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('uses host-specific init before any runtime file on a non-production Firebase host', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -417,7 +436,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=15');
+            expect(source).toContain('firebase-runtime-config.js?v=16');
         }
     });
 
