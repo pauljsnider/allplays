@@ -96,7 +96,7 @@ import {
     isSharedGameSyntheticId,
     mergeGamesForTeam,
     projectSharedGameForTeam
-} from './shared-games.js?v=1';
+} from './shared-games.js?v=2';
 import {
     normalizeAthleteProfileDraft,
     collectAthleteProfileMediaCleanupPaths,

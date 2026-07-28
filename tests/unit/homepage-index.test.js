@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { initHomepage } from '../../js/homepage.js';
+import { getPublicHomepageGames } from '../../js/public-homepage-games.js';
+import {
+    buildSharedGameSyntheticId,
+    decodeSharedGameSyntheticId
+} from '../../js/shared-games.js';
 
 class MockElement {
     constructor(id = '') {
@@ -74,6 +79,7 @@ async function runHomepage({
     upcomingError = null,
     replayError = null,
     homepageGames = null,
+    homepageGamesLoader = null,
     getRedirectUrl = () => 'dashboard.html',
     formatDate = (value) => `DATE:${value}`,
     formatTime = (value) => `TIME:${value}`
@@ -108,9 +114,9 @@ async function runHomepage({
             }
             return replayGames;
         },
-        getHomepageGames: homepageGames
+        getHomepageGames: homepageGamesLoader || (homepageGames
             ? async () => homepageGames
-            : undefined,
+            : undefined),
         formatDate,
         formatTime,
         logger: {
@@ -130,7 +136,7 @@ describe('homepage index workflow', () => {
         expect(homepageHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
         expect(homepageHtml).toContain('Request Access');
         expect(homepageHtml).toContain("./js/homepage.js?v=5");
-        expect(homepageHtml).toContain("./js/public-homepage-games.js?v=1");
+        expect(homepageHtml).toContain("./js/public-homepage-games.js?v=2");
         expect(homepageHtml).not.toMatch(/import\s+\{[^}]*getLiveGamesNow[^}]*\}\s+from\s+'\.\/js\/db\.js/);
     });
 
@@ -341,6 +347,61 @@ describe('homepage index workflow', () => {
             'Showing available replays. Some recent replays may be missing.'
         );
         expect(elements.get('past-games-list').textContent).toContain('No recent replays available');
+    });
+
+    it('routes shared live, upcoming, and replay cards through the shared-game resolver contract', async () => {
+        const paths = {
+            live: 'organizations/org 1/sharedGames/live 1',
+            upcoming: 'tournaments/tournament-1/sharedGames/upcoming-1',
+            replay: 'events/event-1/sharedGames/replay-1'
+        };
+        const makeSharedGame = (category, teamId) => createGame({
+            id: buildSharedGameSyntheticId(paths[category]),
+            teamId,
+            isSharedGame: true
+        });
+        const { elements } = await runHomepage({
+            homepageGames: {
+                live: [makeSharedGame('live', 'team-live')],
+                upcoming: [makeSharedGame('upcoming', 'team-upcoming')],
+                replays: [makeSharedGame('replay', 'team-replay')]
+            }
+        });
+
+        const hrefs = [
+            ...elements.get('live-games-list').innerHTML.matchAll(/href="([^"]+)"/g),
+            ...elements.get('past-games-list').innerHTML.matchAll(/href="([^"]+)"/g)
+        ].map((match) => match[1]);
+
+        expect(hrefs).toHaveLength(3);
+        expect(hrefs[0]).toContain(`gameId=${encodeURIComponent(buildSharedGameSyntheticId(paths.live))}`);
+        expect(hrefs[1]).toContain(`gameId=${encodeURIComponent(buildSharedGameSyntheticId(paths.upcoming))}`);
+        expect(hrefs[2]).toContain(`gameId=${encodeURIComponent(buildSharedGameSyntheticId(paths.replay))}`);
+        expect(hrefs[2]).toContain('&replay=true');
+
+        hrefs.forEach((href, index) => {
+            const gameId = new URL(href, 'https://allplays.ai/').searchParams.get('gameId');
+            expect(decodeSharedGameSyntheticId(gameId)).toBe(Object.values(paths)[index]);
+        });
+    });
+
+    it('replaces both discovery loading sections with errors when the endpoint stalls', async () => {
+        vi.useFakeTimers();
+        try {
+            const homepage = runHomepage({
+                homepageGamesLoader: () => getPublicHomepageGames({
+                    fetchImpl: () => new Promise(() => {}),
+                    timeoutMs: 25
+                })
+            });
+            await vi.advanceTimersByTimeAsync(25);
+            const { elements } = await homepage;
+
+            expect(elements.get('live-games-list').textContent).toBe('Unable to load games');
+            expect(elements.get('past-games-list').textContent).toBe('Unable to load replays');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('replaces loading placeholders with exact error fallback copy when replay loading fails', async () => {

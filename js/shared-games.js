@@ -35,7 +35,18 @@ export function decodeSharedGameSyntheticId(gameId) {
     const prefix = gameId.startsWith(SHARED_GAME_ID_PREFIX)
         ? SHARED_GAME_ID_PREFIX
         : LEGACY_SHARED_GAME_ID_PREFIX;
-    return decodeURIComponent(gameId.slice(prefix.length));
+    let sharedGamePath;
+    try {
+        sharedGamePath = decodeURIComponent(gameId.slice(prefix.length));
+    } catch (_error) {
+        return null;
+    }
+    const segments = sharedGamePath.split('/');
+    const isSharedGameDocumentPath = segments.length >= 2
+        && segments.length % 2 === 0
+        && segments.every(Boolean)
+        && segments.at(-2) === 'sharedGames';
+    return isSharedGameDocumentPath ? sharedGamePath : null;
 }
 
 export function projectSharedGameForTeam(sharedGame, teamId) {

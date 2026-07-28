@@ -3,6 +3,7 @@ const test = require('node:test');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE,
+  buildSharedGameSyntheticId,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   buildPublicHomepageTeamIdBatch,
@@ -212,9 +213,10 @@ test('private or missing teams remain an authoritative omission', async () => {
 });
 
 test('shared games are projected from the selected public team perspective', () => {
+  const sharedGamePath = 'events/event with spaces/sharedGames/shared-1';
   const game = serializeHomepageGame({
     id: 'shared-1',
-    _sharedGamePath: 'events/event-1/sharedGames/shared-1',
+    _sharedGamePath: sharedGamePath,
     date: '2026-07-28T18:00:00Z',
     homeTeamId: 'team-public',
     homeTeamName: 'Public Tigers',
@@ -229,5 +231,9 @@ test('shared games are projected from the selected public team perspective', () 
   assert.equal(game.opponent, 'Falcons');
   assert.equal(game.homeScore, 4);
   assert.equal(game.isSharedGame, true);
-  assert.match(game.id, /^shared_/);
+  assert.equal(game.id, buildSharedGameSyntheticId(sharedGamePath));
+  assert.equal(
+    decodeURIComponent(game.id.slice('shared_'.length)),
+    sharedGamePath
+  );
 });

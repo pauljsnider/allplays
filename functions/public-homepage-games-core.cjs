@@ -45,9 +45,18 @@ function buildPublicHomepageTeamIdBatch(values = []) {
   };
 }
 
+function buildSharedGameSyntheticId(sharedGamePath) {
+  if (typeof sharedGamePath !== 'string' || !sharedGamePath) {
+    throw new Error('sharedGamePath is required');
+  }
+  return `shared_${encodeURIComponent(sharedGamePath)}`;
+}
+
 function sharedGameSyntheticId(game = {}) {
-  const path = compactText(game._sharedGamePath || `sharedGames/${game.id}`, 512);
-  return `shared_${encodeURIComponent(path)}`;
+  const path = typeof game._sharedGamePath === 'string' && game._sharedGamePath
+    ? game._sharedGamePath
+    : game.id ? `sharedGames/${game.id}` : '';
+  return buildSharedGameSyntheticId(path);
 }
 
 function projectSharedGameForPublicTeam(game = {}, teamId) {
@@ -195,6 +204,7 @@ module.exports = {
   PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE,
   PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS,
   PUBLIC_HOMEPAGE_RESULT_LIMIT,
+  buildSharedGameSyntheticId,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   buildPublicHomepageTeamIdBatch,
