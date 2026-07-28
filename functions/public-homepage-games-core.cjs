@@ -83,6 +83,43 @@ function serializeHomepageGame(game = {}, teamId, team = {}) {
   };
 }
 
+async function serializePublicHomepageCandidates({
+  candidates = [],
+  category,
+  getTeamIds,
+  getTeam,
+  onTeamError = () => undefined
+} = {}) {
+  const serialized = [];
+  let partial = false;
+  for (const candidate of candidates) {
+    const teamIds = getTeamIds(candidate);
+    for (const teamId of teamIds) {
+      let team;
+      try {
+        team = await getTeam(teamId);
+      } catch (error) {
+        partial = true;
+        onTeamError({ teamId, error });
+        continue;
+      }
+      const game = team ? serializeHomepageGame(candidate, teamId, team) : null;
+      const categoryMatches = game && (
+        category === 'live'
+          ? game.status === 'live'
+          : category === 'replays'
+            ? game.status === 'completed'
+            : !['live', 'completed', 'cancelled'].includes(game.status)
+      );
+      if (categoryMatches) {
+        serialized.push(game);
+        break;
+      }
+    }
+  }
+  return { games: serialized, partial };
+}
+
 function dedupeAndLimit(games, limit, direction = 'asc') {
   const byKey = new Map();
   games.filter(Boolean).forEach((game) => {
@@ -130,5 +167,6 @@ module.exports = {
   buildPublicHomepageGamesResponse,
   limitPublicHomepageCandidates,
   projectSharedGameForPublicTeam,
-  serializeHomepageGame
+  serializeHomepageGame,
+  serializePublicHomepageCandidates
 };

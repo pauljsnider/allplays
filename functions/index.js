@@ -110,7 +110,7 @@ const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
-  serializeHomepageGame
+  serializePublicHomepageCandidates
 } = require('./public-homepage-games-core.cjs');
 const {
   buildCalendarFeedGamesQuery,
@@ -6506,38 +6506,6 @@ function getPublicHomepageTeamIds(game = {}) {
   ].map(normalizeTeamId).filter(Boolean))];
 }
 
-async function serializePublicHomepageCandidates(candidates, teamCache, category) {
-  const serialized = [];
-  for (const candidate of candidates) {
-    const teamIds = getPublicHomepageTeamIds(candidate);
-    for (const teamId of teamIds) {
-      if (!teamCache.has(teamId)) {
-        teamCache.set(teamId, getStrictPublicTeam(teamId).catch((error) => {
-          functions.logger.warn('Skipping a public homepage team that could not be resolved.', {
-            teamId,
-            error: error?.message || String(error)
-          });
-          return null;
-        }));
-      }
-      const team = await teamCache.get(teamId);
-      const game = team ? serializeHomepageGame(candidate, teamId, team) : null;
-      const categoryMatches = game && (
-        category === 'live'
-          ? game.status === 'live'
-          : category === 'replays'
-            ? game.status === 'completed'
-            : !['live', 'completed', 'cancelled'].includes(game.status)
-      );
-      if (categoryMatches) {
-        serialized.push(game);
-        break;
-      }
-    }
-  }
-  return serialized;
-}
-
 exports.publicHomepageGamesV1 = functions
   .runWith(fetchCalendarRuntime)
   .https
@@ -6553,19 +6521,37 @@ exports.publicHomepageGamesV1 = functions
         getPublicHomepageCandidateDocuments('sharedGames', category, now)
       ]));
       const teamCache = new Map();
-      const [live, upcoming, replays] = await Promise.all(categories.map((category, index) => (
-        serializePublicHomepageCandidates([
-          ...queryResults[index * 2].candidates,
-          ...queryResults[index * 2 + 1].candidates
-        ], teamCache, category)
+      const serializedResults = await Promise.all(categories.map((category, index) => (
+        serializePublicHomepageCandidates({
+          candidates: [
+            ...queryResults[index * 2].candidates,
+            ...queryResults[index * 2 + 1].candidates
+          ],
+          category,
+          getTeamIds: getPublicHomepageTeamIds,
+          getTeam(teamId) {
+            if (!teamCache.has(teamId)) {
+              teamCache.set(teamId, getStrictPublicTeam(teamId));
+            }
+            return teamCache.get(teamId);
+          },
+          onTeamError({ teamId, error }) {
+            functions.logger.warn('Skipping a public homepage team that could not be resolved.', {
+              teamId,
+              error: error?.message || String(error)
+            });
+          }
+        })
       )));
       const partialCategories = categories.filter((category, index) => (
-        queryResults[index * 2].truncated || queryResults[index * 2 + 1].truncated
+        queryResults[index * 2].truncated
+        || queryResults[index * 2 + 1].truncated
+        || serializedResults[index].partial
       ));
       const body = buildPublicHomepageGamesResponse({
-        live,
-        upcoming,
-        replays,
+        live: serializedResults[0].games,
+        upcoming: serializedResults[1].games,
+        replays: serializedResults[2].games,
         partialCategories,
         now
       });

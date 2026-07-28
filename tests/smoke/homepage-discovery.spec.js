@@ -34,6 +34,8 @@ async function installHomepageModuleMocks(page) {
                 body: `
                     export async function getPublicHomepageGames() {
                         return {
+                          partial: true,
+                          partialCategories: ['live', 'replays'],
                           live: [{
                             id: 'smoke-live-1',
                             teamId: 'smoke-team-live',
@@ -108,6 +110,7 @@ test('homepage resolves live/upcoming and replay discovery cards', async ({ page
     });
     await expect(page.locator('#live-games-list')).toContainText('Smoke Tigers');
     await expect(page.locator('#live-games-list')).toContainText('Smoke Panthers');
+    await expect(page.locator('#live-games-list')).toContainText('Some live or upcoming games may be missing.');
     await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-live&gameId=smoke-live-1"]')).toHaveCount(1);
     await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-upcoming&gameId=smoke-upcoming-1"]')).toHaveCount(1);
 
@@ -117,5 +120,6 @@ test('homepage resolves live/upcoming and replay discovery cards', async ({ page
         ctaPattern: /Watch Replay/
     });
     await expect(page.locator('#past-games-list')).toContainText('Smoke Wolves');
+    await expect(page.locator('#past-games-list')).toContainText('Some recent replays may be missing.');
     await expect(page.locator('#past-games-list a[href="live-game.html?teamId=smoke-team-replay&gameId=smoke-replay-1&replay=true"]')).toHaveCount(1);
 });

@@ -5,7 +5,8 @@ const {
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   limitPublicHomepageCandidates,
-  serializeHomepageGame
+  serializeHomepageGame,
+  serializePublicHomepageCandidates
 } = require('../public-homepage-games-core.cjs');
 
 const publicTeam = {
@@ -117,6 +118,35 @@ test('mixed-visibility overflow is explicitly marked partial when a public candi
   assert.equal(batch.truncated, true);
   assert.equal(response.partial, true);
   assert.deepEqual(response.partialCategories, ['live']);
+});
+
+test('team lookup failures mark the affected homepage category partial', async () => {
+  const errors = [];
+  const result = await serializePublicHomepageCandidates({
+    candidates: [{ id: 'game-1', _teamId: 'team-unavailable' }],
+    category: 'live',
+    getTeamIds: (candidate) => [candidate._teamId],
+    getTeam: async () => {
+      throw new Error('transient team read failure');
+    },
+    onTeamError: (failure) => errors.push(failure)
+  });
+
+  assert.deepEqual(result.games, []);
+  assert.equal(result.partial, true);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].teamId, 'team-unavailable');
+});
+
+test('private or missing teams remain an authoritative omission', async () => {
+  const result = await serializePublicHomepageCandidates({
+    candidates: [{ id: 'game-1', _teamId: 'team-private' }],
+    category: 'live',
+    getTeamIds: (candidate) => [candidate._teamId],
+    getTeam: async () => null
+  });
+
+  assert.deepEqual(result, { games: [], partial: false });
 });
 
 test('shared games are projected from the selected public team perspective', () => {

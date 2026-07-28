@@ -73,6 +73,7 @@ async function runHomepage({
     liveError = null,
     upcomingError = null,
     replayError = null,
+    homepageGames = null,
     getRedirectUrl = () => 'dashboard.html',
     formatDate = (value) => `DATE:${value}`,
     formatTime = (value) => `TIME:${value}`
@@ -107,6 +108,9 @@ async function runHomepage({
             }
             return replayGames;
         },
+        getHomepageGames: homepageGames
+            ? async () => homepageGames
+            : undefined,
         formatDate,
         formatTime,
         logger: {
@@ -316,6 +320,27 @@ describe('homepage index workflow', () => {
 
         expect(elements.get('past-games-list').innerHTML).not.toContain('Loading replays...');
         expect(elements.get('past-games-list').textContent).toBe('No recent replays available');
+    });
+
+    it('renders category-level incomplete-result notices from the public homepage response', async () => {
+        const { elements } = await runHomepage({
+            homepageGames: {
+                partial: true,
+                partialCategories: ['live', 'replays'],
+                live: [],
+                upcoming: [],
+                replays: []
+            }
+        });
+
+        expect(elements.get('live-games-list').textContent).toContain(
+            'Showing available games. Some live or upcoming games may be missing.'
+        );
+        expect(elements.get('live-games-list').textContent).toContain('No upcoming live games scheduled');
+        expect(elements.get('past-games-list').textContent).toContain(
+            'Showing available replays. Some recent replays may be missing.'
+        );
+        expect(elements.get('past-games-list').textContent).toContain('No recent replays available');
     });
 
     it('replaces loading placeholders with exact error fallback copy when replay loading fails', async () => {
