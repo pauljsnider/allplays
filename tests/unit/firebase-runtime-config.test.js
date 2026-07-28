@@ -279,6 +279,63 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
+    it.each([
+        'allplays.ai',
+        'www.allplays.ai',
+        'game-flow-c6311.web.app',
+        'game-flow-c6311.firebaseapp.com'
+    ])('rejects inline non-production Firebase config on production host %s', async (hostname) => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: `https://${hostname}`,
+            protocol: 'https:',
+            hostname,
+            pathname: '/app/'
+        };
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'preview-key',
+                authDomain: 'allplays-preview.firebaseapp.com',
+                projectId: 'allplays-preview',
+                messagingSenderId: '456',
+                appId: 'preview-app'
+            }
+        };
+        globalThis.fetch = vi.fn();
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config does not match the production Firebase project.'
+        );
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-production Firebase from the canonical production runtime file', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays.ai',
+            protocol: 'https:',
+            hostname: 'allplays.ai',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                firebase: {
+                    apiKey: 'preview-key',
+                    authDomain: 'allplays-preview.firebaseapp.com',
+                    projectId: 'allplays-preview',
+                    messagingSenderId: '456',
+                    appId: 'preview-app'
+                }
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase runtime config does not match the production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
     it('rejects a non-production project returned by an official production Firebase alias', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -634,10 +691,10 @@ describe('firebase runtime config', () => {
             json: async () => ({
                 firebase: {
                     apiKey: 'runtime-key',
-                    authDomain: 'runtime.firebaseapp.com',
-                    projectId: 'runtime-project',
-                    messagingSenderId: '123',
-                    appId: 'runtime-app'
+                    authDomain: 'game-flow-c6311.firebaseapp.com',
+                    projectId: 'game-flow-c6311',
+                    messagingSenderId: '982493478258',
+                    appId: 'production-runtime-app'
                 },
                 appCheck: { enabled: false }
             })
@@ -648,7 +705,7 @@ describe('firebase runtime config', () => {
             resolveAppCheckRuntimeConfig()
         ]);
 
-        expect(firebaseConfig.projectId).toBe('runtime-project');
+        expect(firebaseConfig.projectId).toBe('game-flow-c6311');
         expect(appCheckConfig.enabled).toBe(false);
         expect(globalThis.fetch).toHaveBeenCalledOnce();
         expect(globalThis.fetch).not.toHaveBeenCalledWith(

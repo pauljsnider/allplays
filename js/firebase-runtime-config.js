@@ -236,22 +236,26 @@ export async function resolvePrimaryFirebaseConfig() {
         : globalThis.location?.protocol;
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
+    const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
         globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
     );
-    if (
-        inlineConfig
-        && (
+    if (inlineConfig) {
+        if (productionRuntimeHost) {
+            if (!isBundledProductionFirebaseConfig(inlineConfig)) {
+                throw new Error('Firebase config does not match the production Firebase project.');
+            }
+            return inlineConfig;
+        }
+        if (
             !isBundledProductionFirebaseConfig(inlineConfig)
-            || canonicalProductionHost
-            || productionFirebaseHostingHost
             || nativeRuntime
             || !runtimeHostname
-        )
-    ) {
-        return inlineConfig;
+        ) {
+            return inlineConfig;
+        }
     }
 
     if (nativeRuntime) {
@@ -269,6 +273,12 @@ export async function resolvePrimaryFirebaseConfig() {
         const remoteFirebaseConfig = normalizeFirebaseConfig(
             remoteConfig.firebase || remoteConfig.firebasePrimary
         );
+        if (
+            remoteFirebaseConfig
+            && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+        ) {
+            throw new Error('Firebase runtime config does not match the production Firebase project.');
+        }
         return remoteFirebaseConfig || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
 
