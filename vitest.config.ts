@@ -54,7 +54,7 @@ export default defineConfig({
     dedupe: ['react', 'react-dom', 'react-router-dom']
   },
   test: {
-    setupFiles: './tests/setupTests.js',
+    setupFiles: path.resolve(workspaceRoot, 'tests/setupTests.js'),
     // Never run tests from nested git worktrees (e.g. `.claude/worktrees/*`,
     // agent worktrees). They are separate checkouts whose test files would
     // otherwise be globbed in and fail on environment-specific issues.
