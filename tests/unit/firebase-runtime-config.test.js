@@ -82,6 +82,31 @@ describe('firebase runtime config', () => {
         });
     });
 
+    it('rejects production Firebase returned by local hosting init', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:3000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            pathname: '/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('uses an explicit non-production runtime fallback for isolated local preview smoke', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -199,6 +224,31 @@ describe('firebase runtime config', () => {
             'https://allplays-preview.web.app/__/firebase/init.json',
             { cache: 'no-store' }
         );
+    });
+
+    it('rejects production Firebase returned by Firebase Hosting preview init', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://game-flow-c6311--preview.web.app',
+            protocol: 'https:',
+            hostname: 'game-flow-c6311--preview.web.app',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting init config points to production Firebase on a non-production host.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
     it('does not let a different non-production runtime file override a Firebase host identity', async () => {

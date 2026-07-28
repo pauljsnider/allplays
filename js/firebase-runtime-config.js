@@ -203,6 +203,14 @@ async function fetchFirebaseConfigFromHosting() {
     return normalized;
 }
 
+async function fetchNonProductionFirebaseConfigFromHosting() {
+    const config = await fetchFirebaseConfigFromHosting();
+    if (isBundledProductionFirebaseConfig(config)) {
+        throw new Error('Firebase Hosting init config points to production Firebase on a non-production host.');
+    }
+    return config;
+}
+
 export async function resolvePrimaryFirebaseConfig() {
     const runtimeHostname = typeof window !== 'undefined'
         ? window.location?.hostname
@@ -248,7 +256,7 @@ export async function resolvePrimaryFirebaseConfig() {
 
     if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {
         try {
-            return await fetchFirebaseConfigFromHosting();
+            return await fetchNonProductionFirebaseConfigFromHosting();
         } catch (hostingError) {
             if (firebaseHostingHost) {
                 throw hostingError;
