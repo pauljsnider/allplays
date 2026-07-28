@@ -3,6 +3,7 @@ const test = require('node:test');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   buildPublicHomepageGamesResponse,
+  limitPublicHomepageCandidates,
   serializeHomepageGame
 } = require('../public-homepage-games-core.cjs');
 
@@ -85,6 +86,16 @@ test('homepage response sorts, deduplicates, and enforces the public result cap'
   assert.deepEqual(response.upcoming.map((game) => game.id), games.slice(0, 6).map((game) => game.id));
   assert.deepEqual(response.replays.map((game) => game.id), [...games].reverse().slice(0, 6).map((game) => game.id));
   assert.equal(PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY, 120);
+});
+
+test('homepage candidate overflow truncates at the scan budget without failing discovery', () => {
+  const candidates = Array.from({ length: 121 }, (_, index) => ({ id: `candidate-${index}` }));
+  const limited = limitPublicHomepageCandidates(candidates);
+
+  assert.equal(limited.length, PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY);
+  assert.equal(limited[0].id, 'candidate-0');
+  assert.equal(limited.at(-1).id, 'candidate-119');
+  assert.equal(candidates.length, 121);
 });
 
 test('shared games are projected from the selected public team perspective', () => {

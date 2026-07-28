@@ -109,6 +109,7 @@ const {
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   buildPublicHomepageGamesResponse,
+  limitPublicHomepageCandidates,
   serializeHomepageGame
 } = require('./public-homepage-games-core.cjs');
 const {
@@ -6477,15 +6478,20 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
   if (snapshot.size > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY) {
-    throw new Error(`Public homepage ${category} candidate scan limit exceeded.`);
+    functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
+      collectionName,
+      category,
+      candidateLimit: PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+    });
   }
-  return snapshot.docs.map((docSnap) => ({
-    id: docSnap.id,
-    ...(docSnap.data() || {}),
-    _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
-    _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
-    isSharedGame: collectionName === 'sharedGames'
-  }));
+  return limitPublicHomepageCandidates(snapshot.docs)
+    .map((docSnap) => ({
+      id: docSnap.id,
+      ...(docSnap.data() || {}),
+      _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
+      _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
+      isSharedGame: collectionName === 'sharedGames'
+    }));
 }
 
 function getPublicHomepageTeamIds(game = {}) {

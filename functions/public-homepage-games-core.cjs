@@ -19,6 +19,11 @@ function finiteNonNegative(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function limitPublicHomepageCandidates(candidates = []) {
+  if (!Array.isArray(candidates)) return [];
+  return candidates.slice(0, PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY);
+}
+
 function sharedGameSyntheticId(game = {}) {
   const path = compactText(game._sharedGamePath || `sharedGames/${game.id}`, 512);
   return `shared_${encodeURIComponent(path)}`;
@@ -107,6 +112,7 @@ module.exports = {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   PUBLIC_HOMEPAGE_RESULT_LIMIT,
   buildPublicHomepageGamesResponse,
+  limitPublicHomepageCandidates,
   projectSharedGameForPublicTeam,
   serializeHomepageGame
 };
