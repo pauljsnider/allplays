@@ -251,6 +251,59 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
+    it.each([
+        'game-flow-c6311.web.app',
+        'game-flow-c6311.firebaseapp.com'
+    ])('accepts production Firebase hosted init on the official alias %s', async (hostname) => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: `https://${hostname}`,
+            protocol: 'https:',
+            hostname,
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).resolves.toMatchObject({
+            projectId: 'game-flow-c6311'
+        });
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a non-production project returned by an official production Firebase alias', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://game-flow-c6311.web.app',
+            protocol: 'https:',
+            hostname: 'game-flow-c6311.web.app',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'preview-key',
+                authDomain: 'allplays-preview.firebaseapp.com',
+                projectId: 'allplays-preview',
+                messagingSenderId: '456',
+                appId: 'preview-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase Hosting init config does not match the production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
     it('does not let a different non-production runtime file override a Firebase host identity', async () => {
         resetGlobals();
         globalThis.window.location = {
