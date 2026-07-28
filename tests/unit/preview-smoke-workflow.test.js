@@ -9,6 +9,10 @@ const integrationWorkflow = readFileSync(
     new URL('../../.github/workflows/pr-integration.yml', import.meta.url),
     'utf8'
 );
+const firebaseAuthBootstrapSmoke = readFileSync(
+    new URL('../smoke/firebase-auth-bootstrap.spec.js', import.meta.url),
+    'utf8'
+);
 
 describe('preview-smoke CI workflow', () => {
     it('is called by the consolidated code-head workflow without label-churn runs', () => {
@@ -93,5 +97,15 @@ describe('preview-smoke CI workflow', () => {
             'apps/app/public/.well-known/allplays-runtime-config.json'
         );
         expect(devServerStep).toContain('npm --prefix apps/app run dev');
+    });
+
+    it('does not run real Firebase bootstrap probes against the synthetic preview identity', () => {
+        expect(workflow).toContain('SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET: preview-smoke');
+        expect(firebaseAuthBootstrapSmoke).toContain(
+            "process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET === 'preview-smoke'"
+        );
+        expect(firebaseAuthBootstrapSmoke).toContain(
+            'Real Firebase bootstrap probes require a valid Firebase runtime identity'
+        );
     });
 });
