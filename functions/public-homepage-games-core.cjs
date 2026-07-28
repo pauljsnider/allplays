@@ -24,6 +24,14 @@ function limitPublicHomepageCandidates(candidates = []) {
   return candidates.slice(0, PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY);
 }
 
+function buildPublicHomepageCandidateBatch(candidates = []) {
+  const safeCandidates = Array.isArray(candidates) ? candidates : [];
+  return {
+    candidates: limitPublicHomepageCandidates(safeCandidates),
+    truncated: safeCandidates.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+  };
+}
+
 function sharedGameSyntheticId(game = {}) {
   const path = compactText(game._sharedGamePath || `sharedGames/${game.id}`, 512);
   return `shared_${encodeURIComponent(path)}`;
@@ -92,15 +100,22 @@ function buildPublicHomepageGamesResponse({
   live = [],
   upcoming = [],
   replays = [],
+  partialCategories = [],
   limit = PUBLIC_HOMEPAGE_RESULT_LIMIT,
   now = new Date()
 } = {}) {
   const safeLimit = Number.isSafeInteger(limit) && limit > 0
     ? Math.min(limit, PUBLIC_HOMEPAGE_RESULT_LIMIT)
     : PUBLIC_HOMEPAGE_RESULT_LIMIT;
+  const safePartialCategories = [...new Set(
+    (Array.isArray(partialCategories) ? partialCategories : [])
+      .filter((category) => ['live', 'upcoming', 'replays'].includes(category))
+  )];
   return {
     version: PUBLIC_HOMEPAGE_API_VERSION,
     generatedAt: new Date(now).toISOString(),
+    partial: safePartialCategories.length > 0,
+    partialCategories: safePartialCategories,
     live: dedupeAndLimit(live, safeLimit),
     upcoming: dedupeAndLimit(upcoming, safeLimit),
     replays: dedupeAndLimit(replays, safeLimit, 'desc')
@@ -111,6 +126,7 @@ module.exports = {
   PUBLIC_HOMEPAGE_API_VERSION,
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   PUBLIC_HOMEPAGE_RESULT_LIMIT,
+  buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   limitPublicHomepageCandidates,
   projectSharedGameForPublicTeam,

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   limitPublicHomepageCandidates,
   serializeHomepageGame
@@ -96,6 +97,26 @@ test('homepage candidate overflow truncates at the scan budget without failing d
   assert.equal(limited[0].id, 'candidate-0');
   assert.equal(limited.at(-1).id, 'candidate-119');
   assert.equal(candidates.length, 121);
+});
+
+test('mixed-visibility overflow is explicitly marked partial when a public candidate falls beyond the scan budget', () => {
+  const candidates = [
+    ...Array.from({ length: PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY }, (_, index) => ({
+      id: `private-${index}`,
+      visibility: 'private'
+    })),
+    { id: 'public-beyond-budget', visibility: 'public' }
+  ];
+  const batch = buildPublicHomepageCandidateBatch(candidates);
+  const response = buildPublicHomepageGamesResponse({
+    live: [],
+    partialCategories: batch.truncated ? ['live'] : []
+  });
+
+  assert.equal(batch.candidates.some((candidate) => candidate.id === 'public-beyond-budget'), false);
+  assert.equal(batch.truncated, true);
+  assert.equal(response.partial, true);
+  assert.deepEqual(response.partialCategories, ['live']);
 });
 
 test('shared games are projected from the selected public team perspective', () => {

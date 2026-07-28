@@ -22,6 +22,10 @@ export async function getPublicHomepageGames({
         throw new Error('Public homepage games response is invalid.');
     }
     return {
+        partial: payload.partial === true,
+        partialCategories: Array.isArray(payload.partialCategories)
+            ? payload.partialCategories.filter((category) => ['live', 'upcoming', 'replays'].includes(category))
+            : [],
         live: Array.isArray(payload.live) ? payload.live : [],
         upcoming: Array.isArray(payload.upcoming) ? payload.upcoming : [],
         replays: Array.isArray(payload.replays) ? payload.replays : []

@@ -6,30 +6,35 @@ import { createLogger } from './logger';
 
 const logger = createLogger('app-auth');
 
-async function clearPerUserCaches() {
+type PerUserCacheResetLoader = () => Promise<() => void>;
+
+const perUserCacheResetLoaders: PerUserCacheResetLoader[] = [
+  async () => (await import('./searchService')).resetAppSearchCache,
+  async () => (await import('./chatService')).resetChatAiModel,
+  async () => (await import('./gameWrapupService')).resetGameWrapupAiModel,
+  async () => (await import('./privateAiService')).resetPrivateAiModel,
+  async () => (await import('./gameDayLineupBuilder')).resetLineupAiModel
+];
+
+export async function clearPerUserCaches(
+  loaders: PerUserCacheResetLoader[] = perUserCacheResetLoaders
+) {
   // These module-level caches key on the signed-in user (search results, help
   // roles) or hold generative-model handles tied to the session's Firebase
   // app. Without this, a second user signing in on the same tab/device could
   // briefly see the previous user's cached search results.
-  const [
-    { resetAppSearchCache },
-    { resetChatAiModel },
-    { resetGameWrapupAiModel },
-    { resetPrivateAiModel },
-    { resetLineupAiModel }
-  ] = await Promise.all([
-    import('./searchService'),
-    import('./chatService'),
-    import('./gameWrapupService'),
-    import('./privateAiService'),
-    import('./gameDayLineupBuilder')
-  ]);
-
-  resetAppSearchCache();
-  resetChatAiModel();
-  resetGameWrapupAiModel();
-  resetPrivateAiModel();
-  resetLineupAiModel();
+  const results = await Promise.allSettled(loaders.map(async (loadReset) => {
+    const reset = await loadReset();
+    reset();
+  }));
+  const failures = results
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => result.reason);
+  if (failures.length > 0) {
+    const cleanupError = new Error('One or more per-user caches could not be reset.');
+    Object.assign(cleanupError, { failures });
+    throw cleanupError;
+  }
 }
 
 export function useAuth(): AuthState {

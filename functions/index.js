@@ -108,8 +108,8 @@ const {
 } = require('./public-team-api-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
-  limitPublicHomepageCandidates,
   serializeHomepageGame
 } = require('./public-homepage-games-core.cjs');
 const {
@@ -6477,21 +6477,24 @@ function buildPublicHomepageCandidateQuery(collectionName, category, now = new D
 
 async function getPublicHomepageCandidateDocuments(collectionName, category, now) {
   const snapshot = await buildPublicHomepageCandidateQuery(collectionName, category, now).get();
-  if (snapshot.size > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY) {
+  const batch = buildPublicHomepageCandidateBatch(snapshot.docs);
+  if (batch.truncated) {
     functions.logger.warn('Truncating a public homepage candidate query at the scan limit.', {
       collectionName,
       category,
       candidateLimit: PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
     });
   }
-  return limitPublicHomepageCandidates(snapshot.docs)
-    .map((docSnap) => ({
+  return {
+    truncated: batch.truncated,
+    candidates: batch.candidates.map((docSnap) => ({
       id: docSnap.id,
       ...(docSnap.data() || {}),
       _sharedGamePath: collectionName === 'sharedGames' ? docSnap.ref.path : null,
       _teamId: collectionName === 'games' ? docSnap.ref?.parent?.parent?.id || '' : '',
       isSharedGame: collectionName === 'sharedGames'
-    }));
+    }))
+  };
 }
 
 function getPublicHomepageTeamIds(game = {}) {
@@ -6552,11 +6555,20 @@ exports.publicHomepageGamesV1 = functions
       const teamCache = new Map();
       const [live, upcoming, replays] = await Promise.all(categories.map((category, index) => (
         serializePublicHomepageCandidates([
-          ...queryResults[index * 2],
-          ...queryResults[index * 2 + 1]
+          ...queryResults[index * 2].candidates,
+          ...queryResults[index * 2 + 1].candidates
         ], teamCache, category)
       )));
-      const body = buildPublicHomepageGamesResponse({ live, upcoming, replays, now });
+      const partialCategories = categories.filter((category, index) => (
+        queryResults[index * 2].truncated || queryResults[index * 2 + 1].truncated
+      ));
+      const body = buildPublicHomepageGamesResponse({
+        live,
+        upcoming,
+        replays,
+        partialCategories,
+        now
+      });
       sendPublicTeamApiSuccess(req, res, body);
     } catch (error) {
       functions.logger.error('Failed to build public homepage games response.', {

@@ -10,6 +10,8 @@ describe('public homepage games client', () => {
             live: [{ id: 'live-1' }],
             upcoming: [{ id: 'upcoming-1' }],
             replays: [{ id: 'replay-1' }],
+            partial: true,
+            partialCategories: ['live', 'invalid'],
             privateInternalField: 'ignored'
         }), {
             status: 200,
@@ -17,6 +19,8 @@ describe('public homepage games client', () => {
         }));
 
         await expect(getPublicHomepageGames({ fetchImpl })).resolves.toEqual({
+            partial: true,
+            partialCategories: ['live'],
             live: [{ id: 'live-1' }],
             upcoming: [{ id: 'upcoming-1' }],
             replays: [{ id: 'replay-1' }]
