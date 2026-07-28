@@ -375,6 +375,7 @@ describe('parent schedule child scope', () => {
 
     expect(scope.children).toEqual([]);
     expect(scope.isPartial).toBe(true);
+    expect(scope.staffTeamsPartial).toBe(false);
   });
 
   it('reloads profile scope during schedule enrichment when the fast scope is partial', async () => {
@@ -458,6 +459,7 @@ describe('parent schedule child scope', () => {
 
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     expect(scope.isPartial).toBe(false);
+    expect(scope.staffTeamsPartial).toBe(false);
     expect(schedule.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     expect(getStaffTeams).toHaveBeenCalledTimes(1);
     expect(getGames).toHaveBeenCalledWith('team-owned', expect.objectContaining({
@@ -473,6 +475,7 @@ describe('parent schedule child scope', () => {
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(scope.isPartial).toBe(true);
+    expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([]);
   });
 
@@ -487,6 +490,7 @@ describe('parent schedule child scope', () => {
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(scope.isPartial).toBe(true);
+    expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
   });
 
@@ -539,6 +543,7 @@ describe('parent schedule child scope', () => {
       const scope = await loadParentScheduleScope(coachUser);
 
       expect(scope.isPartial).toBe(true);
+      expect(scope.staffTeamsPartial).toBe(true);
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     } finally {
       (globalThis as any).window = previousWindow;

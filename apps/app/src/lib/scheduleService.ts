@@ -378,6 +378,8 @@ export type ParentScheduleScope = {
   children: ParentScheduleChild[];
   /** Teams the user can manage, including newly created teams with no players or chat yet. */
   staffTeams?: ParentScheduleStaffTeam[];
+  /** True only when manager-team identity discovery was incomplete. */
+  staffTeamsPartial?: boolean;
   /** True when any authoritative scope read failed and cached access should be preserved. */
   isPartial?: boolean;
 };
@@ -2913,6 +2915,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     profile: profile as Record<string, unknown>,
     children: childResult.children,
     isPartial,
+    staffTeamsPartial: staffTeamResult.isPartial,
     staffTeams: staffTeamResult.teams
       .map((team: any) => {
         const teamId = compactString(team?.id);

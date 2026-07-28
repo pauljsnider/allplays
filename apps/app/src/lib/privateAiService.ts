@@ -5877,6 +5877,8 @@ type AccessibleAiTeamsResult = {
   teams: AccessibleAiTeam[];
   isPartial: boolean;
   partialError?: unknown;
+  managerTeamsPartial: boolean;
+  managerPartialError?: unknown;
 };
 
 async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsResult> {
@@ -5901,23 +5903,47 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
     : { teams: [] };
   const scheduleScope = scheduleScopeResult.status === 'fulfilled'
     ? scheduleScopeResult.value
-    : { staffTeams: [], isPartial: true };
+    : { children: [], staffTeams: [], isPartial: true, staffTeamsPartial: true };
   if (scheduleScope.isPartial === true) isPartial = true;
+  let managerTeamsPartial = scheduleScopeResult.status === 'rejected'
+    || (scheduleScope.staffTeamsPartial ?? scheduleScope.isPartial) === true;
+  let managerPartialError: unknown = scheduleScopeResult.status === 'rejected'
+    ? scheduleScopeResult.reason
+    : undefined;
   const teamIds = new Set<string>();
+  const managerTeamIds = new Set<string>();
   (home.teams || []).forEach((team: any) => {
     const teamId = compactText(team.teamId || team.id);
     if (teamId) teamIds.add(teamId);
   });
+  (scheduleScope.children || []).forEach((child) => {
+    const teamId = compactText(child.teamId);
+    if (teamId) teamIds.add(teamId);
+  });
   (scheduleScope.staffTeams || []).forEach((team) => {
     const teamId = compactText(team.teamId);
-    if (teamId) teamIds.add(teamId);
+    if (teamId) {
+      teamIds.add(teamId);
+      managerTeamIds.add(teamId);
+    }
   });
   (user.coachOf || []).forEach((teamId) => {
     const normalized = compactText(teamId);
-    if (normalized) teamIds.add(normalized);
+    if (normalized) {
+      teamIds.add(normalized);
+      managerTeamIds.add(normalized);
+    }
   });
 
-  const detailResults = await Promise.allSettled(Array.from(teamIds).slice(0, 60).map(async (teamId) => {
+  const candidateTeamIds = Array.from(teamIds);
+  const loadedTeamIds = candidateTeamIds.slice(0, 60);
+  if (candidateTeamIds.length > loadedTeamIds.length) {
+    isPartial = true;
+    if (candidateTeamIds.slice(60).some((teamId) => managerTeamIds.has(teamId))) {
+      managerTeamsPartial = true;
+    }
+  }
+  const detailResults = await Promise.allSettled(loadedTeamIds.map(async (teamId) => {
     const detail = await loadParentTeamDetail(teamId, user);
     if (!detail?.team) return null;
     return {
@@ -5929,18 +5955,30 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
     } satisfies AccessibleAiTeam;
   }));
   const details: AccessibleAiTeam[] = [];
-  detailResults.forEach((result) => {
+  detailResults.forEach((result, index) => {
     if (result.status === 'fulfilled' && result.value) {
       details.push(result.value);
     } else {
       isPartial = true;
+      if (managerTeamIds.has(loadedTeamIds[index])) {
+        managerTeamsPartial = true;
+      }
       if (result.status === 'rejected') {
         partialError ||= result.reason;
+        if (managerTeamIds.has(loadedTeamIds[index])) {
+          managerPartialError ||= result.reason;
+        }
         logger.warn('Unable to verify one private AI team.', { error: result.reason });
       }
     }
   });
-  return { teams: details, isPartial, ...(partialError ? { partialError } : {}) };
+  return {
+    teams: details,
+    isPartial,
+    managerTeamsPartial,
+    ...(partialError ? { partialError } : {}),
+    ...(managerPartialError ? { managerPartialError } : {})
+  };
 }
 
 async function resolveAccessibleTeamId(
@@ -5986,8 +6024,14 @@ async function resolveAccessibleTeamId(
   if (exactPromptTeams.length === 1) {
     return exactPromptTeams[0].teamId;
   }
-  if (access.isPartial) {
-    if (access.partialError instanceof Error) throw access.partialError;
+  const teamIdentityIsPartial = options.requireManager
+    ? access.managerTeamsPartial
+    : access.isPartial;
+  const teamIdentityError = options.requireManager
+    ? access.managerPartialError
+    : access.partialError;
+  if (teamIdentityIsPartial) {
+    if (teamIdentityError instanceof Error) throw teamIdentityError;
     throw new Error('Could not verify all team access. Use an exact team name or team ID and try again.');
   }
   const partiallyNamedTeams = teamName && !exactNamedTeams.length && teamName.length >= 3
@@ -6586,7 +6630,7 @@ function looksLikeFunctionalHelpQuestion(question: string) {
 }
 
 function looksLikeImperativePrivateAiWriteRequest(question: string) {
-  const text = compactText(question).toLowerCase();
+  const text = normalizePrivateAiIntentText(question);
   const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|schedule|reschedule|move|send|resend|retry|set|mark|record|assign|claim|release|save|import|complete|submit|request|revoke|retire|toggle|enable|disable|approve|reject|review|close|reopen|offer|post|pay|favorite|unfavorite)';
   return new RegExp(`^(?:please\\s+)?${writeVerb}\\b`).test(text)
     || new RegExp(`^(?:can|could|would)\\s+you\\s+(?:please\\s+)?${writeVerb}\\b`).test(text)
@@ -6614,7 +6658,7 @@ function privateAiWriteToolMatchesQuestion(question: string, toolName: string) {
 }
 
 function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | null {
-  const text = compactText(question).toLowerCase();
+  const text = normalizePrivateAiIntentText(question);
   if (/\b(?:resend|retry)\b.{0,80}\b(?:parent|guardian|invite|invitation|email)\b/.test(text)) {
     return new Set(['resend_roster_parent_invite']);
   }
@@ -6631,6 +6675,7 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
       && /\b(?:add|remove|delete|deactivate|reactivate|import)\b/.test(text)
       && !/\b(?:profile|tracking|incentive|fee|registration|assignment)\b/.test(text)
     )
+    || looksLikePrivateAiRosterMembershipRequest(text)
   ) {
     return new Set(['apply_roster_import']);
   }
@@ -6741,6 +6786,23 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
     }
   }
   return null;
+}
+
+function normalizePrivateAiIntentText(question: string) {
+  return compactText(question)
+    .toLowerCase()
+    .replace(/^[\s"'“”‘’`()[\]{}<>]+/, '')
+    .trim();
+}
+
+function looksLikePrivateAiRosterMembershipRequest(text: string) {
+  const match = text.match(
+    /\b(?:add|remove|delete|deactivate|reactivate)\s+(.{1,120}?)\s+(?:to|from|on)\s+(?:the\s+)?(.{1,120}?)\s+(?:team|roster)\b/
+  );
+  if (!match) return false;
+  const requestedMember = compactText(match[1]).toLowerCase();
+  if (!requestedMember) return false;
+  return !/\b(?:admin|administrator|coach|staff|game|match|practice|event|schedule|fee|payment|message|email|drill|score|registration|assignment|ride|rideshare)\b/.test(requestedMember);
 }
 
 function getPrivateAiPlannerToolCallKey(call: PrivateAiToolCall) {
