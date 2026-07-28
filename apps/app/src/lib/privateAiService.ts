@@ -6668,6 +6668,9 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
   ) {
     return new Set(['invite_roster_parent']);
   }
+  if (looksLikePrivateAiTeamAdminRequest(text)) {
+    return new Set(['invite_team_admin']);
+  }
   if (
     /\broster\b/.test(text)
     || (
@@ -6720,9 +6723,6 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
   }
   if (/\b(?:team settings?|team name|team sport|league url|livestream url)\b/.test(text)) {
     return new Set(['update_team_settings']);
-  }
-  if (/\b(?:team admin|administrator)\b/.test(text) && /\b(?:invite|add)\b/.test(text)) {
-    return new Set(['invite_team_admin']);
   }
   if (/\b(?:stat configuration|stat tracker|tracker configuration)\b/.test(text)) {
     return new Set(['save_stat_configuration']);
@@ -6795,6 +6795,15 @@ function normalizePrivateAiIntentText(question: string) {
     .trim();
 }
 
+function looksLikePrivateAiTeamAdminRequest(text: string) {
+  return (
+    /\b(?:team admin|administrator)\b/.test(text)
+    && /\b(?:invite|add)\b/.test(text)
+  ) || (
+    /\b(?:invite|add)\s+.{1,120}?\s+(?:to|on)\s+(?:the\s+)?.{1,120}?\s+team\b.{0,80}\b(?:as|to be)\s+(?:an?\s+)?(?:team\s+)?(?:admin|administrator)\b/.test(text)
+  );
+}
+
 function looksLikePrivateAiRosterMembershipRequest(text: string) {
   const match = text.match(
     /\b(?:add|remove|delete|deactivate|reactivate)\s+(.{1,120}?)\s+(?:to|from|on)\s+(?:the\s+)?(.{1,120}?)\s+(?:team|roster)\b/
@@ -6802,7 +6811,11 @@ function looksLikePrivateAiRosterMembershipRequest(text: string) {
   if (!match) return false;
   const requestedMember = compactText(match[1]).toLowerCase();
   if (!requestedMember) return false;
-  return !/\b(?:admin|administrator|coach|staff|game|match|practice|event|schedule|fee|payment|message|email|drill|score|registration|assignment|ride|rideshare)\b/.test(requestedMember);
+  const trailingQualifier = text.slice((match.index || 0) + match[0].length);
+  if (/\b(?:as|with|to be)\b.{0,40}\b(?:admin|administrator|coach|staff|manager)\b/.test(trailingQualifier)) {
+    return false;
+  }
+  return !/\b(?:admin|administrator|coach|staff|manager|game|match|practice|event|schedule|fee|payment|message|email|drill|score|registration|assignment|ride|rideshare)\b/.test(requestedMember);
 }
 
 function getPrivateAiPlannerToolCallKey(call: PrivateAiToolCall) {

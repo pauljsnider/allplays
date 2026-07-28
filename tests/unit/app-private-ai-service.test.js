@@ -5537,7 +5537,8 @@ describe('private AI service', () => {
 
     it.each([
         'Add a game to the Cougars team.',
-        'Add a team admin to the Cougars team.'
+        'Add a team admin to the Cougars team.',
+        'Add Jane to the Cougars team as an admin.'
     ])('does not misclassify another domain as a roster membership request: %s', async (prompt) => {
         const coachUser = {
             ...authUser,
@@ -5574,6 +5575,54 @@ describe('private AI service', () => {
             })
         ]);
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('routes a trailing team-admin qualifier to the administrator invite tool', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'invite_team_admin',
+                    args: {
+                        teamName: 'Bears',
+                        email: 'jane.admin@example.com'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The administrator invitation is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Add Jane to the Bears team as an admin at jane.admin@example.com.'
+        );
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'invite_team_admin',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['users', 'user-1', 'privateAiPendingActions', expect.any(String)]
+            }),
+            expect.objectContaining({
+                toolName: 'invite_team_admin',
+                args: expect.objectContaining({
+                    teamId: 'team-1',
+                    email: 'jane.admin@example.com'
+                })
+            })
+        );
     });
 
     it.each([
