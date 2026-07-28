@@ -313,6 +313,12 @@ describe('firebase runtime config', () => {
 
     it('prefers explicit inline firebase config without making a network request', async () => {
         resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:3000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            pathname: '/'
+        };
         globalThis.window.__ALLPLAYS_CONFIG__ = {
             firebase: {
                 apiKey: 'inline-key',
@@ -346,6 +352,12 @@ describe('firebase runtime config', () => {
 
     it('falls back to inline config before bundled defaults when hosted init lookup fails', async () => {
         resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:3000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            pathname: '/'
+        };
         globalThis.window.__ALLPLAYS_CONFIG__ = {
             firebase: {
                 apiKey: 'inline-key',
@@ -368,6 +380,90 @@ describe('firebase runtime config', () => {
             projectId: 'inline-allplays',
             appId: 'inline-app'
         });
+    });
+
+    it('rejects inline production Firebase config on localhost', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://localhost:3000',
+            protocol: 'http:',
+            hostname: 'localhost',
+            pathname: '/'
+        };
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            }
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects inline production Firebase config on a custom preview host', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://preview.example.com',
+            protocol: 'https:',
+            hostname: 'preview.example.com',
+            pathname: '/'
+        };
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            }
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for this non-production host.'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+    });
+
+    it('ignores inline production Firebase config on a Firebase Hosting preview', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays-preview.web.app',
+            protocol: 'https:',
+            hostname: 'allplays-preview.web.app',
+            pathname: '/'
+        };
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'production-key',
+                authDomain: 'game-flow-c6311.firebaseapp.com',
+                projectId: 'game-flow-c6311',
+                messagingSenderId: '982493478258',
+                appId: 'production-app'
+            }
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'preview-key',
+                authDomain: 'allplays-preview.firebaseapp.com',
+                projectId: 'allplays-preview',
+                messagingSenderId: '456',
+                appId: 'preview-app'
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).resolves.toMatchObject({
+            projectId: 'allplays-preview'
+        });
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
     it('returns the bundled image firebase config when no inline image config is present', () => {

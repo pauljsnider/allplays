@@ -1,5 +1,6 @@
 const {
   isStrictPublicTeam,
+  normalizeTeamId,
   serializePublicGame,
   serializePublicTeam
 } = require('./public-team-api-core.cjs');
@@ -7,6 +8,8 @@ const {
 const PUBLIC_HOMEPAGE_API_VERSION = 1;
 const PUBLIC_HOMEPAGE_RESULT_LIMIT = 6;
 const PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY = 120;
+const PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE = 2;
+const PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS = 240;
 
 function compactText(value, maxLength = 128) {
   if (typeof value !== 'string' && typeof value !== 'number') return '';
@@ -29,6 +32,16 @@ function buildPublicHomepageCandidateBatch(candidates = []) {
   return {
     candidates: limitPublicHomepageCandidates(safeCandidates),
     truncated: safeCandidates.length > PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY
+  };
+}
+
+function buildPublicHomepageTeamIdBatch(values = []) {
+  const validatedTeamIds = [...new Set(
+    (Array.isArray(values) ? values : []).map(normalizeTeamId).filter(Boolean)
+  )];
+  return {
+    teamIds: validatedTeamIds.slice(0, PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE),
+    truncated: validatedTeamIds.length > PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE
   };
 }
 
@@ -88,13 +101,30 @@ async function serializePublicHomepageCandidates({
   category,
   getTeamIds,
   getTeam,
+  teamLookupBudget = {
+    seenTeamIds: new Set(),
+    maxUniqueTeamLookups: PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS
+  },
   onTeamError = () => undefined
 } = {}) {
   const serialized = [];
   let partial = false;
   for (const candidate of candidates) {
-    const teamIds = getTeamIds(candidate);
+    const teamIdResult = getTeamIds(candidate);
+    const teamIds = Array.isArray(teamIdResult)
+      ? teamIdResult
+      : Array.isArray(teamIdResult?.teamIds) ? teamIdResult.teamIds : [];
+    if (!Array.isArray(teamIdResult) && teamIdResult?.truncated === true) {
+      partial = true;
+    }
     for (const teamId of teamIds) {
+      if (!teamLookupBudget.seenTeamIds.has(teamId)) {
+        if (teamLookupBudget.seenTeamIds.size >= teamLookupBudget.maxUniqueTeamLookups) {
+          partial = true;
+          continue;
+        }
+        teamLookupBudget.seenTeamIds.add(teamId);
+      }
       let team;
       try {
         team = await getTeam(teamId);
@@ -162,9 +192,12 @@ function buildPublicHomepageGamesResponse({
 module.exports = {
   PUBLIC_HOMEPAGE_API_VERSION,
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE,
+  PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS,
   PUBLIC_HOMEPAGE_RESULT_LIMIT,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
+  buildPublicHomepageTeamIdBatch,
   limitPublicHomepageCandidates,
   projectSharedGameForPublicTeam,
   serializeHomepageGame,

@@ -17,6 +17,9 @@ test('exports a bounded and cached public homepage games handler', () => {
   assert.match(handler, /Truncating a public homepage candidate query at the scan limit/);
   assert.doesNotMatch(handler, /candidate scan limit exceeded/);
   assert.match(handler, /getStrictPublicTeam\(teamId\)/);
+  assert.match(handler, /buildPublicHomepageTeamIdBatch\(\[/);
+  assert.match(handler, /PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS/);
+  assert.match(handler, /teamLookupBudget/);
   assert.match(handler, /serializePublicHomepageCandidates\(\{/);
   assert.match(handler, /serializedResults\[index\]\.partial/);
   assert.match(handler, /buildPublicHomepageGamesResponse/);

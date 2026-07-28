@@ -2,8 +2,10 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
+  buildPublicHomepageTeamIdBatch,
   limitPublicHomepageCandidates,
   serializeHomepageGame,
   serializePublicHomepageCandidates
@@ -136,6 +138,66 @@ test('team lookup failures mark the affected homepage category partial', async (
   assert.equal(result.partial, true);
   assert.equal(errors.length, 1);
   assert.equal(errors[0].teamId, 'team-unavailable');
+});
+
+test('oversized shared-game team ID arrays are validated, capped, and marked partial', async () => {
+  const batch = buildPublicHomepageTeamIdBatch([
+    'team-home',
+    'team-away',
+    '../invalid',
+    'team-extra-1',
+    'team-extra-2',
+    'team-home'
+  ]);
+  const lookups = [];
+  const result = await serializePublicHomepageCandidates({
+    candidates: [{ id: 'shared-oversized' }],
+    category: 'live',
+    getTeamIds: () => batch,
+    getTeam: async (teamId) => {
+      lookups.push(teamId);
+      return null;
+    }
+  });
+
+  assert.equal(PUBLIC_HOMEPAGE_MAX_TEAM_IDS_PER_CANDIDATE, 2);
+  assert.deepEqual(batch.teamIds, ['team-home', 'team-away']);
+  assert.equal(batch.truncated, true);
+  assert.deepEqual(lookups, ['team-home', 'team-away']);
+  assert.deepEqual(result, { games: [], partial: true });
+});
+
+test('aggregate unique team lookup exhaustion marks only affected serialization partial', async () => {
+  const teamLookupBudget = {
+    seenTeamIds: new Set(),
+    maxUniqueTeamLookups: 3
+  };
+  const lookups = [];
+  const makeCandidate = (teamId) => ({
+    id: `game-${teamId}`,
+    _teamId: teamId,
+    date: '2026-07-28T18:00:00Z',
+    liveStatus: 'live'
+  });
+  const serialize = (teamIds) => serializePublicHomepageCandidates({
+    candidates: teamIds.map(makeCandidate),
+    category: 'live',
+    getTeamIds: (candidate) => [candidate._teamId],
+    getTeam: async (teamId) => {
+      lookups.push(teamId);
+      return publicTeam;
+    },
+    teamLookupBudget
+  });
+
+  const first = await serialize(['team-1', 'team-2']);
+  const affected = await serialize(['team-2', 'team-3', 'team-4']);
+
+  assert.equal(first.partial, false);
+  assert.equal(affected.partial, true);
+  assert.deepEqual(lookups, ['team-1', 'team-2', 'team-2', 'team-3']);
+  assert.deepEqual([...teamLookupBudget.seenTeamIds], ['team-1', 'team-2', 'team-3']);
+  assert.equal(affected.games.some((game) => game.teamId === 'team-4'), false);
 });
 
 test('private or missing teams remain an authoritative omission', async () => {

@@ -108,8 +108,10 @@ const {
 } = require('./public-team-api-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
+  PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
+  buildPublicHomepageTeamIdBatch,
   serializePublicHomepageCandidates
 } = require('./public-homepage-games-core.cjs');
 const {
@@ -6498,12 +6500,14 @@ async function getPublicHomepageCandidateDocuments(collectionName, category, now
 }
 
 function getPublicHomepageTeamIds(game = {}) {
-  if (!game.isSharedGame) return game._teamId ? [game._teamId] : [];
-  return [...new Set([
+  if (!game.isSharedGame) {
+    return buildPublicHomepageTeamIdBatch([game._teamId]);
+  }
+  return buildPublicHomepageTeamIdBatch([
     game.homeTeamId,
     game.awayTeamId,
     ...(Array.isArray(game.teamIds) ? game.teamIds : [])
-  ].map(normalizeTeamId).filter(Boolean))];
+  ]);
 }
 
 exports.publicHomepageGamesV1 = functions
@@ -6521,6 +6525,10 @@ exports.publicHomepageGamesV1 = functions
         getPublicHomepageCandidateDocuments('sharedGames', category, now)
       ]));
       const teamCache = new Map();
+      const teamLookupBudget = {
+        seenTeamIds: new Set(),
+        maxUniqueTeamLookups: PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS
+      };
       const serializedResults = await Promise.all(categories.map((category, index) => (
         serializePublicHomepageCandidates({
           candidates: [
@@ -6529,6 +6537,7 @@ exports.publicHomepageGamesV1 = functions
           ],
           category,
           getTeamIds: getPublicHomepageTeamIds,
+          teamLookupBudget,
           getTeam(teamId) {
             if (!teamCache.has(teamId)) {
               teamCache.set(teamId, getStrictPublicTeam(teamId));

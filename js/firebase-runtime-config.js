@@ -204,14 +204,6 @@ async function fetchFirebaseConfigFromHosting() {
 }
 
 export async function resolvePrimaryFirebaseConfig() {
-    const globalConfig = readGlobalConfig();
-    const inlineConfig = normalizeFirebaseConfig(
-        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
-    );
-    if (inlineConfig) {
-        return inlineConfig;
-    }
-
     const runtimeHostname = typeof window !== 'undefined'
         ? window.location?.hostname
         : globalThis.location?.hostname;
@@ -220,6 +212,21 @@ export async function resolvePrimaryFirebaseConfig() {
         : globalThis.location?.protocol;
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
+    const globalConfig = readGlobalConfig();
+    const inlineConfig = normalizeFirebaseConfig(
+        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
+    );
+    if (
+        inlineConfig
+        && (
+            !isBundledProductionFirebaseConfig(inlineConfig)
+            || canonicalProductionHost
+            || nativeRuntime
+            || !runtimeHostname
+        )
+    ) {
+        return inlineConfig;
+    }
 
     if (nativeRuntime) {
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
