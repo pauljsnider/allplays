@@ -9,6 +9,7 @@ import {
     injectPagesSecurityMeta,
     isAppCheckEnforcementReady,
     readPagesSecurityMetaPolicies,
+    resolveStagedFirebaseRuntimeConfig,
     stagePagesBundle,
     toPagesMetaCsp,
     writeAppCheckRuntimeConfig
@@ -18,6 +19,7 @@ import { writeFirebaseHostingConfig } from '../../scripts/write-firebase-hosting
 const tempDirs = [];
 const originalSiteKey = process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY;
 const originalEnforcementReady = process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
+const originalFirebaseRuntimeTarget = process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET;
 
 function makeTempDir() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allplays-pages-bundle-'));
@@ -68,6 +70,7 @@ function makePagesSecurityFirebaseConfig() {
 beforeEach(() => {
     delete process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY;
     delete process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
+    delete process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET;
 });
 
 afterEach(() => {
@@ -78,9 +81,20 @@ afterEach(() => {
     else process.env.ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY = originalSiteKey;
     if (originalEnforcementReady === undefined) delete process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY;
     else process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY = originalEnforcementReady;
+    if (originalFirebaseRuntimeTarget === undefined) delete process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET;
+    else process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET = originalFirebaseRuntimeTarget;
 });
 
 describe('pages bundle staging', () => {
+    it('uses a non-production Firebase identity only for the explicit preview smoke target', () => {
+        expect(resolveStagedFirebaseRuntimeConfig('preview-smoke').projectId)
+            .toBe('allplays-preview-smoke');
+        expect(resolveStagedFirebaseRuntimeConfig(undefined).projectId)
+            .toBe('game-flow-c6311');
+        expect(resolveStagedFirebaseRuntimeConfig('unexpected').projectId)
+            .toBe('game-flow-c6311');
+    });
+
     it('keeps raw static hosting fail-open without a configured App Check key', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const runtimeConfigPath = path.join(

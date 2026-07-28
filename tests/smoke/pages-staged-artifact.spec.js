@@ -4,7 +4,8 @@ import path from 'node:path';
 import {
     createAppCheckRuntimeConfig,
     isAppCheckEnforcementReady,
-    readPagesSecurityMetaPolicies
+    readPagesSecurityMetaPolicies,
+    resolveStagedFirebaseRuntimeConfig
 } from '../../scripts/stage-pages-bundle.mjs';
 
 const stagedArtifactEnabled = process.env.SMOKE_PAGES_STAGED_ARTIFACT === 'true';
@@ -12,6 +13,8 @@ const expectedEnforcementReady = isAppCheckEnforcementReady(
     process.env.SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY
 );
 const expectedSiteKey = process.env.SMOKE_EXPECTED_APP_CHECK_SITE_KEY || '';
+const expectedFirebaseRuntimeTarget = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET || '';
+const previewSmokeRuntime = expectedFirebaseRuntimeTarget === 'preview-smoke';
 const securityPolicies = readPagesSecurityMetaPolicies(path.resolve(import.meta.dirname, '../..'));
 
 test.describe('exact staged GitHub Pages artifact', () => {
@@ -26,7 +29,8 @@ test.describe('exact staged GitHub Pages artifact', () => {
         expect(runtimeConfigResponse.status()).toBe(200);
         const runtimeConfig = await runtimeConfigResponse.json();
         expect(runtimeConfig).toEqual(createAppCheckRuntimeConfig(expectedSiteKey, {
-            enforcementReady: expectedEnforcementReady
+            enforcementReady: expectedEnforcementReady,
+            firebaseConfig: resolveStagedFirebaseRuntimeConfig(expectedFirebaseRuntimeTarget)
         }));
         if (expectedEnforcementReady) {
             expect(expectedSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
@@ -64,6 +68,12 @@ test.describe('exact staged GitHub Pages artifact', () => {
         const externalAttestationRequests = [];
 
         page.on('pageerror', (error) => {
+            if (
+                previewSmokeRuntime
+                && /Installations:.*API key not valid/i.test(error.message)
+            ) {
+                return;
+            }
             fatalErrors.push(error.message);
         });
         page.on('requestfailed', (request) => {

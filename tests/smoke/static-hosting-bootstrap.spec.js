@@ -18,6 +18,10 @@ async function loginWithPassword(page, baseURL, email, password) {
 }
 
 const smokeContext = getSmokeContext();
+const previewSmokeRuntime = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET === 'preview-smoke';
+const previewRuntimeIgnoredErrors = previewSmokeRuntime
+    ? [/Installations:.*API key not valid/i]
+    : [];
 
 async function stubHomepageEndpointForBootIsolation(page) {
     await page.route(PUBLIC_HOMEPAGE_GAMES_URL, async (route) => {
@@ -42,7 +46,11 @@ test.describe('public smoke pages', () => {
             }
             await assertPageBootsWithoutFatalErrors(page, {
                 baseURL,
-                ...definition
+                ...definition,
+                ignoredConsoleErrors: [
+                    ...(definition.ignoredConsoleErrors || []),
+                    ...previewRuntimeIgnoredErrors
+                ]
             });
         });
     }
@@ -53,14 +61,21 @@ test.describe('preview boot smoke pages', () => {
         test(`${definition.name} boots without fatal runtime errors`, async ({ page, baseURL }) => {
             await assertPageBootsWithoutFatalErrors(page, {
                 baseURL,
-                ...definition
+                ...definition,
+                ignoredConsoleErrors: [
+                    ...(definition.ignoredConsoleErrors || []),
+                    ...previewRuntimeIgnoredErrors
+                ]
             });
         });
     }
 });
 
 test.describe('authenticated smoke pages', () => {
-    test.skip(!smokeContext.authEmail || !smokeContext.authPassword, 'SMOKE_AUTH_EMAIL and SMOKE_AUTH_PASSWORD are required');
+    test.skip(
+        previewSmokeRuntime || !smokeContext.authEmail || !smokeContext.authPassword,
+        'Authenticated smoke requires a configured non-isolated Firebase runtime.'
+    );
     test.setTimeout(300_000);
 
     test('authenticated coach and parent pages render', async ({ page, baseURL }) => {

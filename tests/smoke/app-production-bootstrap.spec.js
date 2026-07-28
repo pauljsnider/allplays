@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const appBootUrl = process.env.SMOKE_APP_BOOT_URL || '';
+const previewSmokeRuntime = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET === 'preview-smoke';
 test.skip(!appBootUrl, 'SMOKE_APP_BOOT_URL is required for production app boot smoke tests');
 
 function appUrl(hashPath = '/auth') {
@@ -18,6 +19,12 @@ test('production React app boots from deployed /app bundle', async ({ page }) =>
     const stylesheetResponses = [];
 
     page.on('pageerror', (error) => {
+        if (
+            previewSmokeRuntime
+            && /Installations:.*API key not valid/i.test(error.message)
+        ) {
+            return;
+        }
         fatalErrors.push(error.message);
     });
 

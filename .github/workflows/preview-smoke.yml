@@ -108,6 +108,7 @@ jobs:
         env:
           ALLPLAYS_APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
           ALLPLAYS_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
+          ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Start staged Pages artifact server
@@ -172,6 +173,7 @@ jobs:
           SMOKE_APP_BOOT_URL: http://127.0.0.1:4173/app/
           SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY: ${{ vars.APP_CHECK_ENFORCEMENT_READY }}
           SMOKE_EXPECTED_APP_CHECK_SITE_KEY: ${{ vars.APP_CHECK_RECAPTCHA_ENTERPRISE_SITE_KEY }}
+          SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET: preview-smoke
           SMOKE_PAGES_STAGED_ARTIFACT: 'true'
           SMOKE_PARENT_EMAIL: ${{ vars.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}

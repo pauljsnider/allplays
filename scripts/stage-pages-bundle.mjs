@@ -59,6 +59,19 @@ const primaryFirebaseRuntimeConfig = {
     appId: '1:982493478258:web:1f942c420cef6c40e8b1eb',
     measurementId: 'G-VTLSFV4PHW'
 };
+const previewSmokeFirebaseRuntimeConfig = {
+    apiKey: 'preview-smoke-key',
+    authDomain: 'allplays-preview-smoke.firebaseapp.com',
+    projectId: 'allplays-preview-smoke',
+    messagingSenderId: '123456789',
+    appId: '1:123456789:web:previewsmoke'
+};
+
+export function resolveStagedFirebaseRuntimeConfig(target) {
+    return target === 'preview-smoke'
+        ? previewSmokeFirebaseRuntimeConfig
+        : primaryFirebaseRuntimeConfig;
+}
 const pagesMetaUnsupportedDirectives = new Set(['frame-ancestors']);
 const widgetScoreboardRelativePath = 'widget-scoreboard.html';
 
@@ -234,10 +247,13 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
     };
 }
 
-export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false } = {}) {
+export function createAppCheckRuntimeConfig(
+    siteKey,
+    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+) {
     if (!isAppCheckEnforcementReady(enforcementReady)) {
         return {
-            firebase: primaryFirebaseRuntimeConfig,
+            firebase: firebaseConfig,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -253,7 +269,7 @@ export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false 
     }
 
     return {
-        firebase: primaryFirebaseRuntimeConfig,
+        firebase: firebaseConfig,
         appCheck: {
             enabled: true,
             recaptchaEnterpriseSiteKey: normalizedSiteKey,
@@ -262,12 +278,19 @@ export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false 
     };
 }
 
-export function writeAppCheckRuntimeConfig(destinationDir, siteKey, { enforcementReady = false } = {}) {
+export function writeAppCheckRuntimeConfig(
+    destinationDir,
+    siteKey,
+    { enforcementReady = false, firebaseConfig = primaryFirebaseRuntimeConfig } = {}
+) {
     const outputPath = path.join(destinationDir, appCheckRuntimeConfigRelativePath);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(
         outputPath,
-        `${JSON.stringify(createAppCheckRuntimeConfig(siteKey, { enforcementReady }), null, 2)}\n`
+        `${JSON.stringify(createAppCheckRuntimeConfig(
+            siteKey,
+            { enforcementReady, firebaseConfig }
+        ), null, 2)}\n`
     );
     return outputPath;
 }
@@ -352,6 +375,9 @@ export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = 
         {
             enforcementReady: isAppCheckEnforcementReady(
                 process.env.ALLPLAYS_APP_CHECK_ENFORCEMENT_READY
+            ),
+            firebaseConfig: resolveStagedFirebaseRuntimeConfig(
+                process.env.ALLPLAYS_FIREBASE_RUNTIME_TARGET
             )
         }
     );
