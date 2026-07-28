@@ -38,6 +38,11 @@ describe('firebase runtime config', () => {
 
     it('falls back to the bundled primary firebase config when hosting init is unavailable', async () => {
         resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays.ai',
+            hostname: 'allplays.ai',
+            pathname: '/'
+        };
         globalThis.fetch = vi.fn().mockResolvedValue({
             ok: false,
             status: 404
@@ -51,7 +56,7 @@ describe('firebase runtime config', () => {
         // project and broke Installations/FCM/Performance wherever the fallback ran.
         expect(config.appId).toBe('1:982493478258:web:1f942c420cef6c40e8b1eb');
         expect(config.messagingSenderId).toBe('982493478258');
-        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
     it('keeps hosted demo firebase config when served through local Firebase hosting', async () => {
@@ -75,6 +80,99 @@ describe('firebase runtime config', () => {
             projectId: 'demo-allplays',
             appId: 'demo-app'
         });
+    });
+
+    it('ignores a production runtime file on a non-production Firebase host', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays-preview.web.app',
+            hostname: 'allplays-preview.web.app',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/.well-known/allplays-runtime-config.json')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        firebase: {
+                            apiKey: 'production-key',
+                            authDomain: 'game-flow-c6311.firebaseapp.com',
+                            projectId: 'game-flow-c6311',
+                            messagingSenderId: '982493478258',
+                            appId: 'production-app'
+                        }
+                    })
+                };
+            }
+            if (url.endsWith('/__/firebase/init.json')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        apiKey: 'preview-key',
+                        authDomain: 'allplays-preview.firebaseapp.com',
+                        projectId: 'allplays-preview',
+                        messagingSenderId: '456',
+                        appId: 'preview-app'
+                    })
+                };
+            }
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('allplays-preview');
+        expect(globalThis.fetch).toHaveBeenNthCalledWith(
+            1,
+            'https://allplays-preview.web.app/.well-known/allplays-runtime-config.json',
+            { cache: 'no-store' }
+        );
+        expect(globalThis.fetch).toHaveBeenNthCalledWith(
+            2,
+            'https://allplays-preview.web.app/__/firebase/init.json',
+            { cache: 'no-store' }
+        );
+    });
+
+    it('fails closed when a non-production host has only the bundled production config', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://preview.example.com',
+            hostname: 'preview.example.com',
+            pathname: '/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                firebase: {
+                    apiKey: 'production-key',
+                    authDomain: 'game-flow-c6311.firebaseapp.com',
+                    projectId: 'game-flow-c6311',
+                    messagingSenderId: '982493478258',
+                    appId: 'production-app'
+                }
+            })
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config is unavailable for this non-production host.'
+        );
+    });
+
+    it('keeps the bundled config available to the packaged native app', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'capacitor://localhost',
+            protocol: 'capacitor:',
+            hostname: 'localhost',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn();
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('game-flow-c6311');
+        expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it('prefers explicit inline firebase config without making a network request', async () => {
@@ -234,7 +332,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=13');
+            expect(source).toContain('firebase-runtime-config.js?v=14');
         }
     });
 

@@ -2,6 +2,7 @@ const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
 const ALLPLAYS_RUNTIME_CONFIG_PATH = '.well-known/allplays-runtime-config.json';
 const REQUIRED_FIREBASE_FIELDS = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId'];
 const OPTIONAL_FIREBASE_FIELDS = ['storageBucket', 'measurementId'];
+const CANONICAL_PRODUCTION_HOSTNAMES = new Set(['allplays.ai', 'www.allplays.ai']);
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -167,6 +168,18 @@ function normalizeFirebaseConfig(rawConfig) {
     return hasRequiredFields ? normalized : null;
 }
 
+function isCanonicalProductionHostname(hostname) {
+    return CANONICAL_PRODUCTION_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
+}
+
+function isBundledProductionFirebaseConfig(config) {
+    return config?.projectId === DEFAULT_PRIMARY_FIREBASE_CONFIG.projectId;
+}
+
+function isNativeRuntimeProtocol(protocol) {
+    return protocol === 'capacitor:' || protocol === 'ionic:';
+}
+
 async function fetchFirebaseConfigFromHosting() {
     const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
         ? window.location.origin
@@ -199,29 +212,61 @@ export async function resolvePrimaryFirebaseConfig() {
         return inlineConfig;
     }
 
+    const runtimeHostname = typeof window !== 'undefined'
+        ? window.location?.hostname
+        : globalThis.location?.hostname;
+    const runtimeProtocol = typeof window !== 'undefined'
+        ? window.location?.protocol
+        : globalThis.location?.protocol;
+    const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
+    const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const remoteConfig = await fetchAllPlaysRuntimeConfig();
     const remoteFirebaseConfig = normalizeFirebaseConfig(
         remoteConfig.firebase || remoteConfig.firebasePrimary
     );
-    if (remoteFirebaseConfig) {
+    const rejectedProductionRuntimeConfig = Boolean(
+        remoteFirebaseConfig
+        && !canonicalProductionHost
+        && !nativeRuntime
+        && isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+    );
+    if (
+        remoteFirebaseConfig
+        && (
+            canonicalProductionHost
+            || nativeRuntime
+            || !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+        )
+    ) {
         return remoteFirebaseConfig;
     }
 
-    const runtimeHostname = typeof window !== 'undefined'
-        ? window.location?.hostname
-        : globalThis.location?.hostname;
+    if (nativeRuntime) {
+        return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    }
+
+    const localDevelopmentHost = runtimeHostname === 'localhost' || runtimeHostname === '127.0.0.1';
+    const localOrUnresolvedHost = !runtimeHostname || localDevelopmentHost;
     const canUseHostingInit = !runtimeHostname
-        || runtimeHostname === 'localhost'
-        || runtimeHostname === '127.0.0.1'
+        || localDevelopmentHost
         || runtimeHostname.endsWith('.web.app')
         || runtimeHostname.endsWith('.firebaseapp.com');
     if (!canUseHostingInit) {
-        return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+        if (canonicalProductionHost) {
+            return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+        }
+        throw new Error('Firebase config is unavailable for this non-production host.');
     }
 
     try {
         return await fetchFirebaseConfigFromHosting();
     } catch (error) {
+        if (
+            !canonicalProductionHost
+            && !(localOrUnresolvedHost && !rejectedProductionRuntimeConfig)
+        ) {
+            throw error;
+        }
         console.warn('Falling back to bundled Firebase config.', error);
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
