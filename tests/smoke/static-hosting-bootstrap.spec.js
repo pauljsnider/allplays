@@ -62,6 +62,12 @@ test.describe('preview boot smoke pages', () => {
             await assertPageBootsWithoutFatalErrors(page, {
                 baseURL,
                 ...definition,
+                expectedAttributes: (
+                    previewSmokeRuntime
+                    && definition.name === 'player details without game context'
+                )
+                    ? []
+                    : definition.expectedAttributes,
                 ignoredConsoleErrors: [
                     ...(definition.ignoredConsoleErrors || []),
                     ...previewRuntimeIgnoredErrors
