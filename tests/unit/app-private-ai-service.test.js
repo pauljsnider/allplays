@@ -1388,6 +1388,97 @@ describe('private AI service', () => {
         expect(directResult.assistantMessage.text).toContain('Reply yes to apply these roster changes.');
     });
 
+    it('stages a quoted natural-language player add against a unique verified shortened team name', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach', 'parent'],
+            coachOf: ['team-cougars'],
+            parentPlayerKeys: []
+        };
+        homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Unrelated Home slice unavailable'));
+        scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-cougars', teamName: 'K - Cougars' }],
+            isPartial: true,
+            staffTeamsPartial: false
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-cougars', name: 'K - Cougars' },
+            players: [],
+            inactivePlayers: [],
+            canManageTeam: true
+        });
+        const addOperation = {
+            type: 'add',
+            payload: { name: 'Tad Mac' },
+            errors: []
+        };
+        rosterAiMocks.normalizeRosterAiImportResponse.mockReturnValue({
+            rows: [rosterPreviewRow({
+                action: 'add',
+                playerId: '',
+                name: 'Tad Mac',
+                number: '',
+                operation: addOperation
+            })],
+            errors: []
+        });
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'I could not identify a roster action.'
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'apply_roster_import',
+                    args: {
+                        teamName: 'Cougars',
+                        operations: [{
+                            action: 'add',
+                            player: { name: 'Tad Mac' }
+                        }]
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'Tad Mac is staged for the K - Cougars roster. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, '“Add Tad Mac to the Cougars team');
+
+        expect(result.answer).toContain('staged for the K - Cougars roster');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'apply_roster_import',
+                ok: true,
+                requiresConfirmation: true,
+                data: expect.objectContaining({
+                    previewSummary: expect.objectContaining({ add: 1 })
+                })
+            })
+        ]);
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(3);
+        expect(aiMocks.model.generateContent.mock.calls[1][0]).toContain(
+            'prior response claimed or described a change without calling a write tool'
+        );
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['teams', 'team-cougars', 'privateAiPendingActions', expect.any(String)]
+            }),
+            expect.objectContaining({
+                teamId: 'team-cougars',
+                args: expect.objectContaining({
+                    teamId: 'team-cougars',
+                    operations: [expect.objectContaining({
+                        type: 'add',
+                        payload: { name: 'Tad Mac' }
+                    })]
+                })
+            })
+        );
+    });
+
     it('reports home and team-management read failures instead of presenting empty complete data', async () => {
         const coachUser = {
             ...authUser,
@@ -5442,6 +5533,96 @@ describe('private AI service', () => {
             })
         ]);
         expect(firebaseMocks.setDoc.mock.calls.some((call) => call[1]?.toolName === 'create_schedule_event')).toBe(false);
+    });
+
+    it.each([
+        'Add a game to the Cougars team.',
+        'Add a team admin to the Cougars team.',
+        'Add Jane to the Cougars team as an admin.'
+    ])('does not misclassify another domain as a roster membership request: %s', async (prompt) => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'apply_roster_import',
+                    args: {
+                        teamName: 'Cougars',
+                        operations: [{
+                            action: 'add',
+                            player: { name: 'Wrong Domain' }
+                        }]
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The roster change is staged.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(coachUser, prompt);
+
+        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'apply_roster_import',
+                ok: false,
+                error: expect.stringContaining('does not match the requested operation')
+            })
+        ]);
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('routes a trailing team-admin qualifier to the administrator invite tool', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'invite_team_admin',
+                    args: {
+                        teamName: 'Bears',
+                        email: 'jane.admin@example.com'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The administrator invitation is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Add Jane to the Bears team as an admin at jane.admin@example.com.'
+        );
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'invite_team_admin',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['users', 'user-1', 'privateAiPendingActions', expect.any(String)]
+            }),
+            expect.objectContaining({
+                toolName: 'invite_team_admin',
+                args: expect.objectContaining({
+                    teamId: 'team-1',
+                    email: 'jane.admin@example.com'
+                })
+            })
+        );
     });
 
     it.each([
