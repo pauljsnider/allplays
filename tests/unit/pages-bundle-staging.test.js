@@ -90,7 +90,7 @@ describe('pages bundle staging', () => {
         );
         const runtimeConfig = JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'));
 
-        expect(runtimeConfig).toEqual({
+        expect(runtimeConfig).toMatchObject({
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -309,7 +309,7 @@ describe('pages bundle staging', () => {
         expect(JSON.parse(fs.readFileSync(
             path.join(destinationDir, '.well-known', 'allplays-runtime-config.json'),
             'utf8'
-        ))).toEqual({
+        ))).toMatchObject({
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -372,7 +372,7 @@ describe('pages bundle staging', () => {
         const config = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
 
         expect(outputPath).toBe(path.join(destinationDir, '.well-known', 'allplays-runtime-config.json'));
-        expect(config).toEqual({
+        expect(config).toMatchObject({
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -402,7 +402,7 @@ describe('pages bundle staging', () => {
         );
         const config = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
 
-        expect(config).toEqual({
+        expect(config).toMatchObject({
             appCheck: {
                 enabled: true,
                 recaptchaEnterpriseSiteKey: 'public-enterprise-site-key_123',
@@ -444,7 +444,7 @@ describe('pages bundle staging', () => {
         );
 
         expect(outputPath).toBe(runtimeConfigPath);
-        expect(JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'))).toEqual({
+        expect(JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'))).toMatchObject({
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true

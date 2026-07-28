@@ -45,7 +45,7 @@ describe('app performance measurement initiative source contract', () => {
     });
 
     it('keeps app preview and bundle budget commands available for baseline captures', () => {
-        expect(packageSource).toContain('"app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs"');
+        expect(packageSource).toContain('"app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs && npm run app:check-bundle-size"');
         expect(packageSource).toContain('"app:preview": "npm --prefix apps/app run preview"');
         expect(packageSource).toContain('"app:check-bundle-size": "node scripts/check-app-bundle-size.mjs"');
         expect(packageSource).toContain('"app:validate-performance-measurements": "node scripts/validate-app-performance-measurements.mjs"');
@@ -53,10 +53,12 @@ describe('app performance measurement initiative source contract', () => {
         expect(ciSource).toContain('Validate app performance evidence when present');
         expect(ciSource).toContain('npm run app:validate-performance-measurements -- docs/app-performance-measurements.json');
 
-        expect(bundleSizeScriptSource).toContain("const defaultEntryBudgetBytes = 1_420_000;");
+        expect(bundleSizeScriptSource).toContain('entryBytes: parsePositiveInteger(process.env.APP_ENTRY_CHUNK_LIMIT_BYTES) || 1_420_000');
         expect(bundleSizeScriptSource).toContain('process.env.APP_ENTRY_CHUNK_LIMIT_BYTES');
+        expect(bundleSizeScriptSource).toContain('process.env.APP_INITIAL_GZIP_LIMIT_BYTES');
+        expect(bundleSizeScriptSource).toContain('process.env.APP_MODULE_PRELOAD_LIMIT');
         expect(bundleSizeScriptSource).toContain('Unable to find the app entry chunk');
-        expect(bundleSizeScriptSource).toContain('App entry chunk ${path.relative(repoRoot, entryChunkPath)} is ${entrySizeKb} KB');
+        expect(bundleSizeScriptSource).toContain('App cold-start budget passed');
 
         [
             'desktop-web',

@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import appViteConfig from '../../apps/app/vite.config.ts';
@@ -14,19 +13,23 @@ const resolvedAppViteConfig = typeof appViteConfig === 'function'
     : await appViteConfig;
 
 describe('app Vite config', () => {
-    it('keeps app source in the entry chunk', () => {
+    it('keeps lazy routes out of the HTML module-preload fanout', () => {
+        const resolveDependencies = resolvedAppViteConfig.build?.modulePreload &&
+            typeof resolvedAppViteConfig.build.modulePreload === 'object'
+            ? resolvedAppViteConfig.build.modulePreload.resolveDependencies
+            : undefined;
+
+        expect(resolveDependencies?.('index.js', ['route-a.js', 'route-b.js'], {
+            hostId: 'index.html',
+            hostType: 'html'
+        })).toEqual([]);
+        expect(resolveDependencies?.('route-a.js', ['shared.js'], {
+            hostId: 'route-a.js',
+            hostType: 'js'
+        })).toEqual(['shared.js']);
         const manualChunks = resolvedAppViteConfig.build?.rollupOptions?.output?.manualChunks;
-
-        expect(manualChunks?.('/workspace/apps/app/src/main.tsx')).toBeUndefined();
-    });
-
-    it('splits node_modules packages into stable vendor chunks', () => {
-        const manualChunks = resolvedAppViteConfig.build?.rollupOptions?.output?.manualChunks;
-        const reactModule = path.join('/workspace', 'node_modules', 'react', 'index.js');
-        const scopedModule = path.join('/workspace', 'node_modules', '@capacitor', 'core', 'dist', 'index.js');
-
-        expect(manualChunks?.(reactModule)).toBe('vendor-react');
-        expect(manualChunks?.(scopedModule)).toBe('vendor-@capacitor-core');
+        expect(manualChunks?.('/workspace/node_modules/lucide-react/dist/cjs/lucide-react.js')).toBe('app-shell-vendor');
+        expect(manualChunks?.('/workspace/node_modules/@sentry/browser/build/npm/esm/index.js')).toBeUndefined();
     });
 
     it('exposes the legacy JS directory through the @legacy alias', () => {

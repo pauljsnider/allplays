@@ -64,31 +64,31 @@ export default defineConfig(({ mode }) => {
   },
   build: {
     chunkSizeWarningLimit: 1400,
+    modulePreload: {
+      resolveDependencies(_filename, dependencies, context) {
+        // Route components already use dynamic imports. Preloading every shared
+        // route dependency from index.html defeated that boundary and produced
+        // nearly one hundred cold-start requests before sign-in was usable.
+        return context.hostType === 'html' ? [] : dependencies;
+      }
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {
           const normalizedId = id.split(path.sep).join('/');
-          const legacyFirebaseMatch = normalizedId.match(/\/js\/vendor\/firebase-([a-z-]+)\.js$/);
-          if (legacyFirebaseMatch) {
-            // Keep App Check from pulling the much larger Firestore client into
-            // the authentication bootstrap chunk through their shared app core.
-            return `legacy-firebase-${legacyFirebaseMatch[1]}`;
+          if (/\/node_modules\/(?:react|react-dom|react-router|react-router-dom|lucide-react)\//.test(normalizedId)) {
+            return 'app-shell-vendor';
           }
-
-          if (!id.includes('node_modules')) {
-            return undefined;
+          if (/\/apps\/app\/src\/lib\/(?:authService|profileService|profilePhotoService|appDataCache|appErrors|logger|telemetry|nativeRuntime|nativeRestDedup|nativeBackButton|pushNotificationRouting|workflowTiming|uxTiming|appLinks)\.(?:ts|tsx)$/.test(normalizedId)) {
+            return 'app-shell-auth';
           }
-
-          const packageRoot = normalizedId.split('/node_modules/')[1];
-          const packageName = packageRoot?.startsWith('@')
-            ? packageRoot.split('/').slice(0, 2).join('/')
-            : packageRoot?.split('/')[0];
-
-          if (!packageName) {
-            return 'vendor';
+          if (/\/apps\/app\/src\/lib\/(?:scheduleService|scheduleLogic|teamDetailService|homeService|homeLogic|chatService|chatLogic|parentToolsService|rosterAiImport|gameWrapupService|gameDayLineupBuilder|gameDayLineupPublish)\.(?:ts|tsx)$/.test(normalizedId)) {
+            return 'app-shell-team-data';
           }
-
-          return `vendor-${packageName.replace(/[\/]/g, '-')}`;
+          if (/\/js\/(?:db|firebase|firebase-runtime-config|firebase-app-check-rest|utils|legacyScheduleHelpers|roster-profile-fields)\.js$/.test(normalizedId)) {
+            return 'app-shell-legacy-data';
+          }
+          return undefined;
         }
       }
     }

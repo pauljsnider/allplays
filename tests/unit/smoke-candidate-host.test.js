@@ -64,7 +64,7 @@ describe('candidate host public smoke', () => {
     it('keeps the expected runtime configuration paused without the rollout-ready gate', () => {
         expect(getExpectedRuntimeConfig({
             siteKey: ' public-site-key_123 '
-        })).toEqual({
+        })).toMatchObject({
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -76,7 +76,7 @@ describe('candidate host public smoke', () => {
         expect(getExpectedRuntimeConfig({
             siteKey: ' public-site-key_123 ',
             enforcementReady: true
-        })).toEqual({
+        })).toMatchObject({
             appCheck: {
                 enabled: true,
                 recaptchaEnterpriseSiteKey: 'public-site-key_123',

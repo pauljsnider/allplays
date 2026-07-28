@@ -51,7 +51,7 @@ describe('firebase runtime config', () => {
         // project and broke Installations/FCM/Performance wherever the fallback ran.
         expect(config.appId).toBe('1:982493478258:web:1f942c420cef6c40e8b1eb');
         expect(config.messagingSenderId).toBe('982493478258');
-        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('keeps hosted demo firebase config when served through local Firebase hosting', async () => {
@@ -77,7 +77,7 @@ describe('firebase runtime config', () => {
         });
     });
 
-    it('prefers hosted firebase config over inline config when both are present', async () => {
+    it('prefers explicit inline firebase config without making a network request', async () => {
         resetGlobals();
         globalThis.window.__ALLPLAYS_CONFIG__ = {
             firebase: {
@@ -102,11 +102,12 @@ describe('firebase runtime config', () => {
         const config = await resolvePrimaryFirebaseConfig();
 
         expect(config).toMatchObject({
-            apiKey: 'hosted-key',
-            authDomain: 'hosted-allplays.firebaseapp.com',
-            projectId: 'hosted-allplays',
-            appId: 'hosted-app'
+            apiKey: 'inline-key',
+            authDomain: 'inline-allplays.firebaseapp.com',
+            projectId: 'inline-allplays',
+            appId: 'inline-app'
         });
+        expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it('falls back to inline config before bundled defaults when hosted init lookup fails', async () => {
@@ -188,6 +189,41 @@ describe('firebase runtime config', () => {
         );
     });
 
+    it('shares one allplays.ai runtime request across Firebase and App Check startup', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays.ai',
+            hostname: 'allplays.ai',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                firebase: {
+                    apiKey: 'runtime-key',
+                    authDomain: 'runtime.firebaseapp.com',
+                    projectId: 'runtime-project',
+                    messagingSenderId: '123',
+                    appId: 'runtime-app'
+                },
+                appCheck: { enabled: false }
+            })
+        });
+
+        const [firebaseConfig, appCheckConfig] = await Promise.all([
+            resolvePrimaryFirebaseConfig(),
+            resolveAppCheckRuntimeConfig()
+        ]);
+
+        expect(firebaseConfig.projectId).toBe('runtime-project');
+        expect(appCheckConfig.enabled).toBe(false);
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).not.toHaveBeenCalledWith(
+            'https://allplays.ai/__/firebase/init.json',
+            expect.anything()
+        );
+    });
+
     it('does not expose the repository through a Vite-analyzable import-meta URL', () => {
         const source = readFileSync(new URL('../../js/firebase-runtime-config.js', import.meta.url), 'utf8');
 
@@ -198,7 +234,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=11');
+            expect(source).toContain('firebase-runtime-config.js?v=12');
         }
     });
 

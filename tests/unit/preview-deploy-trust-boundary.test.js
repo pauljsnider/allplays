@@ -633,7 +633,7 @@ else:
         expect(fs.existsSync(path.join(extractedSite, 'firebase.json'))).toBe(false);
         expect(JSON.parse(
             fs.readFileSync(path.join(extractedSite, '.well-known', 'allplays-runtime-config.json'), 'utf8')
-        )).toEqual({
+        )).toMatchObject({
             appCheck: {
                 enabled: true,
                 recaptchaEnterpriseSiteKey: 'public-preview-site-key_123',

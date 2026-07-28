@@ -26,6 +26,9 @@ const DEFAULT_IMAGE_FIREBASE_CONFIG = {
     appId: '1:340859680438:web:4d00f571e8531907a11817',
     measurementId: 'G-FRVND6NT3C'
 };
+let runtimeConfigFetchPromise = null;
+let runtimeConfigFetchKey = '';
+let runtimeConfigFetchImplementation = null;
 
 function readGlobalConfig() {
     return (typeof window !== 'undefined' && window.__ALLPLAYS_CONFIG__ && typeof window.__ALLPLAYS_CONFIG__ === 'object')
@@ -114,19 +117,36 @@ function runtimeConfigCandidates() {
 }
 
 async function fetchAllPlaysRuntimeConfig() {
-    for (const url of runtimeConfigCandidates()) {
-        try {
-            const response = await fetch(url, { cache: 'no-store' });
-            if (!response.ok) continue;
-            const payload = await response.json();
-            if (payload && typeof payload === 'object') {
-                return payload;
-            }
-        } catch (_error) {
-            // Runtime config is optional until App Check console rollout is complete.
-        }
+    const candidates = runtimeConfigCandidates();
+    const fetchImplementation = globalThis.fetch;
+    const fetchKey = candidates.join('|');
+    if (
+        runtimeConfigFetchPromise
+        && runtimeConfigFetchKey === fetchKey
+        && runtimeConfigFetchImplementation === fetchImplementation
+    ) {
+        return runtimeConfigFetchPromise;
     }
-    return {};
+
+    runtimeConfigFetchKey = fetchKey;
+    runtimeConfigFetchImplementation = fetchImplementation;
+    runtimeConfigFetchPromise = (async () => {
+        if (typeof fetchImplementation !== 'function') return {};
+        for (const url of candidates) {
+            try {
+                const response = await fetchImplementation(url, { cache: 'no-store' });
+                if (!response.ok) continue;
+                const payload = await response.json();
+                if (payload && typeof payload === 'object') {
+                    return payload;
+                }
+            } catch (_error) {
+                // Runtime config is optional until App Check console rollout is complete.
+            }
+        }
+        return {};
+    })();
+    return runtimeConfigFetchPromise;
 }
 
 function normalizeFirebaseConfig(rawConfig) {
@@ -171,19 +191,37 @@ async function fetchFirebaseConfigFromHosting() {
 }
 
 export async function resolvePrimaryFirebaseConfig() {
-    try {
-        const hostedConfig = await fetchFirebaseConfigFromHosting();
-        return hostedConfig;
-    } catch (error) {
-        const globalConfig = readGlobalConfig();
-        const inlineConfig = normalizeFirebaseConfig(
-            globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
-        );
-        if (inlineConfig) {
-            console.warn('Falling back to inline Firebase config after hosted init lookup failed.', error);
-            return inlineConfig;
-        }
+    const globalConfig = readGlobalConfig();
+    const inlineConfig = normalizeFirebaseConfig(
+        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
+    );
+    if (inlineConfig) {
+        return inlineConfig;
+    }
 
+    const remoteConfig = await fetchAllPlaysRuntimeConfig();
+    const remoteFirebaseConfig = normalizeFirebaseConfig(
+        remoteConfig.firebase || remoteConfig.firebasePrimary
+    );
+    if (remoteFirebaseConfig) {
+        return remoteFirebaseConfig;
+    }
+
+    const runtimeHostname = typeof window !== 'undefined'
+        ? window.location?.hostname
+        : globalThis.location?.hostname;
+    const canUseHostingInit = !runtimeHostname
+        || runtimeHostname === 'localhost'
+        || runtimeHostname === '127.0.0.1'
+        || runtimeHostname.endsWith('.web.app')
+        || runtimeHostname.endsWith('.firebaseapp.com');
+    if (!canUseHostingInit) {
+        return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    }
+
+    try {
+        return await fetchFirebaseConfigFromHosting();
+    } catch (error) {
         console.warn('Falling back to bundled Firebase config.', error);
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }

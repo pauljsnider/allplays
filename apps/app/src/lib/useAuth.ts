@@ -3,19 +3,28 @@ import type { AuthState, AuthUser } from './types';
 import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
 import { createLogger } from './logger';
-import { resetChatAiModel } from './chatService';
-import { resetGameWrapupAiModel } from './gameWrapupService';
-import { resetLineupAiModel } from './gameDayLineupBuilder';
-import { resetPrivateAiModel } from './privateAiService';
-import { resetAppSearchCache } from './searchService';
 
 const logger = createLogger('app-auth');
 
-function clearPerUserCaches() {
+async function clearPerUserCaches() {
   // These module-level caches key on the signed-in user (search results, help
   // roles) or hold generative-model handles tied to the session's Firebase
   // app. Without this, a second user signing in on the same tab/device could
   // briefly see the previous user's cached search results.
+  const [
+    { resetAppSearchCache },
+    { resetChatAiModel },
+    { resetGameWrapupAiModel },
+    { resetPrivateAiModel },
+    { resetLineupAiModel }
+  ] = await Promise.all([
+    import('./searchService'),
+    import('./chatService'),
+    import('./gameWrapupService'),
+    import('./privateAiService'),
+    import('./gameDayLineupBuilder')
+  ]);
+
   resetAppSearchCache();
   resetChatAiModel();
   resetGameWrapupAiModel();
@@ -100,13 +109,26 @@ export function useAuth(): AuthState {
   const signOutAndClear = useCallback(async () => {
     setError(null);
     const cleanup = signOut();
+    const cacheCleanup = clearPerUserCaches();
     setUser(null);
     setProfile(null);
     clearAuthBootstrapHint();
-    clearPerUserCaches();
     setLoading(false);
     try {
-      await cleanup;
+      const [signOutResult, cacheCleanupResult] = await Promise.allSettled([
+        cleanup,
+        cacheCleanup
+      ]);
+      if (cacheCleanupResult.status === 'rejected') {
+        logger.warn('Per-user cache cleanup did not complete cleanly.', {
+          error: cacheCleanupResult.reason
+        });
+      }
+      if (signOutResult.status === 'rejected') {
+        logger.warn('Sign-out cleanup did not complete cleanly.', {
+          error: signOutResult.reason
+        });
+      }
     } catch (signOutError: any) {
       logger.warn('Sign-out cleanup did not complete cleanly.', { error: signOutError });
     } finally {

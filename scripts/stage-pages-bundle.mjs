@@ -50,6 +50,15 @@ const excludedPublicClaimPaths = new Set([
 ]);
 
 const appCheckRuntimeConfigRelativePath = path.join('.well-known', 'allplays-runtime-config.json');
+const primaryFirebaseRuntimeConfig = {
+    apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
+    authDomain: 'game-flow-c6311.firebaseapp.com',
+    projectId: 'game-flow-c6311',
+    storageBucket: 'game-flow-c6311.firebasestorage.app',
+    messagingSenderId: '982493478258',
+    appId: '1:982493478258:web:1f942c420cef6c40e8b1eb',
+    measurementId: 'G-VTLSFV4PHW'
+};
 const pagesMetaUnsupportedDirectives = new Set(['frame-ancestors']);
 const widgetScoreboardRelativePath = 'widget-scoreboard.html';
 
@@ -228,6 +237,7 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
 export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false } = {}) {
     if (!isAppCheckEnforcementReady(enforcementReady)) {
         return {
+            firebase: primaryFirebaseRuntimeConfig,
             appCheck: {
                 enabled: false,
                 isTokenAutoRefreshEnabled: true
@@ -243,6 +253,7 @@ export function createAppCheckRuntimeConfig(siteKey, { enforcementReady = false 
     }
 
     return {
+        firebase: primaryFirebaseRuntimeConfig,
         appCheck: {
             enabled: true,
             recaptchaEnterpriseSiteKey: normalizedSiteKey,
