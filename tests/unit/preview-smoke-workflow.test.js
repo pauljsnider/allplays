@@ -78,4 +78,20 @@ describe('preview-smoke CI workflow', () => {
 
         expect(gate).toContain('if: ${{ always() && !cancelled() }}');
     });
+
+    it('serves the isolated staged Firebase config to the React dev server', () => {
+        const devServerStep = workflow.slice(
+            workflow.indexOf('      - name: Start React app dev server'),
+            workflow.indexOf('      - name: Wait for local smoke servers')
+        );
+
+        expect(devServerStep).toContain('mkdir -p apps/app/public/.well-known');
+        expect(devServerStep).toContain(
+            '"$RUNNER_TEMP/allplays-pages/.well-known/allplays-runtime-config.json"'
+        );
+        expect(devServerStep).toContain(
+            'apps/app/public/.well-known/allplays-runtime-config.json'
+        );
+        expect(devServerStep).toContain('npm --prefix apps/app run dev');
+    });
 });
