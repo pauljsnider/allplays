@@ -96,6 +96,8 @@ jobs:
           SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
           SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
           SMOKE_REGISTRATION_FORM_ID: ${{ vars.SMOKE_REGISTRATION_FORM_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
           SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
@@ -108,6 +110,8 @@ jobs:
             SMOKE_EVENT_ID
             SMOKE_PLAYER_ID
             SMOKE_REGISTRATION_FORM_ID
+            SMOKE_ADMIN_EMAIL
+            SMOKE_ADMIN_PASSWORD
             SMOKE_STAFF_EMAIL
             SMOKE_STAFF_PASSWORD
             SMOKE_PARENT_EMAIL
@@ -122,19 +126,22 @@ jobs:
 
           if (( ${#missing_names[@]} > 0 )); then
             missing_csv="$(IFS=,; echo "${missing_names[*]}")"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "missing=$missing_csv" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Fixture-backed production smoke not configured::Missing protected configuration names: $missing_csv"
+            echo "::error title=Fixture-backed production smoke not configured::Missing protected configuration names: $missing_csv"
+            exit 1
           else
+            admin_email_normalized="$(printf '%s' "$SMOKE_ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')"
             staff_email_normalized="$(printf '%s' "$SMOKE_STAFF_EMAIL" | tr '[:upper:]' '[:lower:]')"
             parent_email_normalized="$(printf '%s' "$SMOKE_PARENT_EMAIL" | tr '[:upper:]' '[:lower:]')"
           fi
 
           if (( ${#missing_names[@]} == 0 )) &&
-             [[ "$staff_email_normalized" == "$parent_email_normalized" ]]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+             [[ "$admin_email_normalized" == "$staff_email_normalized" ||
+                "$admin_email_normalized" == "$parent_email_normalized" ||
+                "$staff_email_normalized" == "$parent_email_normalized" ]]; then
             echo "missing=distinct-role-accounts" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Fixture-backed production smoke not configured::Staff and parent smoke accounts must be distinct."
+            echo "::error title=Fixture-backed production smoke not configured::Admin, staff, and parent smoke accounts must be distinct."
+            exit 1
           elif (( ${#missing_names[@]} == 0 )); then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "missing=" >> "$GITHUB_OUTPUT"
@@ -177,6 +184,7 @@ jobs:
         continue-on-error: true
         run: >-
           npx playwright test
+          tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
@@ -193,6 +201,8 @@ jobs:
           SMOKE_CONVERSATION_ID: ${{ vars.SMOKE_CONVERSATION_ID }}
           SMOKE_OPPORTUNITY_LISTING_ID: ${{ vars.SMOKE_OPPORTUNITY_LISTING_ID }}
           SMOKE_OPPORTUNITY_INQUIRY_ID: ${{ vars.SMOKE_OPPORTUNITY_INQUIRY_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
           SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
@@ -219,9 +229,7 @@ jobs:
         run: |
           set -euo pipefail
           fixture_outcome="$CORE_OUTCOME"
-          if [[ "$CORE_CONFIGURED" != "true" ]]; then
-            fixture_outcome="not-configured ($CORE_MISSING)"
-          fi
+          [[ "$CORE_CONFIGURED" == "true" ]] || fixture_outcome="configuration-failed ($CORE_MISSING)"
           {
             echo "### Post-deploy production signals"
             echo
@@ -239,7 +247,7 @@ jobs:
             echo "One or more independent post-deploy signals failed." >&2
             exit 1
           fi
-          if [[ "$CORE_CONFIGURED" == "true" && "$CORE_OUTCOME" != "success" ]]; then
+          if [[ "$CORE_CONFIGURED" != "true" || "$CORE_OUTCOME" != "success" ]]; then
             echo "The configured fixture-backed production smoke failed." >&2
             exit 1
           fi

@@ -46,6 +46,7 @@ jobs:
           tests/smoke/app-production-bootstrap.spec.js
           tests/smoke/static-hosting-bootstrap.spec.js
           tests/smoke/legacy-auth-redirects.spec.js
+          tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
           tests/smoke/app-authenticated-extended.spec.js
           --config=playwright.smoke.config.js
@@ -66,6 +67,8 @@ jobs:
           SMOKE_CONVERSATION_ID: ${{ vars.SMOKE_CONVERSATION_ID }}
           SMOKE_OPPORTUNITY_LISTING_ID: ${{ vars.SMOKE_OPPORTUNITY_LISTING_ID }}
           SMOKE_OPPORTUNITY_INQUIRY_ID: ${{ vars.SMOKE_OPPORTUNITY_INQUIRY_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
           SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}

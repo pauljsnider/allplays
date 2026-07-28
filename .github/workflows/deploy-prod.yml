@@ -88,8 +88,66 @@ jobs:
           name: prod-regression-guards-http-log
           path: /tmp/allplays-prod-regression-guards.log
 
-  prepare-deploy:
+  validate-production-smoke-config:
     needs: [unit-tests, regression-guards]
+    runs-on: ubuntu-latest
+    environment:
+      name: production-smoke
+    permissions: {}
+    env:
+      SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+      SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+      SMOKE_EVENT_ID: ${{ vars.SMOKE_EVENT_ID }}
+      SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+      SMOKE_REGISTRATION_FORM_ID: ${{ vars.SMOKE_REGISTRATION_FORM_ID }}
+      SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+      SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+      SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+      SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+      SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
+      SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
+    steps:
+      - name: Require production role-smoke fixtures before deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_names=(
+            SMOKE_TEAM_ID
+            SMOKE_GAME_ID
+            SMOKE_EVENT_ID
+            SMOKE_PLAYER_ID
+            SMOKE_REGISTRATION_FORM_ID
+            SMOKE_ADMIN_EMAIL
+            SMOKE_ADMIN_PASSWORD
+            SMOKE_STAFF_EMAIL
+            SMOKE_STAFF_PASSWORD
+            SMOKE_PARENT_EMAIL
+            SMOKE_PARENT_PASSWORD
+          )
+          missing_names=()
+          for name in "${required_names[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing_names+=("$name")
+            fi
+          done
+          if (( ${#missing_names[@]} > 0 )); then
+            missing_csv="$(IFS=,; echo "${missing_names[*]}")"
+            echo "::error title=Production smoke configuration incomplete::Missing protected configuration names: $missing_csv"
+            exit 1
+          fi
+
+          admin_email="$(printf '%s' "$SMOKE_ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          staff_email="$(printf '%s' "$SMOKE_STAFF_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          parent_email="$(printf '%s' "$SMOKE_PARENT_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$admin_email" == "$staff_email" ||
+                "$admin_email" == "$parent_email" ||
+                "$staff_email" == "$parent_email" ]]; then
+            echo "::error title=Production smoke roles are not isolated::Admin, staff, and parent accounts must be distinct."
+            exit 1
+          fi
+
+  prepare-deploy:
+    needs: [unit-tests, regression-guards, validate-production-smoke-config]
     runs-on: ubuntu-latest
     permissions:
       actions: read

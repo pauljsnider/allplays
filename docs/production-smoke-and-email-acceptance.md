@@ -7,7 +7,8 @@ reuse a real family or roster for this suite.
 
 Store these values in the protected GitHub environment named `production-smoke`:
 
-- Secrets: `SMOKE_STAFF_EMAIL`, `SMOKE_STAFF_PASSWORD`,
+- Secrets: `SMOKE_ADMIN_EMAIL`, `SMOKE_ADMIN_PASSWORD`,
+  `SMOKE_STAFF_EMAIL`, `SMOKE_STAFF_PASSWORD`,
   `SMOKE_PARENT_EMAIL`, and `SMOKE_PARENT_PASSWORD`.
 - Required variables: `SMOKE_TEAM_ID`, `SMOKE_PLAYER_ID`,
   `SMOKE_GAME_ID`, `SMOKE_EVENT_ID`, and `SMOKE_REGISTRATION_FORM_ID`.
@@ -16,7 +17,8 @@ Store these values in the protected GitHub environment named `production-smoke`:
 - Optional variables: `SMOKE_CONVERSATION_ID`,
   `SMOKE_OPPORTUNITY_LISTING_ID`, and `SMOKE_OPPORTUNITY_INQUIRY_ID`.
 
-The staff account must be verified and have least-privilege owner/admin access to
+The admin account must be a dedicated platform administrator with no implicit
+team membership. The staff account must be verified and have least-privilege owner/admin access to
 the synthetic team. The parent account must be verified and linked to the smoke
 player and team. The smoke event must have a seeded RSVP and tracker
 configuration. The smoke team also needs one writable media album, a fee
@@ -51,11 +53,10 @@ are configured, the same workflow also runs:
 - fixture-backed staff, parent, notification, registration, fees, media,
   certificate, schedule, message, official, profile, and help views.
 
-Missing fixture-backed configuration is reported by name as a workflow warning
-and `not-configured` summary row; it does not convert successful baseline
-release probes into a false production outage. Once configured, any
-fixture-backed failure remains fail-closed. The nightly workflow remains the
-authoritative configuration and extended-coverage sentinel.
+Missing fixture-backed configuration blocks production deployment before any
+production credential is acquired. Post-deploy smoke independently validates
+the same contract and fails when a required role workflow is absent, skipped,
+or unsuccessful.
 
 The nightly workflow always runs the core read-only checks. Extended mutations
 are opt-in: set `SMOKE_EXTENDED_WRITES_ENABLED=1` only after the synthetic team
