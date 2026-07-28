@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 
 import {
+    createAppCheckRuntimeConfig,
     isAppCheckEnforcementReady,
     readPagesSecurityMetaPolicies
 } from '../../scripts/stage-pages-bundle.mjs';
@@ -24,22 +25,11 @@ test.describe('exact staged GitHub Pages artifact', () => {
         const runtimeConfigResponse = await request.get('/.well-known/allplays-runtime-config.json');
         expect(runtimeConfigResponse.status()).toBe(200);
         const runtimeConfig = await runtimeConfigResponse.json();
+        expect(runtimeConfig).toEqual(createAppCheckRuntimeConfig(expectedSiteKey, {
+            enforcementReady: expectedEnforcementReady
+        }));
         if (expectedEnforcementReady) {
-            expect(runtimeConfig).toEqual({
-                appCheck: {
-                    enabled: true,
-                    recaptchaEnterpriseSiteKey: expectedSiteKey,
-                    isTokenAutoRefreshEnabled: true
-                }
-            });
             expect(expectedSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
-        } else {
-            expect(runtimeConfig).toEqual({
-                appCheck: {
-                    enabled: false,
-                    isTokenAutoRefreshEnabled: true
-                }
-            });
         }
 
         for (const path of [
