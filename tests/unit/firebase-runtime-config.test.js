@@ -82,7 +82,42 @@ describe('firebase runtime config', () => {
         });
     });
 
-    it('ignores a production runtime file on a non-production Firebase host', async () => {
+    it('uses an explicit non-production runtime fallback for isolated local preview smoke', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'http://127.0.0.1:4173',
+            protocol: 'http:',
+            hostname: '127.0.0.1',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/__/firebase/init.json')) {
+                return { ok: false, status: 404 };
+            }
+            if (url.endsWith('/.well-known/allplays-runtime-config.json')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        firebase: {
+                            apiKey: 'preview-smoke-key',
+                            authDomain: 'allplays-preview-smoke.firebaseapp.com',
+                            projectId: 'allplays-preview-smoke',
+                            messagingSenderId: '123456789',
+                            appId: 'preview-smoke-app'
+                        }
+                    })
+                };
+            }
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('allplays-preview-smoke');
+        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses host-specific init before any runtime file on a non-production Firebase host', async () => {
         resetGlobals();
         globalThis.window.location = {
             origin: 'https://allplays-preview.web.app',
@@ -90,20 +125,6 @@ describe('firebase runtime config', () => {
             pathname: '/app/'
         };
         globalThis.fetch = vi.fn(async (url) => {
-            if (url.endsWith('/.well-known/allplays-runtime-config.json')) {
-                return {
-                    ok: true,
-                    json: async () => ({
-                        firebase: {
-                            apiKey: 'production-key',
-                            authDomain: 'game-flow-c6311.firebaseapp.com',
-                            projectId: 'game-flow-c6311',
-                            messagingSenderId: '982493478258',
-                            appId: 'production-app'
-                        }
-                    })
-                };
-            }
             if (url.endsWith('/__/firebase/init.json')) {
                 return {
                     ok: true,
@@ -122,13 +143,77 @@ describe('firebase runtime config', () => {
         const config = await resolvePrimaryFirebaseConfig();
 
         expect(config.projectId).toBe('allplays-preview');
-        expect(globalThis.fetch).toHaveBeenNthCalledWith(
-            1,
-            'https://allplays-preview.web.app/.well-known/allplays-runtime-config.json',
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            'https://allplays-preview.web.app/__/firebase/init.json',
             { cache: 'no-store' }
         );
-        expect(globalThis.fetch).toHaveBeenNthCalledWith(
-            2,
+    });
+
+    it('does not let a different non-production runtime file override a Firebase host identity', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays-preview.web.app',
+            hostname: 'allplays-preview.web.app',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/__/firebase/init.json')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        apiKey: 'preview-key',
+                        authDomain: 'allplays-preview.firebaseapp.com',
+                        projectId: 'allplays-preview',
+                        messagingSenderId: '456',
+                        appId: 'preview-app'
+                    })
+                };
+            }
+            if (url.endsWith('/.well-known/allplays-runtime-config.json')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        firebase: {
+                            apiKey: 'other-key',
+                            authDomain: 'other-preview.firebaseapp.com',
+                            projectId: 'other-preview',
+                            messagingSenderId: '789',
+                            appId: 'other-preview-app'
+                        }
+                    })
+                };
+            }
+            throw new Error(`Unexpected URL: ${url}`);
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config.projectId).toBe('allplays-preview');
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).not.toHaveBeenCalledWith(
+            'https://allplays-preview.web.app/.well-known/allplays-runtime-config.json',
+            expect.anything()
+        );
+    });
+
+    it('fails closed instead of using a runtime fallback when Firebase host init is unavailable', async () => {
+        resetGlobals();
+        globalThis.window.location = {
+            origin: 'https://allplays-preview.web.app',
+            hostname: 'allplays-preview.web.app',
+            pathname: '/app/'
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 503
+        });
+
+        await expect(resolvePrimaryFirebaseConfig()).rejects.toThrow(
+            'Firebase config request failed (503)'
+        );
+        expect(globalThis.fetch).toHaveBeenCalledOnce();
+        expect(globalThis.fetch).toHaveBeenCalledWith(
             'https://allplays-preview.web.app/__/firebase/init.json',
             { cache: 'no-store' }
         );
@@ -332,7 +417,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=14');
+            expect(source).toContain('firebase-runtime-config.js?v=15');
         }
     });
 

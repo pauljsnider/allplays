@@ -220,56 +220,58 @@ export async function resolvePrimaryFirebaseConfig() {
         : globalThis.location?.protocol;
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
-    const remoteConfig = await fetchAllPlaysRuntimeConfig();
-    const remoteFirebaseConfig = normalizeFirebaseConfig(
-        remoteConfig.firebase || remoteConfig.firebasePrimary
-    );
-    const rejectedProductionRuntimeConfig = Boolean(
-        remoteFirebaseConfig
-        && !canonicalProductionHost
-        && !nativeRuntime
-        && isBundledProductionFirebaseConfig(remoteFirebaseConfig)
-    );
-    if (
-        remoteFirebaseConfig
-        && (
-            canonicalProductionHost
-            || nativeRuntime
-            || !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
-        )
-    ) {
-        return remoteFirebaseConfig;
-    }
 
     if (nativeRuntime) {
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
 
     const localDevelopmentHost = runtimeHostname === 'localhost' || runtimeHostname === '127.0.0.1';
-    const localOrUnresolvedHost = !runtimeHostname || localDevelopmentHost;
-    const canUseHostingInit = !runtimeHostname
-        || localDevelopmentHost
-        || runtimeHostname.endsWith('.web.app')
-        || runtimeHostname.endsWith('.firebaseapp.com');
-    if (!canUseHostingInit) {
-        if (canonicalProductionHost) {
-            return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
-        }
-        throw new Error('Firebase config is unavailable for this non-production host.');
+    const firebaseHostingHost = Boolean(
+        runtimeHostname?.endsWith('.web.app')
+        || runtimeHostname?.endsWith('.firebaseapp.com')
+    );
+
+    if (canonicalProductionHost) {
+        const remoteConfig = await fetchAllPlaysRuntimeConfig();
+        const remoteFirebaseConfig = normalizeFirebaseConfig(
+            remoteConfig.firebase || remoteConfig.firebasePrimary
+        );
+        return remoteFirebaseConfig || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
 
-    try {
-        return await fetchFirebaseConfigFromHosting();
-    } catch (error) {
-        if (
-            !canonicalProductionHost
-            && !(localOrUnresolvedHost && !rejectedProductionRuntimeConfig)
-        ) {
-            throw error;
+    if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {
+        try {
+            return await fetchFirebaseConfigFromHosting();
+        } catch (hostingError) {
+            if (firebaseHostingHost) {
+                throw hostingError;
+            }
+
+            const remoteConfig = await fetchAllPlaysRuntimeConfig();
+            const remoteFirebaseConfig = normalizeFirebaseConfig(
+                remoteConfig.firebase || remoteConfig.firebasePrimary
+            );
+            if (
+                remoteFirebaseConfig
+                && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+            ) {
+                return remoteFirebaseConfig;
+            }
+            throw hostingError;
         }
-        console.warn('Falling back to bundled Firebase config.', error);
-        return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
+
+    const remoteConfig = await fetchAllPlaysRuntimeConfig();
+    const remoteFirebaseConfig = normalizeFirebaseConfig(
+        remoteConfig.firebase || remoteConfig.firebasePrimary
+    );
+    if (
+        remoteFirebaseConfig
+        && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+    ) {
+        return remoteFirebaseConfig;
+    }
+    throw new Error('Firebase config is unavailable for this non-production host.');
 }
 
 export function resolveImageFirebaseConfig() {
