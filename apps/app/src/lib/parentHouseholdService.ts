@@ -1,5 +1,5 @@
 import { getPlayerPrivateProfile } from './adapters/legacyPlayerDb';
-import { addPendingFamilyMember, getPlayers, readFamilyMembers } from './adapters/legacyParentTools';
+import { addPendingFamilyMember, db, doc, getDoc, readFamilyMembers } from './adapters/legacyParentTools';
 import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import type { AuthUser } from './types';
 
@@ -124,24 +124,26 @@ function normalizeFamilyChildren(children: any[]) {
 }
 
 async function loadLinkedPlayerFamilyContacts(linkedPlayers: ParentHouseholdLinkedPlayer[]): Promise<ParentHouseholdFamilyContact[]> {
-    const byTeam = new Map<string, ParentHouseholdLinkedPlayer[]>();
+    const uniqueLinkedPlayers = new Map<string, ParentHouseholdLinkedPlayer>();
     linkedPlayers.forEach((player) => {
         if (!player.teamId || !player.playerId) return;
-        byTeam.set(player.teamId, [...(byTeam.get(player.teamId) || []), player]);
+        const key = `${player.teamId}::${player.playerId}`;
+        if (!uniqueLinkedPlayers.has(key)) uniqueLinkedPlayers.set(key, player);
     });
-    const contactGroups = await Promise.all([...byTeam.entries()].map(async ([teamId, players]) => {
-        const roster = await Promise.resolve(getPlayers(teamId, { includeInactive: true })).catch(() => []);
-        const privateProfiles = await Promise.all(players.map(async (linkedPlayer) => ({
-            playerId: linkedPlayer.playerId,
-            profile: await getPlayerPrivateProfile(teamId, linkedPlayer.playerId).catch(() => null)
-        })));
-        const privateProfileByPlayerId = new Map(privateProfiles.map((entry) => [entry.playerId, entry.profile]));
-        return players.flatMap((linkedPlayer) => {
-            const player = (Array.isArray(roster) ? roster : []).find((candidate: any) => compactString(candidate?.id) === linkedPlayer.playerId) || {};
-            return normalizePlayerFamilyContacts(player, linkedPlayer, privateProfileByPlayerId.get(linkedPlayer.playerId));
-        });
+    const contactGroups = await Promise.all([...uniqueLinkedPlayers.values()].map(async (linkedPlayer) => {
+        const [player, privateProfile] = await Promise.all([
+            loadPublicPlayer(linkedPlayer.teamId, linkedPlayer.playerId).catch(() => null),
+            getPlayerPrivateProfile(linkedPlayer.teamId, linkedPlayer.playerId).catch(() => null)
+        ]);
+        return normalizePlayerFamilyContacts(player || {}, linkedPlayer, privateProfile);
     }));
     return dedupeFamilyContacts(contactGroups.flat());
+}
+
+async function loadPublicPlayer(teamId: string, playerId: string): Promise<Record<string, any> | null> {
+    const snapshot = await Promise.resolve(getDoc(doc(db, 'teams', teamId, 'players', playerId)));
+    if (!snapshot?.exists?.()) return null;
+    return { id: snapshot.id || playerId, ...(snapshot.data?.() || {}) };
 }
 
 function normalizePlayerFamilyContacts(player: Record<string, any>, linkedPlayer: ParentHouseholdLinkedPlayer, privateProfile?: Record<string, any> | null): ParentHouseholdFamilyContact[] {
