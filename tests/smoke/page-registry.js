@@ -5,9 +5,7 @@ export function getSmokeContext() {
         suite: process.env.SMOKE_SUITE || 'preview',
         teamId: process.env.SMOKE_TEAM_ID || DEFAULT_TEAM_ID,
         gameId: process.env.SMOKE_GAME_ID || '',
-        playerId: process.env.SMOKE_PLAYER_ID || '',
-        authEmail: process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '',
-        authPassword: process.env.SMOKE_STAFF_PASSWORD || process.env.SMOKE_AUTH_PASSWORD || ''
+        playerId: process.env.SMOKE_PLAYER_ID || ''
     };
 }
 
@@ -158,44 +156,6 @@ export function getPreviewBootPages(context) {
             path: '/certificates.html?demo=1#teamId=demo-junior-current',
             titlePatterns: [/Certificates - ALL PLAYS/i],
             readySelectors: ['#cert-setup', '#cert-preview']
-        },
-        ...buildOptionalCorePages(context)
-    ];
-}
-
-export function getAuthenticatedSmokePages(context) {
-    const { teamId } = context;
-
-    return [
-        {
-            name: 'dashboard',
-            path: '/app/#/teams',
-            titlePatterns: [/ALL PLAYS APP/i],
-            readySelectors: ['#root']
-        },
-        {
-            name: 'parent dashboard',
-            path: '/app/#/home',
-            titlePatterns: [/ALL PLAYS APP/i],
-            readySelectors: ['#root']
-        },
-        {
-            name: 'edit schedule',
-            path: `/edit-schedule.html#teamId=${teamId}`,
-            titlePatterns: [/Edit Schedule - ALL PLAYS/i],
-            readySelectors: ['#add-game-form', '#schedule-list']
-        },
-        {
-            name: 'team chat',
-            path: `/team-chat.html#teamId=${teamId}`,
-            titlePatterns: [/Team Chat - ALL PLAYS/i],
-            readySelectors: ['#messages-container', '#message-input']
-        },
-        {
-            name: 'certificates',
-            path: `/certificates.html#teamId=${teamId}`,
-            titlePatterns: [/Certificates - ALL PLAYS/i],
-            readySelectors: ['#cert-setup', '#cert-parent-view']
         },
         ...buildOptionalCorePages(context)
     ];
