@@ -61,6 +61,16 @@ describe('production smoke authenticated setup timeout', () => {
         }
     });
 
+    it('returns immediately after authenticated navigation without waiting for vanished credential fields', () => {
+        const signInHelper = helper.slice(
+            helper.indexOf('export async function signInToApp'),
+            helper.indexOf('async function closeBrowserContextBounded')
+        );
+
+        expect(signInHelper).toContain('return { authenticatedHomeStartedAt };');
+        expect(signInHelper).not.toContain(".fill('')");
+    });
+
     it('limits credential concurrency in the core post-deploy workflow', () => {
         const workflow = readFileSync('.github/workflows/post-deploy-smoke.yml', 'utf8');
         const scheduledWorkflow = readFileSync('.github/workflows/scheduled-prod-smoke.yml', 'utf8');
