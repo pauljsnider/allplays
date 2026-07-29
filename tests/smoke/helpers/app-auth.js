@@ -119,8 +119,6 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
         }).not.toMatch(/^#\/(?:auth|verify-pending)(?:\?|$)/);
         stage = 'waiting for the authenticated shell';
         await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
-        await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
-        await page.getByLabel('Email').fill('').catch(() => {});
         return { authenticatedHomeStartedAt };
     } catch (error) {
         throw new Error(
