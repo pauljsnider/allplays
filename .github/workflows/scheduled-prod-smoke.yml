@@ -51,6 +51,7 @@ jobs:
           tests/smoke/app-authenticated-extended.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
+          --workers=1
           --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai

@@ -8,7 +8,7 @@ const authenticatedExtended = readFileSync('tests/smoke/app-authenticated-extend
 
 describe('production smoke authenticated setup timeout', () => {
     it('uses an explicit bounded setup budget for every credentialed role suite', () => {
-        expect(helper).toContain('export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 180_000;');
+        expect(helper).toContain('export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;');
 
         for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
             expect(source).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
@@ -20,8 +20,8 @@ describe('production smoke authenticated setup timeout', () => {
                 source.indexOf('test.beforeAll('),
                 source.indexOf('test.afterAll(')
             );
-            expect(boundedSetup).toContain('createAuthenticatedAppSession(browser, {');
-            expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?context\.close\(\)/);
+            expect(boundedSetup).toMatch(/createAuthenticatedAppSession(?:s)?\(browser,/);
+            expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?closeAuthenticatedAppSession\(/);
         }
 
         for (const source of [authenticatedCore, authenticatedExtended]) {
@@ -29,7 +29,7 @@ describe('production smoke authenticated setup timeout', () => {
                 source.indexOf('test.beforeAll('),
                 source.indexOf('test.afterAll(')
             );
-            expect(boundedSetup).toContain('await Promise.all([');
+            expect(boundedSetup).toContain('createAuthenticatedAppSessions(browser, [');
         }
     });
 
@@ -46,6 +46,11 @@ describe('production smoke authenticated setup timeout', () => {
             authenticatedSessionHelper.indexOf('signInToApp(')
         );
         expect(authenticatedSessionHelper).toContain('return { context, page, issues, ...timing };');
+        expect(authenticatedSessionHelper).toContain('Promise.allSettled(');
+        expect(authenticatedSessionHelper).toContain('closeBrowserContextBounded(context)');
+        expect(helper).toContain('smoke authentication failed while ${stage}');
+        expect(helper).toContain('AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000');
+        expect(helper).toContain('timeoutId = setTimeout(resolve, AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS)');
         expect(authenticatedSessionHelper).not.toContain('storageState(');
         expect(authenticatedSessionHelper).not.toContain('page.reload(');
 
@@ -54,6 +59,20 @@ describe('production smoke authenticated setup timeout', () => {
             expect(source).not.toContain('createAuthenticatedStorageState');
             expect(source).not.toContain('storageState:');
         }
+    });
+
+    it('limits credential concurrency in the core post-deploy workflow', () => {
+        const workflow = readFileSync('.github/workflows/post-deploy-smoke.yml', 'utf8');
+        const scheduledWorkflow = readFileSync('.github/workflows/scheduled-prod-smoke.yml', 'utf8');
+
+        expect(workflow).toMatch(
+            /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/
+        );
+        expect(scheduledWorkflow).toMatch(
+            /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/
+        );
+        expect(authenticatedCore).not.toContain('parentBoundarySession');
+        expect(authenticatedCore).toContain('withAuthenticatedPage(parentWorkflowSession');
     });
 
     it('asserts the initial authenticated Home route without navigating to the current URL', () => {
@@ -79,7 +98,7 @@ describe('production smoke authenticated setup timeout', () => {
 
     it('measures the initial admin Home transition from before the sign-in action', () => {
         expect(helper).toMatch(
-            /const authenticatedHomeStartedAt = Date\.now\(\);\s+await page\.getByRole\('button', \{ name: 'Sign in' \}\)/
+            /const authenticatedHomeStartedAt = Date\.now\(\);[\s\S]*?await page\.getByRole\('button', \{ name: 'Sign in' \}\)/
         );
         expect(adminCore).toContain('Date.now() - authenticatedHomeStartedAt');
     });

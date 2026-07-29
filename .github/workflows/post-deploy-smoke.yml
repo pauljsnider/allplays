@@ -88,6 +88,15 @@ jobs:
           SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
 
+      - name: Upload redacted candidate authentication diagnostic
+        if: always() && steps.firebase_auth.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-auth-redacted-diagnostic-${{ github.event.workflow_run.head_sha }}
+          path: test-results/**/candidate-auth-diagnostic.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Inspect fixture-backed smoke readiness
         id: core_config
         env:
@@ -188,6 +197,7 @@ jobs:
           tests/smoke/app-authenticated-core.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
+          --workers=1
           --reporter=line
         env:
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
@@ -207,15 +217,6 @@ jobs:
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
-
-      - name: Upload redacted candidate authentication diagnostic
-        if: always() && steps.firebase_auth.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: candidate-auth-redacted-diagnostic-${{ github.event.workflow_run.head_sha }}
-          path: test-results/**/candidate-auth-diagnostic.json
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Aggregate production smoke signals
         if: always()

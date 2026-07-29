@@ -3,7 +3,8 @@ import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertAuthenticatedAppRoute,
     buildAppSmokeUrl,
-    createAuthenticatedAppSession,
+    closeAuthenticatedAppSession,
+    createAuthenticatedAppSessions,
     getAppSmokeConfig,
     redactSmokeDiagnostic
 } from './helpers/app-auth.js';
@@ -63,38 +64,33 @@ test.beforeAll(async ({ browser }) => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
-    [
-        staffSession,
-        parentNotificationSession,
-        parentWriteSession,
-        parentReadOnlySession,
-        staffRestSession,
-        parentRestSession
-    ] = await Promise.all([
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.staffEmail,
-            password: config.staffPassword,
-            roleLabel: 'staff'
-        }),
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        }),
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        }),
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        }),
+    const [uiSessions, nextStaffRestSession, nextParentRestSession] = await Promise.all([
+        createAuthenticatedAppSessions(browser, [
+            {
+                appBaseUrl: config.appBaseUrl,
+                email: config.staffEmail,
+                password: config.staffPassword,
+                roleLabel: 'staff'
+            },
+            {
+                appBaseUrl: config.appBaseUrl,
+                email: config.parentEmail,
+                password: config.parentPassword,
+                roleLabel: 'parent notifications'
+            },
+            {
+                appBaseUrl: config.appBaseUrl,
+                email: config.parentEmail,
+                password: config.parentPassword,
+                roleLabel: 'parent writes'
+            },
+            {
+                appBaseUrl: config.appBaseUrl,
+                email: config.parentEmail,
+                password: config.parentPassword,
+                roleLabel: 'parent read-only'
+            }
+        ]),
         createFirebaseRestSession({
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,
@@ -106,14 +102,22 @@ test.beforeAll(async ({ browser }) => {
             password: config.parentPassword
         })
     ]);
+    [
+        staffSession,
+        parentNotificationSession,
+        parentWriteSession,
+        parentReadOnlySession
+    ] = uiSessions;
+    staffRestSession = nextStaffRestSession;
+    parentRestSession = nextParentRestSession;
 });
 
 test.afterAll(async () => {
     await Promise.all([
-        staffSession?.context.close(),
-        parentNotificationSession?.context.close(),
-        parentWriteSession?.context.close(),
-        parentReadOnlySession?.context.close()
+        closeAuthenticatedAppSession(staffSession),
+        closeAuthenticatedAppSession(parentNotificationSession),
+        closeAuthenticatedAppSession(parentWriteSession),
+        closeAuthenticatedAppSession(parentReadOnlySession)
     ]);
 });
 

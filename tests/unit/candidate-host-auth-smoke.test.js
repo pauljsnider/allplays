@@ -31,7 +31,14 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(spec).toContain("expect(landingUrl.hash).not.toMatch(/^#\\/auth");
         expect(spec).toContain("testInfo.outputPath('candidate-auth-diagnostic.json')");
         expect(spec).toContain('redactDiagnosticText');
+        expect(spec).toContain('test.setTimeout(90_000)');
+        expect(spec).toContain("toBeVisible({ timeout: 30_000 })");
         expect(spec).not.toContain('page.screenshot');
+
+        const diagnosticUpload = workflow.indexOf('Upload redacted candidate authentication diagnostic');
+        const baseline = workflow.indexOf('Run production smoke baseline');
+        expect(diagnosticUpload).toBeGreaterThan(-1);
+        expect(diagnosticUpload).toBeLessThan(baseline);
     });
 
     it('does not enable App Check enforcement for candidate authentication', () => {

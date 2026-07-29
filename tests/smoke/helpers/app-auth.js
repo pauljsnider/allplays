@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test';
 
-export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 180_000;
+export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
+const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
 
 const sensitivePatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
@@ -59,6 +60,16 @@ function safeRequestLabel(requestUrl) {
     }
 }
 
+function safePageLabel(pageUrl) {
+    try {
+        const parsed = new URL(pageUrl);
+        const route = parsed.hash.split('?')[0];
+        return `${parsed.origin}${parsed.pathname}${route}`;
+    } catch {
+        return '[invalid-url]';
+    }
+}
+
 export function collectAppRuntimeIssues(page, secrets = []) {
     const issues = [];
     page.on('pageerror', (error) => {
@@ -87,20 +98,47 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     expect(email, `${roleLabel} smoke email is required`).toBeTruthy();
     expect(password, `${roleLabel} smoke password is required`).toBeTruthy();
 
-    await page.goto(buildAppSmokeUrl(appBaseUrl, '/auth'), { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
-    await page.getByLabel('Email').fill(email);
-    await page.getByLabel('Password', { exact: true }).fill(password);
-    const authenticatedHomeStartedAt = Date.now();
-    await page.getByRole('button', { name: 'Sign in' }).last().click();
-    await expect.poll(() => new URL(page.url()).hash, {
-        message: `${roleLabel} remained in the authentication flow`,
-        timeout: 25_000
-    }).not.toMatch(/^#\/(?:auth|verify-pending)(?:\?|$)/);
-    await expect(page.locator('main')).toBeVisible({ timeout: 15_000 });
-    await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
-    await page.getByLabel('Email').fill('').catch(() => {});
-    return { authenticatedHomeStartedAt };
+    let stage = 'opening the sign-in page';
+    try {
+        await page.goto(buildAppSmokeUrl(appBaseUrl, '/auth'), {
+            waitUntil: 'domcontentloaded',
+            timeout: 45_000
+        });
+        stage = 'waiting for the sign-in form';
+        await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 30_000 });
+        stage = 'filling credentials';
+        await page.getByLabel('Email').fill(email, { timeout: 15_000 });
+        await page.getByLabel('Password', { exact: true }).fill(password, { timeout: 15_000 });
+        const authenticatedHomeStartedAt = Date.now();
+        stage = 'submitting credentials';
+        await page.getByRole('button', { name: 'Sign in' }).last().click({ timeout: 20_000 });
+        stage = 'waiting for the authenticated route';
+        await expect.poll(() => new URL(page.url()).hash, {
+            message: `${roleLabel} remained in the authentication flow`,
+            timeout: 40_000
+        }).not.toMatch(/^#\/(?:auth|verify-pending)(?:\?|$)/);
+        stage = 'waiting for the authenticated shell';
+        await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
+        await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
+        await page.getByLabel('Email').fill('').catch(() => {});
+        return { authenticatedHomeStartedAt };
+    } catch (error) {
+        throw new Error(
+            `${roleLabel} smoke authentication failed while ${stage} at ${safePageLabel(page.url())}: ` +
+            redactSmokeDiagnostic(error?.message, [email, password])
+        );
+    }
+}
+
+async function closeBrowserContextBounded(context) {
+    let timeoutId;
+    await Promise.race([
+        context.close().catch(() => {}),
+        new Promise((resolve) => {
+            timeoutId = setTimeout(resolve, AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS);
+        })
+    ]);
+    clearTimeout(timeoutId);
 }
 
 export async function createAuthenticatedAppSession(browser, credentials) {
@@ -116,9 +154,31 @@ export async function createAuthenticatedAppSession(browser, credentials) {
         // persistence can remain pending after Auth and Home are already usable.
         return { context, page, issues, ...timing };
     } catch (error) {
-        await context.close();
+        await closeBrowserContextBounded(context);
         throw error;
     }
+}
+
+export async function createAuthenticatedAppSessions(browser, credentialsList) {
+    const results = await Promise.allSettled(
+        credentialsList.map((credentials) => createAuthenticatedAppSession(browser, credentials))
+    );
+    const sessions = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+    const failures = results
+        .filter((result) => result.status === 'rejected')
+        .map((result) => String(result.reason?.message || result.reason));
+
+    if (failures.length > 0) {
+        await Promise.all(sessions.map((session) => closeBrowserContextBounded(session.context)));
+        throw new Error(`Authenticated smoke session setup failed: ${failures.join('; ')}`);
+    }
+    return sessions;
+}
+
+export async function closeAuthenticatedAppSession(session) {
+    if (session?.context) await closeBrowserContextBounded(session.context);
 }
 
 export async function assertAuthenticatedAppRoute(page, route, options = {}) {

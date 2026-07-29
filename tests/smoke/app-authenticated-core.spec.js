@@ -4,7 +4,8 @@ import {
     assertAuthenticatedAppRoute,
     assertNotificationInbox,
     buildAppSmokeUrl,
-    createAuthenticatedAppSession,
+    closeAuthenticatedAppSession,
+    createAuthenticatedAppSessions,
     getAppSmokeConfig,
     openAuthenticatedAppRoute,
     redactSmokeDiagnostic
@@ -25,7 +26,6 @@ test.describe.configure({ mode: 'serial' });
 
 let staffSession;
 let parentWorkflowSession;
-let parentBoundarySession;
 
 test.beforeAll(async ({ browser }) => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
@@ -43,33 +43,26 @@ test.beforeAll(async ({ browser }) => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
-    [staffSession, parentWorkflowSession, parentBoundarySession] = await Promise.all([
-        createAuthenticatedAppSession(browser, {
+    [staffSession, parentWorkflowSession] = await createAuthenticatedAppSessions(browser, [
+        {
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,
             password: config.staffPassword,
             roleLabel: 'staff'
-        }),
-        createAuthenticatedAppSession(browser, {
+        },
+        {
             appBaseUrl: config.appBaseUrl,
             email: config.parentEmail,
             password: config.parentPassword,
             roleLabel: 'parent'
-        }),
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        })
+        }
     ]);
 });
 
 test.afterAll(async () => {
     await Promise.all([
-        staffSession?.context.close(),
-        parentWorkflowSession?.context.close(),
-        parentBoundarySession?.context.close()
+        closeAuthenticatedAppSession(staffSession),
+        closeAuthenticatedAppSession(parentWorkflowSession)
     ]);
 });
 
@@ -154,7 +147,7 @@ test('parent account reaches every critical family workflow with linked fixtures
 });
 
 test('role boundaries, logout, refresh persistence, and signed-out rejection hold', async () => {
-    await withAuthenticatedPage(parentBoundarySession, async (page) => {
+    await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         await page.goto(buildAppSmokeUrl(config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/fees`));
         await expect(page.getByText(/Admin access required|Only team owners|access denied/i).first()).toBeVisible({ timeout: 25_000 });
 
