@@ -13,8 +13,15 @@ describe('production smoke authenticated setup timeout', () => {
         for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
             expect(source).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
             expect(source).toMatch(
-                /test\.beforeAll\(async \(\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
+                /test\.beforeAll\(async \(\{ browser \}\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
             );
+
+            const boundedSetup = source.slice(
+                source.indexOf('test.beforeAll('),
+                source.indexOf('test.afterAll(')
+            );
+            expect(boundedSetup).toContain('createAuthenticatedAppSession(browser, {');
+            expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?context\.close\(\)/);
         }
     });
 

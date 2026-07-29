@@ -34,10 +34,14 @@ const secretValues = [
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 test.describe.configure({ mode: 'serial' });
 
+let staffSession;
+let parentNotificationSession;
+let parentWriteSession;
+let parentReadOnlySession;
 let staffRestSession;
 let parentRestSession;
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_RUN_ID: runId,
@@ -59,6 +63,30 @@ test.beforeAll(async () => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
+    staffSession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.staffEmail,
+        password: config.staffPassword,
+        roleLabel: 'staff'
+    });
+    parentNotificationSession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    });
+    parentWriteSession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    });
+    parentReadOnlySession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    });
     [staffRestSession, parentRestSession] = await Promise.all([
         createFirebaseRestSession({
             appBaseUrl: config.appBaseUrl,
@@ -73,15 +101,20 @@ test.beforeAll(async () => {
     ]);
 });
 
-async function withAuthenticatedPage(browser, credentials, callback) {
-    const { context, page } = await createAuthenticatedAppSession(browser, credentials);
+test.afterAll(async () => {
+    await Promise.all([
+        staffSession?.context.close(),
+        parentNotificationSession?.context.close(),
+        parentWriteSession?.context.close(),
+        parentReadOnlySession?.context.close()
+    ]);
+});
+
+async function withAuthenticatedPage(session, callback) {
+    const { page } = session;
     const issues = collectAppRuntimeIssues(page, secretValues);
-    try {
-        await callback(page);
-        expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
-    } finally {
-        await context.close();
-    }
+    await callback(page);
+    expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }
 
 async function openRoute(page, route) {
@@ -90,7 +123,7 @@ async function openRoute(page, route) {
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
 }
 
-test('staff smoke writes are deterministic and removed after validation', async ({ browser }) => {
+test('staff smoke writes are deterministic and removed after validation', async () => {
     test.setTimeout(300_000);
     const playerName = `${smokePrefix}-player`;
     const opponentName = `${smokePrefix}-opponent`;
@@ -139,12 +172,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
     ];
 
     try {
-        await withAuthenticatedPage(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.staffEmail,
-            password: config.staffPassword,
-            roleLabel: 'staff'
-        }, async (page) => {
+        await withAuthenticatedPage(staffSession, async (page) => {
             await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}?tab=roster`);
             await page.getByRole('button', { name: 'Add player' }).click();
             await page.getByPlaceholder('Player name').fill(playerName);
@@ -243,12 +271,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
         });
 
-        await withAuthenticatedPage(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        }, async (page) => {
+        await withAuthenticatedPage(parentNotificationSession, async (page) => {
             await openRoute(page, '/home');
             await page.getByRole('button', { name: 'Notifications' }).first().click();
             const inbox = page.getByRole('dialog', { name: 'Notifications' });
@@ -266,7 +289,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
     }
 });
 
-test('parent smoke writes restore or remove every touched record', async ({ browser }) => {
+test('parent smoke writes restore or remove every touched record', async () => {
     test.setTimeout(240_000);
     const rideNote = `${smokePrefix}-ride`;
     const shareLabel = `${smokePrefix}-share`;
@@ -307,12 +330,7 @@ test('parent smoke writes restore or remove every touched record', async ({ brow
     ];
 
     try {
-        await withAuthenticatedPage(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        }, async (page) => {
+        await withAuthenticatedPage(parentWriteSession, async (page) => {
             await openRoute(
                 page,
                 `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}?childId=${encodeURIComponent(config.playerId)}&section=availability`
@@ -359,14 +377,8 @@ test('parent smoke writes restore or remove every touched record', async ({ brow
     }
 });
 
-test('read-only fixtures cover registrations, fees, opportunities, and notification deep links', async ({ browser }) => {
-    test.setTimeout(90_000);
-    await withAuthenticatedPage(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    }, async (page) => {
+test('read-only fixtures cover registrations, fees, opportunities, and notification deep links', async () => {
+    await withAuthenticatedPage(parentReadOnlySession, async (page) => {
         await openRoute(page, '/parent-tools/registrations');
         await expect(page.getByText('Registrations', { exact: true })).toBeVisible();
         await expect(page.locator(`a[href*="${config.registrationFormId}"]`).first()).toBeVisible({ timeout: 20_000 });

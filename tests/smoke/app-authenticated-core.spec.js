@@ -23,7 +23,11 @@ const secretValues = [
 test.skip(!enabled, 'Credentialed core workflows run only in production or extended-production smoke');
 test.describe.configure({ mode: 'serial' });
 
-test.beforeAll(async () => {
+let staffSession;
+let parentWorkflowSession;
+let parentBoundarySession;
+
+test.beforeAll(async ({ browser }) => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_TEAM_ID: config.teamId,
@@ -38,27 +42,45 @@ test.beforeAll(async () => {
         config.staffEmail.trim().toLowerCase(),
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
-});
 
-async function withAuthenticatedPage(browser, credentials, callback) {
-    const { context, page } = await createAuthenticatedAppSession(browser, credentials);
-    const issues = collectAppRuntimeIssues(page, secretValues);
-    try {
-        await callback(page);
-        expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
-    } finally {
-        await context.close();
-    }
-}
-
-test('staff account reaches every critical app workflow with smoke fixtures', async ({ browser }) => {
-    test.setTimeout(240_000);
-    await withAuthenticatedPage(browser, {
+    staffSession = await createAuthenticatedAppSession(browser, {
         appBaseUrl: config.appBaseUrl,
         email: config.staffEmail,
         password: config.staffPassword,
         roleLabel: 'staff'
-    }, async (page) => {
+    });
+    parentWorkflowSession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    });
+    parentBoundarySession = await createAuthenticatedAppSession(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    });
+});
+
+test.afterAll(async () => {
+    await Promise.all([
+        staffSession?.context.close(),
+        parentWorkflowSession?.context.close(),
+        parentBoundarySession?.context.close()
+    ]);
+});
+
+async function withAuthenticatedPage(session, callback) {
+    const { page } = session;
+    const issues = collectAppRuntimeIssues(page, secretValues);
+    await callback(page);
+    expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
+}
+
+test('staff account reaches every critical app workflow with smoke fixtures', async () => {
+    test.setTimeout(240_000);
+    await withAuthenticatedPage(staffSession, async (page) => {
         const teamPath = `/teams/${encodeURIComponent(config.teamId)}`;
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home', { heading: 'Your day' });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/teams', { requiredHref: teamPath });
@@ -95,14 +117,9 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
     });
 });
 
-test('parent account reaches every critical family workflow with linked fixtures', async ({ browser }) => {
+test('parent account reaches every critical family workflow with linked fixtures', async () => {
     test.setTimeout(210_000);
-    await withAuthenticatedPage(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    }, async (page) => {
+    await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         const playerPath = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}`;
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home', {
             heading: 'Your day',
@@ -135,14 +152,8 @@ test('parent account reaches every critical family workflow with linked fixtures
     });
 });
 
-test('role boundaries, logout, refresh persistence, and signed-out rejection hold', async ({ browser }) => {
-    test.setTimeout(90_000);
-    await withAuthenticatedPage(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    }, async (page) => {
+test('role boundaries, logout, refresh persistence, and signed-out rejection hold', async () => {
+    await withAuthenticatedPage(parentBoundarySession, async (page) => {
         await page.goto(buildAppSmokeUrl(config.appBaseUrl, `/teams/${encodeURIComponent(config.teamId)}/fees`));
         await expect(page.getByText(/Admin access required|Only team owners|access denied/i).first()).toBeVisible({ timeout: 25_000 });
 
