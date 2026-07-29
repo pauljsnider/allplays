@@ -15,16 +15,72 @@ describe('production smoke authenticated setup timeout', () => {
             expect(source).toMatch(
                 /test\.beforeAll\(async \(\{ browser \}\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
             );
+
+            const boundedSetup = source.slice(
+                source.indexOf('test.beforeAll('),
+                source.indexOf('test.afterAll(')
+            );
+            expect(boundedSetup).toContain('createAuthenticatedAppSession(browser, {');
+            expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?context\.close\(\)/);
+        }
+
+        for (const source of [authenticatedCore, authenticatedExtended]) {
+            const boundedSetup = source.slice(
+                source.indexOf('test.beforeAll('),
+                source.indexOf('test.afterAll(')
+            );
+            expect(boundedSetup).toContain('await Promise.all([');
         }
     });
 
-    it('captures Firebase persistence without reloading the signed-in production page', () => {
-        const storageStateHelper = helper.slice(
-            helper.indexOf('export async function createAuthenticatedStorageState'),
+    it('keeps Firebase authentication in a live context without serializing IndexedDB state', () => {
+        const authenticatedSessionHelper = helper.slice(
+            helper.indexOf('export async function createAuthenticatedAppSession'),
             helper.indexOf('export async function openAuthenticatedAppRoute')
         );
 
-        expect(storageStateHelper).toContain('context.storageState({ indexedDB: true })');
-        expect(storageStateHelper).not.toContain('page.reload(');
+        expect(authenticatedSessionHelper).toContain(
+            'const issues = collectAppRuntimeIssues(page, [credentials.email, credentials.password]);'
+        );
+        expect(authenticatedSessionHelper.indexOf('collectAppRuntimeIssues(')).toBeLessThan(
+            authenticatedSessionHelper.indexOf('signInToApp(')
+        );
+        expect(authenticatedSessionHelper).toContain('return { context, page, issues, ...timing };');
+        expect(authenticatedSessionHelper).not.toContain('storageState(');
+        expect(authenticatedSessionHelper).not.toContain('page.reload(');
+
+        for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
+            expect(source).toContain('createAuthenticatedAppSession');
+            expect(source).not.toContain('createAuthenticatedStorageState');
+            expect(source).not.toContain('storageState:');
+        }
+    });
+
+    it('asserts the initial authenticated Home route without navigating to the current URL', () => {
+        const routeAssertions = [
+            "assertAuthenticatedAppRoute(page, '/home'",
+            "assertAuthenticatedAppRoute(page, '/home'",
+            "assertAuthenticatedAppRoute(page, '/home'"
+        ];
+
+        for (const [source, assertion] of [
+            [adminCore, routeAssertions[0]],
+            [authenticatedCore, routeAssertions[1]],
+            [authenticatedExtended, routeAssertions[2]]
+        ]) {
+            expect(source).toContain(assertion);
+            expect(source).not.toContain("openAuthenticatedAppRoute(page, config.appBaseUrl, '/home'");
+        }
+
+        expect(helper).toMatch(
+            /export async function openAuthenticatedAppRoute[\s\S]*?page\.goto\([\s\S]*?await assertAuthenticatedAppRoute\(page, route, options\);/
+        );
+    });
+
+    it('measures the initial admin Home transition from before the sign-in action', () => {
+        expect(helper).toMatch(
+            /const authenticatedHomeStartedAt = Date\.now\(\);\s+await page\.getByRole\('button', \{ name: 'Sign in' \}\)/
+        );
+        expect(adminCore).toContain('Date.now() - authenticatedHomeStartedAt');
     });
 });

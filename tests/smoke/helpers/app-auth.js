@@ -91,6 +91,7 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password', { exact: true }).fill(password);
+    const authenticatedHomeStartedAt = Date.now();
     await page.getByRole('button', { name: 'Sign in' }).last().click();
     await expect.poll(() => new URL(page.url()).hash, {
         message: `${roleLabel} remained in the authentication flow`,
@@ -99,32 +100,33 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await expect(page.locator('main')).toBeVisible({ timeout: 15_000 });
     await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
     await page.getByLabel('Email').fill('').catch(() => {});
+    return { authenticatedHomeStartedAt };
 }
 
-export async function createAuthenticatedStorageState(browser, credentials) {
+export async function createAuthenticatedAppSession(browser, credentials) {
     const context = await browser.newContext({
         serviceWorkers: 'block',
         recordVideo: undefined
     });
     const page = await context.newPage();
+    const issues = collectAppRuntimeIssues(page, [credentials.email, credentials.password]);
     try {
-        await signInToApp(page, credentials);
-        // Consumers restore this state in a fresh context before opening protected routes.
-        // Avoid reloading the signed-in page here: canonical production navigation can
-        // remain pending even after Firebase auth and the protected Home UI are ready.
-        return await context.storageState({ indexedDB: true });
-    } finally {
+        const timing = await signInToApp(page, credentials);
+        // Keep the authenticated context live. Exporting Firebase's IndexedDB-backed
+        // persistence can remain pending after Auth and Home are already usable.
+        return { context, page, issues, ...timing };
+    } catch (error) {
         await context.close();
+        throw error;
     }
 }
 
-export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options = {}) {
+export async function assertAuthenticatedAppRoute(page, route, options = {}) {
     const {
         heading,
         forbidden = [/Unable to load/i, /\bnot found\b/i, /temporarily unavailable/i],
         requiredHref = ''
     } = options;
-    await page.goto(buildAppSmokeUrl(appBaseUrl, route), { waitUntil: 'domcontentloaded' });
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
     await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
     if (heading) {
@@ -140,6 +142,11 @@ export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options
         ), requiredHref);
         expect(found, `Expected a meaningful fixture link containing ${requiredHref}`).toBe(true);
     }
+}
+
+export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options = {}) {
+    await page.goto(buildAppSmokeUrl(appBaseUrl, route), { waitUntil: 'domcontentloaded' });
+    await assertAuthenticatedAppRoute(page, route, options);
 }
 
 export async function assertNotificationInbox(page) {
