@@ -101,6 +101,20 @@ describe('production smoke authenticated setup timeout', () => {
         expect(authenticatedCore).not.toContain("openAuthenticatedAppRoute(page, config.appBaseUrl, '/officials'");
     });
 
+    it('waits for asynchronously hydrated fixture links before failing a route', () => {
+        const routeHelper = helper.slice(
+            helper.indexOf('export async function assertAuthenticatedAppRoute'),
+            helper.indexOf('export async function openAuthenticatedAppRoute')
+        );
+
+        expect(routeHelper).toContain('await expect.poll(');
+        expect(routeHelper).toContain('timeout: 25_000');
+        expect(routeHelper).toContain(
+            'message: `Expected a meaningful fixture link containing ${requiredHref}`'
+        );
+        expect(routeHelper).not.toContain('const found = await');
+    });
+
     it('asserts the initial authenticated Home route without navigating to the current URL', () => {
         const routeAssertions = [
             "assertAuthenticatedAppRoute(page, '/home'",
