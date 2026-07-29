@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
+    assertAuthenticatedAppRoute,
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
     createAuthenticatedAppSession,
@@ -279,7 +280,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
         });
 
         await withAuthenticatedPage(parentNotificationSession, async (page) => {
-            await openRoute(page, '/home');
+            await assertAuthenticatedAppRoute(page, '/home');
             await page.getByRole('button', { name: 'Notifications' }).first().click();
             const inbox = page.getByRole('dialog', { name: 'Notifications' });
             await expect(inbox).toBeVisible();

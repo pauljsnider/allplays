@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
+    assertAuthenticatedAppRoute,
     assertNotificationInbox,
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
@@ -84,7 +85,7 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
     test.setTimeout(240_000);
     await withAuthenticatedPage(staffSession, async (page) => {
         const teamPath = `/teams/${encodeURIComponent(config.teamId)}`;
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home', { heading: 'Your day' });
+        await assertAuthenticatedAppRoute(page, '/home', { heading: 'Your day' });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/teams', { requiredHref: teamPath });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, teamPath);
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `${teamPath}?tab=roster`, {
@@ -123,7 +124,7 @@ test('parent account reaches every critical family workflow with linked fixtures
     test.setTimeout(210_000);
     await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         const playerPath = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}`;
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home', {
+        await assertAuthenticatedAppRoute(page, '/home', {
             heading: 'Your day',
             requiredHref: playerPath
         });

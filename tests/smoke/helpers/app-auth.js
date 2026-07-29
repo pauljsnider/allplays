@@ -118,13 +118,12 @@ export async function createAuthenticatedAppSession(browser, credentials) {
     }
 }
 
-export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options = {}) {
+export async function assertAuthenticatedAppRoute(page, route, options = {}) {
     const {
         heading,
         forbidden = [/Unable to load/i, /\bnot found\b/i, /temporarily unavailable/i],
         requiredHref = ''
     } = options;
-    await page.goto(buildAppSmokeUrl(appBaseUrl, route), { waitUntil: 'domcontentloaded' });
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
     await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
     if (heading) {
@@ -140,6 +139,11 @@ export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options
         ), requiredHref);
         expect(found, `Expected a meaningful fixture link containing ${requiredHref}`).toBe(true);
     }
+}
+
+export async function openAuthenticatedAppRoute(page, appBaseUrl, route, options = {}) {
+    await page.goto(buildAppSmokeUrl(appBaseUrl, route), { waitUntil: 'domcontentloaded' });
+    await assertAuthenticatedAppRoute(page, route, options);
 }
 
 export async function assertNotificationInbox(page) {

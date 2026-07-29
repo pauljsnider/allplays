@@ -50,4 +50,25 @@ describe('production smoke authenticated setup timeout', () => {
             expect(source).not.toContain('storageState:');
         }
     });
+
+    it('asserts the initial authenticated Home route without navigating to the current URL', () => {
+        const routeAssertions = [
+            "assertAuthenticatedAppRoute(page, '/home'",
+            "assertAuthenticatedAppRoute(page, '/home'",
+            "assertAuthenticatedAppRoute(page, '/home'"
+        ];
+
+        for (const [source, assertion] of [
+            [adminCore, routeAssertions[0]],
+            [authenticatedCore, routeAssertions[1]],
+            [authenticatedExtended, routeAssertions[2]]
+        ]) {
+            expect(source).toContain(assertion);
+            expect(source).not.toContain("openAuthenticatedAppRoute(page, config.appBaseUrl, '/home'");
+        }
+
+        expect(helper).toMatch(
+            /export async function openAuthenticatedAppRoute[\s\S]*?page\.goto\([\s\S]*?await assertAuthenticatedAppRoute\(page, route, options\);/
+        );
+    });
 });

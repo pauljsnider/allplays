@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
+    assertAuthenticatedAppRoute,
     collectAppRuntimeIssues,
     createAuthenticatedAppSession,
     getAppSmokeConfig,
-    openAuthenticatedAppRoute,
     redactSmokeDiagnostic
 } from './helpers/app-auth.js';
 
@@ -38,7 +38,7 @@ test('platform admin Home loads without a platform-wide team fanout', async () =
     const { page } = adminSession;
     const issues = collectAppRuntimeIssues(page, secrets);
     const startedAt = Date.now();
-    await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home', {
+    await assertAuthenticatedAppRoute(page, '/home', {
         heading: 'Your day'
     });
     expect(Date.now() - startedAt, 'Platform-admin Home should become usable within 20 seconds').toBeLessThan(20_000);
