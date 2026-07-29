@@ -123,6 +123,9 @@ test('parent account reaches every critical family workflow with linked fixtures
     await withAuthenticatedPage(parentWorkflowSession, async (page) => {
         const playerPath = `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}`;
         await assertAuthenticatedAppRoute(page, '/home', {
+            heading: 'Your day'
+        });
+        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/home?section=players', {
             heading: 'Your day',
             requiredHref: playerPath
         });
