@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+    AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     collectAppRuntimeIssues,
     createAuthenticatedStorageState,
     getAppSmokeConfig,
@@ -18,6 +19,7 @@ test.describe.configure({ mode: 'serial' });
 let adminStorageState;
 
 test.beforeAll(async ({ browser }) => {
+    test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     expect(config.adminEmail, 'SMOKE_ADMIN_EMAIL is required').toBeTruthy();
     expect(config.adminPassword, 'SMOKE_ADMIN_PASSWORD is required').toBeTruthy();
     adminStorageState = await createAuthenticatedStorageState(browser, {
