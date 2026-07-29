@@ -1733,6 +1733,7 @@ describe('official assignments app service', () => {
 
   it('allows an eligible team participant to view requested-team open slots without an official directory link', async () => {
     vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getTeam).mockResolvedValue(null as any);
     vi.mocked(getGames).mockResolvedValue([
       {
         id: 'game-open',
@@ -1759,6 +1760,7 @@ describe('official assignments app service', () => {
         canClaim: true
       })
     ]);
+    expect(getTeam).toHaveBeenCalledWith('team-alpha', { includeInactive: true });
   });
 
   it('delegates accept, decline, and claim writes to legacy officiating actions', async () => {
