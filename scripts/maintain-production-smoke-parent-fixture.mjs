@@ -34,7 +34,7 @@ function isParentLink(value, teamId, playerId) {
 
 function isActiveRosterPlayer(document) {
     const fields = document?.fields || {};
-    const status = getStringField(fields, 'status').trim().toLowerCase();
+    const status = getStringField(fields, 'status');
     return getBooleanField(fields, 'active') !== false &&
         getBooleanField(fields, 'archived') !== true &&
         (!status || status === 'active');

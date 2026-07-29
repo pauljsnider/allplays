@@ -150,6 +150,26 @@ describe('production parent smoke fixture maintenance', () => {
             ready: false,
             playerActive: false
         });
+        expect(
+            inspectParentFixture(
+                buildParentDocument({
+                    parentOf: [
+                        mapValue({
+                            teamId: { stringValue: teamId },
+                            playerId: { stringValue: playerId }
+                        })
+                    ],
+                    parentTeamIds: [teamId],
+                    parentPlayerKeys: [`${teamId}::${playerId}`]
+                }),
+                buildPlayerDocument({ status: 'Active' }),
+                teamId,
+                playerId
+            )
+        ).toMatchObject({
+            ready: false,
+            playerActive: false
+        });
     });
 
     it('keeps parent repair credentials in the protected exact-SHA workflow', () => {
