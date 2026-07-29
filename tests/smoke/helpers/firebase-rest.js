@@ -161,6 +161,39 @@ export async function getFirestoreDocument(session, documentPath) {
     return readJson(response, 'Firestore smoke document read');
 }
 
+export async function patchFirestoreDocumentFields(
+    session,
+    documentPath,
+    fields,
+    { updateTime = '' } = {}
+) {
+    const fieldEntries = Object.entries(fields || {});
+    if (!fieldEntries.length) {
+        throw new Error('Firestore smoke patch requires at least one field');
+    }
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    fieldEntries
+        .map(([fieldPath]) => fieldPath)
+        .sort()
+        .forEach((fieldPath) => url.searchParams.append('updateMask.fieldPaths', fieldPath));
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
+    const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            fields: Object.fromEntries(fieldEntries)
+        })
+    });
+    return readJson(response, 'Firestore smoke document patch');
+}
+
 export async function restoreFirestoreDocument(session, documentPath, originalDocument) {
     if (!originalDocument) {
         await deleteFirestoreDocument(session, documentPath);

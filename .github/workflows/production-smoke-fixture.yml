@@ -1,0 +1,50 @@
+name: production-smoke-fixture
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Audit or repair the dedicated officials smoke fixture
+        required: true
+        default: audit
+        type: choice
+        options:
+          - audit
+          - repair
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke-fixture
+  cancel-in-progress: false
+
+jobs:
+  maintain-officials-fixture:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production-smoke
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Audit or repair officials smoke fixture
+        run: node scripts/maintain-production-smoke-official-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: ${{ inputs.mode }}
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
