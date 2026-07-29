@@ -103,8 +103,15 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
         await expect(page.getByRole('button', { name: 'Photo', exact: true })).toBeVisible({ timeout: 20_000 });
         await expect(page.locator('main')).not.toContainText('No albums are available yet.');
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `${teamPath}/certificates`, { heading: 'Awards studio' });
-        await openAuthenticatedAppRoute(page, config.appBaseUrl, '/officials', { heading: 'Assignments' });
-        await expect(page.locator('main')).not.toContainText('No upcoming assignments');
+        await openAuthenticatedAppRoute(
+            page,
+            config.appBaseUrl,
+            `/officials?teamId=${encodeURIComponent(config.teamId)}`,
+            {
+                heading: 'Assignments',
+                requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.gameId)}`
+            }
+        );
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/profile/settings');
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/help', { heading: 'Find guides without leaving the app' });
         await assertNotificationInbox(page);

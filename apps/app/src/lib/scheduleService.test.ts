@@ -1731,6 +1731,38 @@ describe('official assignments app service', () => {
     expect(getGames).toHaveBeenCalledWith('team-alpha', { startDate: expect.any(Date) });
   });
 
+  it('allows an eligible team participant to view requested-team open slots without an official directory link', async () => {
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getTeam).mockResolvedValue(null as any);
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-open',
+        date: futureDate,
+        opponent: 'Falcons',
+        location: 'Field 4',
+        officiatingSelfAssignmentEnabled: true,
+        officiatingSlots: [
+          { id: 'line', position: 'Line Judge', status: 'open' }
+        ]
+      }
+    ] as any);
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.teamIds).toEqual(['team-alpha']);
+    expect(result.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'open',
+        teamId: 'team-alpha',
+        gameId: 'game-open',
+        slotId: 'line',
+        canClaim: true
+      })
+    ]);
+    expect(getTeam).toHaveBeenCalledWith('team-alpha', { includeInactive: true });
+  });
+
   it('delegates accept, decline, and claim writes to legacy officiating actions', async () => {
     const item = {
       kind: 'assigned',

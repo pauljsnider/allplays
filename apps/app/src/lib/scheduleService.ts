@@ -6579,14 +6579,19 @@ function isUpcomingOfficialGame(game: any, now = new Date()) {
   return Boolean(date && date.getTime() >= now.getTime() && status !== 'cancelled' && status !== 'canceled');
 }
 
-function isEligibleOpenOfficiatingSlotParticipant(team: any = {}, userProfile: Record<string, any> = {}, user: AuthUser) {
+function isEligibleOpenOfficiatingSlotParticipant(
+  team: any = {},
+  userProfile: Record<string, any> = {},
+  user: AuthUser,
+  requestedTeamId = compactString(team?.id)
+) {
   const uid = compactString(user?.uid);
   const email = normalizeOfficialLinkEmail(user?.email || '');
   if (!uid) return false;
   if (team?.ownerId === uid) return true;
   if (email && Array.isArray(team?.adminEmails) && team.adminEmails.map((value: unknown) => normalizeOfficialLinkEmail(value)).includes(email)) return true;
   if (userProfile?.isAdmin === true) return true;
-  if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team?.id)) return true;
+  if (requestedTeamId && Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(requestedTeamId)) return true;
   return false;
 }
 
@@ -6658,7 +6663,12 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
       getTeam(teamId, { includeInactive: true }).catch(() => null),
       getGames(teamId, { startDate: officialGamesSince }).catch(() => [])
     ]);
-    const canClaim = isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile as Record<string, any>, user);
+    const canClaim = isEligibleOpenOfficiatingSlotParticipant(
+      team || {},
+      userProfile as Record<string, any>,
+      user,
+      teamId
+    );
     const teamName = compactString(team?.name) || 'Team';
 
     const assignments = (Array.isArray(games) ? games : [])
@@ -6704,7 +6714,10 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 
     return {
       teamId,
-      hasAccess: linkedTeamIds.includes(teamId) || (requestedTeamId === teamId && assignments.some((item) => item.kind === 'assigned')),
+      hasAccess: linkedTeamIds.includes(teamId) || (
+        requestedTeamId === teamId &&
+        (canClaim || assignments.some((item) => item.kind === 'assigned'))
+      ),
       assignments
     };
   }));
