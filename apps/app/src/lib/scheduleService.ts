@@ -6704,7 +6704,10 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 
     return {
       teamId,
-      hasAccess: linkedTeamIds.includes(teamId) || (requestedTeamId === teamId && assignments.some((item) => item.kind === 'assigned')),
+      hasAccess: linkedTeamIds.includes(teamId) || (
+        requestedTeamId === teamId &&
+        (canClaim || assignments.some((item) => item.kind === 'assigned'))
+      ),
       assignments
     };
   }));

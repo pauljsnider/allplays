@@ -91,6 +91,16 @@ describe('production smoke authenticated setup timeout', () => {
         );
     });
 
+    it('keeps the officials workflow team-scoped and backed by the seeded game', () => {
+        expect(authenticatedCore).toContain(
+            '`/officials?teamId=${encodeURIComponent(config.teamId)}`'
+        );
+        expect(authenticatedCore).toContain(
+            'requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.gameId)}`'
+        );
+        expect(authenticatedCore).not.toContain("openAuthenticatedAppRoute(page, config.appBaseUrl, '/officials'");
+    });
+
     it('asserts the initial authenticated Home route without navigating to the current URL', () => {
         const routeAssertions = [
             "assertAuthenticatedAppRoute(page, '/home'",
