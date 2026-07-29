@@ -17,4 +17,14 @@ describe('production smoke authenticated setup timeout', () => {
             );
         }
     });
+
+    it('captures Firebase persistence without reloading the signed-in production page', () => {
+        const storageStateHelper = helper.slice(
+            helper.indexOf('export async function createAuthenticatedStorageState'),
+            helper.indexOf('export async function openAuthenticatedAppRoute')
+        );
+
+        expect(storageStateHelper).toContain('context.storageState({ indexedDB: true })');
+        expect(storageStateHelper).not.toContain('page.reload(');
+    });
 });
