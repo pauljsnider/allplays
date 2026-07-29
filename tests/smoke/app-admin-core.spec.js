@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertAuthenticatedAppRoute,
+    closeAuthenticatedAppSession,
     createAuthenticatedAppSession,
     getAppSmokeConfig,
     redactSmokeDiagnostic
@@ -30,7 +31,7 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.afterAll(async () => {
-    await adminSession?.context.close();
+    await closeAuthenticatedAppSession(adminSession);
 });
 
 test('platform admin Home loads without a platform-wide team fanout', async () => {

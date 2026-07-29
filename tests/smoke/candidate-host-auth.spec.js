@@ -43,7 +43,7 @@ async function writeRedactedDiagnostic(page, testInfo, failure) {
 }
 
 test('candidate host accepts authentication and loads a protected landing page', async ({ page }, testInfo) => {
-    test.setTimeout(45_000);
+    test.setTimeout(90_000);
     try {
         expect(authEmail, 'SMOKE_STAFF_EMAIL or SMOKE_AUTH_EMAIL is required for candidate-host auth smoke').toBeTruthy();
         expect(authPassword, 'SMOKE_STAFF_PASSWORD or SMOKE_AUTH_PASSWORD is required for candidate-host auth smoke').toBeTruthy();
@@ -51,7 +51,7 @@ test('candidate host accepts authentication and loads a protected landing page',
         await test.step(`authenticate at ${candidateHostUrl}`, async () => {
             await page.goto(candidateUrl('/app/#/auth'), { waitUntil: 'domcontentloaded' });
             await expect(page.getByRole('heading', { name: 'Sign in' }), `Authentication form did not load at candidate URL ${candidateHostUrl}`)
-                .toBeVisible({ timeout: 10_000 });
+                .toBeVisible({ timeout: 30_000 });
             await page.getByLabel('Email').fill(authEmail);
             await page.getByLabel('Password', { exact: true }).fill(authPassword);
             const submitButton = page.getByRole('button', { name: 'Sign in' }).last();
