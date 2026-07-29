@@ -195,11 +195,13 @@ jobs:
           npx playwright test
           tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
+          tests/smoke/legacy-authenticated-core.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
           --workers=1
           --reporter=line
         env:
+          SMOKE_BASE_URL: https://allplays.ai
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: production

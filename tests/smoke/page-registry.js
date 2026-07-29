@@ -160,3 +160,28 @@ export function getPreviewBootPages(context) {
         ...buildOptionalCorePages(context)
     ];
 }
+
+export function getLegacyAuthenticatedSmokePages(context) {
+    const { teamId } = context;
+
+    return [
+        {
+            name: 'legacy edit schedule',
+            path: `/edit-schedule.html#teamId=${teamId}`,
+            titlePatterns: [/Edit Schedule - ALL PLAYS/i],
+            readySelectors: ['#add-game-form', '#schedule-list']
+        },
+        {
+            name: 'legacy team chat',
+            path: `/team-chat.html#teamId=${teamId}`,
+            titlePatterns: [/Team Chat - ALL PLAYS/i],
+            readySelectors: ['#messages-container', '#message-input']
+        },
+        {
+            name: 'legacy certificates',
+            path: `/certificates.html#teamId=${teamId}`,
+            titlePatterns: [/Certificates - ALL PLAYS/i],
+            readySelectors: ['#cert-setup', '#cert-parent-view']
+        }
+    ];
+}
