@@ -34,6 +34,7 @@ async function loadFirebaseSmokeConfig(appBaseUrl) {
 }
 
 export async function createFirebaseRestSession({ appBaseUrl, email, password }) {
+    const appOrigin = new URL(appBaseUrl).origin;
     const config = await loadFirebaseSmokeConfig(appBaseUrl);
     if (!config.apiKey || !config.projectId) {
         throw new Error('Firebase smoke configuration is incomplete');
@@ -43,7 +44,10 @@ export async function createFirebaseRestSession({ appBaseUrl, email, password })
         `${identityToolkitOrigin}/v1/accounts:signInWithPassword?key=${encodeURIComponent(config.apiKey)}`,
         {
             method: 'POST',
-            headers: { 'content-type': 'application/json' },
+            headers: {
+                'content-type': 'application/json',
+                referer: `${appOrigin}/`
+            },
             body: JSON.stringify({
                 email,
                 password,
