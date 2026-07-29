@@ -39,8 +39,13 @@ describe('production smoke authenticated setup timeout', () => {
             helper.indexOf('export async function openAuthenticatedAppRoute')
         );
 
-        expect(authenticatedSessionHelper).toContain('await signInToApp(page, credentials);');
-        expect(authenticatedSessionHelper).toContain('return { context, page };');
+        expect(authenticatedSessionHelper).toContain(
+            'const issues = collectAppRuntimeIssues(page, [credentials.email, credentials.password]);'
+        );
+        expect(authenticatedSessionHelper.indexOf('collectAppRuntimeIssues(')).toBeLessThan(
+            authenticatedSessionHelper.indexOf('signInToApp(')
+        );
+        expect(authenticatedSessionHelper).toContain('return { context, page, issues, ...timing };');
         expect(authenticatedSessionHelper).not.toContain('storageState(');
         expect(authenticatedSessionHelper).not.toContain('page.reload(');
 
@@ -70,5 +75,12 @@ describe('production smoke authenticated setup timeout', () => {
         expect(helper).toMatch(
             /export async function openAuthenticatedAppRoute[\s\S]*?page\.goto\([\s\S]*?await assertAuthenticatedAppRoute\(page, route, options\);/
         );
+    });
+
+    it('measures the initial admin Home transition from before the sign-in action', () => {
+        expect(helper).toMatch(
+            /const authenticatedHomeStartedAt = Date\.now\(\);\s+await page\.getByRole\('button', \{ name: 'Sign in' \}\)/
+        );
+        expect(adminCore).toContain('Date.now() - authenticatedHomeStartedAt');
     });
 });

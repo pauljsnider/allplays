@@ -3,7 +3,6 @@ import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertAuthenticatedAppRoute,
     buildAppSmokeUrl,
-    collectAppRuntimeIssues,
     createAuthenticatedAppSession,
     getAppSmokeConfig,
     redactSmokeDiagnostic
@@ -119,8 +118,7 @@ test.afterAll(async () => {
 });
 
 async function withAuthenticatedPage(session, callback) {
-    const { page } = session;
-    const issues = collectAppRuntimeIssues(page, secretValues);
+    const { page, issues } = session;
     await callback(page);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }

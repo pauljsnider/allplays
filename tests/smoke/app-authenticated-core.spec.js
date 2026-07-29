@@ -4,7 +4,6 @@ import {
     assertAuthenticatedAppRoute,
     assertNotificationInbox,
     buildAppSmokeUrl,
-    collectAppRuntimeIssues,
     createAuthenticatedAppSession,
     getAppSmokeConfig,
     openAuthenticatedAppRoute,
@@ -75,8 +74,7 @@ test.afterAll(async () => {
 });
 
 async function withAuthenticatedPage(session, callback) {
-    const { page } = session;
-    const issues = collectAppRuntimeIssues(page, secretValues);
+    const { page, issues } = session;
     await callback(page);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }

@@ -91,6 +91,7 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({ timeout: 20_000 });
     await page.getByLabel('Email').fill(email);
     await page.getByLabel('Password', { exact: true }).fill(password);
+    const authenticatedHomeStartedAt = Date.now();
     await page.getByRole('button', { name: 'Sign in' }).last().click();
     await expect.poll(() => new URL(page.url()).hash, {
         message: `${roleLabel} remained in the authentication flow`,
@@ -99,6 +100,7 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await expect(page.locator('main')).toBeVisible({ timeout: 15_000 });
     await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
     await page.getByLabel('Email').fill('').catch(() => {});
+    return { authenticatedHomeStartedAt };
 }
 
 export async function createAuthenticatedAppSession(browser, credentials) {
@@ -107,11 +109,12 @@ export async function createAuthenticatedAppSession(browser, credentials) {
         recordVideo: undefined
     });
     const page = await context.newPage();
+    const issues = collectAppRuntimeIssues(page, [credentials.email, credentials.password]);
     try {
-        await signInToApp(page, credentials);
+        const timing = await signInToApp(page, credentials);
         // Keep the authenticated context live. Exporting Firebase's IndexedDB-backed
         // persistence can remain pending after Auth and Home are already usable.
-        return { context, page };
+        return { context, page, issues, ...timing };
     } catch (error) {
         await context.close();
         throw error;

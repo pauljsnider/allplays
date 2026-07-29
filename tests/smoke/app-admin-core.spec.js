@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertAuthenticatedAppRoute,
-    collectAppRuntimeIssues,
     createAuthenticatedAppSession,
     getAppSmokeConfig,
     redactSmokeDiagnostic
@@ -35,12 +34,13 @@ test.afterAll(async () => {
 });
 
 test('platform admin Home loads without a platform-wide team fanout', async () => {
-    const { page } = adminSession;
-    const issues = collectAppRuntimeIssues(page, secrets);
-    const startedAt = Date.now();
+    const { page, issues, authenticatedHomeStartedAt } = adminSession;
     await assertAuthenticatedAppRoute(page, '/home', {
         heading: 'Your day'
     });
-    expect(Date.now() - startedAt, 'Platform-admin Home should become usable within 20 seconds').toBeLessThan(20_000);
+    expect(
+        Date.now() - authenticatedHomeStartedAt,
+        'Platform-admin Home should become usable within 20 seconds of authentication'
+    ).toBeLessThan(20_000);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secrets))).toEqual([]);
 });
