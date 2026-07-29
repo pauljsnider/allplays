@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Audit or repair the dedicated officials smoke fixture
+        description: Audit or repair the dedicated production smoke fixtures
         required: true
         default: audit
         type: choice
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  maintain-officials-fixture:
+  maintain-production-fixtures:
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -48,3 +48,17 @@ jobs:
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
           SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+
+      - name: Audit or repair parent smoke fixture
+        run: node scripts/maintain-production-smoke-parent-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: ${{ inputs.mode }}
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
