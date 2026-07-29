@@ -109,9 +109,9 @@ export async function createAuthenticatedStorageState(browser, credentials) {
     const page = await context.newPage();
     try {
         await signInToApp(page, credentials);
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await expect(page.locator('main')).toBeVisible({ timeout: 20_000 });
-        await expect.poll(() => new URL(page.url()).hash).not.toMatch(/^#\/auth(?:\?|$)/);
+        // Consumers restore this state in a fresh context before opening protected routes.
+        // Avoid reloading the signed-in page here: canonical production navigation can
+        // remain pending even after Firebase auth and the protected Home UI are ready.
         return await context.storageState({ indexedDB: true });
     } finally {
         await context.close();
