@@ -238,7 +238,8 @@ describe('ParentTools access', () => {
                     playerNumber: '12'
                 }
             ],
-            members: []
+            members: [],
+            linkedContacts: []
         });
         vi.mocked(copyPublicText).mockResolvedValue('copied');
         inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
@@ -815,6 +816,49 @@ describe('ParentTools access', () => {
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
         fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders linked contacts and pending invites returned by the Household service', async () => {
+        parentToolsServiceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
+            linkedPlayers: [{
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Sam Player',
+                playerNumber: '12'
+            }],
+            linkedContacts: [{
+                id: 'guardian-1',
+                name: 'Alex Guardian',
+                email: 'alex@example.com',
+                phone: '',
+                relation: 'Guardian',
+                status: 'linked',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Sam Player',
+                playerNumber: '12'
+            }],
+            members: [{
+                id: 'invite-1',
+                email: 'caregiver@example.com',
+                displayName: 'Casey Caregiver',
+                status: 'pending',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                playerNumber: '12',
+                relation: 'Grandparent'
+            }]
+        });
+
+        renderParentTools(['/parent-tools/household'], false, linkedAuth);
+
+        expect(await screen.findByText('Alex Guardian')).toBeTruthy();
+        expect(screen.getByText('Guardian for Sam Player #12 - Bears')).toBeTruthy();
+        expect(screen.getByText('Casey Caregiver')).toBeTruthy();
+        expect(screen.getByText('caregiver@example.com')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
