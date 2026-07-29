@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test';
 
+export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 180_000;
+
 const sensitivePatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
     /\b(?:oobCode|code|token|apiKey|recipientId|registrationId)=([^&#\s]+)/gi,

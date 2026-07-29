@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+    AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
     createAuthenticatedStorageState,
@@ -39,6 +40,7 @@ let staffRestSession;
 let parentRestSession;
 
 test.beforeAll(async ({ browser }) => {
+    test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_RUN_ID: runId,
         SMOKE_APP_BASE_URL: config.appBaseUrl,

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+    AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     assertNotificationInbox,
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
@@ -26,6 +27,7 @@ let staffStorageState;
 let parentStorageState;
 
 test.beforeAll(async ({ browser }) => {
+    test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_TEAM_ID: config.teamId,
         SMOKE_PLAYER_ID: config.playerId,
