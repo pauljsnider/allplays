@@ -136,6 +136,24 @@ describe('production smoke authenticated setup timeout', () => {
         );
     });
 
+    it('checks the linked parent fixture in the Home Players section', () => {
+        const parentWorkflow = authenticatedCore.slice(
+            authenticatedCore.indexOf("test('parent account reaches"),
+            authenticatedCore.indexOf("test('role boundaries")
+        );
+
+        expect(parentWorkflow).toContain("assertAuthenticatedAppRoute(page, '/home',");
+        expect(parentWorkflow).toContain(
+            "openAuthenticatedAppRoute(page, config.appBaseUrl, '/home?section=players'"
+        );
+        expect(parentWorkflow).toMatch(
+            /\/home\?section=players'[\s\S]*?requiredHref: playerPath/
+        );
+        expect(parentWorkflow).not.toContain(
+            "assertAuthenticatedAppRoute(page, '/home', {\n            heading: 'Your day',\n            requiredHref: playerPath"
+        );
+    });
+
     it('measures the initial admin Home transition from before the sign-in action', () => {
         expect(helper).toMatch(
             /const authenticatedHomeStartedAt = Date\.now\(\);[\s\S]*?await page\.getByRole\('button', \{ name: 'Sign in' \}\)/
