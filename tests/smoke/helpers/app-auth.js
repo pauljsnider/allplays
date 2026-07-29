@@ -195,10 +195,15 @@ export async function assertAuthenticatedAppRoute(page, route, options = {}) {
     const body = await page.locator('body').innerText();
     for (const pattern of forbidden) expect(body).not.toMatch(pattern);
     if (requiredHref) {
-        const found = await page.locator('a').evaluateAll((links, expected) => (
-            links.some((link) => String(link.getAttribute('href') || '').includes(String(expected)))
-        ), requiredHref);
-        expect(found, `Expected a meaningful fixture link containing ${requiredHref}`).toBe(true);
+        await expect.poll(
+            () => page.locator('a').evaluateAll((links, expected) => (
+                links.some((link) => String(link.getAttribute('href') || '').includes(String(expected)))
+            ), requiredHref),
+            {
+                timeout: 25_000,
+                message: `Expected a meaningful fixture link containing ${requiredHref}`
+            }
+        ).toBe(true);
     }
 }
 
