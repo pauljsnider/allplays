@@ -7,7 +7,10 @@ import {
     officialFixtureDate,
     officialFixtureSlotId
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
-import { patchFirestoreDocumentFields } from '../smoke/helpers/firebase-rest.js';
+import {
+    createFirebaseRestSession,
+    patchFirestoreDocumentFields
+} from '../smoke/helpers/firebase-rest.js';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
 
@@ -188,6 +191,55 @@ describe('production officials smoke fixture maintenance', () => {
                 officiatingSlots: { arrayValue: { values: [] } },
                 officiatingSelfAssignmentEnabled: { booleanValue: true }
             }
+        });
+    });
+
+    it('loads canonical-host Firebase configuration from the AllPlays runtime fallback', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 404
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    firebase: {
+                        apiKey: 'runtime-api-key',
+                        projectId: 'runtime-project',
+                        storageBucket: 'runtime-bucket'
+                    }
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    idToken: 'redacted-token',
+                    localId: 'smoke-user'
+                })
+            });
+
+        await expect(createFirebaseRestSession({
+            appBaseUrl: 'https://allplays.ai/app/',
+            email: 'smoke@example.com',
+            password: 'exact password'
+        })).resolves.toEqual({
+            projectId: 'runtime-project',
+            storageBucket: 'runtime-bucket',
+            idToken: 'redacted-token',
+            localId: 'smoke-user'
+        });
+
+        expect(fetchMock.mock.calls[0][0]).toBe('https://allplays.ai/__/firebase/init.json');
+        expect(fetchMock.mock.calls[1][0]).toBe(
+            'https://allplays.ai/.well-known/allplays-runtime-config.json'
+        );
+        expect(fetchMock.mock.calls[2][0]).toBe(
+            'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=runtime-api-key'
+        );
+        expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
+            email: 'smoke@example.com',
+            password: 'exact password',
+            returnSecureToken: true
         });
     });
 

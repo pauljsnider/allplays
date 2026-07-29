@@ -17,12 +17,24 @@ async function readJson(response, operation) {
     return response.json();
 }
 
-export async function createFirebaseRestSession({ appBaseUrl, email, password }) {
+async function loadFirebaseSmokeConfig(appBaseUrl) {
     const origin = new URL(appBaseUrl).origin;
-    const configResponse = await fetch(`${origin}/__/firebase/init.json`, {
+    const hostingResponse = await fetch(`${origin}/__/firebase/init.json`, {
         headers: { accept: 'application/json' }
     });
-    const config = await readJson(configResponse, 'Firebase smoke configuration load');
+    if (hostingResponse.ok) {
+        return hostingResponse.json();
+    }
+
+    const runtimeResponse = await fetch(`${origin}/.well-known/allplays-runtime-config.json`, {
+        headers: { accept: 'application/json' }
+    });
+    const runtimeConfig = await readJson(runtimeResponse, 'AllPlays smoke runtime configuration load');
+    return runtimeConfig.firebase || runtimeConfig.firebasePrimary || {};
+}
+
+export async function createFirebaseRestSession({ appBaseUrl, email, password }) {
+    const config = await loadFirebaseSmokeConfig(appBaseUrl);
     if (!config.apiKey || !config.projectId) {
         throw new Error('Firebase smoke configuration is incomplete');
     }
