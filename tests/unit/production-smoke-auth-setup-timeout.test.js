@@ -85,6 +85,12 @@ describe('production smoke authenticated setup timeout', () => {
         expect(authenticatedCore).toContain('withAuthenticatedPage(parentWorkflowSession');
     });
 
+    it('selects the singular media action without matching the plural media filter', () => {
+        expect(authenticatedCore).toContain(
+            "getByRole('button', { name: 'Photo', exact: true })"
+        );
+    });
+
     it('asserts the initial authenticated Home route without navigating to the current URL', () => {
         const routeAssertions = [
             "assertAuthenticatedAppRoute(page, '/home'",
