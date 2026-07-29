@@ -74,12 +74,36 @@ describe('candidate-host authenticated smoke coverage', () => {
         for (const file of [
             'tests/smoke/candidate-host-auth.spec.js',
             'tests/smoke/helpers/app-auth.js',
-            'tests/smoke/static-hosting-bootstrap.spec.js',
             'tests/smoke/app-parent-live.spec.js'
         ]) {
             const source = readRepoFile(file);
             expect(source).not.toMatch(/getByLabel\(['"]Password['"]\)(?!\s*,)/);
             expect(source).toContain("getByLabel('Password', { exact: true })");
+        }
+    });
+
+    it('keeps the public baseline credential-free while dedicated probes own authentication', () => {
+        const workflow = readRepoFile('.github/workflows/post-deploy-smoke.yml');
+        const baseline = readRepoFile('tests/smoke/static-hosting-bootstrap.spec.js');
+        const legacyAuthenticatedCore = readRepoFile('tests/smoke/legacy-authenticated-core.spec.js');
+        const registry = readRepoFile('tests/smoke/page-registry.js');
+
+        expect(baseline).not.toContain('loginWithPassword');
+        expect(baseline).not.toContain('getAuthenticatedSmokePages');
+        expect(baseline).not.toContain("getByLabel('Email')");
+        expect(registry).not.toContain('getAuthenticatedSmokePages');
+        expect(registry).not.toContain('authEmail');
+        expect(registry).not.toContain('authPassword');
+        expect(workflow).toContain('npx playwright test tests/smoke/candidate-host-auth.spec.js');
+        expect(workflow).toContain('tests/smoke/app-admin-core.spec.js');
+        expect(workflow).toContain('tests/smoke/app-authenticated-core.spec.js');
+        expect(workflow).toContain('tests/smoke/legacy-authenticated-core.spec.js');
+        expect(workflow).toMatch(
+            /tests\/smoke\/legacy-authenticated-core\.spec\.js[\s\S]*?env:\s+SMOKE_BASE_URL: https:\/\/allplays\.ai/
+        );
+        expect(legacyAuthenticatedCore).toContain('getLegacyAuthenticatedSmokePages');
+        for (const route of ['edit-schedule.html', 'team-chat.html', 'certificates.html']) {
+            expect(registry).toContain(route);
         }
     });
 });
