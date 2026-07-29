@@ -236,6 +236,10 @@ describe('production officials smoke fixture maintenance', () => {
         expect(fetchMock.mock.calls[2][0]).toBe(
             'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=runtime-api-key'
         );
+        expect(fetchMock.mock.calls[2][1].headers).toEqual({
+            'content-type': 'application/json',
+            referer: 'https://allplays.ai/'
+        });
         expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({
             email: 'smoke@example.com',
             password: 'exact password',
