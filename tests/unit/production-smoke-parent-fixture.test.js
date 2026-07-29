@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
     buildActivePlayerPatch,
+    buildActiveTeamPatch,
     buildParentMembershipPatch,
     inspectParentFixture
 } from '../../scripts/maintain-production-smoke-parent-fixture.mjs';
@@ -50,6 +51,21 @@ function buildPlayerDocument({
     };
 }
 
+function buildTeamDocument({
+    active = true,
+    archived = false,
+    status = 'active'
+} = {}) {
+    return {
+        updateTime: '2026-07-29T18:00:00.000Z',
+        fields: {
+            active: { booleanValue: active },
+            archived: { booleanValue: archived },
+            status: { stringValue: status }
+        }
+    };
+}
+
 const teamId = 'allplays-smoke-team-v1';
 const playerId = 'allplays-smoke-player-v1';
 
@@ -66,15 +82,32 @@ describe('production parent smoke fixture maintenance', () => {
             parentPlayerKeys: [`${teamId}::${playerId}`]
         });
 
-        expect(inspectParentFixture(parentDocument, buildPlayerDocument(), teamId, playerId)).toEqual({
+        expect(
+            inspectParentFixture(
+                parentDocument,
+                buildTeamDocument(),
+                buildPlayerDocument(),
+                teamId,
+                playerId
+            )
+        ).toEqual({
             ready: true,
             hasParentOf: true,
             hasParentTeamId: true,
             hasParentPlayerKey: true,
+            teamActive: true,
             playerExists: true,
             playerActive: true
         });
-        expect(inspectParentFixture(parentDocument, null, teamId, playerId)).toMatchObject({
+        expect(
+            inspectParentFixture(
+                parentDocument,
+                buildTeamDocument(),
+                null,
+                teamId,
+                playerId
+            )
+        ).toMatchObject({
             ready: false,
             playerExists: false,
             playerActive: false
@@ -142,6 +175,7 @@ describe('production parent smoke fixture maintenance', () => {
                     parentTeamIds: [teamId],
                     parentPlayerKeys: [`${teamId}::${playerId}`]
                 }),
+                buildTeamDocument(),
                 buildPlayerDocument({ active: false }),
                 teamId,
                 playerId
@@ -162,6 +196,7 @@ describe('production parent smoke fixture maintenance', () => {
                     parentTeamIds: [teamId],
                     parentPlayerKeys: [`${teamId}::${playerId}`]
                 }),
+                buildTeamDocument(),
                 buildPlayerDocument({ status: 'Active' }),
                 teamId,
                 playerId
@@ -169,6 +204,38 @@ describe('production parent smoke fixture maintenance', () => {
         ).toMatchObject({
             ready: false,
             playerActive: false
+        });
+    });
+
+    it('matches the app team lifecycle predicate and repairs only those fields', () => {
+        const parentDocument = buildParentDocument({
+            parentOf: [
+                mapValue({
+                    teamId: { stringValue: teamId },
+                    playerId: { stringValue: playerId }
+                })
+            ],
+            parentTeamIds: [teamId],
+            parentPlayerKeys: [`${teamId}::${playerId}`]
+        });
+        expect(
+            inspectParentFixture(
+                parentDocument,
+                buildTeamDocument({ status: ' Disabled ' }),
+                buildPlayerDocument(),
+                teamId,
+                playerId
+            )
+        ).toMatchObject({
+            ready: false,
+            teamActive: false
+        });
+        expect(buildActiveTeamPatch()).toEqual({
+            fields: {
+                active: { booleanValue: true },
+                archived: { booleanValue: false },
+                status: { stringValue: 'active' }
+            }
         });
     });
 
