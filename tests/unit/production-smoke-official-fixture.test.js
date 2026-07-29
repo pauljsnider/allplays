@@ -123,6 +123,30 @@ describe('production officials smoke fixture maintenance', () => {
         expect(slots[1].mapValue.fields.id.stringValue).toBe(officialFixtureSlotId);
     });
 
+    it('repairs an open-looking slot that application normalization drops without a position', () => {
+        const document = buildDocument({
+            date: officialFixtureDate,
+            enabled: true,
+            status: 'scheduled',
+            slots: [
+                {
+                    mapValue: {
+                        fields: {
+                            id: { stringValue: 'malformed-slot' },
+                            position: { stringValue: '   ' },
+                            status: { stringValue: 'open' }
+                        }
+                    }
+                }
+            ]
+        });
+
+        expect(inspectOfficialFixture(document).openSlotCount).toBe(0);
+        const slots = buildOfficialFixturePatch(document).fields.officiatingSlots.arrayValue.values;
+        expect(slots).toHaveLength(2);
+        expect(slots[1].mapValue.fields.position.stringValue).toBe('Smoke official');
+    });
+
     it('patches only the named fields with an optimistic concurrency precondition', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
             ok: true,

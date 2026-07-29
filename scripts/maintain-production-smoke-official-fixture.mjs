@@ -23,6 +23,7 @@ function getSlotFields(value) {
 function isUnassignedOpenSlot(value) {
     const fields = getSlotFields(value);
     return getStringField(fields, 'status') === 'open' &&
+        Boolean(getStringField(fields, 'position').trim()) &&
         !getStringField(fields, 'officialUserId') &&
         !getStringField(fields, 'officialEmail') &&
         !getStringField(fields, 'officialName');
