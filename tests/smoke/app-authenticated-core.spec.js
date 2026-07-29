@@ -43,24 +43,26 @@ test.beforeAll(async ({ browser }) => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
-    staffSession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.staffEmail,
-        password: config.staffPassword,
-        roleLabel: 'staff'
-    });
-    parentWorkflowSession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    });
-    parentBoundarySession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    });
+    [staffSession, parentWorkflowSession, parentBoundarySession] = await Promise.all([
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.staffEmail,
+            password: config.staffPassword,
+            roleLabel: 'staff'
+        }),
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }),
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        })
+    ]);
 });
 
 test.afterAll(async () => {

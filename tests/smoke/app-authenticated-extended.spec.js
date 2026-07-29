@@ -63,31 +63,38 @@ test.beforeAll(async ({ browser }) => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
-    staffSession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.staffEmail,
-        password: config.staffPassword,
-        roleLabel: 'staff'
-    });
-    parentNotificationSession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    });
-    parentWriteSession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    });
-    parentReadOnlySession = await createAuthenticatedAppSession(browser, {
-        appBaseUrl: config.appBaseUrl,
-        email: config.parentEmail,
-        password: config.parentPassword,
-        roleLabel: 'parent'
-    });
-    [staffRestSession, parentRestSession] = await Promise.all([
+    [
+        staffSession,
+        parentNotificationSession,
+        parentWriteSession,
+        parentReadOnlySession,
+        staffRestSession,
+        parentRestSession
+    ] = await Promise.all([
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.staffEmail,
+            password: config.staffPassword,
+            roleLabel: 'staff'
+        }),
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }),
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }),
+        createAuthenticatedAppSession(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }),
         createFirebaseRestSession({
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,

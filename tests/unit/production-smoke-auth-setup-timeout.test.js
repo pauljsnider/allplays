@@ -23,6 +23,14 @@ describe('production smoke authenticated setup timeout', () => {
             expect(boundedSetup).toContain('createAuthenticatedAppSession(browser, {');
             expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?context\.close\(\)/);
         }
+
+        for (const source of [authenticatedCore, authenticatedExtended]) {
+            const boundedSetup = source.slice(
+                source.indexOf('test.beforeAll('),
+                source.indexOf('test.afterAll(')
+            );
+            expect(boundedSetup).toContain('await Promise.all([');
+        }
     });
 
     it('keeps Firebase authentication in a live context without serializing IndexedDB state', () => {
