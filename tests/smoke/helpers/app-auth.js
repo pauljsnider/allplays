@@ -101,7 +101,7 @@ export async function signInToApp(page, { appBaseUrl, email, password, roleLabel
     await page.getByLabel('Email').fill('').catch(() => {});
 }
 
-export async function createAuthenticatedStorageState(browser, credentials) {
+export async function createAuthenticatedAppSession(browser, credentials) {
     const context = await browser.newContext({
         serviceWorkers: 'block',
         recordVideo: undefined
@@ -109,12 +109,12 @@ export async function createAuthenticatedStorageState(browser, credentials) {
     const page = await context.newPage();
     try {
         await signInToApp(page, credentials);
-        // Consumers restore this state in a fresh context before opening protected routes.
-        // Avoid reloading the signed-in page here: canonical production navigation can
-        // remain pending even after Firebase auth and the protected Home UI are ready.
-        return await context.storageState({ indexedDB: true });
-    } finally {
+        // Keep the authenticated context live. Exporting Firebase's IndexedDB-backed
+        // persistence can remain pending after Auth and Home are already usable.
+        return { context, page };
+    } catch (error) {
         await context.close();
+        throw error;
     }
 }
 

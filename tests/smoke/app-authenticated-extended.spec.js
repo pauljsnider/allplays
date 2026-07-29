@@ -3,7 +3,7 @@ import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
-    createAuthenticatedStorageState,
+    createAuthenticatedAppSession,
     getAppSmokeConfig,
     redactSmokeDiagnostic
 } from './helpers/app-auth.js';
@@ -34,12 +34,10 @@ const secretValues = [
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 test.describe.configure({ mode: 'serial' });
 
-let staffStorageState;
-let parentStorageState;
 let staffRestSession;
 let parentRestSession;
 
-test.beforeAll(async ({ browser }) => {
+test.beforeAll(async () => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_RUN_ID: runId,
@@ -61,20 +59,6 @@ test.beforeAll(async ({ browser }) => {
         'Staff and parent smoke accounts must be distinct for cross-role access checks'
     ).not.toBe(config.parentEmail.trim().toLowerCase());
 
-    [staffStorageState, parentStorageState] = await Promise.all([
-        createAuthenticatedStorageState(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.staffEmail,
-            password: config.staffPassword,
-            roleLabel: 'staff'
-        }),
-        createAuthenticatedStorageState(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.parentEmail,
-            password: config.parentPassword,
-            roleLabel: 'parent'
-        })
-    ]);
     [staffRestSession, parentRestSession] = await Promise.all([
         createFirebaseRestSession({
             appBaseUrl: config.appBaseUrl,
@@ -89,12 +73,8 @@ test.beforeAll(async ({ browser }) => {
     ]);
 });
 
-async function withAuthenticatedPage(browser, storageState, callback) {
-    const context = await browser.newContext({
-        storageState,
-        serviceWorkers: 'block'
-    });
-    const page = await context.newPage();
+async function withAuthenticatedPage(browser, credentials, callback) {
+    const { context, page } = await createAuthenticatedAppSession(browser, credentials);
     const issues = collectAppRuntimeIssues(page, secretValues);
     try {
         await callback(page);
@@ -159,7 +139,12 @@ test('staff smoke writes are deterministic and removed after validation', async 
     ];
 
     try {
-        await withAuthenticatedPage(browser, staffStorageState, async (page) => {
+        await withAuthenticatedPage(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.staffEmail,
+            password: config.staffPassword,
+            roleLabel: 'staff'
+        }, async (page) => {
             await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}?tab=roster`);
             await page.getByRole('button', { name: 'Add player' }).click();
             await page.getByPlaceholder('Player name').fill(playerName);
@@ -258,7 +243,12 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
         });
 
-        await withAuthenticatedPage(browser, parentStorageState, async (page) => {
+        await withAuthenticatedPage(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }, async (page) => {
             await openRoute(page, '/home');
             await page.getByRole('button', { name: 'Notifications' }).first().click();
             const inbox = page.getByRole('dialog', { name: 'Notifications' });
@@ -317,7 +307,12 @@ test('parent smoke writes restore or remove every touched record', async ({ brow
     ];
 
     try {
-        await withAuthenticatedPage(browser, parentStorageState, async (page) => {
+        await withAuthenticatedPage(browser, {
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword,
+            roleLabel: 'parent'
+        }, async (page) => {
             await openRoute(
                 page,
                 `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}?childId=${encodeURIComponent(config.playerId)}&section=availability`
@@ -365,7 +360,13 @@ test('parent smoke writes restore or remove every touched record', async ({ brow
 });
 
 test('read-only fixtures cover registrations, fees, opportunities, and notification deep links', async ({ browser }) => {
-    await withAuthenticatedPage(browser, parentStorageState, async (page) => {
+    test.setTimeout(90_000);
+    await withAuthenticatedPage(browser, {
+        appBaseUrl: config.appBaseUrl,
+        email: config.parentEmail,
+        password: config.parentPassword,
+        roleLabel: 'parent'
+    }, async (page) => {
         await openRoute(page, '/parent-tools/registrations');
         await expect(page.getByText('Registrations', { exact: true })).toBeVisible();
         await expect(page.locator(`a[href*="${config.registrationFormId}"]`).first()).toBeVisible({ timeout: 20_000 });

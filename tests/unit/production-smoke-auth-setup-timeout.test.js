@@ -13,18 +13,26 @@ describe('production smoke authenticated setup timeout', () => {
         for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
             expect(source).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
             expect(source).toMatch(
-                /test\.beforeAll\(async \(\{ browser \}\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
+                /test\.beforeAll\(async \(\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
             );
         }
     });
 
-    it('captures Firebase persistence without reloading the signed-in production page', () => {
-        const storageStateHelper = helper.slice(
-            helper.indexOf('export async function createAuthenticatedStorageState'),
+    it('keeps Firebase authentication in a live context without serializing IndexedDB state', () => {
+        const authenticatedSessionHelper = helper.slice(
+            helper.indexOf('export async function createAuthenticatedAppSession'),
             helper.indexOf('export async function openAuthenticatedAppRoute')
         );
 
-        expect(storageStateHelper).toContain('context.storageState({ indexedDB: true })');
-        expect(storageStateHelper).not.toContain('page.reload(');
+        expect(authenticatedSessionHelper).toContain('await signInToApp(page, credentials);');
+        expect(authenticatedSessionHelper).toContain('return { context, page };');
+        expect(authenticatedSessionHelper).not.toContain('storageState(');
+        expect(authenticatedSessionHelper).not.toContain('page.reload(');
+
+        for (const source of [authenticatedCore, adminCore, authenticatedExtended]) {
+            expect(source).toContain('createAuthenticatedAppSession');
+            expect(source).not.toContain('createAuthenticatedStorageState');
+            expect(source).not.toContain('storageState:');
+        }
     });
 });

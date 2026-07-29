@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
     collectAppRuntimeIssues,
-    createAuthenticatedStorageState,
+    createAuthenticatedAppSession,
     getAppSmokeConfig,
     openAuthenticatedAppRoute,
     redactSmokeDiagnostic
@@ -16,26 +16,20 @@ const secrets = [config.adminEmail, config.adminPassword];
 test.skip(!enabled, 'Platform-admin workflow runs only in production smoke');
 test.describe.configure({ mode: 'serial' });
 
-let adminStorageState;
-
-test.beforeAll(async ({ browser }) => {
+test.beforeAll(async () => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     expect(config.adminEmail, 'SMOKE_ADMIN_EMAIL is required').toBeTruthy();
     expect(config.adminPassword, 'SMOKE_ADMIN_PASSWORD is required').toBeTruthy();
-    adminStorageState = await createAuthenticatedStorageState(browser, {
+});
+
+test('platform admin Home loads without a platform-wide team fanout', async ({ browser }) => {
+    test.setTimeout(60_000);
+    const { context, page } = await createAuthenticatedAppSession(browser, {
         appBaseUrl: config.appBaseUrl,
         email: config.adminEmail,
         password: config.adminPassword,
         roleLabel: 'platform admin'
     });
-});
-
-test('platform admin Home loads without a platform-wide team fanout', async ({ browser }) => {
-    const context = await browser.newContext({
-        storageState: adminStorageState,
-        serviceWorkers: 'block'
-    });
-    const page = await context.newPage();
     const issues = collectAppRuntimeIssues(page, secrets);
     const startedAt = Date.now();
     try {
