@@ -2,6 +2,11 @@ const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
 const ALLPLAYS_RUNTIME_CONFIG_PATH = '.well-known/allplays-runtime-config.json';
 const REQUIRED_FIREBASE_FIELDS = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId'];
 const OPTIONAL_FIREBASE_FIELDS = ['storageBucket', 'measurementId'];
+const CANONICAL_PRODUCTION_HOSTNAMES = new Set(['allplays.ai', 'www.allplays.ai']);
+const PRODUCTION_FIREBASE_HOSTING_HOSTNAMES = new Set([
+    'game-flow-c6311.web.app',
+    'game-flow-c6311.firebaseapp.com'
+]);
 const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
     authDomain: 'game-flow-c6311.firebaseapp.com',
@@ -26,6 +31,9 @@ const DEFAULT_IMAGE_FIREBASE_CONFIG = {
     appId: '1:340859680438:web:4d00f571e8531907a11817',
     measurementId: 'G-FRVND6NT3C'
 };
+let runtimeConfigFetchPromise = null;
+let runtimeConfigFetchKey = '';
+let runtimeConfigFetchImplementation = null;
 
 function readGlobalConfig() {
     return (typeof window !== 'undefined' && window.__ALLPLAYS_CONFIG__ && typeof window.__ALLPLAYS_CONFIG__ === 'object')
@@ -114,19 +122,36 @@ function runtimeConfigCandidates() {
 }
 
 async function fetchAllPlaysRuntimeConfig() {
-    for (const url of runtimeConfigCandidates()) {
-        try {
-            const response = await fetch(url, { cache: 'no-store' });
-            if (!response.ok) continue;
-            const payload = await response.json();
-            if (payload && typeof payload === 'object') {
-                return payload;
-            }
-        } catch (_error) {
-            // Runtime config is optional until App Check console rollout is complete.
-        }
+    const candidates = runtimeConfigCandidates();
+    const fetchImplementation = globalThis.fetch;
+    const fetchKey = candidates.join('|');
+    if (
+        runtimeConfigFetchPromise
+        && runtimeConfigFetchKey === fetchKey
+        && runtimeConfigFetchImplementation === fetchImplementation
+    ) {
+        return runtimeConfigFetchPromise;
     }
-    return {};
+
+    runtimeConfigFetchKey = fetchKey;
+    runtimeConfigFetchImplementation = fetchImplementation;
+    runtimeConfigFetchPromise = (async () => {
+        if (typeof fetchImplementation !== 'function') return {};
+        for (const url of candidates) {
+            try {
+                const response = await fetchImplementation(url, { cache: 'no-store' });
+                if (!response.ok) continue;
+                const payload = await response.json();
+                if (payload && typeof payload === 'object') {
+                    return payload;
+                }
+            } catch (_error) {
+                // Runtime config is optional until App Check console rollout is complete.
+            }
+        }
+        return {};
+    })();
+    return runtimeConfigFetchPromise;
 }
 
 function normalizeFirebaseConfig(rawConfig) {
@@ -145,6 +170,22 @@ function normalizeFirebaseConfig(rawConfig) {
 
     const hasRequiredFields = REQUIRED_FIREBASE_FIELDS.every((field) => typeof normalized[field] === 'string' && normalized[field].length > 0);
     return hasRequiredFields ? normalized : null;
+}
+
+function isCanonicalProductionHostname(hostname) {
+    return CANONICAL_PRODUCTION_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
+}
+
+function isProductionFirebaseHostingHostname(hostname) {
+    return PRODUCTION_FIREBASE_HOSTING_HOSTNAMES.has(String(hostname || '').trim().toLowerCase());
+}
+
+function isBundledProductionFirebaseConfig(config) {
+    return config?.projectId === DEFAULT_PRIMARY_FIREBASE_CONFIG.projectId;
+}
+
+function isNativeRuntimeProtocol(protocol) {
+    return protocol === 'capacitor:' || protocol === 'ionic:';
 }
 
 async function fetchFirebaseConfigFromHosting() {
@@ -170,23 +211,120 @@ async function fetchFirebaseConfigFromHosting() {
     return normalized;
 }
 
+async function fetchNonProductionFirebaseConfigFromHosting() {
+    const config = await fetchFirebaseConfigFromHosting();
+    if (isBundledProductionFirebaseConfig(config)) {
+        throw new Error('Firebase Hosting init config points to production Firebase on a non-production host.');
+    }
+    return config;
+}
+
+async function fetchProductionFirebaseConfigFromHosting() {
+    const config = await fetchFirebaseConfigFromHosting();
+    if (!isBundledProductionFirebaseConfig(config)) {
+        throw new Error('Firebase Hosting init config does not match the production Firebase project.');
+    }
+    return config;
+}
+
 export async function resolvePrimaryFirebaseConfig() {
-    try {
-        const hostedConfig = await fetchFirebaseConfigFromHosting();
-        return hostedConfig;
-    } catch (error) {
-        const globalConfig = readGlobalConfig();
-        const inlineConfig = normalizeFirebaseConfig(
-            globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
-        );
-        if (inlineConfig) {
-            console.warn('Falling back to inline Firebase config after hosted init lookup failed.', error);
+    const runtimeHostname = typeof window !== 'undefined'
+        ? window.location?.hostname
+        : globalThis.location?.hostname;
+    const runtimeProtocol = typeof window !== 'undefined'
+        ? window.location?.protocol
+        : globalThis.location?.protocol;
+    const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
+    const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
+    const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
+    const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
+    const globalConfig = readGlobalConfig();
+    const inlineConfig = normalizeFirebaseConfig(
+        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
+    );
+    if (inlineConfig) {
+        if (productionRuntimeHost) {
+            if (!isBundledProductionFirebaseConfig(inlineConfig)) {
+                throw new Error('Firebase config does not match the production Firebase project.');
+            }
             return inlineConfig;
         }
+        if (
+            !isBundledProductionFirebaseConfig(inlineConfig)
+            || nativeRuntime
+            || !runtimeHostname
+        ) {
+            return inlineConfig;
+        }
+    }
 
-        console.warn('Falling back to bundled Firebase config.', error);
+    if (nativeRuntime) {
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }
+
+    const localDevelopmentHost = runtimeHostname === 'localhost' || runtimeHostname === '127.0.0.1';
+    const firebaseHostingHost = Boolean(
+        runtimeHostname?.endsWith('.web.app')
+        || runtimeHostname?.endsWith('.firebaseapp.com')
+    );
+
+    if (canonicalProductionHost) {
+        const remoteConfig = await fetchAllPlaysRuntimeConfig();
+        const remoteFirebaseConfig = normalizeFirebaseConfig(
+            remoteConfig.firebase || remoteConfig.firebasePrimary
+        );
+        if (
+            remoteFirebaseConfig
+            && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+        ) {
+            throw new Error('Firebase runtime config does not match the production Firebase project.');
+        }
+        return remoteFirebaseConfig || { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    }
+
+    if (productionFirebaseHostingHost) {
+        return fetchProductionFirebaseConfigFromHosting();
+    }
+
+    if (!runtimeHostname || localDevelopmentHost || firebaseHostingHost) {
+        try {
+            return await fetchNonProductionFirebaseConfigFromHosting();
+        } catch (hostingError) {
+            if (firebaseHostingHost) {
+                throw hostingError;
+            }
+
+            const remoteConfig = await fetchAllPlaysRuntimeConfig();
+            const remoteFirebaseConfig = normalizeFirebaseConfig(
+                remoteConfig.firebase || remoteConfig.firebasePrimary
+            );
+            if (
+                remoteFirebaseConfig
+                && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+            ) {
+                return remoteFirebaseConfig;
+            }
+            if (!runtimeHostname) {
+                return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+            }
+            if (localDevelopmentHost) {
+                throw new Error('Firebase config is unavailable for local development. Configure an explicit non-production Firebase project.');
+            }
+            throw hostingError;
+        }
+    }
+
+    const remoteConfig = await fetchAllPlaysRuntimeConfig();
+    const remoteFirebaseConfig = normalizeFirebaseConfig(
+        remoteConfig.firebase || remoteConfig.firebasePrimary
+    );
+    if (
+        remoteFirebaseConfig
+        && !isBundledProductionFirebaseConfig(remoteFirebaseConfig)
+    ) {
+        return remoteFirebaseConfig;
+    }
+    throw new Error('Firebase config is unavailable for this non-production host.');
 }
 
 export function resolveImageFirebaseConfig() {

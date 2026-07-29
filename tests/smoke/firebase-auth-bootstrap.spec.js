@@ -2,7 +2,12 @@ import { test, expect } from '@playwright/test';
 import { createBootIssueCollector } from './helpers/boot-path.js';
 
 const appBaseUrl = process.env.SMOKE_APP_BASE_URL || process.env.SMOKE_APP_BOOT_URL || '';
+const usesSyntheticPreviewFirebase = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET === 'preview-smoke';
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL or SMOKE_APP_BOOT_URL is required');
+test.skip(
+    usesSyntheticPreviewFirebase,
+    'Real Firebase bootstrap probes require a valid Firebase runtime identity'
+);
 
 function appUrl(route) {
     const url = new URL(appBaseUrl);

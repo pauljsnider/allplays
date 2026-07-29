@@ -116,6 +116,7 @@ vi.mock('./logger', () => ({
 import { signInWithPopup, signInWithRedirect } from './firebaseAuthRuntime';
 import { Capacitor } from '@capacitor/core';
 import {
+  classifyAuthConnectivity,
   describeAuthError,
   getNativeAuthIdToken,
   getNativeAuthUserId,
@@ -229,6 +230,25 @@ describe('auth email validation', () => {
       .toBe('Too many attempts. Wait a few minutes and try again.');
     expect(describeAuthError({ code: 'auth/too-many-requests' }))
       .toBe('Too many attempts. Wait a few minutes and try again.');
+  });
+
+  it('distinguishes offline, timeout, and reachable-network authentication failures', () => {
+    expect(classifyAuthConnectivity({ code: 'auth/network-request-failed' }, false)).toBe('offline');
+    expect(classifyAuthConnectivity({
+      code: 'auth/network-request-failed',
+      message: 'Sign-in timed out.'
+    }, true)).toBe('timeout');
+    expect(classifyAuthConnectivity({ code: 'auth/network-request-failed' }, true))
+      .toBe('service-unreachable');
+  });
+
+  it('gives network failures retryable guidance without exposing implementation details', () => {
+    expect(describeAuthError({
+      code: 'auth/network-request-failed',
+      message: 'Sign-in timed out.'
+    })).toBe('Sign-in services took too long to respond. Try again.');
+    expect(describeAuthError({ code: 'auth/network-request-failed' }))
+      .toBe('ALL PLAYS could not reach sign-in services. Check your connection and try again.');
   });
 });
 

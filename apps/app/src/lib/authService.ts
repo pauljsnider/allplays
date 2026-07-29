@@ -239,7 +239,14 @@ export function describeAuthError(error: any) {
   }
 
   if (code === 'auth/network-request-failed') {
-    return 'Network request failed. Check the device connection.';
+    const connectivity = classifyAuthConnectivity(error);
+    if (connectivity === 'offline') {
+      return 'This device is offline. Reconnect to the internet, then try again.';
+    }
+    if (connectivity === 'timeout') {
+      return 'Sign-in services took too long to respond. Try again.';
+    }
+    return 'ALL PLAYS could not reach sign-in services. Check your connection and try again.';
   }
 
   if (code === 'auth/account-exists-with-different-credential') {
@@ -251,6 +258,30 @@ export function describeAuthError(error: any) {
   }
 
   return error?.message || 'Authentication failed.';
+}
+
+export function classifyAuthConnectivity(
+  error: any,
+  online = typeof navigator === 'undefined' ? undefined : navigator.onLine
+) {
+  if (online === false) return 'offline';
+
+  const diagnosticText = `${error?.code || ''} ${error?.message || ''} ${error?.name || ''}`.toLowerCase();
+  if (
+    diagnosticText.includes('timed out')
+    || diagnosticText.includes('timeout')
+    || diagnosticText.includes('aborterror')
+  ) {
+    return 'timeout';
+  }
+  if (
+    diagnosticText.includes('auth/network-request-failed')
+    || diagnosticText.includes('networkerror')
+    || diagnosticText.includes('failed to fetch')
+  ) {
+    return 'service-unreachable';
+  }
+  return 'unknown';
 }
 
 function getFirebaseAuthStorageKey() {

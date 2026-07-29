@@ -430,14 +430,42 @@ describe('parent schedule child scope', () => {
     expect(getStaffTeams).toHaveBeenCalledWith({
       userId: 'coach-1',
       email: ' Coach@Example.com ',
-      coachTeamIds: ['team-coach', 'team-coach'],
-      includeAll: false
+      coachTeamIds: ['team-coach', 'team-coach']
     });
     expect(getTeams).not.toHaveBeenCalled();
     expect(schedule.children).toEqual([]);
     expect(new Set(schedule.events.map((event) => event.teamId))).toEqual(new Set());
     expect(getTeam).not.toHaveBeenCalledWith('team-inactive');
     expect(getGames).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not turn platform admin authorization into global Home team membership', async () => {
+    const platformAdmin = {
+      uid: 'platform-admin-1',
+      email: 'admin@example.com',
+      isAdmin: true,
+      roles: ['admin'],
+      coachOf: []
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+
+    const schedule = await loadParentSchedule(platformAdmin, {
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getStaffTeams).toHaveBeenCalledWith({
+      userId: 'platform-admin-1',
+      email: 'admin@example.com',
+      coachTeamIds: []
+    });
+    expect(getTeams).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(getPracticeSessions).not.toHaveBeenCalled();
+    expect(schedule.staffTeams).toEqual([]);
+    expect(schedule.events).toEqual([]);
   });
 
   it('carries newly created staff teams through the reusable parent scope', async () => {

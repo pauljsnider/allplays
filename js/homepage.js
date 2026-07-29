@@ -50,6 +50,10 @@ function renderTeamAvatar(game) {
     return `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${teamInitial}</div>`;
 }
 
+function renderPartialNotice(message) {
+    return `<div class="col-span-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status" data-homepage-partial>${escapeHtml(message)}</div>`;
+}
+
 function applyRequestAccessCta(cta) {
     if (!cta) {
         return;
@@ -86,6 +90,7 @@ export async function loadLiveGames({
     container,
     getLiveGamesNow,
     getUpcomingLiveGames,
+    getPartialCategories = async () => [],
     formatDate,
     formatTime,
     logger = console
@@ -111,6 +116,10 @@ export async function loadLiveGames({
         }
 
         upcomingGames = upcomingGames.filter(isVisibleUpcomingHomepageGame);
+        const partialCategories = await getPartialCategories();
+        const partialNotice = partialCategories.includes('live') || partialCategories.includes('upcoming')
+            ? renderPartialNotice('Showing available games. Some live or upcoming games may be missing.')
+            : '';
 
         const combined = [
             ...liveGames.map((game) => ({ ...game, isLive: true })),
@@ -118,11 +127,11 @@ export async function loadLiveGames({
         ].slice(0, 6);
 
         if (combined.length === 0) {
-            container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">No upcoming live games scheduled</div>';
+            container.innerHTML = `${partialNotice}<div class="text-center py-8 text-gray-500 col-span-full">No upcoming live games scheduled</div>`;
             return;
         }
 
-        container.innerHTML = combined.map((game) => `
+        container.innerHTML = partialNotice + combined.map((game) => `
           <a href="${buildLiveGameHref(game)}"
              class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5 ${game.isLive ? 'ring-2 ring-red-500' : ''}">
             ${game.isLive ? `
@@ -156,6 +165,7 @@ export async function loadLiveGames({
 export async function loadPastGames({
     container,
     getRecentLiveTrackedGames,
+    getPartialCategories = async () => [],
     formatDate,
     logger = console
 }) {
@@ -166,12 +176,16 @@ export async function loadPastGames({
     try {
         const pastGamesResult = await getRecentLiveTrackedGames(6);
         const pastGames = Array.isArray(pastGamesResult) ? pastGamesResult : [];
+        const partialCategories = await getPartialCategories();
+        const partialNotice = partialCategories.includes('replays')
+            ? renderPartialNotice('Showing available replays. Some recent replays may be missing.')
+            : '';
         if (pastGames.length === 0) {
-            container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">No recent replays available</div>';
+            container.innerHTML = `${partialNotice}<div class="text-center py-8 text-gray-500 col-span-full">No recent replays available</div>`;
             return;
         }
 
-        container.innerHTML = pastGames.map((game) => `
+        container.innerHTML = partialNotice + pastGames.map((game) => `
           <a href="${buildLiveGameHref(game, true)}"
              class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5">
             <div class="flex items-center gap-3 mb-3">
@@ -200,11 +214,31 @@ export async function initHomepage({
     getLiveGamesNow,
     getUpcomingLiveGames,
     getRecentLiveTrackedGames,
+    getHomepageGames,
     formatDate,
     formatTime,
     logger = console
 }) {
     const heroCta = document.getElementById('hero-cta');
+    const homepageGamesPromise = typeof getHomepageGames === 'function'
+        ? Promise.resolve().then(() => getHomepageGames())
+        : null;
+    const liveGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.live || [])
+        : getLiveGamesNow;
+    const upcomingGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.upcoming || [])
+        : getUpcomingLiveGames;
+    const replayGamesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => payload.replays || [])
+        : getRecentLiveTrackedGames;
+    const partialCategoriesLoader = homepageGamesPromise
+        ? () => homepageGamesPromise.then((payload) => (
+            payload.partial === true && Array.isArray(payload.partialCategories)
+                ? payload.partialCategories
+                : []
+        ))
+        : async () => [];
 
     checkAuth((user) => {
         renderHeader(document.getElementById('header-container'), user);
@@ -215,15 +249,17 @@ export async function initHomepage({
     await Promise.all([
         loadLiveGames({
             container: document.getElementById('live-games-list'),
-            getLiveGamesNow,
-            getUpcomingLiveGames,
+            getLiveGamesNow: liveGamesLoader,
+            getUpcomingLiveGames: upcomingGamesLoader,
+            getPartialCategories: partialCategoriesLoader,
             formatDate,
             formatTime,
             logger
         }),
         loadPastGames({
             container: document.getElementById('past-games-list'),
-            getRecentLiveTrackedGames,
+            getRecentLiveTrackedGames: replayGamesLoader,
+            getPartialCategories: partialCategoriesLoader,
             formatDate,
             logger
         })

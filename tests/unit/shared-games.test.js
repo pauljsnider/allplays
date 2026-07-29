@@ -17,6 +17,13 @@ describe('shared game projection', () => {
         expect(decodeSharedGameSyntheticId(`shared::${encodeURIComponent(sharedPath)}`)).toBe(sharedPath);
     });
 
+    it('rejects malformed or non-shared document paths at the route boundary', () => {
+        expect(decodeSharedGameSyntheticId('shared_%E0%A4%A')).toBeNull();
+        expect(decodeSharedGameSyntheticId(buildSharedGameSyntheticId('teams/team-1'))).toBeNull();
+        expect(decodeSharedGameSyntheticId(buildSharedGameSyntheticId('sharedGames'))).toBeNull();
+        expect(decodeSharedGameSyntheticId(buildSharedGameSyntheticId('sharedGames/game-1/events'))).toBeNull();
+    });
+
     it('projects a centrally owned shared game into the home team schedule', () => {
         const shared = {
             id: 'game-100',

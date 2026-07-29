@@ -26,7 +26,7 @@ vi.mock('./gameWrapupService', () => ({ resetGameWrapupAiModel: cacheResetMocks.
 vi.mock('./privateAiService', () => ({ resetPrivateAiModel: cacheResetMocks.resetPrivateAiModel }));
 vi.mock('./gameDayLineupBuilder', () => ({ resetLineupAiModel: cacheResetMocks.resetLineupAiModel }));
 
-import { useAuth } from './useAuth';
+import { clearPerUserCaches, useAuth } from './useAuth';
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -47,5 +47,21 @@ describe('useAuth signOut', () => {
     expect(cacheResetMocks.resetGameWrapupAiModel).toHaveBeenCalledTimes(1);
     expect(cacheResetMocks.resetPrivateAiModel).toHaveBeenCalledTimes(1);
     expect(cacheResetMocks.resetLineupAiModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues clearing independently loaded caches when one module import fails', async () => {
+    const firstReset = vi.fn();
+    const lastReset = vi.fn();
+
+    await expect(clearPerUserCaches([
+      async () => firstReset,
+      async () => {
+        throw new Error('stale offline chunk');
+      },
+      async () => lastReset
+    ])).rejects.toThrow('One or more per-user caches could not be reset.');
+
+    expect(firstReset).toHaveBeenCalledTimes(1);
+    expect(lastReset).toHaveBeenCalledTimes(1);
   });
 });

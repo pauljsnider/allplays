@@ -772,6 +772,7 @@
                 "listPublicOpportunities",
                 "listPublicOpportunityReports",
                 "moderatePublicOpportunity",
+                "publicHomepageGamesV1",
                 "publicTeamGamesV1",
                 "publicTeamRosterV1",
                 "renewPublicOpportunity",
@@ -782,6 +783,8 @@
             "unitTests": [
                 "functions/test/public-team-api-core.test.cjs",
                 "functions/test/public-team-api-handler-contract.test.cjs",
+                "functions/test/public-homepage-games-core.test.cjs",
+                "functions/test/public-homepage-games-handler-contract.test.cjs",
                 "tests/unit/public-opportunities-core.test.js",
                 "tests/unit/public-opportunities-functions-source.test.js",
                 "tests/unit/public-opportunities-rules.test.js"

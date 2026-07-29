@@ -28,48 +28,45 @@ async function installHomepageModuleMocks(page) {
             return;
         }
 
-        if (url.pathname.endsWith('/js/db.js')) {
+        if (url.pathname.endsWith('/js/public-homepage-games.js')) {
             await route.fulfill({
                 contentType: 'application/javascript',
                 body: `
-                    function timestamp(isoValue) {
-                        return { toDate() { return new Date(isoValue); } };
-                    }
-                    export async function getLiveGamesNow() {
-                        return [{
+                    export async function getPublicHomepageGames() {
+                        return {
+                          partial: true,
+                          partialCategories: ['live', 'replays'],
+                          live: [{
                             id: 'smoke-live-1',
                             teamId: 'smoke-team-live',
                             opponent: 'Falcons',
-                            date: timestamp('2026-04-10T23:00:00.000Z'),
+                            date: '2026-04-10T23:00:00.000Z',
                             homeScore: 21,
                             awayScore: 17,
                             liveViewerCount: 3,
                             liveStatus: 'live',
                             team: { id: 'smoke-team-live', name: 'Smoke Tigers', photoUrl: '' }
-                        }];
-                    }
-                    export async function getUpcomingLiveGames() {
-                        return [{
+                          }],
+                          upcoming: [{
                             id: 'smoke-upcoming-1',
                             teamId: 'smoke-team-upcoming',
                             opponent: 'Owls',
-                            date: timestamp('2026-04-11T20:30:00.000Z'),
+                            date: '2026-04-11T20:30:00.000Z',
                             status: 'scheduled',
                             liveStatus: 'scheduled',
                             team: { id: 'smoke-team-upcoming', name: 'Smoke Panthers', photoUrl: '' }
-                        }];
-                    }
-                    export async function getRecentLiveTrackedGames() {
-                        return [{
+                          }],
+                          replays: [{
                             id: 'smoke-replay-1',
                             teamId: 'smoke-team-replay',
                             opponent: 'Bears',
-                            date: timestamp('2026-04-09T01:15:00.000Z'),
+                            date: '2026-04-09T01:15:00.000Z',
                             homeScore: 44,
                             awayScore: 41,
                             liveStatus: 'completed',
                             team: { id: 'smoke-team-replay', name: 'Smoke Wolves', photoUrl: '' }
-                        }];
+                          }]
+                        };
                     }
                 `
             });
@@ -113,6 +110,7 @@ test('homepage resolves live/upcoming and replay discovery cards', async ({ page
     });
     await expect(page.locator('#live-games-list')).toContainText('Smoke Tigers');
     await expect(page.locator('#live-games-list')).toContainText('Smoke Panthers');
+    await expect(page.locator('#live-games-list')).toContainText('Some live or upcoming games may be missing.');
     await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-live&gameId=smoke-live-1"]')).toHaveCount(1);
     await expect(page.locator('#live-games-list a[href="live-game.html?teamId=smoke-team-upcoming&gameId=smoke-upcoming-1"]')).toHaveCount(1);
 
@@ -122,5 +120,6 @@ test('homepage resolves live/upcoming and replay discovery cards', async ({ page
         ctaPattern: /Watch Replay/
     });
     await expect(page.locator('#past-games-list')).toContainText('Smoke Wolves');
+    await expect(page.locator('#past-games-list')).toContainText('Some recent replays may be missing.');
     await expect(page.locator('#past-games-list a[href="live-game.html?teamId=smoke-team-replay&gameId=smoke-replay-1&replay=true"]')).toHaveCount(1);
 });

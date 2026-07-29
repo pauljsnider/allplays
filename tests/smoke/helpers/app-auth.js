@@ -9,6 +9,8 @@ const sensitivePatterns = [
 export function getAppSmokeConfig() {
     return {
         appBaseUrl: process.env.SMOKE_APP_BASE_URL || process.env.SMOKE_APP_BOOT_URL || '',
+        adminEmail: process.env.SMOKE_ADMIN_EMAIL || '',
+        adminPassword: process.env.SMOKE_ADMIN_PASSWORD || '',
         staffEmail: process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '',
         staffPassword: process.env.SMOKE_STAFF_PASSWORD || process.env.SMOKE_AUTH_PASSWORD || '',
         parentEmail: process.env.SMOKE_PARENT_EMAIL || process.env.SMOKE_AUTH_EMAIL || '',

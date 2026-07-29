@@ -84,7 +84,7 @@ vi.mock('../../js/firebase-app-check.js?v=2', () => ({
     initializePrimaryAppCheck: vi.fn(async () => ({ state: 'skipped' }))
 }));
 
-vi.mock('../../js/firebase-runtime-config.js?v=11', () => ({
+vi.mock('../../js/firebase-runtime-config.js?v=16', () => ({
     resolvePrimaryFirebaseConfig: vi.fn(async () => ({
         apiKey: 'test-key',
         authDomain: 'example.test',
@@ -110,7 +110,7 @@ describe('firebase firestore initialization', () => {
         });
         firestoreMocks.getFirestore.mockReturnValue(existingDb);
 
-        const module = await import('../../js/firebase.js?v=22');
+        const module = await import('../../js/firebase.js?v=23');
 
         expect(module.db).toBe(existingDb);
         expect(firestoreMocks.initializeFirestore).toHaveBeenCalledTimes(1);

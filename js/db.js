@@ -34,7 +34,7 @@ import {
     getDownloadURL,
     deleteObject
 } from './firebase.js?v=23';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=10';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
@@ -96,7 +96,7 @@ import {
     isSharedGameSyntheticId,
     mergeGamesForTeam,
     projectSharedGameForTeam
-} from './shared-games.js?v=1';
+} from './shared-games.js?v=2';
 import {
     normalizeAthleteProfileDraft,
     collectAthleteProfileMediaCleanupPaths,

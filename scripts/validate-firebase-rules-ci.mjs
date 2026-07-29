@@ -235,6 +235,13 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
     // that behavior for environment-like identifiers so constructs such as
     // GOOGLE_"APPLICATION"_CREDENTIALS cannot bypass the static-key guard.
     const normalizedCredentialPolicyText = scalarPolicyText
+        // Production role-smoke accounts are application test fixtures, not
+        // Google/Firebase deployment credentials. Keep this allowlist exact so
+        // generic secrets and credential-shaped values remain forbidden.
+        .replace(
+            /\$\{\{\s*secrets\.SMOKE_(?:ADMIN|STAFF|PARENT)_(?:EMAIL|PASSWORD)\s*\}\}/g,
+            ''
+        )
         .replace(/(["'])([A-Z0-9_]*)\1/gi, '$2')
         .replace(/(?<=[A-Z0-9_])["'](?=[A-Z0-9_])/gi, '');
     const forbiddenScalarPatterns = [

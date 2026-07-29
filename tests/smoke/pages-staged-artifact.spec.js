@@ -2,8 +2,10 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 
 import {
+    createAppCheckRuntimeConfig,
     isAppCheckEnforcementReady,
-    readPagesSecurityMetaPolicies
+    readPagesSecurityMetaPolicies,
+    resolveStagedFirebaseRuntimeConfig
 } from '../../scripts/stage-pages-bundle.mjs';
 
 const stagedArtifactEnabled = process.env.SMOKE_PAGES_STAGED_ARTIFACT === 'true';
@@ -11,6 +13,8 @@ const expectedEnforcementReady = isAppCheckEnforcementReady(
     process.env.SMOKE_EXPECTED_APP_CHECK_ENFORCEMENT_READY
 );
 const expectedSiteKey = process.env.SMOKE_EXPECTED_APP_CHECK_SITE_KEY || '';
+const expectedFirebaseRuntimeTarget = process.env.SMOKE_EXPECTED_FIREBASE_RUNTIME_TARGET || '';
+const previewSmokeRuntime = expectedFirebaseRuntimeTarget === 'preview-smoke';
 const securityPolicies = readPagesSecurityMetaPolicies(path.resolve(import.meta.dirname, '../..'));
 
 test.describe('exact staged GitHub Pages artifact', () => {
@@ -24,22 +28,12 @@ test.describe('exact staged GitHub Pages artifact', () => {
         const runtimeConfigResponse = await request.get('/.well-known/allplays-runtime-config.json');
         expect(runtimeConfigResponse.status()).toBe(200);
         const runtimeConfig = await runtimeConfigResponse.json();
+        expect(runtimeConfig).toEqual(createAppCheckRuntimeConfig(expectedSiteKey, {
+            enforcementReady: expectedEnforcementReady,
+            firebaseConfig: resolveStagedFirebaseRuntimeConfig(expectedFirebaseRuntimeTarget)
+        }));
         if (expectedEnforcementReady) {
-            expect(runtimeConfig).toEqual({
-                appCheck: {
-                    enabled: true,
-                    recaptchaEnterpriseSiteKey: expectedSiteKey,
-                    isTokenAutoRefreshEnabled: true
-                }
-            });
             expect(expectedSiteKey).toMatch(/^[A-Za-z0-9_-]{10,200}$/);
-        } else {
-            expect(runtimeConfig).toEqual({
-                appCheck: {
-                    enabled: false,
-                    isTokenAutoRefreshEnabled: true
-                }
-            });
         }
 
         for (const path of [
@@ -74,6 +68,12 @@ test.describe('exact staged GitHub Pages artifact', () => {
         const externalAttestationRequests = [];
 
         page.on('pageerror', (error) => {
+            if (
+                previewSmokeRuntime
+                && /Installations:.*API key not valid/i.test(error.message)
+            ) {
+                return;
+            }
             fatalErrors.push(error.message);
         });
         page.on('requestfailed', (request) => {
