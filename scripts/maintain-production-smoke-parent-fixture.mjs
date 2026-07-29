@@ -40,21 +40,37 @@ function isActiveRosterPlayer(document) {
         (!status || status === 'active');
 }
 
-export function inspectParentFixture(userDocument, playerDocument, teamId, playerId) {
+function isActiveTeam(document) {
+    const fields = document?.fields || {};
+    const status = getStringField(fields, 'status').trim().toLowerCase();
+    return getBooleanField(fields, 'active') !== false &&
+        getBooleanField(fields, 'archived') !== true &&
+        !['archived', 'inactive', 'disabled'].includes(status);
+}
+
+export function inspectParentFixture(
+    userDocument,
+    teamDocument,
+    playerDocument,
+    teamId,
+    playerId
+) {
     const fields = userDocument?.fields || {};
     const playerKey = `${teamId}::${playerId}`;
     const hasParentOf = getArrayValues(fields.parentOf)
         .some((value) => isParentLink(value, teamId, playerId));
     const hasParentTeamId = hasStringValue(fields.parentTeamIds, teamId);
     const hasParentPlayerKey = hasStringValue(fields.parentPlayerKeys, playerKey);
+    const teamActive = Boolean(teamDocument) && isActiveTeam(teamDocument);
     const playerExists = Boolean(playerDocument);
     const playerActive = playerExists && isActiveRosterPlayer(playerDocument);
 
     return {
-        ready: hasParentOf && hasParentTeamId && hasParentPlayerKey && playerActive,
+        ready: hasParentOf && hasParentTeamId && hasParentPlayerKey && teamActive && playerActive,
         hasParentOf,
         hasParentTeamId,
         hasParentPlayerKey,
+        teamActive,
         playerExists,
         playerActive
     };
@@ -113,6 +129,16 @@ export function buildParentMembershipPatch(
 }
 
 export function buildActivePlayerPatch() {
+    return {
+        fields: {
+            active: { booleanValue: true },
+            archived: { booleanValue: false },
+            status: { stringValue: 'active' }
+        }
+    };
+}
+
+export function buildActiveTeamPatch() {
     return {
         fields: {
             active: { booleanValue: true },
@@ -186,7 +212,7 @@ async function main() {
         })
     ]);
 
-    const [adminDocument, teamDocument] = await Promise.all([
+    let [adminDocument, teamDocument] = await Promise.all([
         getFirestoreDocument(adminSession, `users/${adminSession.localId}`),
         getFirestoreDocument(staffSession, `teams/${teamId}`)
     ]);
@@ -210,8 +236,22 @@ async function main() {
         throw new Error('The parent smoke user profile does not exist');
     }
 
-    let inspection = inspectParentFixture(parentDocument, playerDocument, teamId, playerId);
+    let inspection = inspectParentFixture(
+        parentDocument,
+        teamDocument,
+        playerDocument,
+        teamId,
+        playerId
+    );
     if (mode === 'repair' && !inspection.ready) {
+        if (!inspection.teamActive) {
+            await patchFirestoreDocumentFields(
+                staffSession,
+                `teams/${teamId}`,
+                buildActiveTeamPatch().fields,
+                { updateTime: String(teamDocument.updateTime || '') }
+            );
+        }
         if (!inspection.playerActive) {
             await patchFirestoreDocumentFields(
                 staffSession,
@@ -239,18 +279,26 @@ async function main() {
             );
         }
 
-        [playerDocument, parentDocument] = await Promise.all([
+        [teamDocument, playerDocument, parentDocument] = await Promise.all([
+            getFirestoreDocument(staffSession, `teams/${teamId}`),
             getFirestoreDocument(staffSession, playerPath),
             getFirestoreDocument(parentSession, parentPath)
         ]);
-        inspection = inspectParentFixture(parentDocument, playerDocument, teamId, playerId);
+        inspection = inspectParentFixture(
+            parentDocument,
+            teamDocument,
+            playerDocument,
+            teamId,
+            playerId
+        );
     }
 
     if (!inspection.ready) {
         throw new Error(
             `Parent fixture is not ready (parent-link=${inspection.hasParentOf}, ` +
             `team-link=${inspection.hasParentTeamId}, player-key=${inspection.hasParentPlayerKey}, ` +
-            `player-exists=${inspection.playerExists}, player-active=${inspection.playerActive})`
+            `team-active=${inspection.teamActive}, player-exists=${inspection.playerExists}, ` +
+            `player-active=${inspection.playerActive})`
         );
     }
 
