@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+const require = createRequire(import.meta.url);
+const { hasAdminInviteIssuerAccess } = require('../../functions/team-admin-access-core.cjs');
 
 describe('admin invite server-authoritative redemption', () => {
     it('exposes a callable that validates invite identity and mutates team, user, and access code in one transaction', () => {
@@ -25,6 +29,81 @@ describe('admin invite server-authoritative redemption', () => {
         expect(handlerSource).toContain('used: true');
         expect(handlerSource).toContain('usedBy: userId');
         expect(handlerSource).toContain('usedAt: now');
+    });
+
+    it('revalidates the issuer inside the transaction before any invite redemption writes', () => {
+        const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+        const handlerIndex = functionsSource.indexOf('exports.redeemAdminInvite');
+        const handlerSource = functionsSource.slice(handlerIndex, handlerIndex + 6200);
+        const issuerCheckIndex = handlerSource.indexOf('if (!hasAdminInviteIssuerAccess({');
+        const firstWriteIndex = handlerSource.indexOf('transaction.set(teamRef');
+
+        expect(handlerSource).toContain('const issuerUid = String(codeData.generatedBy || \'\').trim();');
+        expect(handlerSource).toContain('transaction.get(issuerRef)');
+        expect(handlerSource).toContain('admin.auth().getUser(issuerUid).catch(() => null)');
+        expect(issuerCheckIndex).toBeGreaterThanOrEqual(0);
+        expect(firstWriteIndex).toBeGreaterThan(issuerCheckIndex);
+        expect(handlerSource.slice(issuerCheckIndex, firstWriteIndex))
+            .toContain("HttpsError('permission-denied'");
+    });
+
+    it.each([
+        ['current owner', {
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            user: {},
+            uid: 'owner-1',
+            authUser: { uid: 'owner-1', email: 'owner@example.com' }
+        }, true],
+        ['current email-listed administrator', {
+            team: { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+            user: {},
+            uid: 'admin-1',
+            authUser: { uid: 'admin-1', email: 'ADMIN@example.com' }
+        }, true],
+        ['current global administrator', {
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            user: { isAdmin: true },
+            uid: 'global-1',
+            authUser: { uid: 'global-1', email: 'global@example.com' }
+        }, true],
+        ['removed administrator', {
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            user: { email: 'removed@example.com' },
+            uid: 'removed-1',
+            authUser: { uid: 'removed-1', email: 'removed@example.com' }
+        }, false],
+        ['deleted issuer account', {
+            team: { ownerId: 'owner-1', adminEmails: ['deleted@example.com'] },
+            user: { email: 'deleted@example.com' },
+            uid: 'deleted-1',
+            authUser: null
+        }, false],
+        ['removed administrator redeeming a self-addressed invite', {
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            user: { email: 'removed@example.com' },
+            uid: 'removed-1',
+            authUser: { uid: 'removed-1', email: 'removed@example.com' }
+        }, false]
+    ])('%s issuer authorization', (_label, input, expected) => {
+        expect(hasAdminInviteIssuerAccess(input)).toBe(expected);
+    });
+
+    it('uses the issuer Auth email instead of a stale profile email', () => {
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerId: 'owner-1', adminEmails: ['old@example.com'] },
+            user: { email: 'old@example.com' },
+            uid: 'admin-1',
+            authUser: { uid: 'admin-1', email: 'new@example.com' }
+        })).toBe(false);
+    });
+
+    it('fails closed when an email-listed issuer has no authoritative Auth email', () => {
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerId: 'owner-1', adminEmails: ['old@example.com'] },
+            user: { email: 'old@example.com' },
+            uid: 'admin-1',
+            authUser: { uid: 'admin-1' }
+        })).toBe(false);
     });
 
     it('routes legacy and React invite acceptance through the callable-backed adapter', () => {
