@@ -321,23 +321,34 @@ describe('player profile private doc writes', () => {
         expect(source).toContain('await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);');
     });
 
-    it('stores parent invite contact details on the private player profile document', () => {
+    it('keeps validated parent invite contact writes in server-authoritative transactions', () => {
         const dbSource = readDbSource();
         const functionsSource = readFunctionsSource();
         const parentInviteClientSource = extractFunction(dbSource, 'export async function redeemParentInvite(');
         const parentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemParentInvite', 'exports.redeemHouseholdInvite');
         const householdInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemHouseholdInvite', 'exports.redeemCoParentInvite');
+        const coParentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemCoParentInvite', 'exports.redeemAdminInvite');
 
         expect(parentInviteClientSource).toContain("httpsCallable(functions, 'redeemParentInvite')");
         expect(parentInviteClientSource).not.toContain('await updateDoc(playerRef, {\n                parents: arrayUnion({');
 
         expect(parentInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
+        expect(parentInviteCallableSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(parentInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
+        expect(parentInviteCallableSource).toContain('parents: admin.firestore.FieldValue.arrayUnion({');
         expect(parentInviteCallableSource).toContain('email: codeData.email || signedInEmail ||');
 
         expect(householdInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
+        expect(householdInviteCallableSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(householdInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
+        expect(householdInviteCallableSource).toContain('parents: admin.firestore.FieldValue.arrayUnion({');
         expect(householdInviteCallableSource).toContain("status: 'accepted'");
+
+        expect(coParentInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
+        expect(coParentInviteCallableSource).toContain('firestore.runTransaction(async (transaction) =>');
+        expect(coParentInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
+        expect(coParentInviteCallableSource).toContain('parents: admin.firestore.FieldValue.arrayUnion({');
+        expect(coParentInviteCallableSource).toContain("status: 'accepted'");
     });
 
     it('keeps resolved parent invite team and player in scope for the success return', () => {
