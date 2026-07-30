@@ -46,11 +46,12 @@ describe('player Firestore privacy rules', () => {
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers)');
     });
 
-    it('allows linked parents to write household contacts only through the private profile doc', () => {
-        expect(rules).not.toContain("affectedKeys().hasOnly(['parents'])");
-        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
-        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
-        expect(rules).toContain("request.resource.data.parents.hasAll(resource.data.parents)");
+    it('keeps linked-parent private-profile writes limited to emergency and medical data', () => {
+        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
+        expect(rules).not.toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
+        expect(rules).not.toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
+        expect(rules).not.toContain('request.resource.data.parents.hasAll(resource.data.parents)');
     });
 });
 
@@ -68,8 +69,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
         await testEnv.clearFirestore();
         await testEnv.withSecurityRulesDisabled(async (context) => {
             const db = context.firestore();
-            await setDoc(doc(db, 'teams/team-1'), { ownerId: 'owner-1', adminEmails: [], isPublic: true });
-            await setDoc(doc(db, 'users/parent-1'), { parentPlayerKeys: ['team-1::player-1'] });
+            await setDoc(doc(db, 'teams/team-1'), {
+                ownerId: 'owner-1',
+                adminEmails: ['manager@example.com'],
+                isPublic: true
+            });
+            await setDoc(doc(db, 'users/parent-1'), {
+                parentPlayerKeys: [
+                    'team-1::player-1',
+                    'team-1::player-create-medical',
+                    'team-1::player-create-parents'
+                ]
+            });
             await setDoc(doc(db, 'teams/team-1/players/player-1'), {
                 name: 'Avery Lee',
                 profile: { address: { street: '123 Main' } }
@@ -87,6 +98,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
                 profile: { extraFields: { address: { street: '123 Main' } } }
             });
             await setDoc(doc(db, 'teams/team-1/players/player-1/private/profile'), {
+                parents: [{ userId: 'trusted-parent', email: 'trusted@example.com' }],
                 rosterFields: { birthDate: '2014-02-03', address: { street: '123 Main' } }
             });
         });
@@ -150,5 +162,39 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
         await assertFails(updateDoc(doc(ownerDb, 'teams/team-1/players/player-1'), {
             profile: { address: { street: '456 Other' } }
         }));
+    });
+
+    it('allows linked-parent medical writes but denies every client mutation of parents', async () => {
+        const parentDb = testEnv.authenticatedContext('parent-1', { email: 'parent@example.com' }).firestore();
+        const existingProfileRef = doc(parentDb, 'teams/team-1/players/player-1/private/profile');
+
+        await assertSucceeds(updateDoc(existingProfileRef, { medicalInfo: 'Asthma inhaler' }));
+        await assertSucceeds(setDoc(
+            doc(parentDb, 'teams/team-1/players/player-create-medical/private/profile'),
+            { emergencyContact: { name: 'Pat Parent', phone: '555-0100' }, medicalInfo: 'Allergy' }
+        ));
+        await assertFails(setDoc(
+            doc(parentDb, 'teams/team-1/players/player-create-parents/private/profile'),
+            { parents: [{ userId: 'attacker', email: 'attacker@example.com' }] }
+        ));
+        await assertFails(updateDoc(existingProfileRef, {
+            parents: [
+                { userId: 'trusted-parent', email: 'trusted@example.com' },
+                { userId: 'attacker', email: 'attacker@example.com' }
+            ]
+        }));
+        await assertFails(updateDoc(existingProfileRef, {
+            parents: [{ userId: 'replacement', email: 'replacement@example.com' }]
+        }));
+        await assertFails(updateDoc(existingProfileRef, { parents: [] }));
+    });
+
+    it('retains authorized team-manager contact-list management', async () => {
+        const managerDb = testEnv.authenticatedContext('manager-1', { email: 'manager@example.com' }).firestore();
+
+        await assertSucceeds(updateDoc(
+            doc(managerDb, 'teams/team-1/players/player-1/private/profile'),
+            { parents: [{ userId: 'manager-approved', email: 'approved@example.com' }] }
+        ));
     });
 });
