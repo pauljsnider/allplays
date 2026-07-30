@@ -6055,6 +6055,13 @@ function getParentRegistrationSubmittedAtMillis(registrationDoc) {
     return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
+function getParentRegistrationCreatedAtMillis(registrationDoc) {
+    const createdAt = registrationDoc.data()?.createdAt || null;
+    if (createdAt?.toMillis) return createdAt.toMillis();
+    const date = createdAt?.toDate ? createdAt.toDate() : new Date(createdAt || 0);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
 function compareParentRegistrationDocuments(a, b) {
     const submittedAtDifference = getParentRegistrationSubmittedAtMillis(b) - getParentRegistrationSubmittedAtMillis(a);
     if (submittedAtDifference !== 0) return submittedAtDifference;
@@ -6095,7 +6102,7 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         }))
     ));
 
-    const sourceResults = await Promise.all(sourceDefinitions.map(async (source) => {
+    const sources = Object.fromEntries(sourceDefinitions.map((source) => {
         const previousState = previousCursor.sources?.[source.key] || {
             bufferedDocs: [],
             lastDoc: null,
@@ -6103,23 +6110,25 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         };
         const bufferedDocs = (previousState.bufferedDocs || []).filter((registrationDoc) => {
             const path = getParentRegistrationDocumentPath(registrationDoc);
-            return !previouslySeenPaths.has(path) && !queuedRetryPaths.has(path);
+            return !previouslySeenPaths.has(path) &&
+                !queuedRetryPaths.has(path) &&
+                (source.orderField !== 'createdAt' || !registrationDoc.data()?.submittedAt);
         });
-        const normalizedState = { ...previousState, bufferedDocs };
-        if (
-            normalizedState.exhausted ||
-            freshDocCapacity === 0 ||
-            bufferedDocs.length >= freshDocCapacity
-        ) {
-            return { source, state: normalizedState };
-        }
+        return [source.key, { ...previousState, bufferedDocs }];
+    }));
+    const attemptedSourceKeys = new Set();
+    const failedSourceKeys = new Set();
 
+    async function loadSourceBatch(source) {
+        const state = sources[source.key];
+        if (state.exhausted || attemptedSourceKeys.has(source.key) || freshDocCapacity === 0) return false;
+        attemptedSourceKeys.add(source.key);
         const constraints = [
             where(source.field, '==', source.value),
             orderBy(source.orderField, 'desc'),
             orderBy(documentId(), 'desc')
         ];
-        if (previousState.lastDoc) constraints.push(startAfter(previousState.lastDoc));
+        if (state.lastDoc) constraints.push(startAfter(state.lastDoc));
         constraints.push(limit(pageSize));
 
         try {
@@ -6127,33 +6136,61 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
                 collectionGroup(db, 'registrations'),
                 ...constraints
             ));
-            return {
-                source,
-                state: {
-                    bufferedDocs: [...bufferedDocs, ...snapshot.docs].filter((registrationDoc) => {
-                        const path = getParentRegistrationDocumentPath(registrationDoc);
-                        return !previouslySeenPaths.has(path) && !queuedRetryPaths.has(path);
-                    }),
-                    lastDoc: snapshot.docs.at(-1) || previousState.lastDoc,
-                    exhausted: snapshot.docs.length < pageSize
-                }
+            const sourceDocs = source.orderField === 'createdAt'
+                ? snapshot.docs.filter((registrationDoc) => !(registrationDoc.data()?.submittedAt))
+                : snapshot.docs;
+            sources[source.key] = {
+                ...state,
+                bufferedDocs: [...state.bufferedDocs, ...sourceDocs].filter((registrationDoc) => {
+                    const path = getParentRegistrationDocumentPath(registrationDoc);
+                    return !previouslySeenPaths.has(path) && !queuedRetryPaths.has(path);
+                }),
+                lastDoc: snapshot.docs.at(-1) || state.lastDoc,
+                exhausted: snapshot.docs.length < pageSize
             };
+            return true;
         } catch (error) {
+            failedSourceKeys.add(source.key);
             errors.push({ stage: 'query', source: source.identityKey, orderField: source.orderField });
-            return { source, state: normalizedState };
+            return false;
         }
-    }));
+    }
 
-    const registrationDocsByPath = new Map();
-    sourceResults.forEach(({ state }) => {
-        state.bufferedDocs.forEach((registrationDoc) => {
-            const path = getParentRegistrationDocumentPath(registrationDoc);
-            if (!previouslySeenPaths.has(path)) registrationDocsByPath.set(path, registrationDoc);
+    await Promise.all(sourceDefinitions.map(loadSourceBatch));
+
+    function getFreshDocs() {
+        const registrationDocsByPath = new Map();
+        sourceDefinitions.forEach((source) => {
+            const state = sources[source.key];
+            state.bufferedDocs.forEach((registrationDoc) => {
+                const path = getParentRegistrationDocumentPath(registrationDoc);
+                if (!previouslySeenPaths.has(path)) registrationDocsByPath.set(path, registrationDoc);
+            });
         });
-    });
-    const freshDocs = Array.from(registrationDocsByPath.values())
-        .sort(compareParentRegistrationDocuments)
-        .slice(0, freshDocCapacity);
+        return Array.from(registrationDocsByPath.values()).sort(compareParentRegistrationDocuments);
+    }
+
+    // A createdAt query also contains modern documents, whose submittedAt can differ
+    // from createdAt. Only retain legacy documents from that stream, and read past
+    // modern documents until its createdAt frontier is below this page's cutoff.
+    // That keeps every source ordered by the timestamp used in the merged result.
+    let freshDocs = getFreshDocs();
+    while (freshDocs.length > 0 && freshDocCapacity > 0) {
+        const pageCutoff = freshDocs[Math.min(freshDocs.length, freshDocCapacity) - 1];
+        const unsafeCreatedAtSources = sourceDefinitions.filter((source) => {
+            if (source.orderField !== 'createdAt') return false;
+            const state = sources[source.key];
+            return state.lastDoc && !failedSourceKeys.has(source.key) && !state.exhausted &&
+                getParentRegistrationCreatedAtMillis(state.lastDoc) >=
+                getParentRegistrationSubmittedAtMillis(pageCutoff);
+        });
+        if (unsafeCreatedAtSources.length === 0) break;
+        unsafeCreatedAtSources.forEach((source) => attemptedSourceKeys.delete(source.key));
+        const loaded = await Promise.all(unsafeCreatedAtSources.map(loadSourceBatch));
+        if (!loaded.some(Boolean)) break;
+        freshDocs = getFreshDocs();
+    }
+    freshDocs = freshDocs.slice(0, freshDocCapacity);
     const registrationDocs = [...retryDocs, ...freshDocs];
     const selectedPaths = new Set(registrationDocs.map(getParentRegistrationDocumentPath));
 
@@ -6213,7 +6250,8 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     selectedPaths.forEach((path) => {
         if (!enrichmentFailedPaths.has(path)) previouslySeenPaths.add(path);
     });
-    const sources = Object.fromEntries(sourceResults.map(({ source, state }) => {
+    const nextSources = Object.fromEntries(sourceDefinitions.map((source) => {
+        const state = sources[source.key];
         return [source.key, {
             ...state,
             bufferedDocs: state.bufferedDocs.filter((registrationDoc) => !selectedPaths.has(getParentRegistrationDocumentPath(registrationDoc)))
@@ -6227,11 +6265,11 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     ];
     const hasMore = errors.length > 0 ||
         pendingRetryDocs.length > 0 ||
-        Object.values(sources).some((state) => state.bufferedDocs.length > 0 || !state.exhausted);
+        Object.values(nextSources).some((state) => state.bufferedDocs.length > 0 || !state.exhausted);
     return {
         applications,
         nextCursor: hasMore ? {
-            sources,
+            sources: nextSources,
             seenPaths: Array.from(previouslySeenPaths),
             retryDocs: pendingRetryDocs
         } : null,

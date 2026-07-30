@@ -190,6 +190,58 @@ describe('parent dashboard registration application pagination', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 
+    it('keeps legacy createdAt registrations ahead of modern registrations with older submittedAt values', async () => {
+        const modernDocs = Array.from({ length: 10 }, (_, index) => {
+            const number = 10 - index;
+            const registrationDoc = createRegistrationDoc(number);
+            const data = registrationDoc.data();
+            return {
+                ...registrationDoc,
+                data: () => ({
+                    ...data,
+                    submittedAt: new Date(`2026-01-${String(number).padStart(2, '0')}T12:00:00Z`),
+                    createdAt: new Date(`2026-06-${String(number).padStart(2, '0')}T12:00:00Z`)
+                })
+            };
+        });
+        const legacyDoc = createRegistrationDoc(11, { createdAtOnly: true, legacy: true });
+        const legacyData = legacyDoc.data();
+        const recentLegacyDoc = {
+            ...legacyDoc,
+            data: () => ({ ...legacyData, createdAt: new Date('2026-05-15T12:00:00Z') })
+        };
+        firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+            const identity = getQueryConstraint(queryValue, 'where').field;
+            const orderField = queryValue.constraints.find((constraint) =>
+                constraint.type === 'orderBy' && constraint.field !== '__name__'
+            ).field;
+            const cursor = queryValue.constraints.find((constraint) => constraint.type === 'startAfter')?.value;
+            if (identity !== 'guardian.email') return { docs: [] };
+            if (orderField === 'submittedAt') return { docs: modernDocs };
+            if (!cursor) return { docs: modernDocs };
+            if (cursor === modernDocs.at(-1)) return { docs: [recentLegacyDoc] };
+            return { docs: [] };
+        });
+
+        const firstPage = await listParentRegistrationApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.test'
+        });
+        const secondPage = await listParentRegistrationApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.test'
+        }, { cursor: firstPage.nextCursor });
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual([
+            'registration-11',
+            ...modernDocs.slice(0, 9).map((registrationDoc) => registrationDoc.id)
+        ]);
+        expect(secondPage.applications.map((application) => application.id)).toEqual([
+            modernDocs.at(-1).id
+        ]);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(modernDocs.at(-1));
+    });
+
     it('returns available applications and retry metadata when one identity query or enrichment read fails', async () => {
         const registrationDoc = createRegistrationDoc(20);
         firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
