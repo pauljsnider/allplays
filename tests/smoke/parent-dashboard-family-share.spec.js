@@ -13,7 +13,49 @@ function clone(value) {
 }
 
 export async function getParentDashboardData() {
+    window.__familyShareWorkflow.dashboardCalls += 1;
     return { children: clone(children), dashboardState: null, registrationApplications: [] };
+}
+export async function listParentRegistrationApplicationsPage(_profile, options = {}) {
+    window.__familyShareWorkflow.registrationCalls += 1;
+    const firstApplication = {
+        id: 'registration-new',
+        teamId: 'team-1',
+        formId: 'form-1',
+        playerName: 'New Player',
+        programName: 'Summer Program',
+        teamName: 'Bears',
+        status: 'pending',
+        statusLabel: 'Pending Review',
+        submittedAt: '2026-07-30T12:00:00Z'
+    };
+    if (!options.cursor) {
+        return {
+            applications: [firstApplication],
+            nextCursor: { page: 2 },
+            hasMore: true,
+            errors: []
+        };
+    }
+    return {
+        applications: [
+            firstApplication,
+            {
+                id: 'registration-old',
+                teamId: 'team-2',
+                formId: 'form-2',
+                playerName: 'Older Player',
+                programName: 'Spring Program',
+                teamName: 'Hawks',
+                status: 'enrolled',
+                statusLabel: 'Enrolled',
+                submittedAt: '2026-07-01T12:00:00Z'
+            }
+        ],
+        nextCursor: null,
+        hasMore: false,
+        errors: []
+    };
 }
 export async function redeemParentInvite() {}
 export async function getTeam(teamId) { return { id: teamId, name: teamId }; }
@@ -118,7 +160,15 @@ export async function saveCapSetting() {}
 
 async function mockParentDashboardModules(page) {
     await page.addInitScript(() => {
-        window.__familyShareWorkflow = { creates: [], listCalls: [], alerts: [], copied: [], createdToken: null };
+        window.__familyShareWorkflow = {
+            creates: [],
+            listCalls: [],
+            alerts: [],
+            copied: [],
+            createdToken: null,
+            dashboardCalls: 0,
+            registrationCalls: 0
+        };
         window.alert = (message) => window.__familyShareWorkflow.alerts.push(String(message));
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
@@ -194,4 +244,24 @@ test('parent dashboard creates family share links with hydrated children and ext
         `${baseURL}/app/#/family/token-created`
     ]);
     await expect.poll(() => page.evaluate(() => window.__familyShareWorkflow.listCalls.length)).toBeGreaterThanOrEqual(2);
+});
+
+test('parent dashboard loads more registrations without reloading dashboard data', async ({ page, baseURL }) => {
+    await mockParentDashboardModules(page);
+
+    await page.goto(`${baseURL}/parent-dashboard.html`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#registration-applications-list')).toContainText('New Player');
+    await expect(page.locator('[data-registration-action="load-more"]')).toBeVisible();
+
+    await page.locator('[data-registration-action="load-more"]').click();
+
+    await expect(page.locator('#registration-applications-list')).toContainText('Older Player');
+    await expect(page.locator('#registration-applications-list').getByText('New Player')).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => ({
+        dashboardCalls: window.__familyShareWorkflow.dashboardCalls,
+        registrationCalls: window.__familyShareWorkflow.registrationCalls
+    }))).toEqual({
+        dashboardCalls: 1,
+        registrationCalls: 2
+    });
 });
