@@ -6071,6 +6071,16 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     const pageSize = PARENT_REGISTRATION_APPLICATION_PAGE_SIZE;
     const previousCursor = options.cursor || {};
     const previouslySeenPaths = new Set(previousCursor.seenPaths || []);
+    const queuedRetryDocsByPath = new Map();
+    (previousCursor.retryDocs || []).forEach((registrationDoc) => {
+        const path = getParentRegistrationDocumentPath(registrationDoc);
+        if (!previouslySeenPaths.has(path)) queuedRetryDocsByPath.set(path, registrationDoc);
+    });
+    const queuedRetryDocs = Array.from(queuedRetryDocsByPath.values());
+    const retryDocs = queuedRetryDocs.slice(0, pageSize);
+    const deferredRetryDocs = queuedRetryDocs.slice(pageSize);
+    const queuedRetryPaths = new Set(queuedRetryDocsByPath.keys());
+    const freshDocCapacity = pageSize - retryDocs.length;
     const errors = [];
     const identityDefinitions = [
         { key: 'email', field: 'guardian.email', value: email },
@@ -6091,8 +6101,17 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             lastDoc: null,
             exhausted: false
         };
-        if (previousState.exhausted) {
-            return { source, state: previousState };
+        const bufferedDocs = (previousState.bufferedDocs || []).filter((registrationDoc) => {
+            const path = getParentRegistrationDocumentPath(registrationDoc);
+            return !previouslySeenPaths.has(path) && !queuedRetryPaths.has(path);
+        });
+        const normalizedState = { ...previousState, bufferedDocs };
+        if (
+            normalizedState.exhausted ||
+            freshDocCapacity === 0 ||
+            bufferedDocs.length >= freshDocCapacity
+        ) {
+            return { source, state: normalizedState };
         }
 
         const constraints = [
@@ -6111,34 +6130,30 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             return {
                 source,
                 state: {
-                    bufferedDocs: [...previousState.bufferedDocs, ...snapshot.docs],
+                    bufferedDocs: [...bufferedDocs, ...snapshot.docs].filter((registrationDoc) => {
+                        const path = getParentRegistrationDocumentPath(registrationDoc);
+                        return !previouslySeenPaths.has(path) && !queuedRetryPaths.has(path);
+                    }),
                     lastDoc: snapshot.docs.at(-1) || previousState.lastDoc,
                     exhausted: snapshot.docs.length < pageSize
                 }
             };
         } catch (error) {
             errors.push({ stage: 'query', source: source.identityKey, orderField: source.orderField });
-            return { source, state: previousState };
+            return { source, state: normalizedState };
         }
     }));
 
     const registrationDocsByPath = new Map();
-    (previousCursor.retryDocs || []).forEach((registrationDoc) => {
-        registrationDocsByPath.set(getParentRegistrationDocumentPath(registrationDoc), registrationDoc);
-    });
     sourceResults.forEach(({ state }) => {
         state.bufferedDocs.forEach((registrationDoc) => {
             const path = getParentRegistrationDocumentPath(registrationDoc);
             if (!previouslySeenPaths.has(path)) registrationDocsByPath.set(path, registrationDoc);
         });
     });
-    const retryPaths = new Set((previousCursor.retryDocs || []).map(getParentRegistrationDocumentPath));
-    const retryDocs = Array.from(registrationDocsByPath.values())
-        .filter((registrationDoc) => retryPaths.has(getParentRegistrationDocumentPath(registrationDoc)));
     const freshDocs = Array.from(registrationDocsByPath.values())
-        .filter((registrationDoc) => !retryPaths.has(getParentRegistrationDocumentPath(registrationDoc)))
         .sort(compareParentRegistrationDocuments)
-        .slice(0, pageSize);
+        .slice(0, freshDocCapacity);
     const registrationDocs = [...retryDocs, ...freshDocs];
     const selectedPaths = new Set(registrationDocs.map(getParentRegistrationDocumentPath));
 
@@ -6204,9 +6219,12 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             bufferedDocs: state.bufferedDocs.filter((registrationDoc) => !selectedPaths.has(getParentRegistrationDocumentPath(registrationDoc)))
         }];
     }));
-    const pendingRetryDocs = registrationDocs.filter((registrationDoc) => (
-        enrichmentFailedPaths.has(getParentRegistrationDocumentPath(registrationDoc))
-    ));
+    const pendingRetryDocs = [
+        ...deferredRetryDocs,
+        ...registrationDocs.filter((registrationDoc) => (
+            enrichmentFailedPaths.has(getParentRegistrationDocumentPath(registrationDoc))
+        ))
+    ];
     const hasMore = errors.length > 0 ||
         pendingRetryDocs.length > 0 ||
         Object.values(sources).some((state) => state.bufferedDocs.length > 0 || !state.exhausted);

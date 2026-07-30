@@ -259,8 +259,9 @@ describe('parent dashboard registration application pagination', () => {
         ]));
         expect(secondPage.applications.map((application) => application.id)).toEqual([
             'registration-30',
-            ...secondBatch.map((registrationDoc) => registrationDoc.id)
+            ...secondBatch.slice(0, 9).map((registrationDoc) => registrationDoc.id)
         ]);
+        expect(secondPage.applications).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
         expect(secondPage.errors).toEqual(expect.arrayContaining([
             expect.objectContaining({ stage: 'query', source: 'userId' }),
             expect.objectContaining({ stage: 'team', registrationPath: firstBatch[0].ref.path })
@@ -271,10 +272,78 @@ describe('parent dashboard registration application pagination', () => {
         expect(recoveredPage.hasMore).toBe(true);
         expect(recoveredPage.applications.map((application) => application.id)).toEqual([
             'registration-30',
-            ...thirdBatch.map((registrationDoc) => registrationDoc.id)
+            secondBatch.at(-1).id,
+            ...thirdBatch.slice(0, 8).map((registrationDoc) => registrationDoc.id)
         ]);
+        expect(recoveredPage.applications).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
         expect(loadMorePage.errors).toEqual([]);
+        expect(loadMorePage.applications.map((application) => application.id)).toEqual(
+            thirdBatch.slice(8).map((registrationDoc) => registrationDoc.id)
+        );
         expect(loadMorePage.hasMore).toBe(false);
+    });
+
+    it.each([
+        {
+            stage: 'team',
+            createDoc: (number) => createRegistrationDoc(number),
+            failRead: (reference) => !reference.path.includes('/registrationForms/')
+        },
+        {
+            stage: 'form',
+            createDoc: (number) => createRegistrationDoc(number, { legacy: true }),
+            failRead: (reference) => reference.path.includes('/registrationForms/')
+        }
+    ])('bounds repeated $stage enrichment failures and preserves queued fresh documents', async ({
+        stage,
+        createDoc,
+        failRead
+    }) => {
+        const retryBatch = Array.from({ length: 10 }, (_, index) => createDoc(30 - index));
+        const queuedFreshBatch = Array.from({ length: 10 }, (_, index) => createDoc(20 - index));
+        firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+            const identity = getQueryConstraint(queryValue, 'where').field;
+            const orderField = queryValue.constraints.find((constraint) =>
+                constraint.type === 'orderBy' && constraint.field !== '__name__'
+            ).field;
+            if (identity === 'guardian.email' && orderField === 'submittedAt') {
+                return { docs: retryBatch };
+            }
+            if (identity === 'submittedByUserId' && orderField === 'submittedAt') {
+                return { docs: queuedFreshBatch };
+            }
+            return { docs: [] };
+        });
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            if (failRead(reference)) throw new Error(`${stage} unavailable`);
+            const id = reference.path.split('/').at(-1);
+            return {
+                id,
+                exists: () => true,
+                data: () => reference.path.includes('/registrationForms/')
+                    ? { title: `Program ${id}` }
+                    : { name: `Team ${id}` }
+            };
+        });
+
+        const profile = { id: 'parent-1', email: 'parent@example.test' };
+        const firstPage = await listParentRegistrationApplicationsPage(profile);
+        const queryReadCount = firebaseMocks.getDocs.mock.calls.length;
+        const secondPage = await listParentRegistrationApplicationsPage(profile, {
+            cursor: firstPage.nextCursor
+        });
+
+        expect(firstPage.applications).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+        expect(secondPage.applications).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+        expect(firstPage.errors.filter((error) => error.stage === stage)).toHaveLength(10);
+        expect(secondPage.errors.filter((error) => error.stage === stage)).toHaveLength(10);
+        expect(firstPage.nextCursor.retryDocs).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+        expect(secondPage.nextCursor.retryDocs).toHaveLength(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(queryReadCount);
+
+        const queuedPaths = secondPage.nextCursor.sources['userId:submittedAt'].bufferedDocs
+            .map((registrationDoc) => registrationDoc.ref.path);
+        expect(queuedPaths).toEqual(queuedFreshBatch.map((registrationDoc) => registrationDoc.ref.path));
     });
 
     it('wires registration-only loading, retry state, indexes, and read-only controls', () => {
