@@ -73,13 +73,14 @@ function readRepoFile(relativePath) {
 
 function createRegistrationDoc(number, options = {}) {
     const id = `registration-${String(number).padStart(2, '0')}`;
+    const timestamp = new Date(`2026-07-${String(number).padStart(2, '0')}T12:00:00Z`);
     return {
         id,
         ref: { path: `teams/team-${number}/registrationForms/form-${number}/registrations/${id}` },
         data: () => ({
             teamId: `team-${number}`,
             formId: `form-${number}`,
-            submittedAt: new Date(`2026-07-${String(number).padStart(2, '0')}T12:00:00Z`),
+            ...(options.createdAtOnly ? { createdAt: timestamp } : { submittedAt: timestamp, createdAt: timestamp }),
             participant: { name: `Player ${number}` },
             guardian: { email: 'parent@example.test' },
             status: 'pending',
@@ -144,12 +145,13 @@ describe('parent dashboard registration application pagination', () => {
         ]).size).toBe(20);
         expect(secondPage.hasMore).toBe(false);
 
-        expect(firebaseMocks.limit).toHaveBeenCalledTimes(4);
+        expect(firebaseMocks.limit).toHaveBeenCalledTimes(8);
         expect(firebaseMocks.limit).toHaveBeenCalledWith(10);
-        expect(firebaseMocks.startAfter).toHaveBeenCalledTimes(2);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledTimes(4);
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(docs.get(2));
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(docs.get(3));
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('submittedAt', 'desc');
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('__name__', 'desc');
 
         const formReads = firebaseMocks.getDoc.mock.calls.filter(([reference]) =>
@@ -161,6 +163,31 @@ describe('parent dashboard registration application pagination', () => {
         expect(teamReads).toHaveLength(20);
         expect(formReads).toHaveLength(1);
         expect(formReads[0][0].path).toBe('teams/team-1/registrationForms/form-1');
+    });
+
+    it('includes legacy registrations that have createdAt but no submittedAt', async () => {
+        const legacyDoc = createRegistrationDoc(9, { createdAtOnly: true, legacy: true });
+        firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+            const orderField = queryValue.constraints.find((constraint) =>
+                constraint.type === 'orderBy' && constraint.field !== '__name__'
+            ).field;
+            return { docs: orderField === 'createdAt' ? [legacyDoc] : [] };
+        });
+
+        const page = await listParentRegistrationApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.test'
+        });
+
+        expect(page.applications).toEqual([
+            expect.objectContaining({
+                id: 'registration-09',
+                programName: 'Legacy program',
+                submittedAt: legacyDoc.data().createdAt
+            })
+        ]);
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('submittedAt', 'desc');
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 
     it('returns available applications and retry metadata when one identity query or enrichment read fails', async () => {
@@ -192,6 +219,64 @@ describe('parent dashboard registration application pagination', () => {
         expect(page.nextCursor).not.toBeNull();
     });
 
+    it('advances successful sources through repeated failures and a later load-more page', async () => {
+        const firstBatch = Array.from({ length: 10 }, (_, index) => createRegistrationDoc(30 - index));
+        const secondBatch = Array.from({ length: 10 }, (_, index) => createRegistrationDoc(20 - index));
+        const thirdBatch = Array.from({ length: 10 }, (_, index) => createRegistrationDoc(10 - index));
+        let failuresActive = true;
+        firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+            const identity = getQueryConstraint(queryValue, 'where').field;
+            const orderField = queryValue.constraints.find((constraint) =>
+                constraint.type === 'orderBy' && constraint.field !== '__name__'
+            ).field;
+            if (identity === 'submittedByUserId') {
+                if (failuresActive) throw new Error('persistent identity failure');
+                return { docs: [] };
+            }
+            if (orderField === 'createdAt') return { docs: [] };
+            const cursor = queryValue.constraints.find((constraint) => constraint.type === 'startAfter')?.value;
+            if (!cursor) return { docs: firstBatch };
+            if (cursor === firstBatch.at(-1)) return { docs: secondBatch };
+            if (cursor === secondBatch.at(-1)) return { docs: thirdBatch };
+            return { docs: [] };
+        });
+        firebaseMocks.getDoc.mockImplementation(async (reference) => {
+            if (failuresActive && reference.path.endsWith('/team-30')) throw new Error('persistent enrichment failure');
+            const id = reference.path.split('/').at(-1);
+            return { id, exists: () => true, data: () => ({ name: `Team ${id}` }) };
+        });
+
+        const profile = { id: 'parent-1', email: 'parent@example.test' };
+        const firstPage = await listParentRegistrationApplicationsPage(profile);
+        const secondPage = await listParentRegistrationApplicationsPage(profile, { cursor: firstPage.nextCursor });
+        failuresActive = false;
+        const recoveredPage = await listParentRegistrationApplicationsPage(profile, { cursor: secondPage.nextCursor });
+        const loadMorePage = await listParentRegistrationApplicationsPage(profile, { cursor: recoveredPage.nextCursor });
+
+        expect(firstPage.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({ stage: 'query', source: 'userId' }),
+            expect.objectContaining({ stage: 'team', registrationPath: firstBatch[0].ref.path })
+        ]));
+        expect(secondPage.applications.map((application) => application.id)).toEqual([
+            'registration-30',
+            ...secondBatch.map((registrationDoc) => registrationDoc.id)
+        ]);
+        expect(secondPage.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({ stage: 'query', source: 'userId' }),
+            expect.objectContaining({ stage: 'team', registrationPath: firstBatch[0].ref.path })
+        ]));
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstBatch.at(-1));
+        expect(secondPage.nextCursor.retryDocs).toEqual([firstBatch[0]]);
+        expect(recoveredPage.errors).toEqual([]);
+        expect(recoveredPage.hasMore).toBe(true);
+        expect(recoveredPage.applications.map((application) => application.id)).toEqual([
+            'registration-30',
+            ...thirdBatch.map((registrationDoc) => registrationDoc.id)
+        ]);
+        expect(loadMorePage.errors).toEqual([]);
+        expect(loadMorePage.hasMore).toBe(false);
+    });
+
     it('wires registration-only loading, retry state, indexes, and read-only controls', () => {
         const html = readRepoFile('parent-dashboard.html');
         const db = readRepoFile('js/db.js');
@@ -203,10 +288,14 @@ describe('parent dashboard registration application pagination', () => {
         expect(html).toContain('data-registration-action="load-more"');
         expect(html).toContain('data-registration-action="retry"');
         expect(html).toContain('Your existing applications are still shown.');
-        expect(html).toContain("from './js/db.js?v=128';");
+        expect(html).toContain('registrationApplicationsCursor = page.nextCursor;');
+        expect(html).not.toContain('if (page.errors.length === 0)');
+        expect(html).toContain("from './js/db.js?v=129';");
         expect(db).toContain("{ key: 'email', field: 'guardian.email', value: email }");
         expect(db).toContain("{ key: 'userId', field: 'submittedByUserId', value: userId }");
-        expect(db).toContain("orderBy('submittedAt', 'desc')");
+        expect(db).toContain("['submittedAt', 'createdAt']");
+        expect(db).toContain('orderBy(source.orderField');
+        expect(db).toContain('retryDocs: pendingRetryDocs');
         expect(db).toContain('if (!registration.programName && teamId && formId)');
         const dashboardLoaderStart = db.indexOf('export async function getParentDashboardData');
         const dashboardLoaderEnd = db.indexOf('\nexport async function ', dashboardLoaderStart + 1);
@@ -219,13 +308,15 @@ describe('parent dashboard registration application pagination', () => {
             index.queryScope === 'COLLECTION_GROUP'
         );
         for (const identityField of ['guardian.email', 'submittedByUserId']) {
-            expect(registrationIndexes).toContainEqual(expect.objectContaining({
-                fields: [
-                    { fieldPath: identityField, order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
-                    { fieldPath: '__name__', order: 'DESCENDING' }
-                ]
-            }));
+            for (const orderField of ['submittedAt', 'createdAt']) {
+                expect(registrationIndexes).toContainEqual(expect.objectContaining({
+                    fields: [
+                        { fieldPath: identityField, order: 'ASCENDING' },
+                        { fieldPath: orderField, order: 'DESCENDING' },
+                        { fieldPath: '__name__', order: 'DESCENDING' }
+                    ]
+                }));
+            }
         }
 
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');

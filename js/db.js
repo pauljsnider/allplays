@@ -6072,10 +6072,18 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     const previousCursor = options.cursor || {};
     const previouslySeenPaths = new Set(previousCursor.seenPaths || []);
     const errors = [];
-    const sourceDefinitions = [
+    const identityDefinitions = [
         { key: 'email', field: 'guardian.email', value: email },
         { key: 'userId', field: 'submittedByUserId', value: userId }
     ].filter((source) => source.value);
+    const sourceDefinitions = identityDefinitions.flatMap((identity) => (
+        ['submittedAt', 'createdAt'].map((orderField) => ({
+            ...identity,
+            key: `${identity.key}:${orderField}`,
+            identityKey: identity.key,
+            orderField
+        }))
+    ));
 
     const sourceResults = await Promise.all(sourceDefinitions.map(async (source) => {
         const previousState = previousCursor.sources?.[source.key] || {
@@ -6089,7 +6097,7 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
 
         const constraints = [
             where(source.field, '==', source.value),
-            orderBy('submittedAt', 'desc'),
+            orderBy(source.orderField, 'desc'),
             orderBy(documentId(), 'desc')
         ];
         if (previousState.lastDoc) constraints.push(startAfter(previousState.lastDoc));
@@ -6109,28 +6117,38 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
                 }
             };
         } catch (error) {
-            errors.push({ stage: 'query', source: source.key });
+            errors.push({ stage: 'query', source: source.identityKey, orderField: source.orderField });
             return { source, state: previousState };
         }
     }));
 
     const registrationDocsByPath = new Map();
+    (previousCursor.retryDocs || []).forEach((registrationDoc) => {
+        registrationDocsByPath.set(getParentRegistrationDocumentPath(registrationDoc), registrationDoc);
+    });
     sourceResults.forEach(({ state }) => {
         state.bufferedDocs.forEach((registrationDoc) => {
             const path = getParentRegistrationDocumentPath(registrationDoc);
             if (!previouslySeenPaths.has(path)) registrationDocsByPath.set(path, registrationDoc);
         });
     });
-    const registrationDocs = Array.from(registrationDocsByPath.values())
+    const retryPaths = new Set((previousCursor.retryDocs || []).map(getParentRegistrationDocumentPath));
+    const retryDocs = Array.from(registrationDocsByPath.values())
+        .filter((registrationDoc) => retryPaths.has(getParentRegistrationDocumentPath(registrationDoc)));
+    const freshDocs = Array.from(registrationDocsByPath.values())
+        .filter((registrationDoc) => !retryPaths.has(getParentRegistrationDocumentPath(registrationDoc)))
         .sort(compareParentRegistrationDocuments)
         .slice(0, pageSize);
+    const registrationDocs = [...retryDocs, ...freshDocs];
     const selectedPaths = new Set(registrationDocs.map(getParentRegistrationDocumentPath));
 
     const teamCache = new Map();
     const formCache = new Map();
 
+    const enrichmentFailedPaths = new Set();
     const applications = await Promise.all(registrationDocs.map(async (registrationDoc) => {
         const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
+        const registrationPath = getParentRegistrationDocumentPath(registrationDoc);
         const teamId = registration.teamId || '';
         const formId = registration.formId || '';
         const player = getRegistrationPlayerDraft(registration);
@@ -6142,7 +6160,8 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             try {
                 team = await teamCache.get(teamId);
             } catch (error) {
-                errors.push({ stage: 'team', registrationPath: getParentRegistrationDocumentPath(registrationDoc) });
+                enrichmentFailedPaths.add(registrationPath);
+                errors.push({ stage: 'team', registrationPath });
             }
         }
 
@@ -6155,7 +6174,8 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             try {
                 form = await formCache.get(formKey);
             } catch (error) {
-                errors.push({ stage: 'form', registrationPath: getParentRegistrationDocumentPath(registrationDoc) });
+                enrichmentFailedPaths.add(registrationPath);
+                errors.push({ stage: 'form', registrationPath });
             }
         }
 
@@ -6175,17 +6195,28 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         };
     }));
 
-    selectedPaths.forEach((path) => previouslySeenPaths.add(path));
+    selectedPaths.forEach((path) => {
+        if (!enrichmentFailedPaths.has(path)) previouslySeenPaths.add(path);
+    });
     const sources = Object.fromEntries(sourceResults.map(({ source, state }) => {
         return [source.key, {
             ...state,
             bufferedDocs: state.bufferedDocs.filter((registrationDoc) => !selectedPaths.has(getParentRegistrationDocumentPath(registrationDoc)))
         }];
     }));
-    const hasMore = errors.length > 0 || Object.values(sources).some((state) => state.bufferedDocs.length > 0 || !state.exhausted);
+    const pendingRetryDocs = registrationDocs.filter((registrationDoc) => (
+        enrichmentFailedPaths.has(getParentRegistrationDocumentPath(registrationDoc))
+    ));
+    const hasMore = errors.length > 0 ||
+        pendingRetryDocs.length > 0 ||
+        Object.values(sources).some((state) => state.bufferedDocs.length > 0 || !state.exhausted);
     return {
         applications,
-        nextCursor: hasMore ? { sources, seenPaths: Array.from(previouslySeenPaths) } : null,
+        nextCursor: hasMore ? {
+            sources,
+            seenPaths: Array.from(previouslySeenPaths),
+            retryDocs: pendingRetryDocs
+        } : null,
         hasMore,
         errors
     };

@@ -389,7 +389,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=128';
+        } from './js/db.js?v=129';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -2633,9 +2633,7 @@
                 });
                 registrationApplications = Array.from(applicationsByKey.values()).sort(compareRegistrationApplications);
 
-                if (page.errors.length === 0) {
-                    registrationApplicationsCursor = page.nextCursor;
-                }
+                registrationApplicationsCursor = page.nextCursor;
                 renderRegistrationApplications(registrationApplications, {
                     error: page.errors.length > 0,
                     hasMore: page.hasMore
