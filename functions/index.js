@@ -282,7 +282,7 @@ const {
   createCheckAcceptedFriendMessageAccessHandler,
   hasCurrentTeamAccess
 } = require('./friend-message-access-core.cjs');
-const { hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
+const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildChatConversationAccountScrubPlan,
@@ -4266,12 +4266,20 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Admin invite is missing an invited email.');
     }
 
+    const issuerUid = String(codeData.generatedBy || '').trim();
+    if (!issuerUid) {
+      throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
+    }
+
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const teamRef = firestore.doc(`teams/${teamId}`);
     const userRef = firestore.doc(`users/${userId}`);
-    const [teamSnap, userSnap] = await Promise.all([
+    const issuerRef = firestore.doc(`users/${issuerUid}`);
+    const [teamSnap, userSnap, issuerSnap, issuerAuthUser] = await Promise.all([
       transaction.get(teamRef),
-      transaction.get(userRef)
+      transaction.get(userRef),
+      transaction.get(issuerRef),
+      admin.auth().getUser(issuerUid).catch(() => null)
     ]);
 
     if (!teamSnap.exists) {
@@ -4280,6 +4288,16 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
 
     const teamData = teamSnap.data() || {};
     const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const issuerData = issuerSnap.exists ? issuerSnap.data() || {} : {};
+    if (!hasAdminInviteIssuerAccess({
+      team: teamData,
+      user: issuerData,
+      uid: issuerUid,
+      authUser: issuerAuthUser
+    })) {
+      throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
+    }
+
     const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || userData.email);
     if (!signedInEmail || invitedEmail !== signedInEmail) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
