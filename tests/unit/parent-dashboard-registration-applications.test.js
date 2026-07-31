@@ -5,6 +5,53 @@ function readRepoFile(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
 }
 
+function buildTimestamp(seconds, nanoseconds = 0) {
+    return {
+        seconds,
+        nanoseconds,
+        toMillis: () => (seconds * 1000) + Math.floor(nanoseconds / 1000000)
+    };
+}
+
+function buildRegistrationDocument(id, seconds, overrides = {}) {
+    const registration = {
+        teamId: `team-${id}`,
+        formId: `form-${id}`,
+        submittedAt: buildTimestamp(seconds),
+        ...overrides
+    };
+    return {
+        id,
+        ref: {
+            path: `teams/${registration.teamId}/registrationForms/${registration.formId}/registrations/${id}`
+        },
+        data: () => registration
+    };
+}
+
+function buildMergeParentRegistrationQueryPages() {
+    const dbSource = readRepoFile('js/db.js');
+    const start = dbSource.indexOf('function getParentRegistrationDocumentKey');
+    const end = dbSource.indexOf('\nasync function listParentRegistrationApplicationsForProfile', start);
+    const functionSource = dbSource.slice(start, end)
+        .replace(
+            'export function mergeParentRegistrationQueryPages',
+            'return function mergeParentRegistrationQueryPages'
+        );
+    return new Function(functionSource)();
+}
+
+function loadIdentityPage(documents, cursor, pageSize) {
+    const cursorIndex = cursor
+        ? documents.findIndex((registrationDoc) => registrationDoc === cursor)
+        : -1;
+    const docs = documents.slice(cursorIndex + 1, cursorIndex + 1 + pageSize);
+    return {
+        docs,
+        hasMore: cursorIndex + 1 + docs.length < documents.length
+    };
+}
+
 function buildListParentRegistrationApplicationsForProfile({
     registration,
     form = null
@@ -60,7 +107,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=128';");
+        expect(html).toContain("from './js/db.js?v=129';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -109,5 +156,90 @@ describe('parent dashboard registration application statuses', () => {
 
         expect(applications[0].programName).toBe('Legacy Soccer');
         expect(getDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('deduplicates overlapping identity matches and advances both cursors', () => {
+        const mergePages = buildMergeParentRegistrationQueryPages();
+        const newest = buildRegistrationDocument('newest', 60);
+        const overlap = buildRegistrationDocument('overlap', 50);
+        const guardianOnly = buildRegistrationDocument('guardian-only', 40);
+
+        const page = mergePages({
+            guardianEmail: { docs: [newest, overlap, guardianOnly], hasMore: false },
+            submittedByUserId: { docs: [newest, overlap], hasMore: false }
+        }, { pageSize: 2 });
+
+        expect(page.registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
+            'newest',
+            'overlap'
+        ]);
+        expect(page.nextCursor).toEqual({
+            guardianEmail: overlap,
+            submittedByUserId: overlap
+        });
+        expect(page.sourceHasMore).toEqual({
+            guardianEmail: true,
+            submittedByUserId: false
+        });
+    });
+
+    it('uses document path descending as a deterministic submittedAt tie-breaker', () => {
+        const mergePages = buildMergeParentRegistrationQueryPages();
+        const alpha = buildRegistrationDocument('alpha', 50, {
+            submittedAt: buildTimestamp(50, 100)
+        });
+        const omega = buildRegistrationDocument('omega', 50, {
+            submittedAt: buildTimestamp(50, 100)
+        });
+
+        const page = mergePages({
+            guardianEmail: { docs: [alpha] },
+            submittedByUserId: { docs: [omega] }
+        }, { pageSize: 2 });
+
+        expect(page.registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
+            'omega',
+            'alpha'
+        ]);
+    });
+
+    it('keeps consecutive merged pages newest-first without skips or repeats', () => {
+        const mergePages = buildMergeParentRegistrationQueryPages();
+        const overlap = buildRegistrationDocument('overlap', 40);
+        const guardianDocuments = [
+            buildRegistrationDocument('guardian-new', 60),
+            overlap,
+            buildRegistrationDocument('guardian-old', 10)
+        ];
+        const submitterDocuments = [
+            buildRegistrationDocument('submitter-new', 50),
+            overlap,
+            buildRegistrationDocument('submitter-old', 20)
+        ];
+        const pageSize = 2;
+        let cursor = {};
+        const registrationIds = [];
+
+        for (let pageNumber = 0; pageNumber < 3; pageNumber += 1) {
+            const page = mergePages({
+                guardianEmail: loadIdentityPage(guardianDocuments, cursor.guardianEmail, pageSize),
+                submittedByUserId: loadIdentityPage(submitterDocuments, cursor.submittedByUserId, pageSize)
+            }, { cursor, pageSize });
+            registrationIds.push(...page.registrations.map((registrationDoc) => registrationDoc.id));
+            cursor = page.nextCursor;
+        }
+
+        expect(registrationIds).toEqual([
+            'guardian-new',
+            'submitter-new',
+            'overlap',
+            'submitter-old',
+            'guardian-old'
+        ]);
+        expect(new Set(registrationIds).size).toBe(registrationIds.length);
+        expect(cursor).toEqual({
+            guardianEmail: guardianDocuments[2],
+            submittedByUserId: submitterDocuments[2]
+        });
     });
 });

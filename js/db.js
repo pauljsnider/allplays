@@ -6040,6 +6040,101 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+function getParentRegistrationDocumentKey(registrationDoc) {
+    const registrationData = registrationDoc.data() || {};
+    return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+}
+
+function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
+    const submittedAt = registrationDoc.data()?.submittedAt;
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+
+    const milliseconds = submittedAt?.toMillis
+        ? submittedAt.toMillis()
+        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+    if (!Number.isFinite(milliseconds)) return { seconds: 0, nanoseconds: 0 };
+
+    const seconds = Math.floor(milliseconds / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((milliseconds - (seconds * 1000)) * 1000000)
+    };
+}
+
+function compareParentRegistrationDocuments(a, b) {
+    const aSubmittedAt = getParentRegistrationSubmittedAtSortParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtSortParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return bSubmittedAt.seconds - aSubmittedAt.seconds;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return bSubmittedAt.nanoseconds - aSubmittedAt.nanoseconds;
+    }
+
+    const aKey = getParentRegistrationDocumentKey(a);
+    const bKey = getParentRegistrationDocumentKey(b);
+    if (aKey === bKey) return 0;
+    return aKey < bKey ? 1 : -1;
+}
+
+export function mergeParentRegistrationQueryPages(queryPages = {}, options = {}) {
+    const pageSize = Math.max(1, Math.floor(Number(options.pageSize) || 10));
+    const previousCursor = options.cursor || {};
+    const sources = [
+        {
+            cursorKey: 'guardianEmail',
+            page: queryPages.guardianEmail || {}
+        },
+        {
+            cursorKey: 'submittedByUserId',
+            page: queryPages.submittedByUserId || {}
+        }
+    ].map((source) => ({
+        ...source,
+        documents: [...(source.page.docs || [])].sort(compareParentRegistrationDocuments)
+    }));
+
+    const documentsByKey = new Map();
+    sources.forEach((source) => {
+        source.documents.forEach((registrationDoc) => {
+            const key = getParentRegistrationDocumentKey(registrationDoc);
+            if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
+        });
+    });
+
+    const registrations = [...documentsByKey.values()]
+        .sort(compareParentRegistrationDocuments)
+        .slice(0, pageSize);
+    const selectedKeys = new Set(registrations.map(getParentRegistrationDocumentKey));
+    const nextCursor = {
+        guardianEmail: previousCursor.guardianEmail || null,
+        submittedByUserId: previousCursor.submittedByUserId || null
+    };
+    const sourceHasMore = {};
+
+    sources.forEach((source) => {
+        let consumedCount = 0;
+        for (const registrationDoc of source.documents) {
+            if (!selectedKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
+            nextCursor[source.cursorKey] = registrationDoc;
+            consumedCount += 1;
+        }
+        sourceHasMore[source.cursorKey] = consumedCount < source.documents.length || source.page.hasMore === true;
+    });
+
+    return {
+        registrations,
+        nextCursor,
+        hasMore: Object.values(sourceHasMore).some(Boolean),
+        sourceHasMore
+    };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
