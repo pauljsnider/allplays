@@ -455,6 +455,7 @@
         let parentDashboardHydrationRun = 0;
         let registrationApplications = [];
         let registrationApplicationsCursor = null;
+        let registrationApplicationRetryCursors = [];
         let registrationApplicationsLoading = false;
         const certificatesByPlayerKey = new Map();
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
@@ -2610,33 +2611,55 @@
             return [...applicationsByKey.values()];
         }
 
-        async function loadRegistrationApplications(user, { reset = false } = {}) {
+        async function loadRegistrationApplications(user, { reset = false, retryCursor = undefined } = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container || registrationApplicationsLoading) return;
             registrationApplicationsLoading = true;
             if (reset) {
                 registrationApplications = [];
                 registrationApplicationsCursor = null;
+                registrationApplicationRetryCursors = [];
             }
+            const pageCursor = retryCursor === undefined
+                ? registrationApplicationsCursor
+                : retryCursor;
             container.setAttribute('aria-busy', 'true');
             try {
                 const page = await listParentRegistrationApplicationsPage(user, {
-                    cursor: registrationApplicationsCursor
+                    cursor: pageCursor
                 });
                 registrationApplications = mergeRegistrationApplicationPages(
                     registrationApplications,
                     page.applications
                 );
-                registrationApplicationsCursor = page.nextCursor;
+                const hasRetryableError = page.errors.some((error) => error.retryable);
+                if (retryCursor === undefined) {
+                    registrationApplicationsCursor = page.nextCursor;
+                    if (hasRetryableError && !registrationApplicationRetryCursors.includes(pageCursor)) {
+                        registrationApplicationRetryCursors.push(pageCursor);
+                    }
+                } else if (hasRetryableError) {
+                    if (!registrationApplicationRetryCursors.includes(retryCursor)) {
+                        registrationApplicationRetryCursors.push(retryCursor);
+                    }
+                } else {
+                    registrationApplicationRetryCursors = registrationApplicationRetryCursors
+                        .filter((cursor) => cursor !== retryCursor);
+                }
                 renderRegistrationApplications(registrationApplications, {
                     hasMore: page.hasMore,
-                    errors: page.errors
+                    errors: page.errors,
+                    canRetry: registrationApplicationRetryCursors.length > 0
                 });
             } catch (error) {
                 console.warn('[parent-dashboard] Failed to load registration applications:', error);
+                if (!registrationApplicationRetryCursors.includes(pageCursor)) {
+                    registrationApplicationRetryCursors.push(pageCursor);
+                }
                 renderRegistrationApplications(registrationApplications, {
                     hasMore: true,
-                    errors: [{ message: 'Registration applications could not be loaded. Try again.' }]
+                    errors: [{ message: 'Registration applications could not be loaded. Try again.' }],
+                    canRetry: true
                 });
             } finally {
                 registrationApplicationsLoading = false;
@@ -2644,7 +2667,7 @@
             }
         }
 
-        function renderRegistrationApplications(applications, { hasMore = false, errors = [] } = {}) {
+        function renderRegistrationApplications(applications, { hasMore = false, errors = [], canRetry = false } = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
             if ((!applications || applications.length === 0) && !hasMore && errors.length === 0) {
@@ -2689,9 +2712,18 @@
             const loadMoreButton = hasMore
                 ? `<button id="load-more-registration-applications" type="button" class="w-full rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50">Load more applications</button>`
                 : '';
-            container.innerHTML = applicationCards + errorMessage + loadMoreButton;
+            const retryButton = canRetry
+                ? `<button id="retry-registration-application-details" type="button" class="w-full rounded-lg border border-amber-300 px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50">Retry application details</button>`
+                : '';
+            container.innerHTML = applicationCards + errorMessage + retryButton + loadMoreButton;
             document.getElementById('load-more-registration-applications')?.addEventListener('click', () => {
                 loadRegistrationApplications(currentUser);
+            });
+            document.getElementById('retry-registration-application-details')?.addEventListener('click', () => {
+                const retryCursor = registrationApplicationRetryCursors[0];
+                if (retryCursor !== undefined) {
+                    loadRegistrationApplications(currentUser, { retryCursor });
+                }
             });
         }
 

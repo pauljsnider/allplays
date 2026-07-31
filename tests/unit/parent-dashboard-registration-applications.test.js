@@ -142,8 +142,11 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('id="registration-applications-list"');
         expect(html).toContain('listParentRegistrationApplicationsPage,');
         expect(html).toContain('await loadRegistrationApplications(user, { reset: true });');
-        expect(html).toContain('cursor: registrationApplicationsCursor');
+        expect(html).toContain('cursor: pageCursor');
         expect(html).toContain('id="load-more-registration-applications"');
+        expect(html).toContain('registrationApplicationRetryCursors');
+        expect(html).toContain('id="retry-registration-application-details"');
+        expect(html).toContain('loadRegistrationApplications(currentUser, { retryCursor });');
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
@@ -328,6 +331,45 @@ describe('parent dashboard registration application statuses', () => {
                 retryable: true
             })
         ]));
+    });
+
+    it.each([
+        ['team', 'teamName', 'Recovered Team'],
+        ['form', 'programName', 'Recovered Program']
+    ])('retries the same page after a failed %s enrichment', async (failedEnrichment, recoveredField, recoveredValue) => {
+        let failEnrichment = true;
+        const priorRegistration = buildRegistrationDocument('prior-registration', 60);
+        const registration = buildRegistrationDocument('registration-1', 50, {
+            programName: failedEnrichment === 'form' ? '' : 'Program One'
+        });
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [priorRegistration, registration],
+            getTeamImplementation: async (teamId) => {
+                if (failedEnrichment === 'team' && failEnrichment) throw new Error('team read failed');
+                return { id: teamId, name: 'Recovered Team' };
+            },
+            getDocImplementation: async () => {
+                if (failedEnrichment === 'form' && failEnrichment) throw new Error('form read failed');
+                return { exists: () => true, data: () => ({ programName: 'Recovered Program' }) };
+            }
+        });
+        const profile = { email: 'parent@example.com' };
+        const retryCursor = { guardianEmail: priorRegistration };
+
+        const failedPage = await loadPage(profile, { cursor: retryCursor });
+        expect(failedPage.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                code: 'parent-registration-enrichment-failed',
+                retryable: true
+            })
+        ]));
+        expect(failedPage.nextCursor).not.toBeNull();
+
+        failEnrichment = false;
+        const recoveredPage = await loadPage(profile, { cursor: retryCursor });
+
+        expect(recoveredPage.errors).toEqual([]);
+        expect(recoveredPage.applications[0][recoveredField]).toBe(recoveredValue);
     });
 
     it('declares collection-group indexes for both bounded identity queries', () => {
