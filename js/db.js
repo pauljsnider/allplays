@@ -6389,18 +6389,9 @@ export async function getParentDashboardData(userId) {
     }
 
     if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
-        // A registration-applications failure (e.g. a missing collection-group
-        // index) must never crash the dashboard, so degrade to an empty list.
-        let registrationApplications = [];
-        try {
-            registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
-        } catch (error) {
-            console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-        }
         return {
             upcomingGames: [],
             children: [],
-            registrationApplications,
             dashboardState: {
                 kind: 'no-links',
                 blockedLinkCount: 0,
@@ -6488,16 +6479,6 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    // The parent's players are already loaded above. A registration-applications
-    // failure (e.g. a missing collection-group index) must never propagate and
-    // hide those players, so degrade to an empty list instead.
-    let registrationApplications = [];
-    try {
-        registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
-    } catch (error) {
-        console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-    }
-
     if (activeChildren.length === 0) {
         if (dashboardState.blockedLinkCount > 0) {
             dashboardState.kind = 'access-blocked';
@@ -6510,7 +6491,7 @@ export async function getParentDashboardData(userId) {
         dashboardState.kind = 'degraded';
     }
 
-    return { upcomingGames, children: activeChildren, registrationApplications, dashboardState };
+    return { upcomingGames, children: activeChildren, dashboardState };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
