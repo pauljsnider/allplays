@@ -51,6 +51,86 @@ function buildListParentRegistrationApplicationsForProfile({
     return { listApplications, getDoc };
 }
 
+function buildRegistrationDocument(id, submittedAt, overrides = {}) {
+    const registration = {
+        teamId: `team-${id}`,
+        formId: `form-${id}`,
+        programName: `Program ${id}`,
+        status: 'pending',
+        submittedAt: { toMillis: () => submittedAt },
+        ...overrides
+    };
+    return {
+        id,
+        ref: { path: `teams/${registration.teamId}/registrationForms/${registration.formId}/registrations/${id}` },
+        data: () => registration
+    };
+}
+
+function buildParentRegistrationApplicationsPageLoader({
+    guardianDocuments = [],
+    submitterDocuments = [],
+    pageSize = 2,
+    failIdentity = null,
+    getTeamImplementation = async (teamId) => ({ id: teamId, name: `Team ${teamId}` }),
+    getDocImplementation = async () => ({ exists: () => false, data: () => null })
+} = {}) {
+    const dbSource = readRepoFile('js/db.js');
+    const start = dbSource.indexOf('export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE');
+    const end = dbSource.indexOf('\nasync function listParentRegistrationApplicationsForProfile', start);
+    const functionSource = dbSource.slice(start, end)
+        .replace(
+            'export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;',
+            'const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = pageSize;'
+        )
+        .replace(
+            'export async function listParentRegistrationApplicationsPage',
+            'return async function listParentRegistrationApplicationsPage'
+        );
+    const query = vi.fn((...parts) => parts);
+    const where = vi.fn((fieldPath, operator, value) => ({ type: 'where', fieldPath, operator, value }));
+    const orderBy = vi.fn((fieldPath, direction) => ({ type: 'orderBy', fieldPath, direction }));
+    const limit = vi.fn((value) => ({ type: 'limit', value }));
+    const startAfter = vi.fn((queryCursor) => ({ type: 'startAfter', cursor: queryCursor }));
+    const getDocs = vi.fn(async (queryParts) => {
+        const identityConstraint = queryParts.find((part) => part?.type === 'where');
+        const identity = identityConstraint.fieldPath === 'guardian.email' ? 'guardian-email' : 'submitter-uid';
+        if (identity === failIdentity) throw new Error(`${identity} failed`);
+        const source = identity === 'guardian-email' ? guardianDocuments : submitterDocuments;
+        const queryLimit = queryParts.find((part) => part?.type === 'limit')?.value;
+        return { docs: source.slice(0, queryLimit) };
+    });
+    const getTeam = vi.fn(getTeamImplementation);
+    const getDoc = vi.fn(getDocImplementation);
+    const dependencies = {
+        pageSize,
+        normalizeParentRegistrationEmail: (value = '') => String(value || '').trim().toLowerCase(),
+        auth: { currentUser: null },
+        query,
+        collectionGroup: vi.fn(() => ({ type: 'collectionGroup' })),
+        db: {},
+        where,
+        orderBy,
+        documentId: vi.fn(() => '__name__'),
+        limit,
+        startAfter,
+        getDocs,
+        getTeam,
+        getDoc,
+        doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+        getRegistrationPlayerDraft: vi.fn().mockReturnValue({ name: 'Player One' }),
+        getRegistrationGuardianDrafts: vi.fn().mockReturnValue([{ email: 'parent@example.com' }]),
+        normalizeRegistrationStatus: (status = '') => status || 'pending',
+        formatParentRegistrationStatusLabel: () => 'Pending Review'
+    };
+    const dependencyNames = Object.keys(dependencies);
+    const loadPage = new Function(...dependencyNames, functionSource)(
+        ...dependencyNames.map((name) => dependencies[name])
+    );
+
+    return { loadPage, limit, getTeam, getDoc };
+}
+
 describe('parent dashboard registration application statuses', () => {
     it('renders a read-only parent registration applications section from dashboard data', () => {
         const html = readRepoFile('parent-dashboard.html');
@@ -60,7 +140,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=128';");
+        expect(html).toContain("from './js/db.js?v=129';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -109,5 +189,121 @@ describe('parent dashboard registration application statuses', () => {
 
         expect(applications[0].programName).toBe('Legacy Soccer');
         expect(getDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('enriches only registrations selected for the bounded merged page', async () => {
+        const { loadPage, limit, getTeam } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [
+                buildRegistrationDocument('guardian-1', 50),
+                buildRegistrationDocument('guardian-2', 30)
+            ],
+            submitterDocuments: [
+                buildRegistrationDocument('submitter-1', 40),
+                buildRegistrationDocument('submitter-2', 20)
+            ]
+        });
+
+        const page = await loadPage({ email: 'parent@example.com', uid: 'user-1' });
+
+        expect(page.applications.map((application) => application.id)).toEqual([
+            'guardian-1',
+            'submitter-1'
+        ]);
+        expect(getTeam).toHaveBeenCalledTimes(page.applications.length);
+        expect(getTeam).not.toHaveBeenCalledWith('team-guardian-2');
+        expect(getTeam).not.toHaveBeenCalledWith('team-submitter-2');
+        expect(limit.mock.calls).toEqual([[2], [2]]);
+    });
+
+    it('preserves the successful identity query and reports the failed query as retryable', async () => {
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [buildRegistrationDocument('guardian-1', 50)],
+            submitterDocuments: [buildRegistrationDocument('submitter-1', 40)],
+            failIdentity: 'submitter-uid'
+        });
+
+        const page = await loadPage({ email: 'parent@example.com', uid: 'user-1' });
+
+        expect(page.applications.map((application) => application.id)).toEqual(['guardian-1']);
+        expect(page.errors).toEqual([
+            expect.objectContaining({
+                code: 'parent-registration-query-failed',
+                identity: 'submitter-uid',
+                retryable: true
+            })
+        ]);
+        expect(page.retryCursor).toEqual({});
+    });
+
+    it('preserves all selected registrations when one team enrichment read fails', async () => {
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [
+                buildRegistrationDocument('failed', 50),
+                buildRegistrationDocument('successful', 40)
+            ],
+            getTeamImplementation: async (teamId) => {
+                if (teamId === 'team-failed') throw new Error('team read failed');
+                return { id: teamId, name: 'Loaded Team' };
+            }
+        });
+
+        const page = await loadPage({ email: 'parent@example.com' });
+
+        expect(page.applications).toHaveLength(2);
+        expect(page.applications[0]).toMatchObject({
+            id: 'failed',
+            teamName: 'Team registration'
+        });
+        expect(page.applications[1]).toMatchObject({
+            id: 'successful',
+            teamName: 'Loaded Team'
+        });
+        expect(page.errors).toEqual([
+            expect.objectContaining({
+                code: 'parent-registration-enrichment-failed',
+                identity: 'team:team-failed',
+                registrationId: 'failed',
+                registrationKey: expect.stringContaining('/failed'),
+                retryable: true
+            })
+        ]);
+        expect(page.retryCursor).toEqual({});
+    });
+
+    it('preserves all selected registrations when one form enrichment read fails', async () => {
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [
+                buildRegistrationDocument('failed', 50, { programName: '' }),
+                buildRegistrationDocument('successful', 40, { programName: '' })
+            ],
+            getDocImplementation: async (formRef) => {
+                if (formRef.path.includes('form-failed')) throw new Error('form read failed');
+                return {
+                    exists: () => true,
+                    data: () => ({ programName: 'Loaded Program' })
+                };
+            }
+        });
+
+        const page = await loadPage({ email: 'parent@example.com' });
+
+        expect(page.applications).toHaveLength(2);
+        expect(page.applications[0]).toMatchObject({
+            id: 'failed',
+            programName: 'Registration'
+        });
+        expect(page.applications[1]).toMatchObject({
+            id: 'successful',
+            programName: 'Loaded Program'
+        });
+        expect(page.errors).toEqual([
+            expect.objectContaining({
+                code: 'parent-registration-enrichment-failed',
+                identity: 'form:team-failed::form-failed',
+                registrationId: 'failed',
+                retryable: true
+            })
+        ]);
+        expect(page.retryCursor).toEqual({});
     });
 });
