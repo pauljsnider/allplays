@@ -41,6 +41,48 @@ function buildMergeParentRegistrationQueryResults() {
     return new Function(functionSource)();
 }
 
+function buildParentRegistrationIdentityQueryHelpers({ docs = [] } = {}) {
+    const dbSource = readRepoFile('js/db.js');
+    const start = dbSource.indexOf('export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT');
+    const end = dbSource.indexOf('\nfunction getParentRegistrationDocumentKey', start);
+    const functionSource = dbSource.slice(start, end)
+        .replace(
+            'export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;',
+            'const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;'
+        )
+        .replaceAll('export async function ', 'async function ');
+    const query = vi.fn((...parts) => parts);
+    const where = vi.fn((fieldPath, operator, value) => ({ type: 'where', fieldPath, operator, value }));
+    const orderBy = vi.fn((fieldPath, direction) => ({ type: 'orderBy', fieldPath, direction }));
+    const limit = vi.fn((value) => ({ type: 'limit', value }));
+    const startAfter = vi.fn((cursor) => ({ type: 'startAfter', cursor }));
+    const getDocs = vi.fn().mockResolvedValue({ docs });
+    const dependencies = {
+        query,
+        collectionGroup: vi.fn(() => ({ type: 'collectionGroup' })),
+        db: {},
+        where,
+        orderBy,
+        documentId: vi.fn(() => '__name__'),
+        limit,
+        startAfter,
+        getDocs,
+        normalizeParentRegistrationEmail: (value = '') => String(value || '').trim().toLowerCase()
+    };
+    const dependencyNames = Object.keys(dependencies);
+    const buildHelpers = new Function(
+        ...dependencyNames,
+        `${functionSource}
+        return {
+            listParentRegistrationsByGuardianEmailPage,
+            listParentRegistrationsBySubmitterUidPage
+        };`
+    );
+    const helpers = buildHelpers(...dependencyNames.map((name) => dependencies[name]));
+
+    return { ...helpers, dependencies };
+}
+
 function buildListParentRegistrationApplicationsForProfile({
     registration,
     form = null,
@@ -98,7 +140,72 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=130';");
+        expect(html).toContain("from './js/db.js?v=131';");
+    });
+
+    it.each([
+        ['guardian email', 'listParentRegistrationsByGuardianEmailPage', ' Parent@Example.com ', 'guardian.email', 'parent@example.com'],
+        ['submitter uid', 'listParentRegistrationsBySubmitterUidPage', ' user-1 ', 'submittedByUserId', 'user-1']
+    ])('builds a bounded submittedAt-descending %s query', async (
+        _identity,
+        helperName,
+        identityValue,
+        expectedFieldPath,
+        expectedValue
+    ) => {
+        const { [helperName]: loadPage, dependencies } = buildParentRegistrationIdentityQueryHelpers();
+
+        await loadPage(identityValue);
+
+        expect(dependencies.where).toHaveBeenCalledWith(expectedFieldPath, '==', expectedValue);
+        expect(dependencies.orderBy).toHaveBeenNthCalledWith(1, 'submittedAt', 'desc');
+        expect(dependencies.orderBy).toHaveBeenNthCalledWith(2, '__name__', 'desc');
+        expect(dependencies.limit).toHaveBeenCalledWith(10);
+        expect(dependencies.startAfter).not.toHaveBeenCalled();
+        expect(dependencies.query).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['listParentRegistrationsByGuardianEmailPage', 'parent@example.com'],
+        ['listParentRegistrationsBySubmitterUidPage', 'user-1']
+    ])('applies and advances the previous cursor for %s', async (helperName, identityValue) => {
+        const previousCursor = { id: 'previous-registration' };
+        const lastDocument = { id: 'last-registration' };
+        const { [helperName]: loadPage, dependencies } = buildParentRegistrationIdentityQueryHelpers({
+            docs: [{ id: 'first-registration' }, lastDocument]
+        });
+
+        const page = await loadPage(identityValue, previousCursor);
+
+        expect(dependencies.startAfter).toHaveBeenCalledWith(previousCursor);
+        expect(page.docs).toHaveLength(2);
+        expect(page.nextCursor).toBe(lastDocument);
+        expect(page.hasMore).toBe(false);
+    });
+
+    it('declares collection-group indexes for both bounded identity queries', () => {
+        const indexes = JSON.parse(readRepoFile('firestore.indexes.json')).indexes;
+        const registrationIndexes = indexes.filter((index) =>
+            index.collectionGroup === 'registrations'
+            && index.queryScope === 'COLLECTION_GROUP'
+        );
+
+        expect(registrationIndexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
+            })
+        ]));
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {

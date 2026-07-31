@@ -6040,6 +6040,46 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
+
+async function listParentRegistrationsByIdentityPage(fieldPath, identityValue, previousCursor = null) {
+    const constraints = [
+        where(fieldPath, '==', identityValue),
+        orderBy('submittedAt', 'desc'),
+        orderBy(documentId(), 'desc')
+    ];
+    if (previousCursor) constraints.push(startAfter(previousCursor));
+    constraints.push(limit(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
+
+    const snapshot = await getDocs(query(
+        collectionGroup(db, 'registrations'),
+        ...constraints
+    ));
+    const docs = snapshot.docs || [];
+
+    return {
+        docs,
+        nextCursor: docs[docs.length - 1] || previousCursor || null,
+        hasMore: docs.length === PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT
+    };
+}
+
+export async function listParentRegistrationsByGuardianEmailPage(guardianEmail, previousCursor = null) {
+    return listParentRegistrationsByIdentityPage(
+        'guardian.email',
+        normalizeParentRegistrationEmail(guardianEmail),
+        previousCursor
+    );
+}
+
+export async function listParentRegistrationsBySubmitterUidPage(submitterUid, previousCursor = null) {
+    return listParentRegistrationsByIdentityPage(
+        'submittedByUserId',
+        String(submitterUid || '').trim(),
+        previousCursor
+    );
+}
+
 function getParentRegistrationDocumentKey(registrationDoc) {
     const registrationData = registrationDoc.data() || {};
     return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
