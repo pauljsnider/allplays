@@ -33,6 +33,9 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(spec).toContain('redactDiagnosticText');
         expect(spec).toContain('test.setTimeout(90_000)');
         expect(spec).toContain("toBeVisible({ timeout: 30_000 })");
+        expect(spec).toContain("toContainText(/Your day|Your teams|Team/, { timeout: 25_000 })");
+        expect(spec).toContain('if (await passwordInput.count())');
+        expect(spec).toContain('if (await emailInput.count())');
         expect(spec).not.toContain('page.screenshot');
 
         const diagnosticUpload = workflow.indexOf('Upload redacted candidate authentication diagnostic');

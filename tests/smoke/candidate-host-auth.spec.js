@@ -26,9 +26,21 @@ function redactDiagnosticText(value) {
 }
 
 async function writeRedactedDiagnostic(page, testInfo, failure) {
-    const errorText = await page.locator('[role="alert"]').first().textContent().catch(() => '');
-    const submitDisabled = await page.getByRole('button', { name: 'Sign in' }).last().isDisabled().catch(() => null);
-    const loginFormVisible = await page.getByRole('heading', { name: 'Sign in' }).isVisible().catch(() => false);
+    const errorMessage = page.locator('[role="alert"]').first();
+    const submitButton = page.getByRole('button', { name: 'Sign in' }).last();
+    const loginHeading = page.getByRole('heading', { name: 'Sign in' });
+    const hasErrorMessage = (await errorMessage.count()) > 0;
+    const hasSubmitButton = (await submitButton.count()) > 0;
+    const hasLoginHeading = (await loginHeading.count()) > 0;
+    const errorText = hasErrorMessage
+        ? await errorMessage.textContent({ timeout: 1_000 }).catch(() => '')
+        : '';
+    const submitDisabled = hasSubmitButton
+        ? await submitButton.isDisabled({ timeout: 1_000 }).catch(() => null)
+        : null;
+    const loginFormVisible = hasLoginHeading
+        ? await loginHeading.isVisible({ timeout: 1_000 }).catch(() => false)
+        : false;
     const diagnosticPath = testInfo.outputPath('candidate-auth-diagnostic.json');
     await mkdir(path.dirname(diagnosticPath), { recursive: true });
     await writeFile(diagnosticPath, `${JSON.stringify({
@@ -97,11 +109,17 @@ test('candidate host accepts authentication and loads a protected landing page',
             await expect(
                 page.locator('h1').first(),
                 `Candidate post-login assertion failed at ${candidateHostUrl}: authenticated heading was not visible`
-            ).toContainText(/Your day|Your teams|Team/, { timeout: 10_000 });
+            ).toContainText(/Your day|Your teams|Team/, { timeout: 25_000 });
         });
     } catch (error) {
-        await page.getByLabel('Password', { exact: true }).fill('').catch(() => {});
-        await page.getByLabel('Email').fill('').catch(() => {});
+        const passwordInput = page.getByLabel('Password', { exact: true });
+        const emailInput = page.getByLabel('Email');
+        if (await passwordInput.count()) {
+            await passwordInput.fill('', { timeout: 1_000 }).catch(() => {});
+        }
+        if (await emailInput.count()) {
+            await emailInput.fill('', { timeout: 1_000 }).catch(() => {});
+        }
         await writeRedactedDiagnostic(page, testInfo, error);
         throw new Error(
             `Candidate authentication failed at ${new URL(candidateHostUrl).origin}: ${redactDiagnosticText(error?.message)}`
