@@ -274,8 +274,8 @@ describe('parent dashboard registration application statuses', () => {
         expect(secondPage.nextCursor.submittedByUserId).toBe(submitterDocuments[2]);
         expect(orderBy).toHaveBeenCalledWith('submittedAt', 'desc');
         expect(orderBy).toHaveBeenCalledWith('__name__', 'desc');
-        expect(orderBy).toHaveBeenCalledTimes(12);
-        expect(limit.mock.calls).toEqual(Array(6).fill([2]));
+        expect(orderBy).toHaveBeenCalledTimes(24);
+        expect(limit.mock.calls).toEqual(Array(12).fill([2]));
         expect(startAfter).toHaveBeenCalledWith(guardianDocuments[0]);
         expect(startAfter).toHaveBeenCalledWith(submitterDocuments[0]);
         expect(getTeam).toHaveBeenCalledTimes(5);
@@ -443,7 +443,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(readRepoFile('js/db.js')).toContain('export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;');
     });
 
-    it('switches to bounded createdAt paging so legacy registrations are newest-first across pages', async () => {
+    it('merges submittedAt and legacy createdAt streams newest-first across pages', async () => {
         const legacyNewest = buildRegistrationDocument('a-newest', 0, {
             submittedAt: undefined,
             createdAt: buildTimestamp(5000)
@@ -469,17 +469,12 @@ describe('parent dashboard registration application statuses', () => {
         });
         const profile = { email: 'parent@example.com', uid: 'user-1' };
 
-        const timestampedPage = await loadPage(profile);
-        const firstLegacyPage = await loadPage(profile, { cursor: timestampedPage.nextCursor });
-        const secondLegacyPage = await loadPage(profile, { cursor: firstLegacyPage.nextCursor });
+        const firstPage = await loadPage(profile);
+        const secondPage = await loadPage(profile, { cursor: firstPage.nextCursor });
 
-        expect(timestampedPage.applications).toEqual([]);
-        expect(timestampedPage.hasMore).toBe(true);
-        expect(timestampedPage.nextCursor.legacy.active).toBe(true);
-        expect(timestampedPage.nextCursor.legacy.phase).toBe('createdAt');
         expect([
-            ...firstLegacyPage.applications,
-            ...secondLegacyPage.applications
+            ...firstPage.applications,
+            ...secondPage.applications
         ].map((application) => application.id)).toEqual([
             'a-newest',
             'z-second',
@@ -491,7 +486,43 @@ describe('parent dashboard registration application statuses', () => {
         expect(limit).toHaveBeenCalledWith(2);
     });
 
-    it('moves from createdAt paging to a final bounded scan for records without either timestamp', async () => {
+    it('keeps interleaved current and legacy registrations globally newest-first without empty pages', async () => {
+        const currentNewest = buildRegistrationDocument('current-newest', 6000, {
+            createdAt: buildTimestamp(9000)
+        });
+        const currentOldest = buildRegistrationDocument('current-oldest', 3000, {
+            createdAt: buildTimestamp(8000)
+        });
+        const legacyNewest = buildRegistrationDocument('legacy-newest', 0, {
+            submittedAt: undefined,
+            createdAt: buildTimestamp(7000)
+        });
+        const legacyMiddle = buildRegistrationDocument('legacy-middle', 0, {
+            submittedAt: undefined,
+            createdAt: buildTimestamp(5000)
+        });
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [currentNewest, currentOldest, legacyNewest, legacyMiddle],
+            pageSize: 2
+        });
+        const profile = { email: 'parent@example.com' };
+
+        const firstPage = await loadPage(profile);
+        const secondPage = await loadPage(profile, { cursor: firstPage.nextCursor });
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual([
+            'legacy-newest',
+            'current-newest'
+        ]);
+        expect(secondPage.applications.map((application) => application.id)).toEqual([
+            'legacy-middle',
+            'current-oldest'
+        ]);
+        expect(firstPage.applications).toHaveLength(2);
+        expect(secondPage.applications).toHaveLength(2);
+    });
+
+    it('moves from merged timestamp paging to a final bounded scan for records without either timestamp', async () => {
         const timelessRegistration = buildRegistrationDocument('timeless', 0, {
             submittedAt: undefined,
             createdAt: undefined
@@ -500,26 +531,14 @@ describe('parent dashboard registration application statuses', () => {
             guardianDocuments: [timelessRegistration],
             submitterDocuments: []
         });
-        const createdAtCursor = {
-            legacy: {
-                active: true,
-                phase: 'createdAt',
-                guardianEmail: null,
-                submittedByUserId: null
-            }
-        };
-
-        const exhaustedCreatedAtPage = await loadPage(
-            { email: 'parent@example.com' },
-            { cursor: createdAtCursor }
-        );
+        const exhaustedTimestampPage = await loadPage({ email: 'parent@example.com' });
         const timelessPage = await loadPage(
             { email: 'parent@example.com' },
-            { cursor: exhaustedCreatedAtPage.nextCursor }
+            { cursor: exhaustedTimestampPage.nextCursor }
         );
 
-        expect(exhaustedCreatedAtPage.applications).toEqual([]);
-        expect(exhaustedCreatedAtPage.nextCursor.legacy.phase).toBe('timeless');
+        expect(exhaustedTimestampPage.applications).toEqual([]);
+        expect(exhaustedTimestampPage.nextCursor.phase).toBe('timeless');
         expect(timelessPage.applications.map((application) => application.id)).toEqual(['timeless']);
     });
 
@@ -533,18 +552,13 @@ describe('parent dashboard registration application statuses', () => {
             submitterDocuments: []
         });
 
-        const timestampedPage = await loadPage({ email: 'parent@example.com' });
-        const createdAtPage = await loadPage(
-            { email: 'parent@example.com' },
-            { cursor: timestampedPage.nextCursor }
-        );
+        const page = await loadPage({ email: 'parent@example.com' });
 
-        expect(timestampedPage.applications).toEqual([]);
-        expect(createdAtPage.applications.map((application) => application.id)).toEqual(['legacy-null']);
-        expect(createdAtPage.applications[0].submittedAt).toBe(legacyRegistration.data().createdAt);
+        expect(page.applications.map((application) => application.id)).toEqual(['legacy-null']);
+        expect(page.applications[0].submittedAt).toBe(legacyRegistration.data().createdAt);
     });
 
-    it('advances legacy cursors only through the consumed merge prefix for disjoint full identity pages', async () => {
+    it('advances timeless cursors only through the consumed merge prefix for disjoint full identity pages', async () => {
         const guardianDocuments = [
             buildRegistrationDocument('z-guardian-1', 0, { submittedAt: undefined }),
             buildRegistrationDocument('y-guardian-2', 0, { submittedAt: undefined })
@@ -558,18 +572,9 @@ describe('parent dashboard registration application statuses', () => {
             submitterDocuments
         });
         const profile = { email: 'parent@example.com', uid: 'user-1' };
-        const legacyCursor = {
-            guardianEmail: null,
-            submittedByUserId: null,
-            legacy: {
-                active: true,
-                phase: 'timeless',
-                guardianEmail: null,
-                submittedByUserId: null
-            }
-        };
+        const timelessCursor = { phase: 'timeless' };
 
-        const firstPage = await loadPage(profile, { cursor: legacyCursor });
+        const firstPage = await loadPage(profile, { cursor: timelessCursor });
         const secondPage = await loadPage(profile, { cursor: firstPage.nextCursor });
         const applicationIds = [...firstPage.applications, ...secondPage.applications]
             .map((application) => application.id);
@@ -578,8 +583,8 @@ describe('parent dashboard registration application statuses', () => {
             'z-guardian-1',
             'y-guardian-2'
         ]);
-        expect(firstPage.nextCursor.legacy.guardianEmail).toBe(guardianDocuments[1]);
-        expect(firstPage.nextCursor.legacy.submittedByUserId).toBeNull();
+        expect(firstPage.nextCursor.timeless.guardianEmail).toBe(guardianDocuments[1]);
+        expect(firstPage.nextCursor.timeless.submittedByUserId).toBeNull();
         expect(secondPage.applications.map((application) => application.id)).toEqual([
             'b-submitter-1',
             'a-submitter-2'

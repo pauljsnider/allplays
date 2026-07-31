@@ -6066,9 +6066,13 @@ function getParentRegistrationTimestampSortParts(registrationDoc, fieldPath = 's
     };
 }
 
-function compareParentRegistrationDocuments(a, b, timestampField = 'submittedAt') {
-    const aSubmittedAt = getParentRegistrationTimestampSortParts(a, timestampField);
-    const bSubmittedAt = getParentRegistrationTimestampSortParts(b, timestampField);
+function compareParentRegistrationDocuments(a, b, timestampField = null) {
+    const aTimestampField = timestampField
+        || (hasParentRegistrationTimestamp(a.data() || {}, 'submittedAt') ? 'submittedAt' : 'createdAt');
+    const bTimestampField = timestampField
+        || (hasParentRegistrationTimestamp(b.data() || {}, 'submittedAt') ? 'submittedAt' : 'createdAt');
+    const aSubmittedAt = getParentRegistrationTimestampSortParts(a, aTimestampField);
+    const bSubmittedAt = getParentRegistrationTimestampSortParts(b, bTimestampField);
     if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
         return bSubmittedAt.seconds - aSubmittedAt.seconds;
     }
@@ -6172,12 +6176,9 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     const cursors = options.cursor || {};
-    const legacyCursors = cursors.legacy || {};
-    const legacyPhase = legacyCursors.phase
-        || (legacyCursors.active === true ? 'createdAt' : null);
-    const timestampField = legacyPhase === 'createdAt'
-        ? 'createdAt'
-        : (legacyPhase === 'timeless' ? null : 'submittedAt');
+    const timestampCursors = cursors.timestamp || {};
+    const timelessCursors = cursors.timeless || {};
+    const timelessPhase = cursors.phase === 'timeless';
     const queryDefinitions = [
         email ? {
             identity: 'guardian-email',
@@ -6193,13 +6194,20 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         } : null
     ].filter(Boolean);
     const nextCursors = {
+        phase: timelessPhase ? 'timeless' : 'timestamp',
+        // Retain the timestamp cursors at their original keys for an
+        // in-flight dashboard retry created by a prior page version.
         guardianEmail: cursors.guardianEmail || null,
         submittedByUserId: cursors.submittedByUserId || null,
-        legacy: {
-            active: Boolean(legacyPhase),
-            phase: legacyPhase,
-            guardianEmail: legacyCursors.guardianEmail || null,
-            submittedByUserId: legacyCursors.submittedByUserId || null
+        timestamp: {
+            guardianEmail: timestampCursors.guardianEmail || cursors.guardianEmail || null,
+            submittedByUserId: timestampCursors.submittedByUserId || cursors.submittedByUserId || null,
+            guardianEmailCreatedAt: timestampCursors.guardianEmailCreatedAt || null,
+            submittedByUserIdCreatedAt: timestampCursors.submittedByUserIdCreatedAt || null
+        },
+        timeless: {
+            guardianEmail: timelessCursors.guardianEmail || null,
+            submittedByUserId: timelessCursors.submittedByUserId || null
         }
     };
 
@@ -6207,29 +6215,63 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         return { applications: [], nextCursor: null, hasMore: false, errors: [] };
     }
 
-    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
-        const constraints = [
-            where(definition.fieldPath, '==', definition.value)
-        ];
-        if (timestampField) constraints.push(orderBy(timestampField, 'desc'));
+    const streamDefinitions = timelessPhase
+        ? queryDefinitions.map((definition) => ({
+            ...definition,
+            cursorKey: definition.cursorKey,
+            timestampField: null
+        }))
+        : queryDefinitions.flatMap((definition) => ([
+            {
+                ...definition,
+                cursorKey: definition.cursorKey,
+                timestampField: 'submittedAt'
+            },
+            {
+                ...definition,
+                cursorKey: `${definition.cursorKey}CreatedAt`,
+                timestampField: 'createdAt'
+            }
+        ]));
+    const queryResults = await Promise.all(streamDefinitions.map(async (definition) => {
+        const constraints = [where(definition.fieldPath, '==', definition.value)];
+        if (definition.timestampField) constraints.push(orderBy(definition.timestampField, 'desc'));
         constraints.push(orderBy(documentId(), 'desc'));
-        const cursor = legacyPhase
-            ? legacyCursors[definition.cursorKey]
-            : cursors[definition.cursorKey];
-        if (cursor) constraints.push(startAfter(cursor));
+        const cursorContainer = timelessPhase ? timelessCursors : timestampCursors;
+        const cursor = cursorContainer[definition.cursorKey]
+            || (!timelessPhase && definition.timestampField === 'submittedAt' ? cursors[definition.cursorKey] : null);
         constraints.push(limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE));
 
         try {
-            const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
-            const docs = snapshot.docs.filter((registrationDoc) => {
+            const scannedDocs = [];
+            const docs = [];
+            let pageCursor = cursor;
+            let fetchedFullPage = false;
+            do {
+                const pageConstraints = pageCursor
+                    ? [...constraints.slice(0, -1), startAfter(pageCursor), constraints[constraints.length - 1]]
+                    : constraints;
+                const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...pageConstraints));
+                scannedDocs.push(...snapshot.docs);
+                docs.push(...snapshot.docs.filter((registrationDoc) => {
                 const registrationData = registrationDoc.data() || {};
                 const hasSubmittedAt = hasParentRegistrationTimestamp(registrationData, 'submittedAt');
                 const hasCreatedAt = hasParentRegistrationTimestamp(registrationData, 'createdAt');
-                if (legacyPhase === 'createdAt') return !hasSubmittedAt && hasCreatedAt;
-                if (legacyPhase === 'timeless') return !hasSubmittedAt && !hasCreatedAt;
-                return hasSubmittedAt;
-            });
-            return { definition, docs, scannedDocs: snapshot.docs, error: null };
+                if (timelessPhase) return !hasSubmittedAt && !hasCreatedAt;
+                return definition.timestampField === 'submittedAt'
+                    ? hasSubmittedAt
+                    : !hasSubmittedAt && hasCreatedAt;
+                }));
+                fetchedFullPage = snapshot.docs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE;
+                pageCursor = snapshot.docs[snapshot.docs.length - 1] || null;
+                // A createdAt query also returns current records with both
+                // timestamps. Advance through those records in this request
+                // so they cannot create empty pages or delay legacy entries.
+            } while (!timelessPhase
+                && definition.timestampField === 'createdAt'
+                && docs.length < PARENT_REGISTRATION_APPLICATION_PAGE_SIZE
+                && fetchedFullPage);
+            return { definition, docs, scannedDocs, error: null };
         } catch {
             return {
                 definition,
@@ -6248,14 +6290,14 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
         });
     });
     const pageDocuments = [...documentsByKey.values()]
-        .sort((a, b) => compareParentRegistrationDocuments(a, b, timestampField || 'submittedAt'))
+        .sort(compareParentRegistrationDocuments)
         .slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
     const pageDocumentKeys = new Set(pageDocuments.map(getParentRegistrationDocumentKey));
 
     let hasMore = queryResults.some((result) => result.error);
     queryResults.forEach((result) => {
         if (result.error) return;
-        const cursorContainer = legacyPhase ? nextCursors.legacy : nextCursors;
+        const cursorContainer = timelessPhase ? nextCursors.timeless : nextCursors.timestamp;
         let consumedCount = 0;
         for (const registrationDoc of result.scannedDocs) {
             const isPageDocument = pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc));
@@ -6269,20 +6311,15 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             hasMore = true;
         }
     });
-    if (!legacyPhase && !hasMore) {
-        // Firestore excludes documents without an orderBy field. Once the
-        // submittedAt stream is exhausted, page legacy registrations by their
-        // createdAt fallback timestamp.
-        nextCursors.legacy.active = true;
-        nextCursors.legacy.phase = 'createdAt';
-        hasMore = true;
-    } else if (legacyPhase === 'createdAt' && !hasMore) {
-        // The oldest records may predate both timestamp fields. Keep a final,
-        // bounded document-ID phase so they remain reachable after all
-        // chronologically sortable legacy records.
-        nextCursors.legacy.phase = 'timeless';
-        nextCursors.legacy.guardianEmail = null;
-        nextCursors.legacy.submittedByUserId = null;
+    if (!timelessPhase) {
+        nextCursors.guardianEmail = nextCursors.timestamp.guardianEmail;
+        nextCursors.submittedByUserId = nextCursors.timestamp.submittedByUserId;
+    }
+    if (!timelessPhase && !hasMore) {
+        // Firestore excludes documents without an orderBy field. Once both
+        // merged timestamp streams are exhausted, keep a final bounded scan
+        // for records that predate both timestamp fields.
+        nextCursors.phase = 'timeless';
         hasMore = true;
     }
 
