@@ -370,7 +370,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=20';",
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=21';",
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
