@@ -15,6 +15,9 @@ function clone(value) {
 export async function getParentDashboardData() {
     return { children: clone(children), dashboardState: null, registrationApplications: [] };
 }
+export async function listParentRegistrationApplicationsPage() {
+    return { applications: [], nextCursor: null, hasMore: false, errors: [] };
+}
 export async function redeemParentInvite() {}
 export async function getTeam(teamId) { return { id: teamId, name: teamId }; }
 export async function getTeams() { return []; }
