@@ -18,7 +18,7 @@ describe('preview-smoke CI workflow', () => {
     it('is called by the consolidated code-head workflow without label-churn runs', () => {
         const childTriggerSection = workflow.slice(
             workflow.indexOf('\non:'),
-            workflow.indexOf('\nconcurrency:')
+            workflow.indexOf('\npermissions:')
         );
         const triggerSection = integrationWorkflow.slice(
             integrationWorkflow.indexOf('\non:'),
@@ -35,9 +35,7 @@ describe('preview-smoke CI workflow', () => {
         expect(triggerSection).not.toContain('      - labeled');
         expect(integrationWorkflow).toContain('uses: ./.github/workflows/preview-smoke.yml');
         expect(integrationWorkflow).toContain('name: preview-smoke');
-        expect(workflow).toContain(
-            'group: preview-smoke-${{ github.event.pull_request.number || github.run_id }}'
-        );
+        expect(workflow).not.toContain('\nconcurrency:');
         expect(changesSection).toContain("github.event_name == 'workflow_dispatch'");
         expect(workflow.slice(workflow.indexOf('  preview-smoke-run:'), workflow.indexOf('  preview-smoke:')))
             .toContain("github.event_name == 'workflow_dispatch'");
