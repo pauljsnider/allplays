@@ -131,6 +131,36 @@ function buildParentRegistrationApplicationsPageLoader({
     return { loadPage, limit, getTeam, getDoc };
 }
 
+function buildParentDashboardData({
+    userProfile = { id: 'user-1', email: 'parent@example.com', parentOf: [] },
+    registrationPage = { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] }
+} = {}) {
+    const dbSource = readRepoFile('js/db.js');
+    const start = dbSource.indexOf('export async function getParentDashboardData');
+    const end = dbSource.indexOf('\nexport async function updatePlayerProfile', start);
+    const functionSource = dbSource.slice(start, end)
+        .replace(
+            'export async function getParentDashboardData',
+            'return async function getParentDashboardData'
+        );
+    const listParentRegistrationApplicationsPage = vi.fn().mockResolvedValue(registrationPage);
+    const dependencies = {
+        getUserProfile: vi.fn().mockResolvedValue(userProfile),
+        listMyParentMembershipRequests: vi.fn().mockResolvedValue([]),
+        mergeApprovedParentMembershipRequests: vi.fn().mockReturnValue({ changed: false }),
+        updateUserProfile: vi.fn(),
+        listParentRegistrationApplicationsPage,
+        normalizeParentScopeLinks: vi.fn(),
+        getEvents: vi.fn()
+    };
+    const dependencyNames = Object.keys(dependencies);
+    const getParentDashboardData = new Function(...dependencyNames, functionSource)(
+        ...dependencyNames.map((name) => dependencies[name])
+    );
+
+    return { getParentDashboardData, listParentRegistrationApplicationsPage };
+}
+
 describe('parent dashboard registration application statuses', () => {
     it('renders a read-only parent registration applications section from dashboard data', () => {
         const html = readRepoFile('parent-dashboard.html');
@@ -213,6 +243,26 @@ describe('parent dashboard registration application statuses', () => {
         expect(getTeam).not.toHaveBeenCalledWith('team-guardian-2');
         expect(getTeam).not.toHaveBeenCalledWith('team-submitter-2');
         expect(limit.mock.calls).toEqual([[2], [2]]);
+    });
+
+    it('uses the bounded registration page in the production parent dashboard data flow', async () => {
+        const registrationApplications = [{ id: 'registration-1', programName: 'Spring Soccer' }];
+        const { getParentDashboardData, listParentRegistrationApplicationsPage } = buildParentDashboardData({
+            registrationPage: {
+                applications: registrationApplications,
+                nextCursor: null,
+                retryCursor: null,
+                hasMore: false,
+                errors: []
+            }
+        });
+
+        const dashboard = await getParentDashboardData('user-1');
+
+        expect(listParentRegistrationApplicationsPage).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'user-1', email: 'parent@example.com' })
+        );
+        expect(dashboard.registrationApplications).toBe(registrationApplications);
     });
 
     it('preserves the successful identity query and reports the failed query as retryable', async () => {

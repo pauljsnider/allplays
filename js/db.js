@@ -6355,7 +6355,8 @@ export async function getParentDashboardData(userId) {
         // index) must never crash the dashboard, so degrade to an empty list.
         let registrationApplications = [];
         try {
-            registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
+            const registrationPage = await listParentRegistrationApplicationsPage(userProfile || {});
+            registrationApplications = registrationPage.applications;
         } catch (error) {
             console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
         }
@@ -6455,7 +6456,8 @@ export async function getParentDashboardData(userId) {
     // hide those players, so degrade to an empty list instead.
     let registrationApplications = [];
     try {
-        registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
+        const registrationPage = await listParentRegistrationApplicationsPage(userProfile);
+        registrationApplications = registrationPage.applications;
     } catch (error) {
         console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
     }
