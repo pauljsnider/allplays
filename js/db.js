@@ -6119,15 +6119,10 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
     }
 
     const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
-        const constraints = [
-            where(definition.fieldPath, '==', definition.value),
-            limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)
-        ];
-
         try {
             const snapshot = await getDocs(query(
                 collectionGroup(db, 'registrations'),
-                ...constraints
+                where(definition.fieldPath, '==', definition.value)
             ));
             return { definition, snapshot, error: null };
         } catch (error) {
@@ -6138,9 +6133,14 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
     if (successfulResults.length === 0) {
         throw new Error('Registration applications could not be loaded.');
     }
-    const registrationDocs = mergeParentRegistrationQueryResults(
+    // Firestore orderBy excludes documents whose ordered field is missing, and
+    // legacy registrations may use createdAt, string dates, or no date at all.
+    // Read every identity match before sorting so a query-side limit cannot
+    // discard a newer registration before the legacy-compatible merge.
+    const mergedRegistrationDocs = mergeParentRegistrationQueryResults(
         successfulResults.map((result) => result.snapshot)
-    ).slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+    );
+    const registrationDocs = mergedRegistrationDocs.slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
 
     const teamCache = new Map();
     const formCache = new Map();
@@ -6191,9 +6191,9 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
 
     return {
         applications,
-        hasMore: queryResults.some((result) => (
-            result.error || result.snapshot?.docs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE
-        )),
+        nextCursor: null,
+        hasMore: mergedRegistrationDocs.length > PARENT_REGISTRATION_APPLICATION_PAGE_SIZE
+            || queryResults.some((result) => result.error),
         errors: queryResults
             .filter((result) => result.error)
             .map(() => ({

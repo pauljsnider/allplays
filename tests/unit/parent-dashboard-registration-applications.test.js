@@ -125,7 +125,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
         expect(functionSource).not.toContain("orderBy('submittedAt'");
         expect(functionSource).not.toContain('startAfter(');
-        expect(functionSource).toContain('limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)');
+        expect(functionSource).not.toContain('limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)');
         expect(dashboardFunctionSource).not.toContain('listParentRegistrationApplicationsPage');
         expect(dashboardFunctionSource).not.toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
@@ -210,20 +210,31 @@ describe('parent dashboard registration application statuses', () => {
         );
         expect(getDocs).toHaveBeenCalledTimes(2);
         expect(dependencies.query).toHaveBeenCalledTimes(2);
-        expect(dependencies.limit).toHaveBeenCalledTimes(2);
-        expect(dependencies.limit).toHaveBeenCalledWith(10);
+        expect(dependencies.limit).not.toHaveBeenCalled();
         expect(dependencies.getTeam).toHaveBeenCalledTimes(1);
     });
 
-    it('never enriches more than the fixed first-page size', async () => {
-        const registrationDocs = Array.from({ length: 12 }, (_, index) => (
-            buildRegistrationDocument(`registration-${index}`, 100 - index, {
+    it('selects the newest 10 before enrichment from unordered identity results larger than the page', async () => {
+        const olderGuardianDocs = Array.from({ length: 10 }, (_, index) => (
+            buildRegistrationDocument(`older-${index}`, index + 1, {
                 programName: 'Spring Soccer'
             })
         ));
-        const getDocs = vi.fn().mockResolvedValue({ docs: registrationDocs });
+        const newerGuardianDocs = Array.from({ length: 5 }, (_, index) => (
+            buildRegistrationDocument(`newer-guardian-${index}`, 100 + index, {
+                programName: 'Spring Soccer'
+            })
+        ));
+        const newerSubmitterDocs = Array.from({ length: 5 }, (_, index) => (
+            buildRegistrationDocument(`newer-submitter-${index}`, 105 + index, {
+                programName: 'Spring Soccer'
+            })
+        ));
+        const getDocs = vi.fn()
+            .mockResolvedValueOnce({ docs: [...olderGuardianDocs, ...newerGuardianDocs] })
+            .mockResolvedValueOnce({ docs: [...olderGuardianDocs, ...newerSubmitterDocs] });
         const { listApplicationsPage, dependencies } = buildListParentRegistrationApplicationsPage({
-            registration: registrationDocs[0].data(),
+            registration: olderGuardianDocs[0].data(),
             getDocs
         });
 
@@ -232,9 +243,22 @@ describe('parent dashboard registration application statuses', () => {
             email: 'parent@example.com'
         });
 
-        expect(page.applications).toHaveLength(10);
+        expect(page.applications.map((application) => application.id)).toEqual([
+            'newer-submitter-4',
+            'newer-submitter-3',
+            'newer-submitter-2',
+            'newer-submitter-1',
+            'newer-submitter-0',
+            'newer-guardian-4',
+            'newer-guardian-3',
+            'newer-guardian-2',
+            'newer-guardian-1',
+            'newer-guardian-0'
+        ]);
+        expect(page.nextCursor).toBeNull();
+        expect(page.hasMore).toBe(true);
         expect(dependencies.getTeam).toHaveBeenCalledTimes(10);
-        expect(dependencies.limit.mock.calls).toEqual([[10], [10]]);
+        expect(dependencies.limit).not.toHaveBeenCalled();
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {
