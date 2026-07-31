@@ -7,7 +7,10 @@ type ChatSheetsState = {
     showAttachSheet: boolean;
     showLinkSheet: boolean;
     showEmailSheet: boolean;
+    audienceReturnSheet: 'email' | null;
 };
+
+type ChatSheetName = Exclude<keyof ChatSheetsState, 'audienceReturnSheet'>;
 
 const initialState: ChatSheetsState = {
     showConversationSheet: false,
@@ -15,13 +18,15 @@ const initialState: ChatSheetsState = {
     showMediaGallery: false,
     showAttachSheet: false,
     showLinkSheet: false,
-    showEmailSheet: false
+    showEmailSheet: false,
+    audienceReturnSheet: null
 };
 
-function activateSheet(sheetName: keyof ChatSheetsState): ChatSheetsState {
+function activateSheet(sheetName: ChatSheetName, audienceReturnSheet: ChatSheetsState['audienceReturnSheet'] = null): ChatSheetsState {
     return {
         ...initialState,
-        [sheetName]: true
+        [sheetName]: true,
+        audienceReturnSheet
     };
 }
 
@@ -40,8 +45,14 @@ export function useChatSheets() {
         setSheets(activateSheet('showAudienceSheet'));
     }, []);
 
+    const openEmailAudienceSheet = useCallback(() => {
+        setSheets(activateSheet('showAudienceSheet', 'email'));
+    }, []);
+
     const closeAudienceSheet = useCallback(() => {
-        setSheets((current) => ({ ...current, showAudienceSheet: false }));
+        setSheets((current) => current.audienceReturnSheet === 'email'
+            ? activateSheet('showEmailSheet')
+            : { ...current, showAudienceSheet: false, audienceReturnSheet: null });
     }, []);
 
     const openMediaGallery = useCallback(() => {
@@ -84,6 +95,7 @@ export function useChatSheets() {
         openConversationSheet,
         closeConversationSheet,
         openAudienceSheet,
+        openEmailAudienceSheet,
         closeAudienceSheet,
         openMediaGallery,
         closeMediaGallery,

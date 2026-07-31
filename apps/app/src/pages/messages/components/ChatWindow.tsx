@@ -430,6 +430,7 @@ export function ChatWindow({
     openConversationSheet,
     closeConversationSheet,
     openAudienceSheet,
+    openEmailAudienceSheet,
     closeAudienceSheet,
     openMediaGallery,
     closeMediaGallery,
@@ -1633,6 +1634,11 @@ export function ChatWindow({
     void ensureRecipientOptionsLoaded().catch(() => undefined);
   };
 
+  const editEmailAudience = () => {
+    openEmailAudienceSheet();
+    void ensureRecipientOptionsLoaded().catch(() => undefined);
+  };
+
   const toggleVoiceCapture = async () => {
     if (voiceListening) {
       stopVoiceCapture();
@@ -2129,6 +2135,7 @@ export function ChatWindow({
             setSelectedRecipientTarget={setSelectedRecipientTarget}
             setSelectedRecipientIds={setSelectedRecipientIds}
             switchConversation={switchConversation}
+            onEditAudience={editEmailAudience}
             onClose={closeTeamEmailSheet}
           />
         </Suspense>

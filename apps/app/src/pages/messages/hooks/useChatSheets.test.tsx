@@ -18,6 +18,7 @@ function HookProbe() {
             <button type="button" onClick={sheets.openConversationSheet}>Open conversation</button>
             <button type="button" onClick={sheets.closeConversationSheet}>Close conversation</button>
             <button type="button" onClick={sheets.openAudienceSheet}>Open audience</button>
+            <button type="button" onClick={sheets.openEmailAudienceSheet}>Edit email audience</button>
             <button type="button" onClick={sheets.closeAudienceSheet}>Close audience</button>
             <button type="button" onClick={sheets.openMediaGallery}>Open media</button>
             <button type="button" onClick={sheets.closeMediaGallery}>Close media</button>
@@ -108,6 +109,21 @@ describe('useChatSheets', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
         expectSheetState('attach', false);
         expectSheetState('link', true);
+    });
+
+    it('hands off email to audience and restores email when the audience closes', () => {
+        render(<HookProbe />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Edit email audience' }));
+
+        expectSheetState('email', false);
+        expectSheetState('audience', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close audience' }));
+
+        expectSheetState('audience', false);
+        expectSheetState('email', true);
     });
 
     it('resets every other sheet when opening the link sheet', () => {
