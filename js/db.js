@@ -6125,6 +6125,174 @@ export function mergeParentRegistrationQueryResults(querySnapshots = []) {
     return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
 }
 
+export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;
+
+function buildParentRegistrationError(kind, identity) {
+    const messages = {
+        query: 'Some registration applications could not be loaded. Retry this registration page.',
+        enrichment: 'Some registration application details could not be loaded. Retry this registration page.'
+    };
+    return {
+        code: `parent-registration-${kind}-failed`,
+        identity,
+        retryable: true,
+        message: messages[kind]
+    };
+}
+
+async function enrichParentRegistrationApplicationDocuments(registrationDocs = []) {
+    const teamCache = new Map();
+    const formCache = new Map();
+    const enriched = await Promise.all(registrationDocs.map(async (registrationDoc) => {
+        const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
+        const registrationKey = getParentRegistrationDocumentKey(registrationDoc);
+        const teamId = registration.teamId || '';
+        const formId = registration.formId || '';
+        const player = getRegistrationPlayerDraft(registration);
+        const guardians = getRegistrationGuardianDrafts(registration);
+        const errors = [];
+
+        let team = null;
+        if (teamId) {
+            if (!teamCache.has(teamId)) {
+                teamCache.set(teamId, getTeam(teamId)
+                    .then((value) => ({ value, error: null }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `team:${teamId}`)
+                    })));
+            }
+            const teamResult = await teamCache.get(teamId);
+            team = teamResult.value;
+            if (teamResult.error) {
+                errors.push({
+                    ...teamResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        let form = null;
+        if (!registration.programName && teamId && formId) {
+            const formKey = `${teamId}::${formId}`;
+            if (!formCache.has(formKey)) {
+                formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId))
+                    .then((snapshot) => ({
+                        value: snapshot.exists() ? (snapshot.data() || {}) : null,
+                        error: null
+                    }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `form:${formKey}`)
+                    })));
+            }
+            const formResult = await formCache.get(formKey);
+            form = formResult.value;
+            if (formResult.error) {
+                errors.push({
+                    ...formResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        const selectedOption = registration.selectedOption || {};
+        return {
+            application: {
+                id: registration.id,
+                registrationKey,
+                teamId,
+                formId,
+                teamName: team?.name || registration.teamName || form?.teamName || 'Team registration',
+                programName: registration.programName || form?.programName || form?.title || 'Registration',
+                playerName: player.name || registration.participant?.name || 'Unnamed player',
+                guardianEmail: guardians[0]?.email || registration.guardian?.email || '',
+                status: normalizeRegistrationStatus(registration.status),
+                statusLabel: formatParentRegistrationStatusLabel(registration.status),
+                selectedOptionLabel: selectedOption.title || selectedOption.label || '',
+                submittedAt: registration.submittedAt || registration.createdAt || null
+            },
+            errors
+        };
+    }));
+
+    return {
+        applications: enriched.map((result) => result.application),
+        errors: enriched.flatMap((result) => result.errors)
+    };
+}
+
+export async function listParentRegistrationApplicationsPage(userProfile = {}, options = {}) {
+    const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
+    const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
+    const cursor = options.cursor || {};
+    const queryDefinitions = [
+        email ? {
+            identity: 'guardian-email',
+            cursorKey: 'guardianEmail',
+            load: () => queryRegistrationsByGuardianEmail(email, cursor.guardianEmail || null)
+        } : null,
+        userId ? {
+            identity: 'submitter-uid',
+            cursorKey: 'submittedByUserId',
+            load: () => queryRegistrationsBySubmitterUid(userId, cursor.submittedByUserId || null)
+        } : null
+    ].filter(Boolean);
+    const nextCursor = {
+        guardianEmail: cursor.guardianEmail || null,
+        submittedByUserId: cursor.submittedByUserId || null
+    };
+
+    if (queryDefinitions.length === 0) {
+        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
+    }
+
+    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
+        try {
+            return { definition, page: await definition.load(), error: null };
+        } catch {
+            return {
+                definition,
+                page: { snapshot: { docs: [] }, cursor: null, hasMore: false },
+                error: buildParentRegistrationError('query', definition.identity)
+            };
+        }
+    }));
+    const pageDocuments = mergeParentRegistrationQueryResults(
+        queryResults.map((result) => result.page.snapshot)
+    ).slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+    const pageDocumentKeys = new Set(pageDocuments.map(getParentRegistrationDocumentKey));
+
+    let hasMore = queryResults.some((result) => result.error);
+    queryResults.forEach((result) => {
+        if (result.error) return;
+        let consumedCount = 0;
+        for (const registrationDoc of result.page.snapshot.docs) {
+            if (!pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
+            nextCursor[result.definition.cursorKey] = registrationDoc;
+            consumedCount += 1;
+        }
+        if (consumedCount < result.page.snapshot.docs.length || result.page.hasMore) {
+            hasMore = true;
+        }
+    });
+
+    const enrichment = await enrichParentRegistrationApplicationDocuments(pageDocuments);
+    const errors = [
+        ...queryResults.map((result) => result.error).filter(Boolean),
+        ...enrichment.errors
+    ];
+    return {
+        applications: enrichment.applications,
+        nextCursor: (hasMore || enrichment.errors.length > 0) ? nextCursor : null,
+        retryCursor: errors.length > 0 ? cursor : null,
+        hasMore,
+        errors
+    };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
