@@ -78,9 +78,61 @@ function fail(url, message) {
     throw new Error(`${url}: ${message}`);
 }
 
+function parseHstsDirectives(value) {
+    const directives = new Map();
+    for (const directive of value.split(';').map((part) => part.trim()).filter(Boolean)) {
+        const [name, ...rest] = directive.split('=');
+        directives.set(
+            name.toLowerCase(),
+            rest.length > 0 ? rest.join('=').trim().toLowerCase() : true
+        );
+    }
+    return directives;
+}
+
+function validateHstsHeader(url, observed, expected) {
+    const observedDirectives = parseHstsDirectives(observed);
+    const expectedDirectives = parseHstsDirectives(expected);
+    const observedMaxAgeValue = observedDirectives.get('max-age');
+    const expectedMaxAgeValue = expectedDirectives.get('max-age');
+    const observedMaxAge = typeof observedMaxAgeValue === 'string'
+        && /^\d+$/.test(observedMaxAgeValue)
+        ? Number(observedMaxAgeValue)
+        : Number.NaN;
+    const expectedMaxAge = typeof expectedMaxAgeValue === 'string'
+        && /^\d+$/.test(expectedMaxAgeValue)
+        ? Number(expectedMaxAgeValue)
+        : Number.NaN;
+
+    if (
+        !Number.isSafeInteger(observedMaxAge)
+        || !Number.isSafeInteger(expectedMaxAge)
+        || observedMaxAge < expectedMaxAge
+    ) {
+        fail(
+            url,
+            `header "Strict-Transport-Security" expected max-age at least ${expectedMaxAge} but observed "${observed}"`
+        );
+    }
+
+    for (const [name, value] of expectedDirectives) {
+        if (name === 'max-age') continue;
+        if (observedDirectives.get(name) !== value) {
+            fail(
+                url,
+                `header "Strict-Transport-Security" expected directive "${name}" but observed "${observed}"`
+            );
+        }
+    }
+}
+
 function validateHeaders(url, response, expectedHeaders) {
     for (const [name, expected] of expectedHeaders) {
         const observed = response.headers.get(name)?.trim() ?? '<missing>';
+        if (name.toLowerCase() === 'strict-transport-security') {
+            validateHstsHeader(url, observed, expected);
+            continue;
+        }
         if (observed !== expected) {
             fail(
                 url,
