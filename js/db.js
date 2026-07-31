@@ -6095,7 +6095,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         }
 
         let form = null;
-        if (teamId && formId) {
+        if (!registration.programName && teamId && formId) {
             const formKey = `${teamId}::${formId}`;
             if (!formCache.has(formKey)) {
                 formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId)).then((snap) => snap.exists() ? (snap.data() || {}) : null));
