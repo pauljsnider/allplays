@@ -21,8 +21,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=127')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=20"></script>');
+        expect(adminSource).toContain("import('./db.js?v=129')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=22"></script>');
     });
 
     it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {

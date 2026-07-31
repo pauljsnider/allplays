@@ -691,7 +691,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=18'; // Import resolveZip
+import { resolveZip } from './utils.js?v=20'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6040,6 +6040,36 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
+
+async function queryRegistrationIdentityPage(fieldPath, value, previousCursor = null) {
+    const constraints = [
+        where(fieldPath, '==', value),
+        orderBy(documentId(), 'desc')
+    ];
+    if (previousCursor) constraints.push(startAfterQuery(previousCursor));
+    constraints.push(limitQuery(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
+
+    const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
+    return {
+        snapshot,
+        cursor: snapshot.docs.at(-1) || null,
+        hasMore: snapshot.docs.length === PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT
+    };
+}
+
+export async function queryRegistrationsByGuardianEmail(email, previousCursor = null) {
+    const normalizedEmail = normalizeParentRegistrationEmail(email);
+    if (!normalizedEmail) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('guardian.email', normalizedEmail, previousCursor);
+}
+
+export async function queryRegistrationsBySubmitterUid(userId, previousCursor = null) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('submittedByUserId', normalizedUserId, previousCursor);
+}
+
 function getParentRegistrationDocumentKey(registrationDoc) {
     const registrationData = registrationDoc.data() || {};
     return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
@@ -6100,33 +6130,36 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const registrationQueryLoaders = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsByGuardianEmail(email, cursor));
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsBySubmitterUid(userId, cursor));
     }
 
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+    const queryResults = await Promise.all(registrationQueryLoaders.map(async (loadRegistrationPage) => {
         try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
+            const snapshots = [];
+            let cursor = null;
+            let hasMore = true;
+            while (hasMore) {
+                const page = await loadRegistrationPage(cursor);
+                snapshots.push(page.snapshot);
+                cursor = page.cursor;
+                hasMore = page.hasMore && Boolean(cursor);
+            }
+            return { snapshots, error: null };
         } catch (error) {
-            return { snapshot: null, error };
+            return { snapshots: null, error };
         }
     }));
-    const successfulResults = queryResults.filter((result) => result.snapshot);
+    const successfulResults = queryResults.filter((result) => result.snapshots);
     if (successfulResults.length === 0) {
         throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
     }
     const registrationDocs = mergeParentRegistrationQueryResults(
-        successfulResults.map((result) => result.snapshot)
+        successfulResults.flatMap((result) => result.snapshots)
     );
 
     const teamCache = new Map();

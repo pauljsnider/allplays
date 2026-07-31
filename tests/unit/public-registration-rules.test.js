@@ -1,7 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import {
+  collectionGroup,
+  doc,
+  documentId,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  setDoc,
+  startAfter,
+  where
+} from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const projectId = process.env.FIRESTORE_EMULATOR_PROJECT_ID || `allplays-public-registration-rules-${Date.now()}`;
@@ -113,6 +125,40 @@ describe('public registration Firestore boundary', () => {
         submitterDb,
         'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'uid-owned'
       )));
+    });
+
+    it('includes legacy registrations without submittedAt across document-id pages', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore();
+        await Promise.all(Array.from({ length: 11 }, (_, index) => setDoc(doc(
+          db,
+          'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', `paged-${index}`
+        ), {
+          guardian: { email: 'paged@example.com' },
+          ...(index === 5 ? { createdAt: new Date('2024-01-01T00:00:00.000Z') } : { submittedAt: new Date() }),
+          status: 'pending'
+        })));
+
+        const baseConstraints = [
+          where('guardian.email', '==', 'paged@example.com'),
+          orderBy(documentId(), 'desc')
+        ];
+        const firstPage = await getDocs(query(
+          collectionGroup(db, 'registrations'),
+          ...baseConstraints,
+          limit(10)
+        ));
+        const secondPage = await getDocs(query(
+          collectionGroup(db, 'registrations'),
+          ...baseConstraints,
+          startAfter(firstPage.docs.at(-1)),
+          limit(10)
+        ));
+        const registrationIds = [...firstPage.docs, ...secondPage.docs].map((registrationDoc) => registrationDoc.id);
+
+        expect(registrationIds).toHaveLength(11);
+        expect(registrationIds).toContain('paged-5');
+      });
     });
   });
 });
