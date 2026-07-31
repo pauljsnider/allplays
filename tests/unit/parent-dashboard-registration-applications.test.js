@@ -7,8 +7,19 @@ function readRepoFile(relativePath) {
 
 function buildTimestamp(milliseconds) {
     return {
+        seconds: Math.floor(milliseconds / 1000),
+        nanoseconds: (milliseconds % 1000) * 1000000,
         toMillis: () => milliseconds,
         toDate: () => new Date(milliseconds)
+    };
+}
+
+function buildNanosecondTimestamp(seconds, nanoseconds) {
+    return {
+        seconds,
+        nanoseconds,
+        toMillis: () => (seconds * 1000) + Math.floor(nanoseconds / 1000000),
+        toDate: () => new Date((seconds * 1000) + Math.floor(nanoseconds / 1000000))
     };
 }
 
@@ -36,6 +47,7 @@ function buildParentRegistrationApplicationsPageLoader({
     getTeamImplementation = async (teamId) => ({ id: teamId, name: `Team ${teamId}` }),
     getDocImplementation = async () => ({ exists: () => false, data: () => null })
 } = {}) {
+    const failedIdentities = new Set(failIdentity ? [failIdentity] : []);
     const dbSource = readRepoFile('js/db.js');
     const start = dbSource.indexOf('export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE');
     const end = dbSource.indexOf('\nexport async function getParentDashboardData', start);
@@ -56,7 +68,7 @@ function buildParentRegistrationApplicationsPageLoader({
     const getDocs = vi.fn(async (queryParts) => {
         const identityConstraint = queryParts.find((part) => part?.type === 'where');
         const identity = identityConstraint.fieldPath === 'guardian.email' ? 'guardian-email' : 'submitter-uid';
-        if (identity === failIdentity) throw new Error(`${identity} failed`);
+        if (failedIdentities.has(identity)) throw new Error(`${identity} failed`);
         const identitySource = identity === 'guardian-email' ? guardianDocuments : submitterDocuments;
         const ordersBySubmittedAt = queryParts.some((part) =>
             part?.type === 'orderBy' && part.fieldPath === 'submittedAt'
@@ -97,7 +109,30 @@ function buildParentRegistrationApplicationsPageLoader({
         ...dependencyNames.map((name) => dependencies[name])
     );
 
-    return { loadPage, query, orderBy, limit, startAfter, getDocs, getTeam, getDoc };
+    return {
+        loadPage,
+        query,
+        orderBy,
+        limit,
+        startAfter,
+        getDocs,
+        getTeam,
+        getDoc,
+        setIdentityFailure(identity, shouldFail) {
+            if (shouldFail) {
+                failedIdentities.add(identity);
+            } else {
+                failedIdentities.delete(identity);
+            }
+        }
+    };
+}
+
+function buildMergeRegistrationApplicationPages() {
+    const html = readRepoFile('parent-dashboard.html');
+    const start = html.indexOf('function mergeRegistrationApplicationPages');
+    const end = html.indexOf('\n\n        async function loadRegistrationApplications', start);
+    return new Function(`${html.slice(start, end)}; return mergeRegistrationApplicationPages;`)();
 }
 
 describe('parent dashboard registration application statuses', () => {
@@ -225,6 +260,27 @@ describe('parent dashboard registration application statuses', () => {
         expect(getTeam).toHaveBeenCalledTimes(5);
     });
 
+    it('preserves Firestore nanosecond ordering when advancing a timestamped cursor', async () => {
+        const newer = buildRegistrationDocument('a-newer', 0, {
+            submittedAt: buildNanosecondTimestamp(100, 900)
+        });
+        const older = buildRegistrationDocument('z-older', 0, {
+            submittedAt: buildNanosecondTimestamp(100, 100)
+        });
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [newer, older],
+            pageSize: 1
+        });
+        const profile = { email: 'parent@example.com' };
+
+        const firstPage = await loadPage(profile);
+        const secondPage = await loadPage(profile, { cursor: firstPage.nextCursor });
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual(['a-newer']);
+        expect(firstPage.nextCursor.guardianEmail).toBe(newer);
+        expect(secondPage.applications.map((application) => application.id)).toEqual(['z-older']);
+    });
+
     it('enriches only the returned merged page', async () => {
         const { loadPage, getTeam } = buildParentRegistrationApplicationsPageLoader({
             guardianDocuments: [
@@ -318,6 +374,91 @@ describe('parent dashboard registration application statuses', () => {
         expect(legacyPage.applications.map((application) => application.id)).toEqual(['legacy']);
         expect(orderBy).toHaveBeenCalledWith('__name__', 'desc');
         expect(limit).toHaveBeenCalledWith(2);
+    });
+
+    it('advances legacy cursors only through the consumed merge prefix for disjoint full identity pages', async () => {
+        const guardianDocuments = [
+            buildRegistrationDocument('z-guardian-1', 0, { submittedAt: undefined }),
+            buildRegistrationDocument('y-guardian-2', 0, { submittedAt: undefined })
+        ];
+        const submitterDocuments = [
+            buildRegistrationDocument('b-submitter-1', 0, { submittedAt: undefined }),
+            buildRegistrationDocument('a-submitter-2', 0, { submittedAt: undefined })
+        ];
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments,
+            submitterDocuments
+        });
+        const profile = { email: 'parent@example.com', uid: 'user-1' };
+        const legacyCursor = {
+            guardianEmail: null,
+            submittedByUserId: null,
+            legacy: {
+                active: true,
+                guardianEmail: null,
+                submittedByUserId: null
+            }
+        };
+
+        const firstPage = await loadPage(profile, { cursor: legacyCursor });
+        const secondPage = await loadPage(profile, { cursor: firstPage.nextCursor });
+        const applicationIds = [...firstPage.applications, ...secondPage.applications]
+            .map((application) => application.id);
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual([
+            'z-guardian-1',
+            'y-guardian-2'
+        ]);
+        expect(firstPage.nextCursor.legacy.guardianEmail).toBe(guardianDocuments[1]);
+        expect(firstPage.nextCursor.legacy.submittedByUserId).toBeNull();
+        expect(secondPage.applications.map((application) => application.id)).toEqual([
+            'b-submitter-1',
+            'a-submitter-2'
+        ]);
+        expect(applicationIds).toEqual([
+            'z-guardian-1',
+            'y-guardian-2',
+            'b-submitter-1',
+            'a-submitter-2'
+        ]);
+        expect(new Set(applicationIds).size).toBe(4);
+    });
+
+    it.each([
+        ['guardian-email', 'submitter-uid'],
+        ['submitter-uid', 'guardian-email']
+    ])('deduplicates an overlapping application when %s recovers after %s advanced', async (
+        recoveringIdentity,
+        successfulIdentity
+    ) => {
+        const overlap = buildRegistrationDocument('overlap', 50);
+        const guardianDocuments = [overlap];
+        const submitterDocuments = [overlap];
+        const loader = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments,
+            submitterDocuments,
+            failIdentity: recoveringIdentity
+        });
+        const mergePages = buildMergeRegistrationApplicationPages();
+        const profile = { email: 'parent@example.com', uid: 'user-1' };
+
+        const partialPage = await loader.loadPage(profile);
+        expect(partialPage.errors).toEqual(expect.arrayContaining([
+            expect.objectContaining({ identity: recoveringIdentity })
+        ]));
+        const successfulCursorKey = successfulIdentity === 'guardian-email'
+            ? 'guardianEmail'
+            : 'submittedByUserId';
+        expect(partialPage.nextCursor[successfulCursorKey]).toBe(overlap);
+
+        loader.setIdentityFailure(recoveringIdentity, false);
+        const recoveredPage = await loader.loadPage(profile, { cursor: partialPage.nextCursor });
+        const mergedApplications = mergePages(partialPage.applications, recoveredPage.applications);
+
+        expect(partialPage.applications.map((application) => application.id)).toEqual(['overlap']);
+        expect(recoveredPage.applications.map((application) => application.id)).toEqual(['overlap']);
+        expect(mergedApplications.map((application) => application.id)).toEqual(['overlap']);
+        expect(mergedApplications[0].registrationKey).toBe(overlap.ref.path);
     });
 
     it('does not eagerly load full registration history as part of dashboard data', () => {

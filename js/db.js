@@ -6047,17 +6047,38 @@ function getParentRegistrationDocumentKey(registrationDoc) {
     return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
 }
 
-function getParentRegistrationSubmittedAtMillis(registrationDoc) {
+function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
     const submittedAt = registrationDoc.data()?.submittedAt;
-    if (submittedAt?.toMillis) return submittedAt.toMillis();
-    const parsed = submittedAt ? new Date(submittedAt).getTime() : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+    const milliseconds = submittedAt?.toMillis
+        ? submittedAt.toMillis()
+        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+    if (!Number.isFinite(milliseconds)) return { seconds: 0, nanoseconds: 0 };
+    const seconds = Math.floor(milliseconds / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((milliseconds - (seconds * 1000)) * 1000000)
+    };
 }
 
 function compareParentRegistrationDocuments(a, b) {
-    const submittedAtDifference = getParentRegistrationSubmittedAtMillis(b) - getParentRegistrationSubmittedAtMillis(a);
-    if (submittedAtDifference !== 0) return submittedAtDifference;
-    return getParentRegistrationDocumentKey(b).localeCompare(getParentRegistrationDocumentKey(a));
+    const aSubmittedAt = getParentRegistrationSubmittedAtSortParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtSortParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return bSubmittedAt.seconds - aSubmittedAt.seconds;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return bSubmittedAt.nanoseconds - aSubmittedAt.nanoseconds;
+    }
+    const aKey = getParentRegistrationDocumentKey(a);
+    const bKey = getParentRegistrationDocumentKey(b);
+    if (aKey === bKey) return 0;
+    return aKey < bKey ? 1 : -1;
 }
 
 function buildParentRegistrationError(kind, identity = null) {
@@ -6114,6 +6135,7 @@ async function enrichParentRegistrationApplicationDocuments(registrationDocs = [
         return {
             application: {
                 id: registration.id,
+                registrationKey: getParentRegistrationDocumentKey(registrationDoc),
                 teamId,
                 formId,
                 teamName: team?.name || registration.teamName || form?.teamName || 'Team registration',
@@ -6219,11 +6241,17 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     queryResults.forEach((result) => {
         if (result.error) return;
         if (isLegacyPage) {
-            const lastScannedDocument = result.scannedDocs.at(-1);
-            if (lastScannedDocument) {
-                nextCursors.legacy[result.definition.cursorKey] = lastScannedDocument;
+            let consumedCount = 0;
+            for (const registrationDoc of result.scannedDocs) {
+                const isLegacyDocument = registrationDoc.data()?.submittedAt === undefined;
+                if (isLegacyDocument && !pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc))) {
+                    break;
+                }
+                nextCursors.legacy[result.definition.cursorKey] = registrationDoc;
+                consumedCount += 1;
             }
-            if (result.scannedDocs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE) {
+            if (consumedCount < result.scannedDocs.length
+                || result.scannedDocs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE) {
                 hasMore = true;
             }
             return;
