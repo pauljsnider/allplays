@@ -141,7 +141,8 @@ describe('parent dashboard registration application statuses', () => {
 
         expect(html).toContain('id="registration-applications-list"');
         expect(html).toContain('listParentRegistrationApplicationsPage,');
-        expect(html).toContain('await loadRegistrationApplications(user, { reset: true });');
+        expect(html).toContain('loadRegistrationApplications(user, { reset: true });');
+        expect(html).not.toContain('await loadRegistrationApplications(user, { reset: true });');
         expect(html).toContain('cursor: pageCursor');
         expect(html).toContain('id="load-more-registration-applications"');
         expect(html).toContain('registrationApplicationRetryCursors');
@@ -150,7 +151,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=130';");
+        expect(html).toContain("from './js/db.js?v=131';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -501,6 +502,82 @@ describe('parent dashboard registration application statuses', () => {
         expect(recoveredPage.applications.map((application) => application.id)).toEqual(['overlap']);
         expect(mergedApplications.map((application) => application.id)).toEqual(['overlap']);
         expect(mergedApplications[0].registrationKey).toBe(overlap.ref.path);
+    });
+
+    it('keeps appended and recovered applications duplicate-free and newest-first', () => {
+        const mergePages = buildMergeRegistrationApplicationPages();
+        const older = {
+            id: 'older',
+            registrationKey: 'registrations/older',
+            submittedAt: buildTimestamp(1000)
+        };
+        const overlap = {
+            id: 'overlap',
+            registrationKey: 'registrations/overlap',
+            submittedAt: buildTimestamp(2000),
+            teamName: 'Initial Team'
+        };
+        const recoveredOverlap = {
+            ...overlap,
+            teamName: 'Recovered Team'
+        };
+        const recoveredNewer = {
+            id: 'newer',
+            registrationKey: 'registrations/newer',
+            submittedAt: buildTimestamp(3000)
+        };
+
+        const firstAppend = mergePages([], [overlap, older]);
+        const secondAppend = mergePages(firstAppend, [recoveredOverlap, recoveredNewer]);
+
+        expect(secondAppend.map((application) => application.id)).toEqual([
+            'newer',
+            'overlap',
+            'older'
+        ]);
+        expect(secondAppend).toHaveLength(3);
+        expect(secondAppend[1].teamName).toBe('Recovered Team');
+    });
+
+    it('starts registration paging after player render without rerunning dashboard bootstrap', () => {
+        const html = readRepoFile('parent-dashboard.html');
+        const initSource = html.slice(
+            html.indexOf('async function init()'),
+            html.indexOf('\n\n        function getParentDashboardStateMessage')
+        );
+        const registrationLoaderSource = html.slice(
+            html.indexOf('async function loadRegistrationApplications'),
+            html.indexOf('\n\n        function renderRegistrationApplications')
+        );
+
+        expect(initSource.match(/getParentDashboardData\(user\.uid\)/g)).toHaveLength(1);
+        expect(initSource.indexOf('renderPlayers(data.children, data.dashboardState || null);'))
+            .toBeLessThan(initSource.indexOf('loadRegistrationApplications(user, { reset: true });'));
+        expect(initSource).not.toContain('await loadRegistrationApplications(user, { reset: true });');
+        expect(registrationLoaderSource).not.toContain('getParentDashboardData');
+        expect(html).toContain("loadRegistrationApplications(currentUser);");
+    });
+
+    it('preserves the legacy createdAt submission date during enrichment', async () => {
+        const createdAt = buildTimestamp(1000);
+        const legacyRegistration = buildRegistrationDocument('legacy-created-at', 0, {
+            submittedAt: undefined,
+            createdAt
+        });
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [legacyRegistration]
+        });
+        const legacyCursor = {
+            legacy: {
+                active: true,
+                guardianEmail: null,
+                submittedByUserId: null
+            }
+        };
+
+        const page = await loadPage({ email: 'parent@example.com' }, { cursor: legacyCursor });
+
+        expect(page.applications[0].submittedAt).toBe(createdAt);
     });
 
     it('does not eagerly load full registration history as part of dashboard data', () => {

@@ -6145,7 +6145,7 @@ async function enrichParentRegistrationApplicationDocuments(registrationDocs = [
                 status: normalizeRegistrationStatus(registration.status),
                 statusLabel: formatParentRegistrationStatusLabel(registration.status),
                 selectedOptionLabel: selectedOption.title || selectedOption.label || '',
-                submittedAt: registration.submittedAt || null
+                submittedAt: registration.submittedAt || registration.createdAt || null
             },
             errors
         };

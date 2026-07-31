@@ -366,7 +366,7 @@ describe('parent scope normalization', () => {
         expect(result.children).toHaveLength(2);
     });
 
-    it('keeps players visible when the registration applications query fails (missing index)', async () => {
+    it('keeps registration history off the player dashboard bootstrap path', async () => {
         const getUserProfile = vi.fn().mockResolvedValue({
             parentOf: [
                 { teamId: 'team-active', playerId: 'player-active', teamName: 'Active Team', playerName: 'Avery Lee' }
@@ -404,11 +404,10 @@ describe('parent scope normalization', () => {
             getEvents: vi.fn().mockResolvedValue([])
         });
 
-        // Must not throw, and the player must still be returned.
         const result = await getParentDashboardData('parent-1');
 
-        expect(listParentRegistrationApplicationsForProfile).toHaveBeenCalled();
-        expect(result.registrationApplications).toEqual([]);
+        expect(listParentRegistrationApplicationsForProfile).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty('registrationApplications');
         expect(result.children).toEqual([
             {
                 teamId: 'team-active',

@@ -389,7 +389,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=130';
+        } from './js/db.js?v=131';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -456,6 +456,7 @@
         let registrationApplications = [];
         let registrationApplicationsCursor = null;
         let registrationApplicationRetryCursors = [];
+        let registrationApplicationsHasMore = false;
         let registrationApplicationsLoading = false;
         const certificatesByPlayerKey = new Map();
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
@@ -1553,12 +1554,12 @@
                     loadRequestAccessOptions(),
                     refreshParentMembershipRequestList(user.uid)
                 ]);
-                await loadRegistrationApplications(user, { reset: true });
                 familyShareChildren = data.children || [];
                 updateShareLinkControlsReady();
+                renderPlayers(data.children, data.dashboardState || null);
+                loadRegistrationApplications(user, { reset: true });
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
-                renderPlayers(data.children, data.dashboardState || null);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -2608,7 +2609,27 @@
                     || [application.teamId, application.formId, application.id].join('/');
                 applicationsByKey.set(key, application);
             });
-            return [...applicationsByKey.values()];
+            return [...applicationsByKey.values()].sort((a, b) => {
+                const getTimestampParts = (application) => {
+                    const submittedAt = application.submittedAt;
+                    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+                        return [submittedAt.seconds, submittedAt.nanoseconds];
+                    }
+                    const milliseconds = submittedAt?.toMillis
+                        ? submittedAt.toMillis()
+                        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+                    if (!Number.isFinite(milliseconds)) return [0, 0];
+                    const seconds = Math.floor(milliseconds / 1000);
+                    return [seconds, Math.floor((milliseconds - (seconds * 1000)) * 1000000)];
+                };
+                const [aSeconds, aNanoseconds] = getTimestampParts(a);
+                const [bSeconds, bNanoseconds] = getTimestampParts(b);
+                if (aSeconds !== bSeconds) return bSeconds - aSeconds;
+                if (aNanoseconds !== bNanoseconds) return bNanoseconds - aNanoseconds;
+                const aKey = a.registrationKey || [a.teamId, a.formId, a.id].join('/');
+                const bKey = b.registrationKey || [b.teamId, b.formId, b.id].join('/');
+                return bKey.localeCompare(aKey);
+            });
         }
 
         async function loadRegistrationApplications(user, { reset = false, retryCursor = undefined } = {}) {
@@ -2619,6 +2640,7 @@
                 registrationApplications = [];
                 registrationApplicationsCursor = null;
                 registrationApplicationRetryCursors = [];
+                registrationApplicationsHasMore = false;
             }
             const pageCursor = retryCursor === undefined
                 ? registrationApplicationsCursor
@@ -2635,6 +2657,7 @@
                 const hasRetryableError = page.errors.some((error) => error.retryable);
                 if (retryCursor === undefined) {
                     registrationApplicationsCursor = page.nextCursor;
+                    registrationApplicationsHasMore = page.hasMore;
                     if (hasRetryableError && !registrationApplicationRetryCursors.includes(pageCursor)) {
                         registrationApplicationRetryCursors.push(pageCursor);
                     }
@@ -2647,7 +2670,7 @@
                         .filter((cursor) => cursor !== retryCursor);
                 }
                 renderRegistrationApplications(registrationApplications, {
-                    hasMore: page.hasMore,
+                    hasMore: registrationApplicationsHasMore,
                     errors: page.errors,
                     canRetry: registrationApplicationRetryCursors.length > 0
                 });
@@ -2657,7 +2680,7 @@
                     registrationApplicationRetryCursors.push(pageCursor);
                 }
                 renderRegistrationApplications(registrationApplications, {
-                    hasMore: true,
+                    hasMore: registrationApplicationsHasMore,
                     errors: [{ message: 'Registration applications could not be loaded. Try again.' }],
                     canRetry: true
                 });
