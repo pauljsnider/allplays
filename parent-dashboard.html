@@ -435,6 +435,13 @@
         let allScheduleEvents = [];
         let currentUserId = null;
         let currentUser = null;
+        let registrationApplications = [];
+        let registrationNextCursor = null;
+        let registrationRetryCursor = null;
+        let registrationRetryAvailable = false;
+        let registrationErrors = [];
+        let registrationLoadInFlight = false;
+        let registrationUser = null;
         let allPracticePacketSessions = [];
         let practicePacketFilter = 'recent_upcoming';
         let scheduleViewFilter = 'upcoming-all';
@@ -2598,25 +2605,88 @@
         }
 
         async function loadInitialRegistrationApplications(user) {
+            registrationUser = user;
+            registrationApplications = [];
+            registrationNextCursor = null;
+            registrationRetryCursor = null;
+            registrationRetryAvailable = false;
+            registrationErrors = [];
+            await loadRegistrationApplicationsPage(null);
+        }
+
+        function getRegistrationApplicationKey(application = {}) {
+            return application.registrationKey || application.id || '';
+        }
+
+        function getRegistrationApplicationSubmittedAt(application = {}) {
+            const submittedAt = application.submittedAt;
+            if (typeof submittedAt?.toMillis === 'function') return submittedAt.toMillis();
+            if (Number.isFinite(submittedAt?.seconds)) {
+                return (submittedAt.seconds * 1000) + Math.floor((submittedAt.nanoseconds || 0) / 1000000);
+            }
+            const milliseconds = submittedAt ? new Date(submittedAt).getTime() : 0;
+            return Number.isFinite(milliseconds) ? milliseconds : 0;
+        }
+
+        function mergeRegistrationApplications(existing = [], incoming = []) {
+            const applicationsByKey = new Map();
+            [...existing, ...incoming].forEach((application) => {
+                const key = getRegistrationApplicationKey(application);
+                if (key) applicationsByKey.set(key, application);
+            });
+            return [...applicationsByKey.values()].sort((a, b) => {
+                const submittedAtDifference = getRegistrationApplicationSubmittedAt(b)
+                    - getRegistrationApplicationSubmittedAt(a);
+                if (submittedAtDifference !== 0) return submittedAtDifference;
+                return getRegistrationApplicationKey(b).localeCompare(getRegistrationApplicationKey(a));
+            });
+        }
+
+        async function loadRegistrationApplicationsPage(cursor) {
+            if (!registrationUser || registrationLoadInFlight) return;
+            registrationLoadInFlight = true;
+            renderRegistrationApplications(registrationApplications, registrationErrors, { loading: true });
             try {
-                const page = await listParentRegistrationApplicationsPage(user);
-                renderRegistrationApplications(page.applications, page.errors);
+                const page = await listParentRegistrationApplicationsPage(registrationUser, { cursor });
+                registrationApplications = mergeRegistrationApplications(
+                    registrationApplications,
+                    page.applications || []
+                );
+                registrationErrors = page.errors || [];
+                registrationRetryAvailable = registrationErrors.length > 0;
+                registrationRetryCursor = registrationRetryAvailable
+                    ? (page.retryCursor ?? cursor)
+                    : null;
+                registrationNextCursor = page.nextCursor || null;
             } catch (error) {
                 console.warn('[parent-dashboard] Failed to load registration applications:', error);
-                renderRegistrationApplications([], [{
-                    message: 'Registration applications could not be loaded. Retry by refreshing this page.'
-                }]);
+                registrationErrors = [{
+                    message: 'Registration applications could not be loaded. Retry this registration page.'
+                }];
+                registrationRetryAvailable = true;
+                registrationRetryCursor = cursor;
+            } finally {
+                registrationLoadInFlight = false;
+                renderRegistrationApplications(registrationApplications, registrationErrors);
             }
         }
 
-        function renderRegistrationApplications(applications, errors = []) {
+        function renderRegistrationApplications(applications, errors = [], options = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
             const errorHtml = errors.length > 0
-                ? `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">${escapeHtml(errors[0].message || 'Registration applications could not be loaded.')}</div>`
+                ? `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <div>${escapeHtml(errors[0].message || 'Registration applications could not be loaded.')}</div>
+                    <button type="button" id="registration-retry-btn" class="mt-2 font-semibold underline disabled:opacity-60" ${options.loading ? 'disabled' : ''}>${options.loading ? 'Retrying...' : 'Retry'}</button>
+                </div>`
                 : '';
             if (!applications || applications.length === 0) {
-                container.innerHTML = errorHtml || `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
+                container.innerHTML = errorHtml || (options.loading
+                    ? `<div class="text-xs text-gray-500">Loading applications...</div>`
+                    : `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`);
+                document.getElementById('registration-retry-btn')?.addEventListener('click', () => {
+                    void loadRegistrationApplicationsPage(registrationRetryCursor);
+                });
                 return;
             }
 
@@ -2630,7 +2700,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = errorHtml + applications.map((application) => {
+            const applicationsHtml = applications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
@@ -2651,6 +2721,16 @@
                     </div>
                 `;
             }).join('');
+            const loadMoreHtml = !registrationRetryAvailable && registrationNextCursor
+                ? `<button type="button" id="registration-load-more-btn" class="w-full rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-60" ${options.loading ? 'disabled' : ''}>${options.loading ? 'Loading...' : 'Load more'}</button>`
+                : '';
+            container.innerHTML = errorHtml + applicationsHtml + loadMoreHtml;
+            document.getElementById('registration-retry-btn')?.addEventListener('click', () => {
+                void loadRegistrationApplicationsPage(registrationRetryCursor);
+            });
+            document.getElementById('registration-load-more-btn')?.addEventListener('click', () => {
+                void loadRegistrationApplicationsPage(registrationNextCursor);
+            });
         }
 
         function renderPlayers(children, dashboardState = null) {
