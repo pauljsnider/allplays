@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Loader2, Mail, RefreshCw } from 'lucide-react';
 import {
   loadSentTeamEmails,
@@ -100,7 +100,7 @@ export default function TeamEmailSheet({
   const selectedMemberAudience = emailAudienceMetadata.targetType === 'individuals'
     || (isDefaultTeamConversation(selectedConversationId) && selectedRecipientTarget === 'individuals');
 
-  const reloadSentEmailHistory = async ({ suppressErrorStatus = false } = {}) => {
+  const reloadSentEmailHistory = useCallback(async ({ suppressErrorStatus = false } = {}) => {
     setEmailLoadingHistory(true);
     try {
       setSentEmails(await loadSentTeamEmails(teamId, { limit: 25 }));
@@ -112,9 +112,9 @@ export default function TeamEmailSheet({
     } finally {
       setEmailLoadingHistory(false);
     }
-  };
+  }, [teamId]);
 
-  const reloadEmailTemplates = async ({ suppressErrorStatus = false } = {}) => {
+  const reloadEmailTemplates = useCallback(async ({ suppressErrorStatus = false } = {}) => {
     setEmailLoadingTemplates(true);
     try {
       emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));
@@ -128,9 +128,9 @@ export default function TeamEmailSheet({
     } finally {
       setEmailLoadingTemplates(false);
     }
-  };
+  }, [teamId]);
 
-  const reloadEmailDrafts = async ({ suppressErrorStatus = false } = {}) => {
+  const reloadEmailDrafts = useCallback(async ({ suppressErrorStatus = false } = {}) => {
     setEmailLoadingDrafts(true);
     try {
       emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));
@@ -144,7 +144,7 @@ export default function TeamEmailSheet({
     } finally {
       setEmailLoadingDrafts(false);
     }
-  };
+  }, [teamId]);
 
   useEffect(() => {
     if (!open) {
@@ -164,7 +164,7 @@ export default function TeamEmailSheet({
     void reloadEmailDrafts();
     void reloadEmailTemplates();
     void reloadSentEmailHistory();
-  }, [ensureRecipientOptionsLoaded, open, teamId]);
+  }, [ensureRecipientOptionsLoaded, open, reloadEmailDrafts, reloadEmailTemplates, reloadSentEmailHistory, teamId]);
 
   const handleApplyEmailDraft = (draftId: string) => {
     const draft = emailState.drafts.find((item) => item.id === draftId);

@@ -173,6 +173,24 @@ describe('TeamEmailSheet compose-first workflow', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('Practice starts at six.');
   });
 
+  it('loads email data once per team while the sheet stays open', async () => {
+    const view = renderTeamEmailSheet();
+
+    await waitFor(() => expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1));
+    expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
+    expect(chatServiceMocks.loadSentTeamEmails).toHaveBeenCalledTimes(1);
+
+    view.rerender(<TeamEmailSheet {...view.props} profile={{ fullName: 'Coach One' }} />);
+    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
+    expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
+    expect(chatServiceMocks.loadSentTeamEmails).toHaveBeenCalledTimes(1);
+
+    view.rerender(<TeamEmailSheet {...view.props} teamId="team-2" />);
+    await waitFor(() => expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2'));
+    expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenLastCalledWith('team-2');
+    expect(chatServiceMocks.loadSentTeamEmails).toHaveBeenLastCalledWith('team-2', { limit: 25 });
+  });
+
   it.each([
     ['full team', 'full_team', [], 'full_team', []],
     ['selected members', 'individuals', ['user:parent-1'], 'individuals', ['user:parent-1']]
