@@ -82,8 +82,12 @@ function parseHstsDirectives(value) {
     const directives = new Map();
     for (const directive of value.split(';').map((part) => part.trim()).filter(Boolean)) {
         const [name, ...rest] = directive.split('=');
+        const normalizedName = name.toLowerCase();
+        if (directives.has(normalizedName)) {
+            throw new Error(`duplicate directive "${normalizedName}"`);
+        }
         directives.set(
-            name.toLowerCase(),
+            normalizedName,
             rest.length > 0 ? rest.join('=').trim().toLowerCase() : true
         );
     }
@@ -91,7 +95,15 @@ function parseHstsDirectives(value) {
 }
 
 function validateHstsHeader(url, observed, expected) {
-    const observedDirectives = parseHstsDirectives(observed);
+    let observedDirectives;
+    try {
+        observedDirectives = parseHstsDirectives(observed);
+    } catch (error) {
+        fail(
+            url,
+            `header "Strict-Transport-Security" rejected ${error.message} in observed "${observed}"`
+        );
+    }
     const expectedDirectives = parseHstsDirectives(expected);
     const observedMaxAgeValue = observedDirectives.get('max-age');
     const expectedMaxAgeValue = expectedDirectives.get('max-age');
