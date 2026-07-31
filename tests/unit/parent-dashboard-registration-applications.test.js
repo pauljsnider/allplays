@@ -90,7 +90,7 @@ function buildListParentRegistrationApplicationsForProfile({
     submitterPages
 }) {
     const dbSource = readRepoFile('js/db.js');
-    const start = dbSource.indexOf('async function listAllParentRegistrationIdentityPages');
+    const start = dbSource.indexOf('async function listParentRegistrationApplicationsForProfile');
     const end = dbSource.indexOf('\nexport async function getParentDashboardData', start);
     const functionSource = dbSource.slice(start, end)
         .replace(
@@ -152,7 +152,7 @@ describe('parent dashboard registration application statuses', () => {
     it.each([
         ['guardian email', 'listParentRegistrationsByGuardianEmailPage', ' Parent@Example.com ', 'guardian.email', 'parent@example.com'],
         ['submitter uid', 'listParentRegistrationsBySubmitterUidPage', ' user-1 ', 'submittedByUserId', 'user-1']
-    ])('builds a bounded submittedAt-descending %s query', async (
+    ])('builds a bounded document-path page for %s without excluding missing submittedAt fields', async (
         _identity,
         helperName,
         identityValue,
@@ -164,8 +164,9 @@ describe('parent dashboard registration application statuses', () => {
         await loadPage(identityValue);
 
         expect(dependencies.where).toHaveBeenCalledWith(expectedFieldPath, '==', expectedValue);
-        expect(dependencies.orderBy).toHaveBeenNthCalledWith(1, 'submittedAt', 'desc');
-        expect(dependencies.orderBy).toHaveBeenNthCalledWith(2, '__name__', 'desc');
+        expect(dependencies.orderBy).toHaveBeenCalledOnce();
+        expect(dependencies.orderBy).toHaveBeenCalledWith('__name__', 'asc');
+        expect(dependencies.orderBy).not.toHaveBeenCalledWith('submittedAt', expect.anything());
         expect(dependencies.limit).toHaveBeenCalledWith(10);
         expect(dependencies.startAfter).not.toHaveBeenCalled();
         expect(dependencies.query).toHaveBeenCalledTimes(1);
@@ -189,29 +190,16 @@ describe('parent dashboard registration application statuses', () => {
         expect(page.hasMore).toBe(false);
     });
 
-    it('declares collection-group indexes for both bounded identity queries', () => {
-        const indexes = JSON.parse(readRepoFile('firestore.indexes.json')).indexes;
-        const registrationIndexes = indexes.filter((index) =>
-            index.collectionGroup === 'registrations'
-            && index.queryScope === 'COLLECTION_GROUP'
-        );
+    it('returns a legacy registration omitted by a Firestore submittedAt orderBy', async () => {
+        const legacyDocument = buildRegistrationDocument('legacy', 0, { submittedAt: undefined });
+        const { listParentRegistrationsByGuardianEmailPage, dependencies } = buildParentRegistrationIdentityQueryHelpers({
+            docs: [legacyDocument]
+        });
 
-        expect(registrationIndexes).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                fields: [
-                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
-                    { fieldPath: '__name__', order: 'DESCENDING' }
-                ]
-            }),
-            expect.objectContaining({
-                fields: [
-                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
-                    { fieldPath: '__name__', order: 'DESCENDING' }
-                ]
-            })
-        ]));
+        const page = await listParentRegistrationsByGuardianEmailPage('parent@example.com');
+
+        expect(page.docs).toEqual([legacyDocument]);
+        expect(dependencies.orderBy).not.toHaveBeenCalledWith('submittedAt', expect.anything());
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -222,10 +210,10 @@ describe('parent dashboard registration application statuses', () => {
         const functionSource = db.slice(functionStart, functionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(functionSource).toContain('listParentRegistrationsByGuardianEmailPage(email, cursor)');
-        expect(functionSource).toContain('listParentRegistrationsBySubmitterUidPage(userId, cursor)');
+        expect(functionSource).toContain('listParentRegistrationsByGuardianEmailPage(email)');
+        expect(functionSource).toContain('listParentRegistrationsBySubmitterUidPage(userId)');
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
-        expect(functionSource).toContain('listAllParentRegistrationIdentityPages(loadPage)');
+        expect(functionSource).toContain('snapshot: await loadPage()');
         expect(db).toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
@@ -313,28 +301,40 @@ describe('parent dashboard registration application statuses', () => {
         expect(applications.map((application) => application.id)).toEqual(
             ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
-        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenCalledWith('parent@example.com', null);
-        expect(dependencies.listParentRegistrationsBySubmitterUidPage).toHaveBeenCalledWith('parent-1', null);
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenCalledWith('parent@example.com');
+        expect(dependencies.listParentRegistrationsBySubmitterUidPage).toHaveBeenCalledWith('parent-1');
     });
 
-    it('assembles registration applications from every bounded identity page', async () => {
-        const newest = buildRegistrationDocument('newest', 300, { programName: 'Spring Soccer' });
-        const guardianCursor = buildRegistrationDocument('guardian-cursor', 200, { programName: 'Spring Soccer' });
-        const oldest = buildRegistrationDocument('oldest', 100, { programName: 'Spring Soccer' });
+    it('limits initial assembly to one fixed-cardinality page per identity', async () => {
+        const guardianDocuments = Array.from({ length: 10 }, (_, index) =>
+            buildRegistrationDocument(`guardian-${index}`, 200 - index, { programName: 'Spring Soccer' })
+        );
+        const submitterDocuments = Array.from({ length: 10 }, (_, index) =>
+            buildRegistrationDocument(`submitter-${index}`, 100 - index, { programName: 'Spring Soccer' })
+        );
+        const nextGuardianDocument = buildRegistrationDocument('next-guardian-page', 2, { programName: 'Spring Soccer' });
+        const nextSubmitterDocument = buildRegistrationDocument('next-submitter-page', 1, { programName: 'Spring Soccer' });
         const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
-            registration: newest.data(),
+            registration: guardianDocuments[0].data(),
             guardianPages: [
-                { docs: [newest, guardianCursor], hasMore: true, nextCursor: guardianCursor },
-                { docs: [oldest], hasMore: false, nextCursor: oldest }
+                { docs: guardianDocuments, hasMore: true, nextCursor: guardianDocuments[9] },
+                { docs: [nextGuardianDocument], hasMore: false, nextCursor: nextGuardianDocument }
             ],
-            submitterPages: []
+            submitterPages: [
+                { docs: submitterDocuments, hasMore: true, nextCursor: submitterDocuments[9] },
+                { docs: [nextSubmitterDocument], hasMore: false, nextCursor: nextSubmitterDocument }
+            ]
         });
 
-        const applications = await listApplications({ email: 'parent@example.com' });
+        const applications = await listApplications({ id: 'parent-1', email: 'parent@example.com' });
 
-        expect(applications.map((application) => application.id)).toEqual(['newest', 'guardian-cursor', 'oldest']);
-        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenNthCalledWith(1, 'parent@example.com', null);
-        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenNthCalledWith(2, 'parent@example.com', guardianCursor);
+        expect(applications).toHaveLength(20);
+        expect(applications.map((application) => application.id)).not.toContain('next-guardian-page');
+        expect(applications.map((application) => application.id)).not.toContain('next-submitter-page');
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenCalledOnce();
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenCalledWith('parent@example.com');
+        expect(dependencies.listParentRegistrationsBySubmitterUidPage).toHaveBeenCalledOnce();
+        expect(dependencies.listParentRegistrationsBySubmitterUidPage).toHaveBeenCalledWith('parent-1');
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {

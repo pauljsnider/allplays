@@ -6045,8 +6045,7 @@ export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
 async function listParentRegistrationsByIdentityPage(fieldPath, identityValue, previousCursor = null) {
     const constraints = [
         where(fieldPath, '==', identityValue),
-        orderBy('submittedAt', 'desc'),
-        orderBy(documentId(), 'desc')
+        orderBy(documentId(), 'asc')
     ];
     if (previousCursor) constraints.push(startAfter(previousCursor));
     constraints.push(limit(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
@@ -6135,20 +6134,6 @@ export function mergeParentRegistrationQueryResults(querySnapshots = []) {
     return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
 }
 
-async function listAllParentRegistrationIdentityPages(loadPage) {
-    const docs = [];
-    let cursor = null;
-
-    while (true) {
-        const page = await loadPage(cursor);
-        docs.push(...(page.docs || []));
-        if (!page.hasMore || !page.nextCursor || page.nextCursor === cursor) break;
-        cursor = page.nextCursor;
-    }
-
-    return { docs };
-}
-
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
@@ -6156,15 +6141,15 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
 
     const registrationLookups = [];
     if (email) {
-        registrationLookups.push((cursor) => listParentRegistrationsByGuardianEmailPage(email, cursor));
+        registrationLookups.push(() => listParentRegistrationsByGuardianEmailPage(email));
     }
     if (userId) {
-        registrationLookups.push((cursor) => listParentRegistrationsBySubmitterUidPage(userId, cursor));
+        registrationLookups.push(() => listParentRegistrationsBySubmitterUidPage(userId));
     }
 
     const queryResults = await Promise.all(registrationLookups.map(async (loadPage) => {
         try {
-            return { snapshot: await listAllParentRegistrationIdentityPages(loadPage), error: null };
+            return { snapshot: await loadPage(), error: null };
         } catch (error) {
             return { snapshot: null, error };
         }
