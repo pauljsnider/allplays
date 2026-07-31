@@ -51,18 +51,18 @@ function buildListParentRegistrationApplicationsForProfile({
     return { listApplications, getDoc };
 }
 
-function buildRegistrationDocument(id, submittedAt, overrides = {}) {
+function buildRegistrationDocument(id, submittedAt, overrides = {}, refPath = '') {
     const registration = {
         teamId: `team-${id}`,
         formId: `form-${id}`,
         programName: `Program ${id}`,
         status: 'pending',
-        submittedAt: { toMillis: () => submittedAt },
+        submittedAt: typeof submittedAt === 'number' ? { toMillis: () => submittedAt } : submittedAt,
         ...overrides
     };
     return {
         id,
-        ref: { path: `teams/${registration.teamId}/registrationForms/${registration.formId}/registrations/${id}` },
+        ref: { path: refPath || `teams/${registration.teamId}/registrationForms/${registration.formId}/registrations/${id}` },
         data: () => registration
     };
 }
@@ -98,7 +98,9 @@ function buildParentRegistrationApplicationsPageLoader({
         if (identity === failIdentity) throw new Error(`${identity} failed`);
         const source = identity === 'guardian-email' ? guardianDocuments : submitterDocuments;
         const queryLimit = queryParts.find((part) => part?.type === 'limit')?.value;
-        return { docs: source.slice(0, queryLimit) };
+        const queryCursor = queryParts.find((part) => part?.type === 'startAfter')?.cursor;
+        const startIndex = queryCursor ? source.indexOf(queryCursor) + 1 : 0;
+        return { docs: source.slice(startIndex, startIndex + queryLimit) };
     });
     const getTeam = vi.fn(getTeamImplementation);
     const getDoc = vi.fn(getDocImplementation);
@@ -133,7 +135,14 @@ function buildParentRegistrationApplicationsPageLoader({
 
 function buildParentDashboardData({
     userProfile = { id: 'user-1', email: 'parent@example.com', parentOf: [] },
-    registrationPage = { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] }
+    registrationPage = { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] },
+    normalizedParentScope = {
+        activeLinks: [],
+        blockedLinkCount: 0,
+        staleLinkCount: 0,
+        parentTeamIds: [],
+        parentPlayerKeys: []
+    }
 } = {}) {
     const dbSource = readRepoFile('js/db.js');
     const start = dbSource.indexOf('export async function getParentDashboardData');
@@ -150,8 +159,8 @@ function buildParentDashboardData({
         mergeApprovedParentMembershipRequests: vi.fn().mockReturnValue({ changed: false }),
         updateUserProfile: vi.fn(),
         listParentRegistrationApplicationsPage,
-        normalizeParentScopeLinks: vi.fn(),
-        getEvents: vi.fn()
+        normalizeParentScopeLinks: vi.fn().mockResolvedValue(normalizedParentScope),
+        getEvents: vi.fn().mockResolvedValue([])
     };
     const dependencyNames = Object.keys(dependencies);
     const getParentDashboardData = new Function(...dependencyNames, functionSource)(
@@ -166,11 +175,13 @@ describe('parent dashboard registration application statuses', () => {
         const html = readRepoFile('parent-dashboard.html');
 
         expect(html).toContain('id="registration-applications-list"');
-        expect(html).toContain('renderRegistrationApplications(data.registrationApplications || [])');
+        expect(html).toContain('registrationApplications = data.registrationApplications || []');
+        expect(html).toContain('loadMoreRegistrationApplications');
+        expect(html).toContain('retryRegistrationApplications');
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=129';");
+        expect(html).toContain("from './js/db.js?v=130';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -263,6 +274,105 @@ describe('parent dashboard registration application statuses', () => {
             expect.objectContaining({ id: 'user-1', email: 'parent@example.com' })
         );
         expect(dashboard.registrationApplications).toBe(registrationApplications);
+        expect(dashboard.registrationApplicationsPage).toEqual({
+            applications: registrationApplications,
+            nextCursor: null,
+            retryCursor: null,
+            hasMore: false,
+            errors: []
+        });
+    });
+
+    it('wires pagination and partial failures through both parent dashboard branches', async () => {
+        const registrationPage = {
+            applications: [{ id: 'registration-1' }],
+            nextCursor: { guardianEmail: { id: 'registration-1' } },
+            retryCursor: {},
+            hasMore: true,
+            errors: [{ code: 'parent-registration-query-failed', retryable: true }]
+        };
+        const withoutLinks = buildParentDashboardData({ registrationPage });
+        const withoutLinksDashboard = await withoutLinks.getParentDashboardData('user-1');
+
+        expect(withoutLinksDashboard.registrationApplicationsPage).toBe(registrationPage);
+
+        const withLinks = buildParentDashboardData({
+            userProfile: {
+                id: 'user-1',
+                email: 'parent@example.com',
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::player-1']
+            },
+            registrationPage,
+            normalizedParentScope: {
+                activeLinks: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Player One' }],
+                blockedLinkCount: 0,
+                staleLinkCount: 0,
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::player-1']
+            }
+        });
+        const withLinksDashboard = await withLinks.getParentDashboardData('user-1');
+
+        expect(withLinksDashboard.registrationApplicationsPage).toBe(registrationPage);
+        expect(withLinksDashboard.registrationApplications).toBe(registrationPage.applications);
+    });
+
+    it('paginates beyond ten applications without repeating the first page', async () => {
+        const documents = Array.from({ length: 11 }, (_, index) => (
+            buildRegistrationDocument(`registration-${index}`, 100 - index)
+        ));
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: documents,
+            pageSize: 10
+        });
+
+        const firstPage = await loadPage({ email: 'parent@example.com' });
+        const secondPage = await loadPage(
+            { email: 'parent@example.com' },
+            { cursor: firstPage.nextCursor }
+        );
+
+        expect(firstPage.applications).toHaveLength(10);
+        expect(firstPage.hasMore).toBe(true);
+        expect(secondPage.applications.map((application) => application.id)).toEqual(['registration-10']);
+        expect(secondPage.hasMore).toBe(false);
+    });
+
+    it('uses nanosecond and Firestore byte ordering when advancing mixed-case tied cursors', async () => {
+        const newerLowercase = buildRegistrationDocument(
+            'a',
+            { seconds: 10, nanoseconds: 2, toMillis: () => 10000 },
+            {},
+            'teams/team/registrationForms/form/registrations/a'
+        );
+        const newerUppercase = buildRegistrationDocument(
+            'Z',
+            { seconds: 10, nanoseconds: 2, toMillis: () => 10000 },
+            {},
+            'teams/team/registrationForms/form/registrations/Z'
+        );
+        const olderNanosecond = buildRegistrationDocument(
+            'z',
+            { seconds: 10, nanoseconds: 1, toMillis: () => 10000 },
+            {},
+            'teams/team/registrationForms/form/registrations/z'
+        );
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [newerLowercase, newerUppercase, olderNanosecond],
+            submitterDocuments: [newerUppercase, olderNanosecond],
+            pageSize: 2
+        });
+
+        const firstPage = await loadPage({ email: 'parent@example.com', uid: 'user-1' });
+        const secondPage = await loadPage(
+            { email: 'parent@example.com', uid: 'user-1' },
+            { cursor: firstPage.nextCursor }
+        );
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual(['a', 'Z']);
+        expect(secondPage.applications.map((application) => application.id)).toEqual(['z']);
     });
 
     it('preserves the successful identity query and reports the failed query as retryable', async () => {

@@ -353,6 +353,7 @@
     <script type="module">
         import {
             getParentDashboardData,
+            listParentRegistrationApplicationsPage,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -388,7 +389,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=129';
+        } from './js/db.js?v=130';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -1553,7 +1554,15 @@
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children, data.dashboardState || null);
-                renderRegistrationApplications(data.registrationApplications || []);
+                registrationApplications = data.registrationApplications || [];
+                registrationApplicationsPage = data.registrationApplicationsPage || {
+                    applications: registrationApplications,
+                    nextCursor: null,
+                    retryCursor: null,
+                    hasMore: false,
+                    errors: []
+                };
+                renderRegistrationApplications();
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -2596,10 +2605,64 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
-        function renderRegistrationApplications(applications) {
+        let registrationApplications = [];
+        let registrationApplicationsPage = {
+            applications: [],
+            nextCursor: null,
+            retryCursor: null,
+            hasMore: false,
+            errors: []
+        };
+        let registrationApplicationsLoading = false;
+
+        async function loadRegistrationApplicationsPage(cursor) {
+            if (registrationApplicationsLoading || !currentUser) return;
+            registrationApplicationsLoading = true;
+            renderRegistrationApplications();
+            try {
+                const page = await listParentRegistrationApplicationsPage({
+                    uid: currentUser.uid,
+                    email: currentUser.email || ''
+                }, { cursor });
+                const applicationsByKey = new Map(registrationApplications.map((application) => [
+                    application.registrationKey || application.id,
+                    application
+                ]));
+                page.applications.forEach((application) => {
+                    applicationsByKey.set(application.registrationKey || application.id, application);
+                });
+                registrationApplications = [...applicationsByKey.values()];
+                registrationApplicationsPage = page;
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load another registration page:', error);
+                registrationApplicationsPage = {
+                    ...registrationApplicationsPage,
+                    retryCursor: cursor || {},
+                    errors: [{
+                        message: 'Some registration applications could not be loaded. Retry this registration page.',
+                        retryable: true
+                    }]
+                };
+            } finally {
+                registrationApplicationsLoading = false;
+                renderRegistrationApplications();
+            }
+        }
+
+        window.loadMoreRegistrationApplications = () => {
+            if (registrationApplicationsPage.nextCursor) {
+                loadRegistrationApplicationsPage(registrationApplicationsPage.nextCursor);
+            }
+        };
+        window.retryRegistrationApplications = () => {
+            loadRegistrationApplicationsPage(registrationApplicationsPage.retryCursor || {});
+        };
+
+        function renderRegistrationApplications() {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
-            if (!applications || applications.length === 0) {
+            const errors = registrationApplicationsPage.errors || [];
+            if (registrationApplications.length === 0 && errors.length === 0) {
                 container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
                 return;
             }
@@ -2614,7 +2677,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = applications.map((application) => {
+            const applicationsHtml = registrationApplications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
@@ -2635,6 +2698,20 @@
                     </div>
                 `;
             }).join('');
+            const errorHtml = errors.length > 0
+                ? `<div class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <div>${escapeHtml(errors[0].message || 'Some registration applications could not be loaded.')}</div>
+                    <button type="button" onclick="retryRegistrationApplications()" class="mt-2 font-semibold underline" ${registrationApplicationsLoading ? 'disabled' : ''}>
+                        ${registrationApplicationsLoading ? 'Retrying...' : 'Try again'}
+                    </button>
+                </div>`
+                : '';
+            const loadMoreHtml = registrationApplicationsPage.hasMore && errors.length === 0
+                ? `<button type="button" onclick="loadMoreRegistrationApplications()" class="w-full rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100" ${registrationApplicationsLoading ? 'disabled' : ''}>
+                    ${registrationApplicationsLoading ? 'Loading...' : 'Load more applications'}
+                </button>`
+                : '';
+            container.innerHTML = `${applicationsHtml}${errorHtml}${loadMoreHtml}`;
         }
 
         function renderPlayers(children, dashboardState = null) {

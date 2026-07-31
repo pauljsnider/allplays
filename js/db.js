@@ -6047,17 +6047,55 @@ function getParentRegistrationDocumentKey(registrationDoc) {
     return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
 }
 
-function getParentRegistrationSubmittedAtMillis(registrationDoc) {
+function getParentRegistrationSubmittedAtParts(registrationDoc) {
     const submittedAt = registrationDoc.data()?.submittedAt;
-    if (submittedAt?.toMillis) return submittedAt.toMillis();
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+    if (submittedAt?.toMillis) {
+        const millis = submittedAt.toMillis();
+        const seconds = Math.floor(millis / 1000);
+        return {
+            seconds,
+            nanoseconds: Math.floor((millis - (seconds * 1000)) * 1e6)
+        };
+    }
     const parsed = submittedAt ? new Date(submittedAt).getTime() : 0;
-    return Number.isFinite(parsed) ? parsed : 0;
+    const millis = Number.isFinite(parsed) ? parsed : 0;
+    const seconds = Math.floor(millis / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((millis - (seconds * 1000)) * 1e6)
+    };
+}
+
+function compareFirestoreDocumentPaths(a, b) {
+    const aBytes = new TextEncoder().encode(a);
+    const bBytes = new TextEncoder().encode(b);
+    const sharedLength = Math.min(aBytes.length, bBytes.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+        if (aBytes[index] !== bBytes[index]) return aBytes[index] < bBytes[index] ? -1 : 1;
+    }
+    if (aBytes.length === bBytes.length) return 0;
+    return aBytes.length < bBytes.length ? -1 : 1;
 }
 
 function compareParentRegistrationDocuments(a, b) {
-    const submittedAtDifference = getParentRegistrationSubmittedAtMillis(b) - getParentRegistrationSubmittedAtMillis(a);
-    if (submittedAtDifference !== 0) return submittedAtDifference;
-    return getParentRegistrationDocumentKey(b).localeCompare(getParentRegistrationDocumentKey(a));
+    const aSubmittedAt = getParentRegistrationSubmittedAtParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return aSubmittedAt.seconds < bSubmittedAt.seconds ? 1 : -1;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return aSubmittedAt.nanoseconds < bSubmittedAt.nanoseconds ? 1 : -1;
+    }
+    return compareFirestoreDocumentPaths(
+        getParentRegistrationDocumentKey(b),
+        getParentRegistrationDocumentKey(a)
+    );
 }
 
 function buildParentRegistrationError(kind, identity) {
@@ -6337,6 +6375,23 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
 }
 
 export async function getParentDashboardData(userId) {
+    const createRegistrationApplicationsPage = () => ({
+        applications: [],
+        nextCursor: null,
+        retryCursor: null,
+        hasMore: false,
+        errors: []
+    });
+    const createFailedRegistrationApplicationsPage = () => ({
+        ...createRegistrationApplicationsPage(),
+        retryCursor: {},
+        errors: [{
+            code: 'parent-registration-query-failed',
+            identity: 'dashboard',
+            retryable: true,
+            message: 'Some registration applications could not be loaded. Retry this registration page.'
+        }]
+    });
     const userProfile = (await getUserProfile(userId)) || {};
 
     try {
@@ -6353,17 +6408,18 @@ export async function getParentDashboardData(userId) {
     if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
         // A registration-applications failure (e.g. a missing collection-group
         // index) must never crash the dashboard, so degrade to an empty list.
-        let registrationApplications = [];
+        let registrationApplicationsPage = createRegistrationApplicationsPage();
         try {
-            const registrationPage = await listParentRegistrationApplicationsPage(userProfile || {});
-            registrationApplications = registrationPage.applications;
+            registrationApplicationsPage = await listParentRegistrationApplicationsPage(userProfile || {});
         } catch (error) {
             console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
+            registrationApplicationsPage = createFailedRegistrationApplicationsPage();
         }
         return {
             upcomingGames: [],
             children: [],
-            registrationApplications,
+            registrationApplications: registrationApplicationsPage.applications,
+            registrationApplicationsPage,
             dashboardState: {
                 kind: 'no-links',
                 blockedLinkCount: 0,
@@ -6454,12 +6510,12 @@ export async function getParentDashboardData(userId) {
     // The parent's players are already loaded above. A registration-applications
     // failure (e.g. a missing collection-group index) must never propagate and
     // hide those players, so degrade to an empty list instead.
-    let registrationApplications = [];
+    let registrationApplicationsPage = createRegistrationApplicationsPage();
     try {
-        const registrationPage = await listParentRegistrationApplicationsPage(userProfile);
-        registrationApplications = registrationPage.applications;
+        registrationApplicationsPage = await listParentRegistrationApplicationsPage(userProfile);
     } catch (error) {
         console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
+        registrationApplicationsPage = createFailedRegistrationApplicationsPage();
     }
 
     if (activeChildren.length === 0) {
@@ -6474,7 +6530,13 @@ export async function getParentDashboardData(userId) {
         dashboardState.kind = 'degraded';
     }
 
-    return { upcomingGames, children: activeChildren, registrationApplications, dashboardState };
+    return {
+        upcomingGames,
+        children: activeChildren,
+        registrationApplications: registrationApplicationsPage.applications,
+        registrationApplicationsPage,
+        dashboardState
+    };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
