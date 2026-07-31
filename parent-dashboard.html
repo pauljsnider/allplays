@@ -2600,6 +2600,16 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
+        function mergeRegistrationApplicationPages(currentApplications = [], nextApplications = []) {
+            const applicationsByKey = new Map();
+            [...currentApplications, ...nextApplications].forEach((application) => {
+                const key = application.registrationKey
+                    || [application.teamId, application.formId, application.id].join('/');
+                applicationsByKey.set(key, application);
+            });
+            return [...applicationsByKey.values()];
+        }
+
         async function loadRegistrationApplications(user, { reset = false } = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container || registrationApplicationsLoading) return;
@@ -2613,7 +2623,10 @@
                 const page = await listParentRegistrationApplicationsPage(user, {
                     cursor: registrationApplicationsCursor
                 });
-                registrationApplications = [...registrationApplications, ...page.applications];
+                registrationApplications = mergeRegistrationApplicationPages(
+                    registrationApplications,
+                    page.applications
+                );
                 registrationApplicationsCursor = page.nextCursor;
                 renderRegistrationApplications(registrationApplications, {
                     hasMore: page.hasMore,
