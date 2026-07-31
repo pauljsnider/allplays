@@ -6040,6 +6040,36 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
+
+async function queryRegistrationIdentityPage(fieldPath, value, previousCursor = null) {
+    const constraints = [
+        where(fieldPath, '==', value),
+        orderBy('submittedAt', 'desc'),
+        orderBy(documentId(), 'desc')
+    ];
+    if (previousCursor) constraints.push(startAfterQuery(previousCursor));
+    constraints.push(limitQuery(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
+
+    const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
+    return {
+        snapshot,
+        cursor: snapshot.docs.at(-1) || null
+    };
+}
+
+export async function queryRegistrationsByGuardianEmail(email, previousCursor = null) {
+    const normalizedEmail = normalizeParentRegistrationEmail(email);
+    if (!normalizedEmail) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('guardian.email', normalizedEmail, previousCursor);
+}
+
+export async function queryRegistrationsBySubmitterUid(userId, previousCursor = null) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('submittedByUserId', normalizedUserId, previousCursor);
+}
+
 function getParentRegistrationDocumentKey(registrationDoc) {
     const registrationData = registrationDoc.data() || {};
     return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
@@ -6100,23 +6130,18 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const registrationQueryLoaders = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationQueryLoaders.push(() => queryRegistrationsByGuardianEmail(email));
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationQueryLoaders.push(() => queryRegistrationsBySubmitterUid(userId));
     }
 
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+    const queryResults = await Promise.all(registrationQueryLoaders.map(async (loadRegistrationPage) => {
         try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
+            const page = await loadRegistrationPage();
+            return { snapshot: page.snapshot, error: null };
         } catch (error) {
             return { snapshot: null, error };
         }

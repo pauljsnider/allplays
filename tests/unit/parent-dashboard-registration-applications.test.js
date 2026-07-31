@@ -41,6 +41,35 @@ function buildMergeParentRegistrationQueryResults() {
     return new Function(functionSource)();
 }
 
+function buildRegistrationIdentityQueryHelpers(getDocs) {
+    const dbSource = readRepoFile('js/db.js');
+    const start = dbSource.indexOf('export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT');
+    const end = dbSource.indexOf('\nfunction getParentRegistrationDocumentKey', start);
+    const functionSource = `${dbSource.slice(start, end)
+        .replace('export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT', 'const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT')
+        .replace('export async function queryRegistrationsByGuardianEmail', 'async function queryRegistrationsByGuardianEmail')
+        .replace('export async function queryRegistrationsBySubmitterUid', 'async function queryRegistrationsBySubmitterUid')}
+return { queryRegistrationsByGuardianEmail, queryRegistrationsBySubmitterUid };`;
+    const dependencies = {
+        normalizeParentRegistrationEmail: (value = '') => String(value || '').trim().toLowerCase(),
+        where: vi.fn((fieldPath, operator, value) => ({ type: 'where', fieldPath, operator, value })),
+        orderBy: vi.fn((fieldPath, direction) => ({ type: 'orderBy', fieldPath, direction })),
+        documentId: vi.fn(() => '__name__'),
+        startAfterQuery: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
+        limitQuery: vi.fn((value) => ({ type: 'limit', value })),
+        getDocs,
+        query: vi.fn((...parts) => parts),
+        collectionGroup: vi.fn(() => ({ type: 'collectionGroup' })),
+        db: {}
+    };
+    const dependencyNames = Object.keys(dependencies);
+    const helpers = new Function(...dependencyNames, functionSource)(
+        ...dependencyNames.map((name) => dependencies[name])
+    );
+
+    return { ...helpers, dependencies };
+}
+
 function buildListParentRegistrationApplicationsForProfile({
     registration,
     form = null,
@@ -67,11 +96,10 @@ function buildListParentRegistrationApplicationsForProfile({
     const dependencies = {
         normalizeParentRegistrationEmail: (value = '') => String(value || '').trim().toLowerCase(),
         auth: { currentUser: null },
-        query: vi.fn((...parts) => parts),
-        collectionGroup: vi.fn(),
         db: {},
-        where: vi.fn(),
         getDocs,
+        queryRegistrationsByGuardianEmail: vi.fn(async () => ({ snapshot: await getDocs(), cursor: null })),
+        queryRegistrationsBySubmitterUid: vi.fn(async () => ({ snapshot: await getDocs(), cursor: null })),
         mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
         getDoc,
@@ -98,7 +126,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=130';");
+        expect(html).toContain("from './js/db.js?v=131';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -109,18 +137,88 @@ describe('parent dashboard registration application statuses', () => {
         const functionSource = db.slice(functionStart, functionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(functionSource).toContain("where('guardian.email', '==', email)");
-        expect(functionSource).toContain("where('submittedByUserId', '==', userId)");
+        expect(functionSource).toContain('queryRegistrationsByGuardianEmail(email)');
+        expect(functionSource).toContain('queryRegistrationsBySubmitterUid(userId)');
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
-        expect(functionSource).not.toContain("orderBy('submittedAt'");
-        expect(functionSource).not.toContain('startAfter(');
-        expect(functionSource).not.toContain('limit(');
         expect(db).toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
         expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
         expect(registrationRules).not.toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
+    });
+
+    it('builds fixed-size, descending identity queries and resumes after each previous cursor', async () => {
+        const guardianLast = buildRegistrationDocument('guardian-last', 200);
+        const submitterLast = buildRegistrationDocument('submitter-last', 100);
+        const guardianPreviousCursor = buildRegistrationDocument('guardian-previous', 300);
+        const submitterPreviousCursor = buildRegistrationDocument('submitter-previous', 250);
+        const getDocs = vi.fn()
+            .mockResolvedValueOnce({ docs: [guardianLast] })
+            .mockResolvedValueOnce({ docs: [submitterLast] });
+        const {
+            queryRegistrationsByGuardianEmail,
+            queryRegistrationsBySubmitterUid,
+            dependencies
+        } = buildRegistrationIdentityQueryHelpers(getDocs);
+
+        const guardianPage = await queryRegistrationsByGuardianEmail(' Parent@Example.com ', guardianPreviousCursor);
+        const submitterPage = await queryRegistrationsBySubmitterUid(' user-1 ', submitterPreviousCursor);
+
+        expect(dependencies.where.mock.calls).toEqual([
+            ['guardian.email', '==', 'parent@example.com'],
+            ['submittedByUserId', '==', 'user-1']
+        ]);
+        expect(dependencies.orderBy.mock.calls).toEqual([
+            ['submittedAt', 'desc'],
+            ['__name__', 'desc'],
+            ['submittedAt', 'desc'],
+            ['__name__', 'desc']
+        ]);
+        expect(dependencies.limitQuery.mock.calls).toEqual([[10], [10]]);
+        expect(dependencies.startAfterQuery.mock.calls).toEqual([
+            [guardianPreviousCursor],
+            [submitterPreviousCursor]
+        ]);
+        expect(dependencies.query.mock.calls[0].slice(1).map((constraint) => constraint.type)).toEqual([
+            'where',
+            'orderBy',
+            'orderBy',
+            'startAfter',
+            'limit'
+        ]);
+        expect(dependencies.query.mock.calls[1].slice(1).map((constraint) => constraint.type)).toEqual([
+            'where',
+            'orderBy',
+            'orderBy',
+            'startAfter',
+            'limit'
+        ]);
+        expect(guardianPage.cursor).toBe(guardianLast);
+        expect(submitterPage.cursor).toBe(submitterLast);
+    });
+
+    it('declares the composite collection-group indexes used by both identity queries', () => {
+        const indexes = JSON.parse(readRepoFile('firestore.indexes.json')).indexes;
+        const registrationIndexes = indexes.filter((index) => index.collectionGroup === 'registrations'
+            && index.queryScope === 'COLLECTION_GROUP');
+
+        expect(registrationIndexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
+            })
+        ]));
     });
 
     it('uses the registration snapshot program name without reading its registration form', async () => {
@@ -155,7 +253,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(getDoc).toHaveBeenCalledTimes(1);
     });
 
-    it('merges the production identity queries without excluding legacy submittedAt values', async () => {
+    it('merges bounded identity snapshots using legacy submittedAt sort fallbacks', async () => {
         const canonical = buildRegistrationDocument('canonical', 300, {
             teamId: 'team-1',
             formId: 'form-1',
@@ -197,8 +295,8 @@ describe('parent dashboard registration application statuses', () => {
             ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
         expect(getDocs).toHaveBeenCalledTimes(2);
-        expect(dependencies.query).toHaveBeenCalledTimes(2);
-        expect(dependencies.query.mock.calls.every((call) => call.length === 2)).toBe(true);
+        expect(dependencies.queryRegistrationsByGuardianEmail).toHaveBeenCalledWith('parent@example.com');
+        expect(dependencies.queryRegistrationsBySubmitterUid).toHaveBeenCalledWith('parent-1');
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {
