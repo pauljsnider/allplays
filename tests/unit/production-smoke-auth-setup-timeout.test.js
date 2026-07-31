@@ -79,6 +79,9 @@ describe('production smoke authenticated setup timeout', () => {
         expect(workflow).toMatch(
             /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/
         );
+        expect(workflow).toMatch(
+            /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--retries=1/
+        );
         expect(scheduledWorkflow).toMatch(
             /tests\/smoke\/app-admin-core\.spec\.js[\s\S]*?tests\/smoke\/app-authenticated-core\.spec\.js[\s\S]*?--workers=1/
         );
