@@ -73,6 +73,8 @@ return { queryRegistrationsByGuardianEmail, queryRegistrationsBySubmitterUid };`
 function buildListParentRegistrationApplicationsForProfile({
     registration,
     form = null,
+    queryRegistrationsByGuardianEmail = null,
+    queryRegistrationsBySubmitterUid = null,
     getDocs = vi.fn().mockResolvedValue({
         docs: [{
             id: 'registration-1',
@@ -98,8 +100,10 @@ function buildListParentRegistrationApplicationsForProfile({
         auth: { currentUser: null },
         db: {},
         getDocs,
-        queryRegistrationsByGuardianEmail: vi.fn(async () => ({ snapshot: await getDocs(), cursor: null })),
-        queryRegistrationsBySubmitterUid: vi.fn(async () => ({ snapshot: await getDocs(), cursor: null })),
+        queryRegistrationsByGuardianEmail: queryRegistrationsByGuardianEmail
+            || vi.fn(async () => ({ snapshot: await getDocs(), cursor: null, hasMore: false })),
+        queryRegistrationsBySubmitterUid: queryRegistrationsBySubmitterUid
+            || vi.fn(async () => ({ snapshot: await getDocs(), cursor: null, hasMore: false })),
         mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
         getDoc,
@@ -126,7 +130,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=131';");
+        expect(html).toContain("from './js/db.js?v=132';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -137,8 +141,8 @@ describe('parent dashboard registration application statuses', () => {
         const functionSource = db.slice(functionStart, functionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(functionSource).toContain('queryRegistrationsByGuardianEmail(email)');
-        expect(functionSource).toContain('queryRegistrationsBySubmitterUid(userId)');
+        expect(functionSource).toContain('queryRegistrationsByGuardianEmail(email, cursor)');
+        expect(functionSource).toContain('queryRegistrationsBySubmitterUid(userId, cursor)');
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
         expect(db).toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
@@ -148,7 +152,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(registrationRules).not.toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
     });
 
-    it('builds fixed-size, descending identity queries and resumes after each previous cursor', async () => {
+    it('builds fixed-size document-id identity queries that include records without submittedAt', async () => {
         const guardianLast = buildRegistrationDocument('guardian-last', 200);
         const submitterLast = buildRegistrationDocument('submitter-last', 100);
         const guardianPreviousCursor = buildRegistrationDocument('guardian-previous', 300);
@@ -170,9 +174,7 @@ describe('parent dashboard registration application statuses', () => {
             ['submittedByUserId', '==', 'user-1']
         ]);
         expect(dependencies.orderBy.mock.calls).toEqual([
-            ['submittedAt', 'desc'],
             ['__name__', 'desc'],
-            ['submittedAt', 'desc'],
             ['__name__', 'desc']
         ]);
         expect(dependencies.limitQuery.mock.calls).toEqual([[10], [10]]);
@@ -183,19 +185,19 @@ describe('parent dashboard registration application statuses', () => {
         expect(dependencies.query.mock.calls[0].slice(1).map((constraint) => constraint.type)).toEqual([
             'where',
             'orderBy',
-            'orderBy',
             'startAfter',
             'limit'
         ]);
         expect(dependencies.query.mock.calls[1].slice(1).map((constraint) => constraint.type)).toEqual([
             'where',
             'orderBy',
-            'orderBy',
             'startAfter',
             'limit'
         ]);
         expect(guardianPage.cursor).toBe(guardianLast);
         expect(submitterPage.cursor).toBe(submitterLast);
+        expect(guardianPage.hasMore).toBe(false);
+        expect(submitterPage.hasMore).toBe(false);
     });
 
     it('declares the composite collection-group indexes used by both identity queries', () => {
@@ -207,14 +209,12 @@ describe('parent dashboard registration application statuses', () => {
             expect.objectContaining({
                 fields: [
                     { fieldPath: 'guardian.email', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
                     { fieldPath: '__name__', order: 'DESCENDING' }
                 ]
             }),
             expect.objectContaining({
                 fields: [
                     { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' },
                     { fieldPath: '__name__', order: 'DESCENDING' }
                 ]
             })
@@ -295,8 +295,52 @@ describe('parent dashboard registration application statuses', () => {
             ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
         expect(getDocs).toHaveBeenCalledTimes(2);
-        expect(dependencies.queryRegistrationsByGuardianEmail).toHaveBeenCalledWith('parent@example.com');
-        expect(dependencies.queryRegistrationsBySubmitterUid).toHaveBeenCalledWith('parent-1');
+        expect(dependencies.queryRegistrationsByGuardianEmail).toHaveBeenCalledWith('parent@example.com', null);
+        expect(dependencies.queryRegistrationsBySubmitterUid).toHaveBeenCalledWith('parent-1', null);
+    });
+
+    it('loads every page from both identity streams and retains legacy records', async () => {
+        const guardianDocuments = Array.from({ length: 11 }, (_, index) => buildRegistrationDocument(
+            `guardian-${index + 1}`,
+            300 - index,
+            {
+                teamId: 'team-1',
+                formId: 'form-1',
+                programName: 'Spring Soccer'
+            }
+        ));
+        const legacySubmitterDocument = buildRegistrationDocument('legacy-submitter', 0, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer',
+            submittedAt: undefined,
+            createdAt: buildTimestamp(100)
+        });
+        const queryGuardian = vi.fn(async (_email, cursor) => cursor
+            ? { snapshot: { docs: guardianDocuments.slice(10) }, cursor: guardianDocuments[10], hasMore: false }
+            : { snapshot: { docs: guardianDocuments.slice(0, 10) }, cursor: guardianDocuments[9], hasMore: true });
+        const querySubmitter = vi.fn(async () => ({
+            snapshot: { docs: [guardianDocuments[0], legacySubmitterDocument] },
+            cursor: legacySubmitterDocument,
+            hasMore: false
+        }));
+        const { listApplications } = buildListParentRegistrationApplicationsForProfile({
+            registration: guardianDocuments[0].data(),
+            queryRegistrationsByGuardianEmail: queryGuardian,
+            queryRegistrationsBySubmitterUid: querySubmitter
+        });
+
+        const applications = await listApplications({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        });
+
+        expect(applications).toHaveLength(12);
+        expect(applications.map((application) => application.id)).toContain('guardian-11');
+        expect(applications.map((application) => application.id)).toContain('legacy-submitter');
+        expect(queryGuardian).toHaveBeenNthCalledWith(1, 'parent@example.com', null);
+        expect(queryGuardian).toHaveBeenNthCalledWith(2, 'parent@example.com', guardianDocuments[9]);
+        expect(querySubmitter).toHaveBeenCalledWith('parent-1', null);
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {

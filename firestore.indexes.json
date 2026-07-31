@@ -397,7 +397,6 @@
       "queryScope": "COLLECTION_GROUP",
       "fields": [
         { "fieldPath": "guardian.email", "order": "ASCENDING" },
-        { "fieldPath": "submittedAt", "order": "DESCENDING" },
         { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
     },
@@ -406,7 +405,6 @@
       "queryScope": "COLLECTION_GROUP",
       "fields": [
         { "fieldPath": "submittedByUserId", "order": "ASCENDING" },
-        { "fieldPath": "submittedAt", "order": "DESCENDING" },
         { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
     },
