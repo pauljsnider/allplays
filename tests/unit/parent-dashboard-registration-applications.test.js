@@ -72,9 +72,13 @@ function buildListParentRegistrationApplicationsPage({
         collectionGroup: vi.fn(),
         db: {},
         where: vi.fn(),
+        orderBy: vi.fn(),
         limit: vi.fn(),
         PARENT_REGISTRATION_APPLICATION_PAGE_SIZE: 10,
         getDocs,
+        buildParentRegistrationApplicationQueries: (queryDefinitions) => queryDefinitions.flatMap((definition) => (
+            ['submittedAt', 'createdAt'].map((timestampField) => ({ ...definition, timestampField }))
+        )),
         mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
         getParentRegistrationDocumentKey: (registrationDoc) => registrationDoc.ref?.path || registrationDoc.id,
         getTeam,
@@ -123,9 +127,9 @@ describe('parent dashboard registration application statuses', () => {
         expect(functionSource).toContain("fieldPath: 'guardian.email'");
         expect(functionSource).toContain("fieldPath: 'submittedByUserId'");
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
-        expect(functionSource).not.toContain("orderBy('submittedAt'");
+        expect(functionSource).toContain("orderBy(definition.timestampField, 'desc')");
         expect(functionSource).not.toContain('startAfter(');
-        expect(functionSource).not.toContain('limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)');
+        expect(functionSource).toContain('limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)');
         expect(dashboardFunctionSource).not.toContain('listParentRegistrationApplicationsPage');
         expect(dashboardFunctionSource).not.toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
@@ -193,6 +197,8 @@ describe('parent dashboard registration application statuses', () => {
             submittedAt: undefined
         });
         const getDocs = vi.fn()
+            .mockResolvedValueOnce({ docs: [stringDate, canonical] })
+            .mockResolvedValueOnce({ docs: [canonical, createdAtFallback] })
             .mockResolvedValueOnce({ docs: [missingDate, stringDate, canonical] })
             .mockResolvedValueOnce({ docs: [canonical, createdAtFallback] });
         const { listApplicationsPage, dependencies } = buildListParentRegistrationApplicationsPage({
@@ -208,13 +214,19 @@ describe('parent dashboard registration application statuses', () => {
         expect(applications.map((application) => application.id)).toEqual(
             ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
-        expect(getDocs).toHaveBeenCalledTimes(2);
-        expect(dependencies.query).toHaveBeenCalledTimes(2);
-        expect(dependencies.limit).not.toHaveBeenCalled();
+        expect(getDocs).toHaveBeenCalledTimes(4);
+        expect(dependencies.query).toHaveBeenCalledTimes(4);
+        expect(dependencies.orderBy.mock.calls).toEqual([
+            ['submittedAt', 'desc'],
+            ['createdAt', 'desc'],
+            ['submittedAt', 'desc'],
+            ['createdAt', 'desc']
+        ]);
+        expect(dependencies.limit.mock.calls).toEqual([[10], [10], [10], [10]]);
         expect(dependencies.getTeam).toHaveBeenCalledTimes(1);
     });
 
-    it('selects the newest 10 before enrichment from unordered identity results larger than the page', async () => {
+    it('uses bounded submittedAt and legacy createdAt candidates for both identity queries', async () => {
         const olderGuardianDocs = Array.from({ length: 10 }, (_, index) => (
             buildRegistrationDocument(`older-${index}`, index + 1, {
                 programName: 'Spring Soccer'
@@ -231,8 +243,10 @@ describe('parent dashboard registration application statuses', () => {
             })
         ));
         const getDocs = vi.fn()
-            .mockResolvedValueOnce({ docs: [...olderGuardianDocs, ...newerGuardianDocs] })
-            .mockResolvedValueOnce({ docs: [...olderGuardianDocs, ...newerSubmitterDocs] });
+            .mockResolvedValueOnce({ docs: newerGuardianDocs })
+            .mockResolvedValueOnce({ docs: newerGuardianDocs })
+            .mockResolvedValueOnce({ docs: newerSubmitterDocs })
+            .mockResolvedValueOnce({ docs: newerSubmitterDocs });
         const { listApplicationsPage, dependencies } = buildListParentRegistrationApplicationsPage({
             registration: olderGuardianDocs[0].data(),
             getDocs
@@ -256,9 +270,22 @@ describe('parent dashboard registration application statuses', () => {
             'newer-guardian-0'
         ]);
         expect(page.nextCursor).toBeNull();
-        expect(page.hasMore).toBe(true);
+        expect(page.hasMore).toBe(false);
         expect(dependencies.getTeam).toHaveBeenCalledTimes(10);
-        expect(dependencies.limit).not.toHaveBeenCalled();
+        expect(getDocs).toHaveBeenCalledTimes(4);
+        expect(dependencies.where.mock.calls).toEqual([
+            ['guardian.email', '==', 'parent@example.com'],
+            ['guardian.email', '==', 'parent@example.com'],
+            ['submittedByUserId', '==', 'parent-1'],
+            ['submittedByUserId', '==', 'parent-1']
+        ]);
+        expect(dependencies.limit.mock.calls).toEqual([[10], [10], [10], [10]]);
+        expect(dependencies.orderBy.mock.calls).toEqual([
+            ['submittedAt', 'desc'],
+            ['createdAt', 'desc'],
+            ['submittedAt', 'desc'],
+            ['createdAt', 'desc']
+        ]);
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {

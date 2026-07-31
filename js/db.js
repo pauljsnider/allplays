@@ -6097,6 +6097,18 @@ export function mergeParentRegistrationQueryResults(querySnapshots = []) {
 
 export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;
 
+function buildParentRegistrationApplicationQueries(queryDefinitions = []) {
+    return queryDefinitions.flatMap((definition) => (
+        // Current registrations use submittedAt. Older registrations may only
+        // have createdAt, so take a bounded newest candidate set for both
+        // timestamp shapes before applying the client-side coalesced sort.
+        ['submittedAt', 'createdAt'].map((timestampField) => ({
+            ...definition,
+            timestampField
+        }))
+    ));
+}
+
 export async function listParentRegistrationApplicationsPage(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
@@ -6118,11 +6130,13 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
         });
     }
 
-    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
+    const queryResults = await Promise.all(buildParentRegistrationApplicationQueries(queryDefinitions).map(async (definition) => {
         try {
             const snapshot = await getDocs(query(
                 collectionGroup(db, 'registrations'),
-                where(definition.fieldPath, '==', definition.value)
+                where(definition.fieldPath, '==', definition.value),
+                orderBy(definition.timestampField, 'desc'),
+                limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)
             ));
             return { definition, snapshot, error: null };
         } catch (error) {
@@ -6133,10 +6147,8 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
     if (successfulResults.length === 0) {
         throw new Error('Registration applications could not be loaded.');
     }
-    // Firestore orderBy excludes documents whose ordered field is missing, and
-    // legacy registrations may use createdAt, string dates, or no date at all.
-    // Read every identity match before sorting so a query-side limit cannot
-    // discard a newer registration before the legacy-compatible merge.
+    // Each identity/timestamp query is bounded. Merging both fields retains
+    // newest current submissions and legacy createdAt-only registrations.
     const mergedRegistrationDocs = mergeParentRegistrationQueryResults(
         successfulResults.map((result) => result.snapshot)
     );
@@ -6193,6 +6205,7 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}) {
         applications,
         nextCursor: null,
         hasMore: mergedRegistrationDocs.length > PARENT_REGISTRATION_APPLICATION_PAGE_SIZE
+            || queryResults.some((result) => result.snapshot?.docs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)
             || queryResults.some((result) => result.error),
         errors: queryResults
             .filter((result) => result.error)

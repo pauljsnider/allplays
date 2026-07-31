@@ -24,6 +24,6 @@ describe('registration review pagination query', () => {
         );
 
         expect(registrationFieldPaths).toContain('submittedAt:DESCENDING');
-        expect(registrationFieldPaths).not.toContain('createdAt:DESCENDING');
+        expect(registrationFieldPaths).toContain('createdAt:DESCENDING');
     });
 });
