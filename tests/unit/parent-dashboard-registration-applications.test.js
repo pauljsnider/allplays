@@ -392,6 +392,18 @@ describe('parent dashboard registration application statuses', () => {
                     { fieldPath: 'submittedAt', order: 'DESCENDING' },
                     { fieldPath: '__name__', order: 'DESCENDING' }
                 ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                fields: [
+                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
+                    { fieldPath: '__name__', order: 'DESCENDING' }
+                ]
             })
         ]));
     });

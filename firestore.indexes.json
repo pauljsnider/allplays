@@ -414,6 +414,22 @@
       "collectionGroup": "registrations",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
+        { "fieldPath": "guardian.email", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "submittedByUserId", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "registrations",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
         { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "guardian.guardianEmail", "order": "ASCENDING" }
       ]
