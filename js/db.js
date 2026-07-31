@@ -6046,7 +6046,8 @@ function getParentRegistrationDocumentKey(registrationDoc) {
 }
 
 function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
-    const submittedAt = registrationDoc.data()?.submittedAt;
+    const registration = registrationDoc.data() || {};
+    const submittedAt = registration.submittedAt || registration.createdAt;
     if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
         return {
             seconds: submittedAt.seconds,
@@ -6082,57 +6083,16 @@ function compareParentRegistrationDocuments(a, b) {
     return aKey < bKey ? 1 : -1;
 }
 
-export function mergeParentRegistrationQueryPages(queryPages = {}, options = {}) {
-    const pageSize = Math.max(1, Math.floor(Number(options.pageSize) || 10));
-    const previousCursor = options.cursor || {};
-    const sources = [
-        {
-            cursorKey: 'guardianEmail',
-            page: queryPages.guardianEmail || {}
-        },
-        {
-            cursorKey: 'submittedByUserId',
-            page: queryPages.submittedByUserId || {}
-        }
-    ].map((source) => ({
-        ...source,
-        documents: [...(source.page.docs || [])].sort(compareParentRegistrationDocuments)
-    }));
-
+export function mergeParentRegistrationQueryResults(querySnapshots = []) {
     const documentsByKey = new Map();
-    sources.forEach((source) => {
-        source.documents.forEach((registrationDoc) => {
+    querySnapshots.forEach((snapshot) => {
+        (snapshot?.docs || []).forEach((registrationDoc) => {
             const key = getParentRegistrationDocumentKey(registrationDoc);
             if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
         });
     });
 
-    const registrations = [...documentsByKey.values()]
-        .sort(compareParentRegistrationDocuments)
-        .slice(0, pageSize);
-    const selectedKeys = new Set(registrations.map(getParentRegistrationDocumentKey));
-    const nextCursor = {
-        guardianEmail: previousCursor.guardianEmail || null,
-        submittedByUserId: previousCursor.submittedByUserId || null
-    };
-    const sourceHasMore = {};
-
-    sources.forEach((source) => {
-        let consumedCount = 0;
-        for (const registrationDoc of source.documents) {
-            if (!selectedKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
-            nextCursor[source.cursorKey] = registrationDoc;
-            consumedCount += 1;
-        }
-        sourceHasMore[source.cursorKey] = consumedCount < source.documents.length || source.page.hasMore === true;
-    });
-
-    return {
-        registrations,
-        nextCursor,
-        hasMore: Object.values(sourceHasMore).some(Boolean),
-        sourceHasMore
-    };
+    return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
 }
 
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
@@ -6140,75 +6100,34 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const pageSize = 10;
-    const registrationQuerySources = [];
+    const registrationQueries = [];
     if (email) {
-        registrationQuerySources.push({
-            cursorKey: 'guardianEmail',
-            filter: where('guardian.email', '==', email)
-        });
+        registrationQueries.push(query(
+            collectionGroup(db, 'registrations'),
+            where('guardian.email', '==', email)
+        ));
     }
     if (userId) {
-        registrationQuerySources.push({
-            cursorKey: 'submittedByUserId',
-            filter: where('submittedByUserId', '==', userId)
-        });
+        registrationQueries.push(query(
+            collectionGroup(db, 'registrations'),
+            where('submittedByUserId', '==', userId)
+        ));
     }
 
-    let cursor = {};
-    let sourceHasMore = Object.fromEntries(registrationQuerySources.map((source) => [source.cursorKey, true]));
-    const registrationDocs = [];
-
-    while (Object.values(sourceHasMore).some(Boolean)) {
-        const queryResults = await Promise.all(registrationQuerySources
-            .filter((source) => sourceHasMore[source.cursorKey])
-            .map(async (source) => {
-                const constraints = [
-                    source.filter,
-                    orderBy('submittedAt', 'desc'),
-                    orderBy(documentId(), 'desc')
-                ];
-                if (cursor[source.cursorKey]) constraints.push(startAfter(cursor[source.cursorKey]));
-                constraints.push(limit(pageSize));
-
-                try {
-                    const snapshot = await getDocs(query(
-                        collectionGroup(db, 'registrations'),
-                        ...constraints
-                    ));
-                    return {
-                        source,
-                        page: {
-                            docs: snapshot.docs,
-                            hasMore: snapshot.docs.length === pageSize
-                        },
-                        error: null
-                    };
-                } catch (error) {
-                    return { source, page: null, error };
-                }
-            }));
-        const successfulResults = queryResults.filter((result) => result.page);
-        if (successfulResults.length === 0) {
-            if (registrationDocs.length === 0) {
-                throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
-            }
-            break;
+    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+        try {
+            return { snapshot: await getDocs(registrationQuery), error: null };
+        } catch (error) {
+            return { snapshot: null, error };
         }
-
-        const queryPages = Object.fromEntries(successfulResults.map((result) => [
-            result.source.cursorKey,
-            result.page
-        ]));
-        const mergedPage = mergeParentRegistrationQueryPages(queryPages, { cursor, pageSize });
-        registrationDocs.push(...mergedPage.registrations);
-        cursor = mergedPage.nextCursor;
-        queryResults.forEach((result) => {
-            sourceHasMore[result.source.cursorKey] = result.page
-                ? mergedPage.sourceHasMore[result.source.cursorKey]
-                : false;
-        });
+    }));
+    const successfulResults = queryResults.filter((result) => result.snapshot);
+    if (successfulResults.length === 0) {
+        throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
     }
+    const registrationDocs = mergeParentRegistrationQueryResults(
+        successfulResults.map((result) => result.snapshot)
+    );
 
     const teamCache = new Map();
     const formCache = new Map();
@@ -6251,11 +6170,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         };
     }));
 
-    return applications.sort((a, b) => {
-        const aDate = a.submittedAt?.toDate ? a.submittedAt.toDate() : (a.submittedAt ? new Date(a.submittedAt) : new Date(0));
-        const bDate = b.submittedAt?.toDate ? b.submittedAt.toDate() : (b.submittedAt ? new Date(b.submittedAt) : new Date(0));
-        return bDate - aDate;
-    });
+    return applications;
 }
 
 export async function getParentDashboardData(userId) {

@@ -29,27 +29,16 @@ function buildRegistrationDocument(id, seconds, overrides = {}) {
     };
 }
 
-function buildMergeParentRegistrationQueryPages() {
+function buildMergeParentRegistrationQueryResults() {
     const dbSource = readRepoFile('js/db.js');
     const start = dbSource.indexOf('function getParentRegistrationDocumentKey');
     const end = dbSource.indexOf('\nasync function listParentRegistrationApplicationsForProfile', start);
     const functionSource = dbSource.slice(start, end)
         .replace(
-            'export function mergeParentRegistrationQueryPages',
-            'return function mergeParentRegistrationQueryPages'
+            'export function mergeParentRegistrationQueryResults',
+            'return function mergeParentRegistrationQueryResults'
         );
     return new Function(functionSource)();
-}
-
-function loadIdentityPage(documents, cursor, pageSize) {
-    const cursorIndex = cursor
-        ? documents.findIndex((registrationDoc) => registrationDoc === cursor)
-        : -1;
-    const docs = documents.slice(cursorIndex + 1, cursorIndex + 1 + pageSize);
-    return {
-        docs,
-        hasMore: cursorIndex + 1 + docs.length < documents.length
-    };
 }
 
 function buildListParentRegistrationApplicationsForProfile({
@@ -82,12 +71,8 @@ function buildListParentRegistrationApplicationsForProfile({
         collectionGroup: vi.fn(),
         db: {},
         where: vi.fn(),
-        orderBy: vi.fn((...parts) => ({ type: 'orderBy', parts })),
-        documentId: vi.fn(() => '__name__'),
-        startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
-        limit: vi.fn((value) => ({ type: 'limit', value })),
         getDocs,
-        mergeParentRegistrationQueryPages: buildMergeParentRegistrationQueryPages(),
+        mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
         getDoc,
         doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
@@ -118,32 +103,19 @@ describe('parent dashboard registration application statuses', () => {
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
         const db = readRepoFile('js/db.js');
-        const indexes = JSON.parse(readRepoFile('firestore.indexes.json'));
         const rules = readRepoFile('firestore.rules');
+        const functionStart = db.indexOf('async function listParentRegistrationApplicationsForProfile');
+        const functionEnd = db.indexOf('\nexport async function getParentDashboardData', functionStart);
+        const functionSource = db.slice(functionStart, functionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(db).toContain("where('guardian.email', '==', email)");
-        expect(db).toContain("where('submittedByUserId', '==', userId)");
-        expect(db).toContain('mergeParentRegistrationQueryPages(queryPages, { cursor, pageSize })');
+        expect(functionSource).toContain("where('guardian.email', '==', email)");
+        expect(functionSource).toContain("where('submittedByUserId', '==', userId)");
+        expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
+        expect(functionSource).not.toContain("orderBy('submittedAt'");
+        expect(functionSource).not.toContain('startAfter(');
+        expect(functionSource).not.toContain('limit(');
         expect(db).toContain('registrationApplications');
-        expect(indexes.indexes).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                collectionGroup: 'registrations',
-                queryScope: 'COLLECTION_GROUP',
-                fields: [
-                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' }
-                ]
-            }),
-            expect.objectContaining({
-                collectionGroup: 'registrations',
-                queryScope: 'COLLECTION_GROUP',
-                fields: [
-                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
-                    { fieldPath: 'submittedAt', order: 'DESCENDING' }
-                ]
-            })
-        ]));
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
@@ -183,24 +155,36 @@ describe('parent dashboard registration application statuses', () => {
         expect(getDoc).toHaveBeenCalledTimes(1);
     });
 
-    it('uses the deterministic page merger in the production registration loader', async () => {
-        const documents = new Map(Array.from({ length: 15 }, (_, index) => {
-            const seconds = 20 - index;
-            return [seconds, buildRegistrationDocument(`registration-${seconds}`, seconds, {
-                teamId: 'team-1',
-                formId: 'form-1',
-                programName: 'Spring Soccer'
-            })];
-        }));
-        const guardianFirstPage = Array.from({ length: 10 }, (_, index) => documents.get(20 - index));
-        const submitterFirstPage = Array.from({ length: 10 }, (_, index) => documents.get(15 - index));
+    it('merges the production identity queries without excluding legacy submittedAt values', async () => {
+        const canonical = buildRegistrationDocument('canonical', 300, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer'
+        });
+        const stringDate = buildRegistrationDocument('string-date', 0, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer',
+            submittedAt: '1970-01-01T00:03:20.000Z'
+        });
+        const createdAtFallback = buildRegistrationDocument('created-at-fallback', 0, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer',
+            submittedAt: undefined,
+            createdAt: buildTimestamp(100)
+        });
+        const missingDate = buildRegistrationDocument('missing-date', 0, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer',
+            submittedAt: undefined
+        });
         const getDocs = vi.fn()
-            .mockResolvedValueOnce({ docs: guardianFirstPage })
-            .mockResolvedValueOnce({ docs: submitterFirstPage })
-            .mockResolvedValueOnce({ docs: [documents.get(10)] })
-            .mockResolvedValueOnce({ docs: Array.from({ length: 5 }, (_, index) => documents.get(10 - index)) });
+            .mockResolvedValueOnce({ docs: [missingDate, stringDate, canonical] })
+            .mockResolvedValueOnce({ docs: [canonical, createdAtFallback] });
         const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
-            registration: documents.get(20).data(),
+            registration: canonical.data(),
             getDocs
         });
 
@@ -210,43 +194,33 @@ describe('parent dashboard registration application statuses', () => {
         });
 
         expect(applications.map((application) => application.id)).toEqual(
-            Array.from({ length: 15 }, (_, index) => `registration-${20 - index}`)
+            ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
-        expect(getDocs).toHaveBeenCalledTimes(4);
-        expect(dependencies.orderBy).toHaveBeenCalledWith('submittedAt', 'desc');
-        expect(dependencies.orderBy).toHaveBeenCalledWith('__name__', 'desc');
-        expect(dependencies.limit).toHaveBeenCalledWith(10);
-        expect(dependencies.startAfter).toHaveBeenCalledTimes(2);
-        expect(dependencies.startAfter).toHaveBeenCalledWith(documents.get(11));
+        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(dependencies.query).toHaveBeenCalledTimes(2);
+        expect(dependencies.query.mock.calls.every((call) => call.length === 2)).toBe(true);
     });
 
-    it('deduplicates overlapping identity matches and advances both cursors', () => {
-        const mergePages = buildMergeParentRegistrationQueryPages();
+    it('deduplicates overlapping identity matches across complete query results', () => {
+        const mergeResults = buildMergeParentRegistrationQueryResults();
         const newest = buildRegistrationDocument('newest', 60);
         const overlap = buildRegistrationDocument('overlap', 50);
         const guardianOnly = buildRegistrationDocument('guardian-only', 40);
 
-        const page = mergePages({
-            guardianEmail: { docs: [newest, overlap, guardianOnly], hasMore: false },
-            submittedByUserId: { docs: [newest, overlap], hasMore: false }
-        }, { pageSize: 2 });
-
-        expect(page.registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
-            'newest',
-            'overlap'
+        const registrations = mergeResults([
+            { docs: [guardianOnly, overlap, newest] },
+            { docs: [overlap, newest] }
         ]);
-        expect(page.nextCursor).toEqual({
-            guardianEmail: overlap,
-            submittedByUserId: overlap
-        });
-        expect(page.sourceHasMore).toEqual({
-            guardianEmail: true,
-            submittedByUserId: false
-        });
+
+        expect(registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
+            'newest',
+            'overlap',
+            'guardian-only'
+        ]);
     });
 
     it('uses document path descending as a deterministic submittedAt tie-breaker', () => {
-        const mergePages = buildMergeParentRegistrationQueryPages();
+        const mergeResults = buildMergeParentRegistrationQueryResults();
         const alpha = buildRegistrationDocument('alpha', 50, {
             submittedAt: buildTimestamp(50, 100)
         });
@@ -254,54 +228,59 @@ describe('parent dashboard registration application statuses', () => {
             submittedAt: buildTimestamp(50, 100)
         });
 
-        const page = mergePages({
-            guardianEmail: { docs: [alpha] },
-            submittedByUserId: { docs: [omega] }
-        }, { pageSize: 2 });
+        const registrations = mergeResults([{ docs: [alpha] }, { docs: [omega] }]);
 
-        expect(page.registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
+        expect(registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
             'omega',
             'alpha'
         ]);
     });
 
-    it('keeps consecutive merged pages newest-first without skips or repeats', () => {
-        const mergePages = buildMergeParentRegistrationQueryPages();
-        const overlap = buildRegistrationDocument('overlap', 40);
-        const guardianDocuments = [
-            buildRegistrationDocument('guardian-new', 60),
-            overlap,
-            buildRegistrationDocument('guardian-old', 10)
-        ];
-        const submitterDocuments = [
-            buildRegistrationDocument('submitter-new', 50),
-            overlap,
-            buildRegistrationDocument('submitter-old', 20)
-        ];
-        const pageSize = 2;
-        let cursor = {};
-        const registrationIds = [];
+    it('orders Timestamp, string, createdAt fallback, invalid, and missing dates without dropping records', () => {
+        const mergeResults = buildMergeParentRegistrationQueryResults();
+        const registrations = mergeResults([{
+            docs: [
+                buildRegistrationDocument('missing', 0, { submittedAt: undefined }),
+                buildRegistrationDocument('invalid', 0, { submittedAt: 'not-a-date' }),
+                buildRegistrationDocument('created-at', 0, {
+                    submittedAt: undefined,
+                    createdAt: buildTimestamp(100)
+                }),
+                buildRegistrationDocument('string', 0, {
+                    submittedAt: '1970-01-01T00:03:20.000Z'
+                }),
+                buildRegistrationDocument('timestamp', 300)
+            ]
+        }]);
 
-        for (let pageNumber = 0; pageNumber < 3; pageNumber += 1) {
-            const page = mergePages({
-                guardianEmail: loadIdentityPage(guardianDocuments, cursor.guardianEmail, pageSize),
-                submittedByUserId: loadIdentityPage(submitterDocuments, cursor.submittedByUserId, pageSize)
-            }, { cursor, pageSize });
-            registrationIds.push(...page.registrations.map((registrationDoc) => registrationDoc.id));
-            cursor = page.nextCursor;
-        }
-
-        expect(registrationIds).toEqual([
-            'guardian-new',
-            'submitter-new',
-            'overlap',
-            'submitter-old',
-            'guardian-old'
+        expect(registrations.map((registrationDoc) => registrationDoc.id)).toEqual([
+            'timestamp',
+            'string',
+            'created-at',
+            'missing',
+            'invalid'
         ]);
-        expect(new Set(registrationIds).size).toBe(registrationIds.length);
-        expect(cursor).toEqual({
-            guardianEmail: guardianDocuments[2],
-            submittedByUserId: submitterDocuments[2]
+    });
+
+    it('returns the successful identity query when the other lookup fails', async () => {
+        const registrationDoc = buildRegistrationDocument('submitter-match', 100, {
+            teamId: 'team-1',
+            formId: 'form-1',
+            programName: 'Spring Soccer'
         });
+        const getDocs = vi.fn()
+            .mockRejectedValueOnce(new Error('guardian index unavailable'))
+            .mockResolvedValueOnce({ docs: [registrationDoc] });
+        const { listApplications } = buildListParentRegistrationApplicationsForProfile({
+            registration: registrationDoc.data(),
+            getDocs
+        });
+
+        const applications = await listApplications({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        });
+
+        expect(applications.map((application) => application.id)).toEqual(['submitter-match']);
     });
 });
