@@ -185,15 +185,42 @@ function buildParentRegistrationApplicationsPageLoader({
 }
 
 describe('parent dashboard registration application statuses', () => {
-    it('renders a read-only parent registration applications section from dashboard data', () => {
+    it('loads the bounded first registration page without blocking or rerunning dashboard bootstrap', () => {
         const html = readRepoFile('parent-dashboard.html');
+        const db = readRepoFile('js/db.js');
+        const initStart = html.indexOf('async function init()');
+        const initEnd = html.indexOf('\n        function getParentDashboardStateMessage', initStart);
+        const initSource = html.slice(initStart, initEnd);
+        const loaderStart = html.indexOf('async function loadInitialRegistrationApplications');
+        const loaderEnd = html.indexOf('\n        function renderRegistrationApplications', loaderStart);
+        const loaderSource = html.slice(loaderStart, loaderEnd);
+        const dashboardStart = db.indexOf('export async function getParentDashboardData');
+        const dashboardEnd = db.indexOf('\nexport async function updatePlayerProfile', dashboardStart);
+        const dashboardSource = db.slice(dashboardStart, dashboardEnd);
 
         expect(html).toContain('id="registration-applications-list"');
-        expect(html).toContain('renderRegistrationApplications(data.registrationApplications || [])');
+        expect(html).toContain('listParentRegistrationApplicationsPage,');
+        expect(initSource).toContain('renderPlayers(data.children, data.dashboardState || null);');
+        expect(initSource).toContain('void loadInitialRegistrationApplications(user);');
+        expect(initSource).not.toContain('await loadInitialRegistrationApplications(user)');
+        expect(initSource.match(/loadInitialRegistrationApplications\(user\)/g)).toHaveLength(1);
+        expect(loaderSource.match(/listParentRegistrationApplicationsPage\(user\)/g)).toHaveLength(1);
+        expect(loaderSource).toContain('renderRegistrationApplications(page.applications, page.errors);');
+        expect(dashboardSource).not.toContain('listParentRegistrationApplicationsForProfile');
+        expect(dashboardSource).not.toContain('registrationApplications');
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=133';");
+        expect(html).toContain("from './js/db.js?v=134';");
+    });
+
+    it('shows a registration-specific error without replacing successful applications', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain("renderRegistrationApplications([], [{");
+        expect(html).toContain('Registration applications could not be loaded. Retry by refreshing this page.');
+        expect(html).toContain("const errorHtml = errors.length > 0");
+        expect(html).toContain('container.innerHTML = errorHtml + applications.map((application) => {');
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
@@ -207,7 +234,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(functionSource).toContain('queryRegistrationsByGuardianEmail(email, cursor)');
         expect(functionSource).toContain('queryRegistrationsBySubmitterUid(userId, cursor)');
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
-        expect(db).toContain('registrationApplications');
+        expect(db).toContain('listParentRegistrationApplicationsPage');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');

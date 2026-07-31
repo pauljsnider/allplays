@@ -353,6 +353,7 @@
     <script type="module">
         import {
             getParentDashboardData,
+            listParentRegistrationApplicationsPage,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -388,8 +389,8 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=133';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=20';
+        } from './js/db.js?v=134';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=21';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -407,7 +408,7 @@
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=138';
+        import { requireAuth, checkAuth } from './js/auth.js?v=139';
         import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
@@ -1553,7 +1554,7 @@
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children, data.dashboardState || null);
-                renderRegistrationApplications(data.registrationApplications || []);
+                void loadInitialRegistrationApplications(user);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -2596,11 +2597,26 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
-        function renderRegistrationApplications(applications) {
+        async function loadInitialRegistrationApplications(user) {
+            try {
+                const page = await listParentRegistrationApplicationsPage(user);
+                renderRegistrationApplications(page.applications, page.errors);
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load registration applications:', error);
+                renderRegistrationApplications([], [{
+                    message: 'Registration applications could not be loaded. Retry by refreshing this page.'
+                }]);
+            }
+        }
+
+        function renderRegistrationApplications(applications, errors = []) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
+            const errorHtml = errors.length > 0
+                ? `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">${escapeHtml(errors[0].message || 'Registration applications could not be loaded.')}</div>`
+                : '';
             if (!applications || applications.length === 0) {
-                container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
+                container.innerHTML = errorHtml || `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
                 return;
             }
 
@@ -2614,7 +2630,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = applications.map((application) => {
+            container.innerHTML = errorHtml + applications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`

@@ -17,7 +17,7 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=130");
+        expect(acceptInviteSource).toContain("./js/db.js?v=131");
         expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=11");
     });
 
