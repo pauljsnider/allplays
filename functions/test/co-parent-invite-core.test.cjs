@@ -20,7 +20,9 @@ function clone(value) {
 
 function createFirestore(initialDocs = {}) {
   const docs = new Map(Object.entries(initialDocs).map(([path, value]) => [path, clone(value)]));
+  const versions = new Map([...docs.keys()].map((path) => [path, 1]));
   const writes = [];
+  let transactionAttempts = 0;
 
   function makeRef(path) {
     return { id: path.split('/').pop(), path };
@@ -51,44 +53,59 @@ function createFirestore(initialDocs = {}) {
       return Object.assign(query, { kind: 'query', path, filters });
     },
     async runTransaction(handler) {
-      const stagedCreates = [];
-      const stagedSets = [];
-      const transaction = {
-        async get(target) {
-          if (target.kind === 'query') {
-            const matches = [...docs.entries()]
-              .filter(([path, value]) => /^accessCodes\/[^/]+$/.test(path)
-                && target.filters.every(({ field, expected }) => value[field] === expected))
-              .map(([path]) => makeSnapshot(path));
-            return { docs: matches, empty: matches.length === 0 };
+      for (;;) {
+        transactionAttempts += 1;
+        const readVersions = new Map();
+        const stagedCreates = [];
+        const stagedSets = [];
+        const transaction = {
+          async get(target) {
+            if (target.kind === 'query') {
+              const matches = [...docs.entries()]
+                .filter(([path, value]) => /^accessCodes\/[^/]+$/.test(path)
+                  && target.filters.every(({ field, expected }) => value[field] === expected))
+                .map(([path]) => makeSnapshot(path));
+              return { docs: matches, empty: matches.length === 0 };
+            }
+            readVersions.set(target.path, versions.get(target.path) || 0);
+            return makeSnapshot(target.path);
+          },
+          create(ref, value) {
+            stagedCreates.push([ref.path, clone(value)]);
+          },
+          set(ref, value) {
+            stagedSets.push([ref.path, clone(value)]);
           }
-          return makeSnapshot(target.path);
-        },
-        create(ref, value) {
-          stagedCreates.push([ref.path, clone(value)]);
-        },
-        set(ref, value) {
-          stagedSets.push([ref.path, clone(value)]);
+        };
+        const result = await handler(transaction);
+        const hasConflict = [...readVersions]
+          .some(([path, version]) => (versions.get(path) || 0) !== version);
+        if (hasConflict) continue;
+
+        for (const [path, value] of stagedCreates) {
+          assert.equal(docs.has(path), false, `create target already exists: ${path}`);
+          docs.set(path, value);
+          versions.set(path, (versions.get(path) || 0) + 1);
+          writes.push([path, clone(value)]);
         }
-      };
-      const result = await handler(transaction);
-      for (const [path, value] of stagedCreates) {
-        assert.equal(docs.has(path), false, `create target already exists: ${path}`);
-        docs.set(path, value);
-        writes.push([path, clone(value)]);
+        for (const [path, value] of stagedSets) {
+          docs.set(path, value);
+          versions.set(path, (versions.get(path) || 0) + 1);
+          writes.push([path, clone(value)]);
+        }
+        return result;
       }
-      for (const [path, value] of stagedSets) {
-        docs.set(path, value);
-        writes.push([path, clone(value)]);
-      }
-      return result;
     }
   };
 
-  return { firestore, docs, writes };
+  return { firestore, docs, writes, getTransactionAttempts: () => transactionAttempts };
 }
 
-function createHarness({ linked = true, initialDocs = {} } = {}) {
+function createHarness({
+  linked = true,
+  initialDocs = {},
+  createInviteCode = () => 'COPE1234'
+} = {}) {
   const store = createFirestore({
     'users/parent-1': { parentPlayerKeys: linked ? ['team-1::player-1'] : ['team-1::other-player'] },
     'teams/team-1': { name: 'Tigers' },
@@ -99,7 +116,7 @@ function createHarness({ linked = true, initialDocs = {} } = {}) {
     firestore: store.firestore,
     Timestamp: { now: () => NOW, fromMillis: (millis) => ({ millis }) },
     HttpsError: TestHttpsError,
-    createInviteCode: () => 'COPE1234'
+    createInviteCode
   });
   return {
     ...store,
@@ -186,6 +203,29 @@ test('reuses the active invite for equivalent recipient case and whitespace', as
     created: false,
     reused: true
   });
+  assert.equal(harness.writes.filter(([path]) => path.startsWith('accessCodes/')).length, 1);
+  assert.equal([...harness.docs.keys()].filter((path) => path.startsWith('accessCodes/')).length, 1);
+});
+
+test('concurrent calls retry the idempotency conflict and return the same invite', async () => {
+  const codes = ['COPE1234', 'COPE5678'];
+  const harness = createHarness({ createInviteCode: () => codes.shift() });
+
+  const [first, second] = await Promise.all([
+    harness.handler(
+      { teamId: 'team-1', playerId: 'player-1', email: 'CoParent@example.com' },
+      harness.context
+    ),
+    harness.handler(
+      { teamId: 'team-1', playerId: 'player-1', email: ' coparent@EXAMPLE.com ' },
+      harness.context
+    )
+  ]);
+
+  assert.equal(harness.getTransactionAttempts(), 3);
+  assert.equal(first.code, second.code);
+  assert.equal(first.created || second.created, true);
+  assert.equal(first.reused || second.reused, true);
   assert.equal(harness.writes.filter(([path]) => path.startsWith('accessCodes/')).length, 1);
   assert.equal([...harness.docs.keys()].filter((path) => path.startsWith('accessCodes/')).length, 1);
 });
