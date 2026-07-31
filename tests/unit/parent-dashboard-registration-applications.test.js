@@ -226,6 +226,7 @@ describe('parent dashboard registration application statuses', () => {
         const loaderEnd = html.indexOf('\n        function renderRegistrationApplications', loaderStart);
         const loaderSource = html.slice(loaderStart, loaderEnd);
 
+        expect(() => new Function(loaderSource)).not.toThrow();
         expect(loaderSource).toContain('listParentRegistrationApplicationsPage(registrationUser, { cursor })');
         expect(loaderSource).toContain('registrationApplications = mergeRegistrationApplications(');
         expect(loaderSource).toContain('registrationRetryCursor = cursor || {};');
