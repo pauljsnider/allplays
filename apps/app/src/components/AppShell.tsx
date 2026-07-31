@@ -33,6 +33,7 @@ import {
   X
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
+import { useAppForegroundState } from '../lib/useAppForegroundState';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
@@ -114,6 +115,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [reportedScheduleAccess, setReportedScheduleAccess] = useState<ScheduleAccessReport | null>(null);
   const { isDesktopWeb } = useShellLayout();
+  const isAppForeground = useAppForegroundState();
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -227,6 +229,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       setUnreadState('ready');
       return;
     }
+    if (!isAppForeground) return;
     setUnreadState('loading');
     let active = true;
     let unsubscribe = () => {};
@@ -251,7 +254,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, isAppForeground]);
 
   useEffect(() => {
     if (!auth.user?.uid) {
@@ -279,7 +282,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       setInboxState('idle');
       return;
     }
-    if (!inboxOpen) return;
+    if (!inboxOpen || !isAppForeground) return;
 
     setInboxState('loading');
     let active = true;
@@ -306,7 +309,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid, inboxOpen, inboxRetryKey]);
+  }, [auth.user?.uid, inboxOpen, inboxRetryKey, isAppForeground]);
 
   const handleRetryNotificationInbox = () => {
     setInboxRetryKey((current) => current + 1);
