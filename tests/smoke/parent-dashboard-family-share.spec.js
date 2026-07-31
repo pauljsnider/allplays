@@ -13,7 +13,15 @@ function clone(value) {
 }
 
 export async function getParentDashboardData() {
+    window.__registrationWorkflow.bootstrapCalls += 1;
     return { children: clone(children), dashboardState: null, registrationApplications: [] };
+}
+export async function listParentRegistrationApplicationsPage(_user, options = {}) {
+    const cursor = options.cursor || null;
+    window.__registrationWorkflow.pageCalls.push(cursor);
+    const result = window.__registrationWorkflow.results.shift();
+    if (result instanceof Error) throw result;
+    return clone(result || { applications: [], errors: [], nextCursor: null, retryCursor: null });
 }
 export async function redeemParentInvite() {}
 export async function getTeam(teamId) { return { id: teamId, name: teamId }; }
@@ -119,6 +127,7 @@ export async function saveCapSetting() {}
 async function mockParentDashboardModules(page) {
     await page.addInitScript(() => {
         window.__familyShareWorkflow = { creates: [], listCalls: [], alerts: [], copied: [], createdToken: null };
+        window.__registrationWorkflow = { bootstrapCalls: 0, pageCalls: [], results: [] };
         window.alert = (message) => window.__familyShareWorkflow.alerts.push(String(message));
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
@@ -148,6 +157,63 @@ async function mockParentDashboardModules(page) {
     await page.route(/\/js\/family-plan\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export async function renderFamilyPlanSection(el) { if (el) el.innerHTML = ""; }' }));
     await page.route(/\/js\/availability-preferences\.js(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: 'export function buildAvailabilityNoteRows() { return []; } export function formatAvailabilityCutoff() { return ""; } export function isAvailabilityLocked() { return false; } export function normalizeAvailabilityPreferences(value = {}) { return value; }' }));
 }
+
+test('parent dashboard appends and retries registration pages without rerunning bootstrap', async ({ page, baseURL }) => {
+    await mockParentDashboardModules(page);
+    await page.addInitScript(() => {
+        window.__registrationWorkflow.results = [
+            {
+                applications: [
+                    { id: 'newest', registrationKey: 'registrations/newest', playerName: 'Newest Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-03T00:00:00Z' },
+                    { id: 'duplicate', registrationKey: 'registrations/duplicate', playerName: 'Duplicate Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-02T00:00:00Z' }
+                ],
+                errors: [],
+                nextCursor: { guardianEmail: 'page-1' },
+                retryCursor: null
+            },
+            {
+                applications: [
+                    { id: 'duplicate', registrationKey: 'registrations/duplicate', playerName: 'Duplicate Player', programName: 'Fall', teamName: 'Bears', status: 'pending', statusLabel: 'Pending Review', submittedAt: '2026-07-02T00:00:00Z' }
+                ],
+                errors: [{ message: 'Some registration applications could not be loaded.' }],
+                nextCursor: { guardianEmail: 'page-1' },
+                retryCursor: { guardianEmail: 'page-1' }
+            },
+            {
+                applications: [
+                    { id: 'oldest', registrationKey: 'registrations/oldest', playerName: 'Oldest Player', programName: 'Spring', teamName: 'Hawks', status: 'enrolled', statusLabel: 'Enrolled', submittedAt: '2026-07-01T00:00:00Z' }
+                ],
+                errors: [],
+                nextCursor: null,
+                retryCursor: null
+            }
+        ];
+    });
+
+    await page.goto(`${baseURL}/parent-dashboard.html`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#registration-load-more-btn')).toBeVisible();
+    await page.locator('#registration-load-more-btn').click();
+
+    await expect(page.locator('#registration-retry-btn')).toBeVisible();
+    await expect(page.locator('#registration-applications-list')).toContainText('Newest Player');
+    await expect(page.locator('#registration-applications-list').getByText('Duplicate Player')).toHaveCount(1);
+    await page.locator('#registration-retry-btn').click();
+
+    await expect(page.locator('#registration-applications-list')).toContainText('Oldest Player');
+    await expect(page.locator('#registration-load-more-btn')).toHaveCount(0);
+    await expect(page.locator('#registration-applications-list > div .font-semibold').filter({ hasText: /Player/ })).toHaveText([
+        'Newest Player',
+        'Duplicate Player',
+        'Oldest Player'
+    ]);
+    await expect.poll(() => page.evaluate(() => ({
+        bootstrapCalls: window.__registrationWorkflow.bootstrapCalls,
+        pageCalls: window.__registrationWorkflow.pageCalls
+    }))).toEqual({
+        bootstrapCalls: 1,
+        pageCalls: [null, { guardianEmail: 'page-1' }, { guardianEmail: 'page-1' }]
+    });
+});
 
 test('parent dashboard creates family share links with hydrated children and extra calendars', async ({ page, baseURL }) => {
     await mockParentDashboardModules(page);

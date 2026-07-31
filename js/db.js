@@ -691,7 +691,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=18'; // Import resolveZip
+import { resolveZip } from './utils.js?v=21'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6040,43 +6040,295 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT = 10;
+
+async function queryRegistrationIdentityPage(fieldPath, value, previousCursor = null) {
+    const constraints = [
+        where(fieldPath, '==', value),
+        orderBy(documentId(), 'desc')
+    ];
+    if (previousCursor) constraints.push(startAfterQuery(previousCursor));
+    constraints.push(limitQuery(PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT));
+
+    const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
+    return {
+        snapshot,
+        cursor: snapshot.docs.at(-1) || null,
+        hasMore: snapshot.docs.length === PARENT_REGISTRATION_IDENTITY_QUERY_LIMIT
+    };
+}
+
+export async function queryRegistrationsByGuardianEmail(email, previousCursor = null) {
+    const normalizedEmail = normalizeParentRegistrationEmail(email);
+    if (!normalizedEmail) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('guardian.email', normalizedEmail, previousCursor);
+}
+
+export async function queryRegistrationsBySubmitterUid(userId, previousCursor = null) {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return { snapshot: { docs: [] }, cursor: null };
+    return queryRegistrationIdentityPage('submittedByUserId', normalizedUserId, previousCursor);
+}
+
+function getParentRegistrationDocumentKey(registrationDoc) {
+    const registrationData = registrationDoc.data() || {};
+    return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+}
+
+function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
+    const registration = registrationDoc.data() || {};
+    const submittedAt = registration.submittedAt || registration.createdAt;
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+
+    const milliseconds = submittedAt?.toMillis
+        ? submittedAt.toMillis()
+        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+    if (!Number.isFinite(milliseconds)) return { seconds: 0, nanoseconds: 0 };
+
+    const seconds = Math.floor(milliseconds / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((milliseconds - (seconds * 1000)) * 1000000)
+    };
+}
+
+function compareParentRegistrationDocuments(a, b) {
+    const aSubmittedAt = getParentRegistrationSubmittedAtSortParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtSortParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return bSubmittedAt.seconds - aSubmittedAt.seconds;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return bSubmittedAt.nanoseconds - aSubmittedAt.nanoseconds;
+    }
+
+    const aKey = getParentRegistrationDocumentKey(a);
+    const bKey = getParentRegistrationDocumentKey(b);
+    if (aKey === bKey) return 0;
+    return aKey < bKey ? 1 : -1;
+}
+
+export function mergeParentRegistrationQueryResults(querySnapshots = []) {
+    const documentsByKey = new Map();
+    querySnapshots.forEach((snapshot) => {
+        (snapshot?.docs || []).forEach((registrationDoc) => {
+            const key = getParentRegistrationDocumentKey(registrationDoc);
+            if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
+        });
+    });
+
+    return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
+}
+
+export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;
+
+function buildParentRegistrationError(kind, identity) {
+    const messages = {
+        query: 'Some registration applications could not be loaded. Retry this registration page.',
+        enrichment: 'Some registration application details could not be loaded. Retry this registration page.'
+    };
+    return {
+        code: `parent-registration-${kind}-failed`,
+        identity,
+        retryable: true,
+        message: messages[kind]
+    };
+}
+
+async function enrichParentRegistrationApplicationDocuments(registrationDocs = []) {
+    const teamCache = new Map();
+    const formCache = new Map();
+    const enriched = await Promise.all(registrationDocs.map(async (registrationDoc) => {
+        const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
+        const registrationKey = getParentRegistrationDocumentKey(registrationDoc);
+        const teamId = registration.teamId || '';
+        const formId = registration.formId || '';
+        const player = getRegistrationPlayerDraft(registration);
+        const guardians = getRegistrationGuardianDrafts(registration);
+        const errors = [];
+
+        let team = null;
+        if (teamId) {
+            if (!teamCache.has(teamId)) {
+                teamCache.set(teamId, getTeam(teamId)
+                    .then((value) => ({ value, error: null }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `team:${teamId}`)
+                    })));
+            }
+            const teamResult = await teamCache.get(teamId);
+            team = teamResult.value;
+            if (teamResult.error) {
+                errors.push({
+                    ...teamResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        let form = null;
+        if (!registration.programName && teamId && formId) {
+            const formKey = `${teamId}::${formId}`;
+            if (!formCache.has(formKey)) {
+                formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId))
+                    .then((snapshot) => ({
+                        value: snapshot.exists() ? (snapshot.data() || {}) : null,
+                        error: null
+                    }))
+                    .catch(() => ({
+                        value: null,
+                        error: buildParentRegistrationError('enrichment', `form:${formKey}`)
+                    })));
+            }
+            const formResult = await formCache.get(formKey);
+            form = formResult.value;
+            if (formResult.error) {
+                errors.push({
+                    ...formResult.error,
+                    registrationId: registration.id,
+                    registrationKey
+                });
+            }
+        }
+
+        const selectedOption = registration.selectedOption || {};
+        return {
+            application: {
+                id: registration.id,
+                registrationKey,
+                teamId,
+                formId,
+                teamName: team?.name || registration.teamName || form?.teamName || 'Team registration',
+                programName: registration.programName || form?.programName || form?.title || 'Registration',
+                playerName: player.name || registration.participant?.name || 'Unnamed player',
+                guardianEmail: guardians[0]?.email || registration.guardian?.email || '',
+                status: normalizeRegistrationStatus(registration.status),
+                statusLabel: formatParentRegistrationStatusLabel(registration.status),
+                selectedOptionLabel: selectedOption.title || selectedOption.label || '',
+                submittedAt: registration.submittedAt || registration.createdAt || null
+            },
+            errors
+        };
+    }));
+
+    return {
+        applications: enriched.map((result) => result.application),
+        errors: enriched.flatMap((result) => result.errors)
+    };
+}
+
+export async function listParentRegistrationApplicationsPage(userProfile = {}, options = {}) {
+    const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
+    const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
+    const cursor = options.cursor || {};
+    const queryDefinitions = [
+        email ? {
+            identity: 'guardian-email',
+            cursorKey: 'guardianEmail',
+            load: () => queryRegistrationsByGuardianEmail(email, cursor.guardianEmail || null)
+        } : null,
+        userId ? {
+            identity: 'submitter-uid',
+            cursorKey: 'submittedByUserId',
+            load: () => queryRegistrationsBySubmitterUid(userId, cursor.submittedByUserId || null)
+        } : null
+    ].filter(Boolean);
+    const nextCursor = {
+        guardianEmail: cursor.guardianEmail || null,
+        submittedByUserId: cursor.submittedByUserId || null
+    };
+
+    if (queryDefinitions.length === 0) {
+        return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
+    }
+
+    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
+        try {
+            return { definition, page: await definition.load(), error: null };
+        } catch {
+            return {
+                definition,
+                page: { snapshot: { docs: [] }, cursor: null, hasMore: false },
+                error: buildParentRegistrationError('query', definition.identity)
+            };
+        }
+    }));
+    const pageDocuments = mergeParentRegistrationQueryResults(
+        queryResults.map((result) => result.page.snapshot)
+    ).slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+    const pageDocumentKeys = new Set(pageDocuments.map(getParentRegistrationDocumentKey));
+
+    let hasMore = queryResults.some((result) => result.error);
+    queryResults.forEach((result) => {
+        if (result.error) return;
+        let consumedCount = 0;
+        for (const registrationDoc of result.page.snapshot.docs) {
+            if (!pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
+            nextCursor[result.definition.cursorKey] = registrationDoc;
+            consumedCount += 1;
+        }
+        if (consumedCount < result.page.snapshot.docs.length || result.page.hasMore) {
+            hasMore = true;
+        }
+    });
+
+    const enrichment = await enrichParentRegistrationApplicationDocuments(pageDocuments);
+    const errors = [
+        ...queryResults.map((result) => result.error).filter(Boolean),
+        ...enrichment.errors
+    ];
+    return {
+        applications: enrichment.applications,
+        nextCursor: (hasMore || enrichment.errors.length > 0) ? nextCursor : null,
+        retryCursor: errors.length > 0 ? cursor : null,
+        hasMore,
+        errors
+    };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const registrationQueryLoaders = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsByGuardianEmail(email, cursor));
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationQueryLoaders.push((cursor) => queryRegistrationsBySubmitterUid(userId, cursor));
     }
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+
+    const queryResults = await Promise.all(registrationQueryLoaders.map(async (loadRegistrationPage) => {
         try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
+            const snapshots = [];
+            let cursor = null;
+            let hasMore = true;
+            while (hasMore) {
+                const page = await loadRegistrationPage(cursor);
+                snapshots.push(page.snapshot);
+                cursor = page.cursor;
+                hasMore = page.hasMore && Boolean(cursor);
+            }
+            return { snapshots, error: null };
         } catch (error) {
-            return { snapshot: null, error };
+            return { snapshots: null, error };
         }
     }));
-    const successfulResults = queryResults.filter((result) => result.snapshot);
+    const successfulResults = queryResults.filter((result) => result.snapshots);
     if (successfulResults.length === 0) {
         throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
     }
-    const seenRegistrationPaths = new Set();
-    const registrationDocs = successfulResults.flatMap((result) => result.snapshot.docs).filter((registrationDoc) => {
-        const registrationData = registrationDoc.data() || {};
-        const dedupKey = registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
-        if (seenRegistrationPaths.has(dedupKey)) return false;
-        seenRegistrationPaths.add(dedupKey);
-        return true;
-    });
+    const registrationDocs = mergeParentRegistrationQueryResults(
+        successfulResults.flatMap((result) => result.snapshots)
+    );
 
     const teamCache = new Map();
     const formCache = new Map();
@@ -6095,7 +6347,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         }
 
         let form = null;
-        if (teamId && formId) {
+        if (!registration.programName && teamId && formId) {
             const formKey = `${teamId}::${formId}`;
             if (!formCache.has(formKey)) {
                 formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId)).then((snap) => snap.exists() ? (snap.data() || {}) : null));
@@ -6119,11 +6371,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         };
     }));
 
-    return applications.sort((a, b) => {
-        const aDate = a.submittedAt?.toDate ? a.submittedAt.toDate() : (a.submittedAt ? new Date(a.submittedAt) : new Date(0));
-        const bDate = b.submittedAt?.toDate ? b.submittedAt.toDate() : (b.submittedAt ? new Date(b.submittedAt) : new Date(0));
-        return bDate - aDate;
-    });
+    return applications;
 }
 
 export async function getParentDashboardData(userId) {
@@ -6141,18 +6389,9 @@ export async function getParentDashboardData(userId) {
     }
 
     if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
-        // A registration-applications failure (e.g. a missing collection-group
-        // index) must never crash the dashboard, so degrade to an empty list.
-        let registrationApplications = [];
-        try {
-            registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
-        } catch (error) {
-            console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-        }
         return {
             upcomingGames: [],
             children: [],
-            registrationApplications,
             dashboardState: {
                 kind: 'no-links',
                 blockedLinkCount: 0,
@@ -6240,16 +6479,6 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    // The parent's players are already loaded above. A registration-applications
-    // failure (e.g. a missing collection-group index) must never propagate and
-    // hide those players, so degrade to an empty list instead.
-    let registrationApplications = [];
-    try {
-        registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
-    } catch (error) {
-        console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
-    }
-
     if (activeChildren.length === 0) {
         if (dashboardState.blockedLinkCount > 0) {
             dashboardState.kind = 'access-blocked';
@@ -6262,7 +6491,7 @@ export async function getParentDashboardData(userId) {
         dashboardState.kind = 'degraded';
     }
 
-    return { upcomingGames, children: activeChildren, registrationApplications, dashboardState };
+    return { upcomingGames, children: activeChildren, dashboardState };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {

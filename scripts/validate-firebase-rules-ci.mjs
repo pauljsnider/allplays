@@ -289,7 +289,8 @@ export function validateProductionDeployCommand(deployProd) {
     const deployArgs = deployProd.slice(deployArgsStart, deployArgsEnd);
     assertIncludes(deployArgs, '--only "$deploy_targets"', 'Production Firebase deploy target arguments');
     assertIncludes(deployArgs, '--project game-flow-c6311', 'Production Firebase deploy project');
-    assertIncludes(deployArgs, '--config "$firebase_config"', 'Production Firebase generated config');
+    assertIncludes(deployProd, 'deploy_config="$firebase_config"', 'Production Firebase generated config default');
+    assertIncludes(deployArgs, '--config "$deploy_config"', 'Production Firebase selected generated config');
 
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(
@@ -339,6 +340,26 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
         'Production Firestore exact-source indexes-only deploy'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"',
+        'Production Firestore indexes config beside staged indexes'
+    );
+    assertIncludes(
+        deployProd,
+        "jq 'del(.firestore.rules)' \"$firebase_config\" > \"$firestore_indexes_config\"",
+        'Production Firestore indexes config removes the rules target'
+    );
+    assertIncludes(
+        deployProd,
+        'and (.firestore | has("rules") | not)',
+        'Production Firestore indexes config rejects a retained rules target'
+    );
+    assertMatches(
+        deployProd,
+        /if \[\[ "\$deploy_targets" == "firestore:indexes" \]\]; then[\s\S]{0,1000}deploy_config="\$firestore_indexes_config"[\s\S]{0,1000}--config "\$deploy_config"/,
+        'Production Firestore indexes deploy uses the rules-free config'
     );
     assertIncludes(
         deployProd,

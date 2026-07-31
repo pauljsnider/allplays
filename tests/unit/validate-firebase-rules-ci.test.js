@@ -147,10 +147,17 @@ concurrency:
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
+            firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
+            jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
+            jq -e 'and (.firestore | has("rules") | not)' "$firestore_indexes_config"
+            deploy_config="$firebase_config"
+            if [[ "$deploy_targets" == "firestore:indexes" ]]; then
+              deploy_config="$firestore_indexes_config"
+            fi
             local -a deploy_args=(
               --only "$deploy_targets"
               --project game-flow-c6311
-              --config "$firebase_config"
+              --config "$deploy_config"
               --non-interactive
             )
             retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
@@ -249,8 +256,23 @@ concurrency:
             validDeployCommand.replace('              --project game-flow-c6311\n', '')
         )).toThrow('Production Firebase deploy project');
         expect(() => validateProductionDeployCommand(
-            validDeployCommand.replace('              --config "$firebase_config"\n', '')
-        )).toThrow('Production Firebase generated config');
+            validDeployCommand.replace('            deploy_config="$firebase_config"\n', '')
+        )).toThrow('Production Firebase generated config default');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                'firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"',
+                'firestore_indexes_config="$RUNNER_TEMP/firebase-indexes.generated.json"'
+            )
+        )).toThrow('Production Firestore indexes config beside staged indexes');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                "            jq 'del(.firestore.rules)' \"$firebase_config\" > \"$firestore_indexes_config\"\n",
+                ''
+            )
+        )).toThrow('Production Firestore indexes config removes the rules target');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('              deploy_config="$firestore_indexes_config"', '              deploy_config="$firebase_config"')
+        )).toThrow('Production Firestore indexes deploy uses the rules-free config');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace(
                 'git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules',

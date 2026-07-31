@@ -539,8 +539,25 @@ jobs:
           set -euo pipefail
           firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
+          firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
           retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+
+          if ! jq -e '
+            .firestore.rules == "firestore.rules"
+            and .firestore.indexes == "firestore.indexes.json"
+          ' "$firebase_config" >/dev/null; then
+            echo "The trusted production config does not contain the exact Firestore rules and indexes paths." >&2
+            exit 1
+          fi
+          jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
+          if ! jq -e '
+            .firestore.indexes == "firestore.indexes.json"
+            and (.firestore | has("rules") | not)
+          ' "$firestore_indexes_config" >/dev/null; then
+            echo "The indexes-only Firebase config still contains a Firestore rules target." >&2
+            exit 1
+          fi
 
           verify_active_firestore_rules() {
             local release_json ruleset_json ruleset_name local_rules_b64 active_rules_b64
@@ -854,11 +871,20 @@ jobs:
             local max_attempts="${3:-3}"
             local base_delay_seconds="${4:-15}"
             local acknowledge_failure_policy="${5:-false}"
-            local attempt deploy_log deploy_status retry_delay_seconds retry_jitter_seconds
+            local attempt deploy_config deploy_log deploy_status retry_delay_seconds retry_jitter_seconds
+            deploy_config="$firebase_config"
+            if [[ "$deploy_targets" == "firestore:indexes" ]]; then
+              # firebase-tools 14.25 prepares every Firestore rules path present
+              # in the config even for --only firestore:indexes. Supplying the
+              # derived indexes-only config prevents an unrelated projects:test
+              # outage from blocking index deployment after exact rules were
+              # already compiled, source-verified, and activated above.
+              deploy_config="$firestore_indexes_config"
+            fi
             local -a deploy_args=(
               --only "$deploy_targets"
               --project game-flow-c6311
-              --config "$firebase_config"
+              --config "$deploy_config"
               --non-interactive
             )
 

@@ -66,7 +66,7 @@ function getWhereConstraint(queryValue) {
   return queryValue.constraints.find((constraint) => constraint?.field);
 }
 
-const { getTeams, getUserTeamsWithAccess } = await import('../../js/db.js?v=127');
+const { getTeams, getUserTeamsWithAccess } = await import('../../js/db.js?v=131');
 
 describe('team access query resilience', () => {
   beforeEach(() => {

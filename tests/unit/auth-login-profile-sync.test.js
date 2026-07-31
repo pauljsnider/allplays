@@ -32,7 +32,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
-vi.mock('../../js/db.js?v=127', () => dbMocks);
+vi.mock('../../js/db.js?v=131', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=12', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
