@@ -2659,7 +2659,7 @@
                 console.warn('[parent-dashboard] Failed to load registration applications:', error);
                 registrationErrors = [{
                     message: 'Registration applications could not be loaded. Retry this registration page.'
-                }]);
+                }];
                 registrationRetryCursor = cursor || {};
             } finally {
                 registrationLoadInFlight = false;
