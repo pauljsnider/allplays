@@ -140,7 +140,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=130';");
+        expect(html).toContain("from './js/db.js?v=131';");
     });
 
     it.each([
