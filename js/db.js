@@ -6135,28 +6135,36 @@ export function mergeParentRegistrationQueryResults(querySnapshots = []) {
     return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
 }
 
+async function listAllParentRegistrationIdentityPages(loadPage) {
+    const docs = [];
+    let cursor = null;
+
+    while (true) {
+        const page = await loadPage(cursor);
+        docs.push(...(page.docs || []));
+        if (!page.hasMore || !page.nextCursor || page.nextCursor === cursor) break;
+        cursor = page.nextCursor;
+    }
+
+    return { docs };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const registrationLookups = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationLookups.push((cursor) => listParentRegistrationsByGuardianEmailPage(email, cursor));
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationLookups.push((cursor) => listParentRegistrationsBySubmitterUidPage(userId, cursor));
     }
 
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
+    const queryResults = await Promise.all(registrationLookups.map(async (loadPage) => {
         try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
+            return { snapshot: await listAllParentRegistrationIdentityPages(loadPage), error: null };
         } catch (error) {
             return { snapshot: null, error };
         }

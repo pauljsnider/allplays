@@ -86,16 +86,11 @@ function buildParentRegistrationIdentityQueryHelpers({ docs = [] } = {}) {
 function buildListParentRegistrationApplicationsForProfile({
     registration,
     form = null,
-    getDocs = vi.fn().mockResolvedValue({
-        docs: [{
-            id: 'registration-1',
-            ref: { path: 'teams/team-1/registrationForms/form-1/registrations/registration-1' },
-            data: () => registration
-        }]
-    })
+    guardianPages,
+    submitterPages
 }) {
     const dbSource = readRepoFile('js/db.js');
-    const start = dbSource.indexOf('async function listParentRegistrationApplicationsForProfile');
+    const start = dbSource.indexOf('async function listAllParentRegistrationIdentityPages');
     const end = dbSource.indexOf('\nexport async function getParentDashboardData', start);
     const functionSource = dbSource.slice(start, end)
         .replace(
@@ -106,14 +101,25 @@ function buildListParentRegistrationApplicationsForProfile({
         exists: () => form !== null,
         data: () => form
     });
+    const defaultDocument = {
+        id: 'registration-1',
+        ref: { path: 'teams/team-1/registrationForms/form-1/registrations/registration-1' },
+        data: () => registration
+    };
+    function buildPageLoader(pages = [{ docs: [defaultDocument], hasMore: false, nextCursor: defaultDocument }]) {
+        return vi.fn().mockImplementation(async (_identity, cursor) => {
+            const pageIndex = cursor ? pages.findIndex((page) => page.nextCursor === cursor) + 1 : 0;
+            return pages[pageIndex] || { docs: [], hasMore: false, nextCursor: cursor };
+        });
+    }
+    const listParentRegistrationsByGuardianEmailPage = buildPageLoader(guardianPages);
+    const listParentRegistrationsBySubmitterUidPage = buildPageLoader(submitterPages);
     const dependencies = {
         normalizeParentRegistrationEmail: (value = '') => String(value || '').trim().toLowerCase(),
         auth: { currentUser: null },
-        query: vi.fn((...parts) => parts),
-        collectionGroup: vi.fn(),
         db: {},
-        where: vi.fn(),
-        getDocs,
+        listParentRegistrationsByGuardianEmailPage,
+        listParentRegistrationsBySubmitterUidPage,
         mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
         getDoc,
@@ -216,12 +222,10 @@ describe('parent dashboard registration application statuses', () => {
         const functionSource = db.slice(functionStart, functionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(functionSource).toContain("where('guardian.email', '==', email)");
-        expect(functionSource).toContain("where('submittedByUserId', '==', userId)");
+        expect(functionSource).toContain('listParentRegistrationsByGuardianEmailPage(email, cursor)');
+        expect(functionSource).toContain('listParentRegistrationsBySubmitterUidPage(userId, cursor)');
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
-        expect(functionSource).not.toContain("orderBy('submittedAt'");
-        expect(functionSource).not.toContain('startAfter(');
-        expect(functionSource).not.toContain('limit(');
+        expect(functionSource).toContain('listAllParentRegistrationIdentityPages(loadPage)');
         expect(db).toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
@@ -287,12 +291,18 @@ describe('parent dashboard registration application statuses', () => {
             programName: 'Spring Soccer',
             submittedAt: undefined
         });
-        const getDocs = vi.fn()
-            .mockResolvedValueOnce({ docs: [missingDate, stringDate, canonical] })
-            .mockResolvedValueOnce({ docs: [canonical, createdAtFallback] });
         const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
             registration: canonical.data(),
-            getDocs
+            guardianPages: [{
+                docs: [missingDate, stringDate, canonical],
+                hasMore: false,
+                nextCursor: canonical
+            }],
+            submitterPages: [{
+                docs: [canonical, createdAtFallback],
+                hasMore: false,
+                nextCursor: createdAtFallback
+            }]
         });
 
         const applications = await listApplications({
@@ -303,9 +313,28 @@ describe('parent dashboard registration application statuses', () => {
         expect(applications.map((application) => application.id)).toEqual(
             ['canonical', 'string-date', 'created-at-fallback', 'missing-date']
         );
-        expect(getDocs).toHaveBeenCalledTimes(2);
-        expect(dependencies.query).toHaveBeenCalledTimes(2);
-        expect(dependencies.query.mock.calls.every((call) => call.length === 2)).toBe(true);
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenCalledWith('parent@example.com', null);
+        expect(dependencies.listParentRegistrationsBySubmitterUidPage).toHaveBeenCalledWith('parent-1', null);
+    });
+
+    it('assembles registration applications from every bounded identity page', async () => {
+        const newest = buildRegistrationDocument('newest', 300, { programName: 'Spring Soccer' });
+        const guardianCursor = buildRegistrationDocument('guardian-cursor', 200, { programName: 'Spring Soccer' });
+        const oldest = buildRegistrationDocument('oldest', 100, { programName: 'Spring Soccer' });
+        const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
+            registration: newest.data(),
+            guardianPages: [
+                { docs: [newest, guardianCursor], hasMore: true, nextCursor: guardianCursor },
+                { docs: [oldest], hasMore: false, nextCursor: oldest }
+            ],
+            submitterPages: []
+        });
+
+        const applications = await listApplications({ email: 'parent@example.com' });
+
+        expect(applications.map((application) => application.id)).toEqual(['newest', 'guardian-cursor', 'oldest']);
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenNthCalledWith(1, 'parent@example.com', null);
+        expect(dependencies.listParentRegistrationsByGuardianEmailPage).toHaveBeenNthCalledWith(2, 'parent@example.com', guardianCursor);
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {
@@ -375,13 +404,12 @@ describe('parent dashboard registration application statuses', () => {
             formId: 'form-1',
             programName: 'Spring Soccer'
         });
-        const getDocs = vi.fn()
-            .mockRejectedValueOnce(new Error('guardian index unavailable'))
-            .mockResolvedValueOnce({ docs: [registrationDoc] });
-        const { listApplications } = buildListParentRegistrationApplicationsForProfile({
+        const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
             registration: registrationDoc.data(),
-            getDocs
+            guardianPages: [],
+            submitterPages: [{ docs: [registrationDoc], hasMore: false, nextCursor: registrationDoc }]
         });
+        dependencies.listParentRegistrationsByGuardianEmailPage.mockRejectedValueOnce(new Error('guardian index unavailable'));
 
         const applications = await listApplications({
             id: 'parent-1',
