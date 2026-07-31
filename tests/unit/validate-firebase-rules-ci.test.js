@@ -147,7 +147,7 @@ concurrency:
           if [[ "$STORAGE_RULES_CHANGED" != "true" ]]; then exit 0; fi
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
-            firestore_indexes_config="$RUNNER_TEMP/firebase-indexes.generated.json"
+            firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
             jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
             jq -e 'and (.firestore | has("rules") | not)' "$firestore_indexes_config"
             deploy_config="$firebase_config"
@@ -258,6 +258,12 @@ concurrency:
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('            deploy_config="$firebase_config"\n', '')
         )).toThrow('Production Firebase generated config default');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace(
+                'firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"',
+                'firestore_indexes_config="$RUNNER_TEMP/firebase-indexes.generated.json"'
+            )
+        )).toThrow('Production Firestore indexes config beside staged indexes');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace(
                 "            jq 'del(.firestore.rules)' \"$firebase_config\" > \"$firestore_indexes_config\"\n",

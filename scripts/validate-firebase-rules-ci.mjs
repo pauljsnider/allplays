@@ -343,8 +343,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'firestore_indexes_config="$RUNNER_TEMP/firebase-indexes.generated.json"',
-        'Production Firestore isolated indexes config path'
+        'firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"',
+        'Production Firestore indexes config beside staged indexes'
     );
     assertIncludes(
         deployProd,
