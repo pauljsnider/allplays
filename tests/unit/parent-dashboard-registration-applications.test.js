@@ -184,6 +184,13 @@ function buildParentRegistrationApplicationsPageLoader({
     };
 }
 
+function buildMergeRegistrationApplications() {
+    const html = readRepoFile('parent-dashboard.html');
+    const start = html.indexOf('function getRegistrationApplicationKey');
+    const end = html.indexOf('\n        async function loadRegistrationApplicationsPage', start);
+    return new Function(`${html.slice(start, end)}\nreturn mergeRegistrationApplications;`)();
+}
+
 describe('parent dashboard registration application statuses', () => {
     it('loads the bounded first registration page without blocking or rerunning dashboard bootstrap', () => {
         const html = readRepoFile('parent-dashboard.html');
@@ -204,8 +211,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(initSource).toContain('void loadInitialRegistrationApplications(user);');
         expect(initSource).not.toContain('await loadInitialRegistrationApplications(user)');
         expect(initSource.match(/loadInitialRegistrationApplications\(user\)/g)).toHaveLength(1);
-        expect(loaderSource.match(/listParentRegistrationApplicationsPage\(user\)/g)).toHaveLength(1);
-        expect(loaderSource).toContain('renderRegistrationApplications(page.applications, page.errors);');
+        expect(loaderSource).toContain('await loadRegistrationApplicationsPage(null);');
         expect(dashboardSource).not.toContain('listParentRegistrationApplicationsForProfile');
         expect(dashboardSource).not.toContain('registrationApplications');
         expect(html).toContain('registration-applications-list');
@@ -216,11 +222,50 @@ describe('parent dashboard registration application statuses', () => {
 
     it('shows a registration-specific error without replacing successful applications', () => {
         const html = readRepoFile('parent-dashboard.html');
+        const loaderStart = html.indexOf('async function loadRegistrationApplicationsPage');
+        const loaderEnd = html.indexOf('\n        function renderRegistrationApplications', loaderStart);
+        const loaderSource = html.slice(loaderStart, loaderEnd);
 
-        expect(html).toContain("renderRegistrationApplications([], [{");
-        expect(html).toContain('Registration applications could not be loaded. Retry by refreshing this page.');
+        expect(loaderSource).toContain('listParentRegistrationApplicationsPage(registrationUser, { cursor })');
+        expect(loaderSource).toContain('registrationApplications = mergeRegistrationApplications(');
+        expect(loaderSource).toContain('registrationRetryCursor = cursor || {};');
+        expect(html).toContain('Registration applications could not be loaded. Retry this registration page.');
         expect(html).toContain("const errorHtml = errors.length > 0");
-        expect(html).toContain('container.innerHTML = errorHtml + applications.map((application) => {');
+        expect(html).toContain('id="registration-retry-btn"');
+    });
+
+    it('appends registration pages newest-first without rerunning dashboard bootstrap', () => {
+        const html = readRepoFile('parent-dashboard.html');
+        const loaderStart = html.indexOf('async function loadRegistrationApplicationsPage');
+        const loaderEnd = html.indexOf('\n        function renderRegistrationApplications', loaderStart);
+        const loaderSource = html.slice(loaderStart, loaderEnd);
+        const mergeStart = html.indexOf('function mergeRegistrationApplications');
+        const mergeEnd = html.indexOf('\n        async function loadRegistrationApplicationsPage', mergeStart);
+        const mergeSource = html.slice(mergeStart, mergeEnd);
+
+        expect(loaderSource).toContain('page.nextCursor || null');
+        expect(loaderSource).not.toContain('getParentDashboardData');
+        expect(mergeSource).toContain('new Map()');
+        expect(mergeSource).toContain('getRegistrationApplicationSubmittedAt(b)');
+        expect(html).toContain('id="registration-load-more-btn"');
+        expect(html).toContain('void loadRegistrationApplicationsPage(registrationNextCursor);');
+    });
+
+    it('merges appended applications newest-first and replaces duplicate identities', () => {
+        const mergeApplications = buildMergeRegistrationApplications();
+        const firstPage = [
+            { id: 'newest', registrationKey: 'registrations/newest', submittedAt: '2026-07-03T00:00:00Z' },
+            { id: 'duplicate', registrationKey: 'registrations/duplicate', submittedAt: '2026-07-02T00:00:00Z', statusLabel: 'Pending' }
+        ];
+        const nextPage = [
+            { id: 'oldest', registrationKey: 'registrations/oldest', submittedAt: '2026-07-01T00:00:00Z' },
+            { id: 'duplicate', registrationKey: 'registrations/duplicate', submittedAt: '2026-07-02T00:00:00Z', statusLabel: 'Enrolled' }
+        ];
+
+        const merged = mergeApplications(firstPage, nextPage);
+
+        expect(merged.map((application) => application.id)).toEqual(['newest', 'duplicate', 'oldest']);
+        expect(merged.find((application) => application.id === 'duplicate').statusLabel).toBe('Enrolled');
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
