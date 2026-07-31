@@ -353,6 +353,7 @@
     <script type="module">
         import {
             getParentDashboardData,
+            listParentRegistrationApplicationsPage,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -388,7 +389,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=129';
+        } from './js/db.js?v=130';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -452,6 +453,9 @@
         let incentivesPanelPlayer = null;  // { id, name, teamId }
         let incentivesPanelRules = [];
         let parentDashboardHydrationRun = 0;
+        let registrationApplications = [];
+        let registrationApplicationsCursor = null;
+        let registrationApplicationsLoading = false;
         const certificatesByPlayerKey = new Map();
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
@@ -1548,12 +1552,12 @@
                     loadRequestAccessOptions(),
                     refreshParentMembershipRequestList(user.uid)
                 ]);
+                await loadRegistrationApplications(user, { reset: true });
                 familyShareChildren = data.children || [];
                 updateShareLinkControlsReady();
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children, data.dashboardState || null);
-                renderRegistrationApplications(data.registrationApplications || []);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -2596,10 +2600,41 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
-        function renderRegistrationApplications(applications) {
+        async function loadRegistrationApplications(user, { reset = false } = {}) {
+            const container = document.getElementById('registration-applications-list');
+            if (!container || registrationApplicationsLoading) return;
+            registrationApplicationsLoading = true;
+            if (reset) {
+                registrationApplications = [];
+                registrationApplicationsCursor = null;
+            }
+            container.setAttribute('aria-busy', 'true');
+            try {
+                const page = await listParentRegistrationApplicationsPage(user, {
+                    cursor: registrationApplicationsCursor
+                });
+                registrationApplications = [...registrationApplications, ...page.applications];
+                registrationApplicationsCursor = page.nextCursor;
+                renderRegistrationApplications(registrationApplications, {
+                    hasMore: page.hasMore,
+                    errors: page.errors
+                });
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load registration applications:', error);
+                renderRegistrationApplications(registrationApplications, {
+                    hasMore: true,
+                    errors: [{ message: 'Registration applications could not be loaded. Try again.' }]
+                });
+            } finally {
+                registrationApplicationsLoading = false;
+                container.removeAttribute('aria-busy');
+            }
+        }
+
+        function renderRegistrationApplications(applications, { hasMore = false, errors = [] } = {}) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
-            if (!applications || applications.length === 0) {
+            if ((!applications || applications.length === 0) && !hasMore && errors.length === 0) {
                 container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
                 return;
             }
@@ -2614,7 +2649,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = applications.map((application) => {
+            const applicationCards = applications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
@@ -2635,6 +2670,16 @@
                     </div>
                 `;
             }).join('');
+            const errorMessage = errors.length > 0
+                ? `<div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">${escapeHtml(errors[0].message || 'Some applications could not be loaded.')}</div>`
+                : '';
+            const loadMoreButton = hasMore
+                ? `<button id="load-more-registration-applications" type="button" class="w-full rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50">Load more applications</button>`
+                : '';
+            container.innerHTML = applicationCards + errorMessage + loadMoreButton;
+            document.getElementById('load-more-registration-applications')?.addEventListener('click', () => {
+                loadRegistrationApplications(currentUser);
+            });
         }
 
         function renderPlayers(children, dashboardState = null) {
