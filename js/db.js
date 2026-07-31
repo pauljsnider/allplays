@@ -6040,6 +6040,194 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+export const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE = 10;
+
+function getParentRegistrationDocumentKey(registrationDoc) {
+    const registrationData = registrationDoc.data() || {};
+    return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+}
+
+function getParentRegistrationSubmittedAtMillis(registrationDoc) {
+    const submittedAt = registrationDoc.data()?.submittedAt;
+    if (submittedAt?.toMillis) return submittedAt.toMillis();
+    const parsed = submittedAt ? new Date(submittedAt).getTime() : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareParentRegistrationDocuments(a, b) {
+    const submittedAtDifference = getParentRegistrationSubmittedAtMillis(b) - getParentRegistrationSubmittedAtMillis(a);
+    if (submittedAtDifference !== 0) return submittedAtDifference;
+    return getParentRegistrationDocumentKey(b).localeCompare(getParentRegistrationDocumentKey(a));
+}
+
+function buildParentRegistrationError(kind, identity = null) {
+    const messages = {
+        query: 'Some registration applications could not be loaded. Retry this registration page.',
+        enrichment: 'Some registration application details could not be loaded. Retry this registration page.'
+    };
+    return {
+        code: `parent-registration-${kind}-failed`,
+        identity,
+        retryable: true,
+        message: messages[kind]
+    };
+}
+
+async function enrichParentRegistrationApplicationDocuments(registrationDocs = []) {
+    const teamCache = new Map();
+    const formCache = new Map();
+
+    const enriched = await Promise.all(registrationDocs.map(async (registrationDoc) => {
+        const registration = { id: registrationDoc.id, ...(registrationDoc.data() || {}) };
+        const teamId = registration.teamId || '';
+        const formId = registration.formId || '';
+        const player = getRegistrationPlayerDraft(registration);
+        const guardians = getRegistrationGuardianDrafts(registration);
+        const errors = [];
+
+        let team = null;
+        if (teamId) {
+            if (!teamCache.has(teamId)) {
+                teamCache.set(teamId, getTeam(teamId)
+                    .then((value) => ({ value, error: null }))
+                    .catch(() => ({ value: null, error: buildParentRegistrationError('enrichment', `team:${teamId}`) })));
+            }
+            const teamResult = await teamCache.get(teamId);
+            team = teamResult.value;
+            if (teamResult.error) errors.push(teamResult.error);
+        }
+
+        let form = null;
+        if (!registration.programName && teamId && formId) {
+            const formKey = `${teamId}::${formId}`;
+            if (!formCache.has(formKey)) {
+                formCache.set(formKey, getDoc(doc(db, `teams/${teamId}/registrationForms`, formId))
+                    .then((snap) => ({ value: snap.exists() ? (snap.data() || {}) : null, error: null }))
+                    .catch(() => ({ value: null, error: buildParentRegistrationError('enrichment', `form:${formKey}`) })));
+            }
+            const formResult = await formCache.get(formKey);
+            form = formResult.value;
+            if (formResult.error) errors.push(formResult.error);
+        }
+
+        const selectedOption = registration.selectedOption || {};
+        return {
+            application: {
+                id: registration.id,
+                teamId,
+                formId,
+                teamName: team?.name || registration.teamName || form?.teamName || 'Team registration',
+                programName: registration.programName || form?.programName || form?.title || 'Registration',
+                playerName: player.name || registration.participant?.name || 'Unnamed player',
+                guardianEmail: guardians[0]?.email || registration.guardian?.email || '',
+                status: normalizeRegistrationStatus(registration.status),
+                statusLabel: formatParentRegistrationStatusLabel(registration.status),
+                selectedOptionLabel: selectedOption.title || selectedOption.label || '',
+                submittedAt: registration.submittedAt || null
+            },
+            errors
+        };
+    }));
+
+    const seenErrors = new Set();
+    return {
+        applications: enriched.map((result) => result.application),
+        errors: enriched.flatMap((result) => result.errors).filter((error) => {
+            const key = `${error.code}:${error.identity}`;
+            if (seenErrors.has(key)) return false;
+            seenErrors.add(key);
+            return true;
+        })
+    };
+}
+
+export async function listParentRegistrationApplicationsPage(userProfile = {}, options = {}) {
+    const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
+    const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
+    const cursors = options.cursor || {};
+    const queryDefinitions = [
+        email ? {
+            identity: 'guardian-email',
+            cursorKey: 'guardianEmail',
+            fieldPath: 'guardian.email',
+            value: email
+        } : null,
+        userId ? {
+            identity: 'submitter-uid',
+            cursorKey: 'submittedByUserId',
+            fieldPath: 'submittedByUserId',
+            value: userId
+        } : null
+    ].filter(Boolean);
+    const nextCursors = {
+        guardianEmail: cursors.guardianEmail || null,
+        submittedByUserId: cursors.submittedByUserId || null
+    };
+
+    if (queryDefinitions.length === 0) {
+        return { applications: [], nextCursor: null, hasMore: false, errors: [] };
+    }
+
+    const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
+        const constraints = [
+            where(definition.fieldPath, '==', definition.value),
+            orderBy('submittedAt', 'desc'),
+            orderBy(documentId(), 'desc')
+        ];
+        const cursor = cursors[definition.cursorKey];
+        if (cursor) constraints.push(startAfter(cursor));
+        constraints.push(limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE));
+
+        try {
+            const snapshot = await getDocs(query(collectionGroup(db, 'registrations'), ...constraints));
+            return { definition, docs: snapshot.docs, error: null };
+        } catch {
+            return {
+                definition,
+                docs: [],
+                error: buildParentRegistrationError('query', definition.identity)
+            };
+        }
+    }));
+
+    const documentsByKey = new Map();
+    queryResults.forEach((result) => {
+        result.docs.forEach((registrationDoc) => {
+            const key = getParentRegistrationDocumentKey(registrationDoc);
+            if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
+        });
+    });
+    const pageDocuments = [...documentsByKey.values()]
+        .sort(compareParentRegistrationDocuments)
+        .slice(0, PARENT_REGISTRATION_APPLICATION_PAGE_SIZE);
+    const pageDocumentKeys = new Set(pageDocuments.map(getParentRegistrationDocumentKey));
+
+    let hasMore = queryResults.some((result) => result.error);
+    queryResults.forEach((result) => {
+        if (result.error) return;
+        let consumedCount = 0;
+        for (const registrationDoc of result.docs) {
+            if (!pageDocumentKeys.has(getParentRegistrationDocumentKey(registrationDoc))) break;
+            nextCursors[result.definition.cursorKey] = registrationDoc;
+            consumedCount += 1;
+        }
+        if (consumedCount < result.docs.length || result.docs.length === PARENT_REGISTRATION_APPLICATION_PAGE_SIZE) {
+            hasMore = true;
+        }
+    });
+
+    const enrichment = await enrichParentRegistrationApplicationDocuments(pageDocuments);
+    return {
+        applications: enrichment.applications,
+        nextCursor: (hasMore || enrichment.errors.length > 0) ? nextCursors : null,
+        hasMore,
+        errors: [
+            ...queryResults.map((result) => result.error).filter(Boolean),
+            ...enrichment.errors
+        ]
+    };
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
