@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+    createFirestoreFixedWindowRateLimitReservation,
     createFirestoreFixedWindowRateLimiter,
     createInMemoryRateLimiter,
     getRequestIp
@@ -140,6 +141,59 @@ test('shares an atomic fixed-window count across durable limiter instances', asy
 
     assert.equal(results.filter((result) => result.allowed).length, 3);
     assert.equal(results.filter((result) => !result.allowed).length, 1);
+});
+
+test('prepares a transaction-compatible durable reservation with a hashed boundary', async () => {
+    const firestore = makeAtomicFirestore();
+    const prepareReservation = createFirestoreFixedWindowRateLimitReservation({
+        firestore,
+        collectionName: 'coParentInviteRateLimits',
+        windowMs: 10_000,
+        maxRequests: 1
+    });
+    const boundary = 'recipient\nparent@example.com';
+    const reservation = prepareReservation(boundary, 1_000);
+
+    assert.match(reservation.ref.path, /^coParentInviteRateLimits\/[a-f0-9]{64}$/);
+    assert.doesNotMatch(reservation.ref.path, /parent@example\.com/);
+    const first = await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(reservation.ref);
+        const decision = reservation.evaluate(snapshot);
+        reservation.commit(transaction, decision);
+        return decision;
+    });
+
+    assert.equal(first.allowed, true);
+    assert.equal([...firestore.state.values()][0].count, 1);
+    assert.doesNotMatch(JSON.stringify([...firestore.state.values()][0]), /parent@example\.com/);
+});
+
+test('does not stage a transaction-compatible write when a boundary is exhausted', async () => {
+    const firestore = makeAtomicFirestore();
+    const prepareReservation = createFirestoreFixedWindowRateLimitReservation({
+        firestore,
+        collectionName: 'coParentInviteRateLimits',
+        windowMs: 10_000,
+        maxRequests: 1
+    });
+    const firstReservation = prepareReservation('sender\nparent-1', 1_000);
+    await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(firstReservation.ref);
+        const decision = firstReservation.evaluate(snapshot);
+        firstReservation.commit(transaction, decision);
+    });
+    const writesBefore = firestore.setCalls.length;
+    const rejectedReservation = prepareReservation('sender\nparent-1', 2_000);
+    const rejected = await firestore.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(rejectedReservation.ref);
+        const decision = rejectedReservation.evaluate(snapshot);
+        rejectedReservation.commit(transaction, decision);
+        return decision;
+    });
+
+    assert.equal(rejected.allowed, false);
+    assert.equal(firestore.setCalls.length, writesBefore);
+    assert.equal([...firestore.state.values()][0].count, 1);
 });
 
 test('counts concurrent reservations with the same id once across limiter instances', async () => {

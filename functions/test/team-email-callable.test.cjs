@@ -144,6 +144,15 @@ function makeFirestore(seed) {
         }
       };
     },
+    async runTransaction(handler) {
+      return handler({
+        get: async (ref) => snapshot(ref.path),
+        set(ref, value, options) {
+          committedWrites.push({ path: ref.path, value, options });
+          state.set(ref.path, value);
+        }
+      });
+    },
     get mailJobRefsCreated() {
       return mailJobRefsCreated;
     },

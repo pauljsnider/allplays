@@ -3681,10 +3681,17 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
 
 exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
 
+const coParentInviteConfig = functions.config()?.co_parent_invite || {};
 const createCoParentInviteCallableHandler = createCoParentInviteHandler({
   firestore,
   Timestamp: admin.firestore.Timestamp,
-  HttpsError: functions.https.HttpsError
+  HttpsError: functions.https.HttpsError,
+  rateLimitWindowMs: process.env.CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS
+    ?? coParentInviteConfig.rate_limit_window_ms,
+  senderMaxInvites: process.env.CO_PARENT_INVITE_SENDER_MAX_INVITES
+    ?? coParentInviteConfig.sender_max_invites,
+  recipientMaxInvites: process.env.CO_PARENT_INVITE_RECIPIENT_MAX_INVITES
+    ?? coParentInviteConfig.recipient_max_invites
 });
 
 exports.createCoParentInvite = functions.https.onCall(createCoParentInviteCallableHandler);
