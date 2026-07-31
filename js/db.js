@@ -6140,38 +6140,75 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     if (!email && !userId) return [];
 
-    const registrationQueries = [];
+    const pageSize = 10;
+    const registrationQuerySources = [];
     if (email) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('guardian.email', '==', email)
-        ));
+        registrationQuerySources.push({
+            cursorKey: 'guardianEmail',
+            filter: where('guardian.email', '==', email)
+        });
     }
     if (userId) {
-        registrationQueries.push(query(
-            collectionGroup(db, 'registrations'),
-            where('submittedByUserId', '==', userId)
-        ));
+        registrationQuerySources.push({
+            cursorKey: 'submittedByUserId',
+            filter: where('submittedByUserId', '==', userId)
+        });
     }
-    const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
-        try {
-            return { snapshot: await getDocs(registrationQuery), error: null };
-        } catch (error) {
-            return { snapshot: null, error };
+
+    let cursor = {};
+    let sourceHasMore = Object.fromEntries(registrationQuerySources.map((source) => [source.cursorKey, true]));
+    const registrationDocs = [];
+
+    while (Object.values(sourceHasMore).some(Boolean)) {
+        const queryResults = await Promise.all(registrationQuerySources
+            .filter((source) => sourceHasMore[source.cursorKey])
+            .map(async (source) => {
+                const constraints = [
+                    source.filter,
+                    orderBy('submittedAt', 'desc'),
+                    orderBy(documentId(), 'desc')
+                ];
+                if (cursor[source.cursorKey]) constraints.push(startAfter(cursor[source.cursorKey]));
+                constraints.push(limit(pageSize));
+
+                try {
+                    const snapshot = await getDocs(query(
+                        collectionGroup(db, 'registrations'),
+                        ...constraints
+                    ));
+                    return {
+                        source,
+                        page: {
+                            docs: snapshot.docs,
+                            hasMore: snapshot.docs.length === pageSize
+                        },
+                        error: null
+                    };
+                } catch (error) {
+                    return { source, page: null, error };
+                }
+            }));
+        const successfulResults = queryResults.filter((result) => result.page);
+        if (successfulResults.length === 0) {
+            if (registrationDocs.length === 0) {
+                throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
+            }
+            break;
         }
-    }));
-    const successfulResults = queryResults.filter((result) => result.snapshot);
-    if (successfulResults.length === 0) {
-        throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
+
+        const queryPages = Object.fromEntries(successfulResults.map((result) => [
+            result.source.cursorKey,
+            result.page
+        ]));
+        const mergedPage = mergeParentRegistrationQueryPages(queryPages, { cursor, pageSize });
+        registrationDocs.push(...mergedPage.registrations);
+        cursor = mergedPage.nextCursor;
+        queryResults.forEach((result) => {
+            sourceHasMore[result.source.cursorKey] = result.page
+                ? mergedPage.sourceHasMore[result.source.cursorKey]
+                : false;
+        });
     }
-    const seenRegistrationPaths = new Set();
-    const registrationDocs = successfulResults.flatMap((result) => result.snapshot.docs).filter((registrationDoc) => {
-        const registrationData = registrationDoc.data() || {};
-        const dedupKey = registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
-        if (seenRegistrationPaths.has(dedupKey)) return false;
-        seenRegistrationPaths.add(dedupKey);
-        return true;
-    });
 
     const teamCache = new Map();
     const formCache = new Map();

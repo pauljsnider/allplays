@@ -54,7 +54,14 @@ function loadIdentityPage(documents, cursor, pageSize) {
 
 function buildListParentRegistrationApplicationsForProfile({
     registration,
-    form = null
+    form = null,
+    getDocs = vi.fn().mockResolvedValue({
+        docs: [{
+            id: 'registration-1',
+            ref: { path: 'teams/team-1/registrationForms/form-1/registrations/registration-1' },
+            data: () => registration
+        }]
+    })
 }) {
     const dbSource = readRepoFile('js/db.js');
     const start = dbSource.indexOf('async function listParentRegistrationApplicationsForProfile');
@@ -75,13 +82,12 @@ function buildListParentRegistrationApplicationsForProfile({
         collectionGroup: vi.fn(),
         db: {},
         where: vi.fn(),
-        getDocs: vi.fn().mockResolvedValue({
-            docs: [{
-                id: 'registration-1',
-                ref: { path: 'teams/team-1/registrationForms/form-1/registrations/registration-1' },
-                data: () => registration
-            }]
-        }),
+        orderBy: vi.fn((...parts) => ({ type: 'orderBy', parts })),
+        documentId: vi.fn(() => '__name__'),
+        startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
+        limit: vi.fn((value) => ({ type: 'limit', value })),
+        getDocs,
+        mergeParentRegistrationQueryPages: buildMergeParentRegistrationQueryPages(),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
         getDoc,
         doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
@@ -95,7 +101,7 @@ function buildListParentRegistrationApplicationsForProfile({
         ...dependencyNames.map((name) => dependencies[name])
     );
 
-    return { listApplications, getDoc };
+    return { listApplications, getDoc, dependencies };
 }
 
 describe('parent dashboard registration application statuses', () => {
@@ -107,18 +113,37 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=129';");
+        expect(html).toContain("from './js/db.js?v=130';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
         const db = readRepoFile('js/db.js');
+        const indexes = JSON.parse(readRepoFile('firestore.indexes.json'));
         const rules = readRepoFile('firestore.rules');
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
         expect(db).toContain("where('guardian.email', '==', email)");
         expect(db).toContain("where('submittedByUserId', '==', userId)");
-        expect(db).toContain('seenRegistrationPaths');
+        expect(db).toContain('mergeParentRegistrationQueryPages(queryPages, { cursor, pageSize })');
         expect(db).toContain('registrationApplications');
+        expect(indexes.indexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                collectionGroup: 'registrations',
+                queryScope: 'COLLECTION_GROUP',
+                fields: [
+                    { fieldPath: 'guardian.email', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                collectionGroup: 'registrations',
+                queryScope: 'COLLECTION_GROUP',
+                fields: [
+                    { fieldPath: 'submittedByUserId', order: 'ASCENDING' },
+                    { fieldPath: 'submittedAt', order: 'DESCENDING' }
+                ]
+            })
+        ]));
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
@@ -156,6 +181,43 @@ describe('parent dashboard registration application statuses', () => {
 
         expect(applications[0].programName).toBe('Legacy Soccer');
         expect(getDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the deterministic page merger in the production registration loader', async () => {
+        const documents = new Map(Array.from({ length: 15 }, (_, index) => {
+            const seconds = 20 - index;
+            return [seconds, buildRegistrationDocument(`registration-${seconds}`, seconds, {
+                teamId: 'team-1',
+                formId: 'form-1',
+                programName: 'Spring Soccer'
+            })];
+        }));
+        const guardianFirstPage = Array.from({ length: 10 }, (_, index) => documents.get(20 - index));
+        const submitterFirstPage = Array.from({ length: 10 }, (_, index) => documents.get(15 - index));
+        const getDocs = vi.fn()
+            .mockResolvedValueOnce({ docs: guardianFirstPage })
+            .mockResolvedValueOnce({ docs: submitterFirstPage })
+            .mockResolvedValueOnce({ docs: [documents.get(10)] })
+            .mockResolvedValueOnce({ docs: Array.from({ length: 5 }, (_, index) => documents.get(10 - index)) });
+        const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
+            registration: documents.get(20).data(),
+            getDocs
+        });
+
+        const applications = await listApplications({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        });
+
+        expect(applications.map((application) => application.id)).toEqual(
+            Array.from({ length: 15 }, (_, index) => `registration-${20 - index}`)
+        );
+        expect(getDocs).toHaveBeenCalledTimes(4);
+        expect(dependencies.orderBy).toHaveBeenCalledWith('submittedAt', 'desc');
+        expect(dependencies.orderBy).toHaveBeenCalledWith('__name__', 'desc');
+        expect(dependencies.limit).toHaveBeenCalledWith(10);
+        expect(dependencies.startAfter).toHaveBeenCalledTimes(2);
+        expect(dependencies.startAfter).toHaveBeenCalledWith(documents.get(11));
     });
 
     it('deduplicates overlapping identity matches and advances both cursors', () => {
