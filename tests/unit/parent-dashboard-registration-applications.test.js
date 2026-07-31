@@ -375,6 +375,44 @@ describe('parent dashboard registration application statuses', () => {
         expect(secondPage.applications.map((application) => application.id)).toEqual(['z']);
     });
 
+    it('compares tied document paths segment-by-segment when prefix IDs span identity queries', async () => {
+        const longerTeamId = buildRegistrationDocument(
+            'longer-team-id',
+            { seconds: 10, nanoseconds: 1, toMillis: () => 10000 },
+            { teamId: 'a-b' },
+            'teams/a-b/registrationForms/form/registrations/longer-team-id'
+        );
+        const prefixTeamId = buildRegistrationDocument(
+            'prefix-team-id',
+            { seconds: 10, nanoseconds: 1, toMillis: () => 10000 },
+            { teamId: 'a' },
+            'teams/a/registrationForms/form/registrations/prefix-team-id'
+        );
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            // Firestore reference ordering compares path segments, so descending
+            // order puts "a-b" before its prefix "a".
+            guardianDocuments: [longerTeamId, prefixTeamId],
+            submitterDocuments: [prefixTeamId],
+            pageSize: 1
+        });
+
+        const firstPage = await loadPage({ email: 'parent@example.com', uid: 'user-1' });
+        const secondPage = await loadPage(
+            { email: 'parent@example.com', uid: 'user-1' },
+            { cursor: firstPage.nextCursor }
+        );
+        const exhaustedPage = await loadPage(
+            { email: 'parent@example.com', uid: 'user-1' },
+            { cursor: secondPage.nextCursor }
+        );
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual(['longer-team-id']);
+        expect(secondPage.applications.map((application) => application.id)).toEqual(['prefix-team-id']);
+        expect(secondPage.hasMore).toBe(true);
+        expect(exhaustedPage.applications).toEqual([]);
+        expect(exhaustedPage.hasMore).toBe(false);
+    });
+
     it('preserves the successful identity query and reports the failed query as retryable', async () => {
         const { loadPage } = buildParentRegistrationApplicationsPageLoader({
             guardianDocuments: [buildRegistrationDocument('guardian-1', 50)],

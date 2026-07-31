@@ -6072,7 +6072,7 @@ function getParentRegistrationSubmittedAtParts(registrationDoc) {
     };
 }
 
-function compareFirestoreDocumentPaths(a, b) {
+function compareFirestorePathSegments(a, b) {
     const aBytes = new TextEncoder().encode(a);
     const bBytes = new TextEncoder().encode(b);
     const sharedLength = Math.min(aBytes.length, bBytes.length);
@@ -6081,6 +6081,18 @@ function compareFirestoreDocumentPaths(a, b) {
     }
     if (aBytes.length === bBytes.length) return 0;
     return aBytes.length < bBytes.length ? -1 : 1;
+}
+
+function compareFirestoreDocumentPaths(a, b) {
+    const aSegments = String(a || '').split('/');
+    const bSegments = String(b || '').split('/');
+    const sharedLength = Math.min(aSegments.length, bSegments.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+        const segmentComparison = compareFirestorePathSegments(aSegments[index], bSegments[index]);
+        if (segmentComparison !== 0) return segmentComparison;
+    }
+    if (aSegments.length === bSegments.length) return 0;
+    return aSegments.length < bSegments.length ? -1 : 1;
 }
 
 function compareParentRegistrationDocuments(a, b) {
