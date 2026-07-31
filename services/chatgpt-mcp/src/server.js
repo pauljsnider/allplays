@@ -27,6 +27,14 @@ import { createUserDb } from './firestoreRest.js';
 import { createOAuthBroker, metadataFor, OAuthError } from './oauth.js';
 import { createFileStore } from './fileStore.js';
 import { createFirestoreStore } from './firestoreStore.js';
+import { getToolDescriptor } from './assistant-core/index.js';
+
+// Tool descriptions come from the shared assistant registry (single source of
+// truth with the in-app AI chat) so the two surfaces cannot drift. A tool the
+// MCP implements that is not yet in the shared registry keeps a local fallback.
+function sharedDescription(name, fallback) {
+    return getToolDescriptor(name)?.description || fallback;
+}
 
 const PORT = Number(process.env.PORT) || 8787;
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
@@ -214,14 +222,14 @@ function buildServer(identity) {
 
     server.registerTool('get_profile', {
         title: 'Get profile',
-        description: 'Account roles, linked teams, and linked players for the signed-in AllPlays user.',
+        description: sharedDescription('get_profile', 'Account roles, linked teams, and linked players for the signed-in AllPlays user.'),
         inputSchema: {},
         annotations: { readOnlyHint: true }
     }, run((context) => listMyTeams(db, context)));
 
     server.registerTool('list_schedule', {
         title: 'List schedule',
-        description: 'Games and practices in a date range (default: next 7 days) across the user\'s teams, with RSVP state for linked players and deep links into AllPlays.',
+        description: sharedDescription('list_schedule', 'Games and practices in a date range across the user\'s teams, with RSVP state for linked players and deep links into AllPlays.'),
         _meta: {
             'openai/outputTemplate': SCHEDULE_CARD_URI,
             'openai/toolInvocation/invoking': 'Checking your family schedule',
@@ -234,6 +242,9 @@ function buildServer(identity) {
         annotations: { readOnlyHint: true }
     }, run((context, args) => getFamilySchedule(db, context, args)));
 
+    // NOTE: get_game_summary is not yet in the shared registry (the app exposes
+    // get_last_game / get_player_stats instead). Reconciled in the resolver-port
+    // phase; keeps a local description until then.
     server.registerTool('get_game_summary', {
         title: 'Get game summary',
         description: 'Score, status, summary, and aggregated player statistics for one game on a team the user belongs to.',

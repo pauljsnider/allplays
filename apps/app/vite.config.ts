@@ -27,6 +27,11 @@ export default defineConfig(({ mode }) => {
   resolve: {
     alias: {
       '@legacy': path.resolve(appDirectory, '../../js'),
+      // Shared AllPlays assistant core (tool registry + planner prompts), the
+      // single source of truth with the ChatGPT MCP service. It lives under the
+      // MCP src tree so it deploys with that service unchanged; the app reaches
+      // it via this alias, the same pattern as @legacy.
+      '@assistant-core': path.resolve(appDirectory, '../../services/chatgpt-mcp/src/assistant-core'),
       // Legacy Firebase bootstrap modules live outside apps/app, so bare
       // imports from those files would otherwise walk toward the repository
       // root. Resolve the native plugin from this app package explicitly so

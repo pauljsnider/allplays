@@ -49,7 +49,11 @@ export default defineConfig({
       '@capacitor-firebase/messaging': resolveModule('@capacitor-firebase/messaging'),
       '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge'),
       'dompurify': resolveModule('dompurify'),
-      '@legacy': path.resolve(workspaceRoot, 'js')
+      '@legacy': path.resolve(workspaceRoot, 'js'),
+      // Shared AllPlays assistant core (lives under the MCP src tree; see
+      // apps/app/vite.config.ts). Mirrored here so root-level app tests that
+      // import privateAiService can resolve it.
+      '@assistant-core': path.resolve(workspaceRoot, 'services/chatgpt-mcp/src/assistant-core')
     },
     dedupe: ['react', 'react-dom', 'react-router-dom']
   },

@@ -79,6 +79,12 @@ import {
 } from './scheduleService';
 import { loadParentTeamDetail } from './teamDetailService';
 import type { AuthUser } from './types';
+import {
+  buildPlannerPrompt as buildPlannerPromptShared,
+  buildFinalAnswerPrompt,
+  summarizeSignedInUser,
+  formatToolResultsForPrompt
+} from '@assistant-core/index.js';
 
 export type PrivateAiRole = 'user' | 'assistant';
 
@@ -1434,77 +1440,23 @@ async function generateModelText(model: any, prompt: string) {
   return compactText(result?.response?.text?.() || '');
 }
 
-function buildPlannerPrompt({
-  user,
-  question,
-  history,
-  toolResults
-}: {
+// Planner and final-answer prompts, summarizeSignedInUser, and
+// formatToolResultsForPrompt now live in @assistant-core so the in-app AI chat
+// and the ChatGPT MCP service reason identically. buildPlannerPrompt is a thin
+// wrapper that injects THIS app's own live tool registry into the shared
+// builder, so the AVAILABLE TOOLS block always reflects privateAiToolDefinitions.
+function buildPlannerPrompt(input: {
   user: AuthUser;
   question: string;
   history: unknown;
   toolResults: PrivateAiToolResult[];
 }) {
-  return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
-    `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
-    `Use only the available tools; never ask for or invent Firestore paths.\n` +
-    `Return strict JSON only, with no markdown.\n` +
-    `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
-    `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
-    `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
-    `If you have enough information, return {"answer":"..."}.\n\n` +
-    `AVAILABLE TOOLS:\n` +
-    privateAiToolDefinitions.map((definition) => (
-      `- ${definition.name} (${definition.mode}): ${definition.description}`
-    )).join('\n') + `\n\n` +
-    `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
-    `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
-    `QUESTION:\n${question}\n\n` +
-    `TOOL RESULTS SO FAR:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
-}
-
-function buildFinalAnswerPrompt({
-  user,
-  question,
-  history,
-  toolResults
-}: {
-  user: AuthUser;
-  question: string;
-  history: unknown;
-  toolResults: PrivateAiToolResult[];
-}) {
-  return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
-    `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
-    `For product/how-to questions, use help documentation results and include the relevant help page when useful.\n` +
-    `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
-    `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
-    `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
-    `Return strict JSON only: {"answer":"..."}.\n\n` +
-    `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
-    `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
-    `QUESTION:\n${question}\n\n` +
-    `TOOL RESULTS:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
-}
-
-function formatToolResultsForPrompt(toolResults: PrivateAiToolResult[]) {
-  return toolResults.map((result) => ({
-    name: result.name,
-    ok: result.ok,
-    data: result.data,
-    error: result.error,
-    requiresConfirmation: result.requiresConfirmation === true
-  }));
-}
-
-function summarizeSignedInUser(user: AuthUser) {
-  return {
-    uid: user.uid,
-    email: user.email,
-    displayName: user.displayName,
-    roles: user.roles || [],
-    emailVerified: user.emailVerified === true
-  };
+  return buildPlannerPromptShared(input, privateAiToolDefinitions.map((definition) => ({
+    name: definition.name,
+    mode: definition.mode,
+    aliases: definition.aliases || [],
+    description: definition.description
+  })));
 }
 
 function summarizeChatHistory(messages: PrivateAiMessage[]) {
