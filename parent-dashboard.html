@@ -353,6 +353,7 @@
     <script type="module">
         import {
             getParentDashboardData,
+            listParentRegistrationApplicationsPage,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -388,7 +389,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=130';
+        } from './js/db.js?v=131';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=18';
         import {
             getIncentiveRules,
@@ -1553,7 +1554,7 @@
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children, data.dashboardState || null);
-                renderRegistrationApplications(data.registrationApplications || []);
+                loadRegistrationApplications(user);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -2596,10 +2597,25 @@
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
-        function renderRegistrationApplications(applications) {
+        async function loadRegistrationApplications(user) {
+            try {
+                const page = await listParentRegistrationApplicationsPage(user);
+                renderRegistrationApplications(page.applications, page.errors);
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load registration applications:', error);
+                renderRegistrationApplications([], [{
+                    message: error?.message || 'Registration applications could not be loaded.'
+                }]);
+            }
+        }
+
+        function renderRegistrationApplications(applications, errors = []) {
             const container = document.getElementById('registration-applications-list');
             if (!container) return;
-            if (!applications || applications.length === 0) {
+            const errorMessage = errors.length > 0
+                ? `<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">${escapeHtml(errors[0].message)}</div>`
+                : '';
+            if ((!applications || applications.length === 0) && errors.length === 0) {
                 container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
                 return;
             }
@@ -2614,7 +2630,7 @@
                 rejected: 'bg-red-50 text-red-700 border-red-200'
             };
 
-            container.innerHTML = applications.map((application) => {
+            container.innerHTML = `${errorMessage}${applications.map((application) => {
                 const statusClass = statusClasses[application.status] || statusClasses.pending;
                 const optionLabel = application.selectedOptionLabel
                     ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
@@ -2634,7 +2650,7 @@
                         <div class="text-[11px] text-gray-400 mt-2">Status is read-only and controlled by the team admin.</div>
                     </div>
                 `;
-            }).join('');
+            }).join('')}`;
         }
 
         function renderPlayers(children, dashboardState = null) {

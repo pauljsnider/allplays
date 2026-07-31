@@ -32,7 +32,7 @@ function buildRegistrationDocument(id, seconds, overrides = {}) {
 function buildMergeParentRegistrationQueryResults() {
     const dbSource = readRepoFile('js/db.js');
     const start = dbSource.indexOf('function getParentRegistrationDocumentKey');
-    const end = dbSource.indexOf('\nasync function listParentRegistrationApplicationsForProfile', start);
+    const end = dbSource.indexOf('\nexport const PARENT_REGISTRATION_APPLICATION_PAGE_SIZE', start);
     const functionSource = dbSource.slice(start, end)
         .replace(
             'export function mergeParentRegistrationQueryResults',
@@ -41,9 +41,10 @@ function buildMergeParentRegistrationQueryResults() {
     return new Function(functionSource)();
 }
 
-function buildListParentRegistrationApplicationsForProfile({
+function buildListParentRegistrationApplicationsPage({
     registration,
     form = null,
+    getTeam = vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
     getDocs = vi.fn().mockResolvedValue({
         docs: [{
             id: 'registration-1',
@@ -53,12 +54,12 @@ function buildListParentRegistrationApplicationsForProfile({
     })
 }) {
     const dbSource = readRepoFile('js/db.js');
-    const start = dbSource.indexOf('async function listParentRegistrationApplicationsForProfile');
+    const start = dbSource.indexOf('export async function listParentRegistrationApplicationsPage');
     const end = dbSource.indexOf('\nexport async function getParentDashboardData', start);
     const functionSource = dbSource.slice(start, end)
         .replace(
-            'async function listParentRegistrationApplicationsForProfile',
-            'return async function listParentRegistrationApplicationsForProfile'
+            'export async function listParentRegistrationApplicationsPage',
+            'return async function listParentRegistrationApplicationsPage'
         );
     const getDoc = vi.fn().mockResolvedValue({
         exists: () => form !== null,
@@ -71,9 +72,12 @@ function buildListParentRegistrationApplicationsForProfile({
         collectionGroup: vi.fn(),
         db: {},
         where: vi.fn(),
+        limit: vi.fn(),
+        PARENT_REGISTRATION_APPLICATION_PAGE_SIZE: 10,
         getDocs,
         mergeParentRegistrationQueryResults: buildMergeParentRegistrationQueryResults(),
-        getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Team One' }),
+        getParentRegistrationDocumentKey: (registrationDoc) => registrationDoc.ref?.path || registrationDoc.id,
+        getTeam,
         getDoc,
         doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
         getRegistrationPlayerDraft: vi.fn().mockReturnValue({ name: 'Player One' }),
@@ -82,11 +86,11 @@ function buildListParentRegistrationApplicationsForProfile({
         formatParentRegistrationStatusLabel: () => 'Pending Review'
     };
     const dependencyNames = Object.keys(dependencies);
-    const listApplications = new Function(...dependencyNames, functionSource)(
+    const listApplicationsPage = new Function(...dependencyNames, functionSource)(
         ...dependencyNames.map((name) => dependencies[name])
     );
 
-    return { listApplications, getDoc, dependencies };
+    return { listApplicationsPage, getDoc, dependencies };
 }
 
 describe('parent dashboard registration application statuses', () => {
@@ -94,28 +98,36 @@ describe('parent dashboard registration application statuses', () => {
         const html = readRepoFile('parent-dashboard.html');
 
         expect(html).toContain('id="registration-applications-list"');
-        expect(html).toContain('renderRegistrationApplications(data.registrationApplications || [])');
+        expect(html).toContain('listParentRegistrationApplicationsPage,');
+        expect(html).toContain('loadRegistrationApplications(user);');
+        expect(html).not.toContain('await loadRegistrationApplications(user);');
+        expect(html).toContain('renderRegistrationApplications(page.applications, page.errors)');
+        expect(html).toContain('Registration applications could not be loaded.');
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=130';");
+        expect(html).toContain("from './js/db.js?v=131';");
     });
 
     it('loads registrations by verified guardian email or authoritative submitter uid without exposing write controls', () => {
         const db = readRepoFile('js/db.js');
         const rules = readRepoFile('firestore.rules');
-        const functionStart = db.indexOf('async function listParentRegistrationApplicationsForProfile');
+        const functionStart = db.indexOf('export async function listParentRegistrationApplicationsPage');
         const functionEnd = db.indexOf('\nexport async function getParentDashboardData', functionStart);
         const functionSource = db.slice(functionStart, functionEnd);
+        const dashboardFunctionStart = db.indexOf('export async function getParentDashboardData');
+        const dashboardFunctionEnd = db.indexOf('\nexport async function updatePlayerProfile', dashboardFunctionStart);
+        const dashboardFunctionSource = db.slice(dashboardFunctionStart, dashboardFunctionEnd);
 
         expect(db).toContain("collectionGroup(db, 'registrations')");
-        expect(functionSource).toContain("where('guardian.email', '==', email)");
-        expect(functionSource).toContain("where('submittedByUserId', '==', userId)");
+        expect(functionSource).toContain("fieldPath: 'guardian.email'");
+        expect(functionSource).toContain("fieldPath: 'submittedByUserId'");
         expect(functionSource).toContain('mergeParentRegistrationQueryResults(');
         expect(functionSource).not.toContain("orderBy('submittedAt'");
         expect(functionSource).not.toContain('startAfter(');
-        expect(functionSource).not.toContain('limit(');
-        expect(db).toContain('registrationApplications');
+        expect(functionSource).toContain('limit(PARENT_REGISTRATION_APPLICATION_PAGE_SIZE)');
+        expect(dashboardFunctionSource).not.toContain('listParentRegistrationApplicationsPage');
+        expect(dashboardFunctionSource).not.toContain('registrationApplications');
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
@@ -124,7 +136,7 @@ describe('parent dashboard registration application statuses', () => {
     });
 
     it('uses the registration snapshot program name without reading its registration form', async () => {
-        const { listApplications, getDoc } = buildListParentRegistrationApplicationsForProfile({
+        const { listApplicationsPage, getDoc } = buildListParentRegistrationApplicationsPage({
             registration: {
                 teamId: 'team-1',
                 formId: 'form-1',
@@ -133,14 +145,14 @@ describe('parent dashboard registration application statuses', () => {
             }
         });
 
-        const applications = await listApplications({ email: 'parent@example.com' });
+        const { applications } = await listApplicationsPage({ email: 'parent@example.com' });
 
         expect(applications[0].programName).toBe('Spring Soccer');
         expect(getDoc).not.toHaveBeenCalled();
     });
 
     it('reads the registration form once to resolve a legacy registration program name', async () => {
-        const { listApplications, getDoc } = buildListParentRegistrationApplicationsForProfile({
+        const { listApplicationsPage, getDoc } = buildListParentRegistrationApplicationsPage({
             registration: {
                 teamId: 'team-1',
                 formId: 'form-1',
@@ -149,13 +161,13 @@ describe('parent dashboard registration application statuses', () => {
             form: { programName: 'Legacy Soccer' }
         });
 
-        const applications = await listApplications({ email: 'parent@example.com' });
+        const { applications } = await listApplicationsPage({ email: 'parent@example.com' });
 
         expect(applications[0].programName).toBe('Legacy Soccer');
         expect(getDoc).toHaveBeenCalledTimes(1);
     });
 
-    it('merges the production identity queries without excluding legacy submittedAt values', async () => {
+    it('fetches and enriches only the first bounded merged page', async () => {
         const canonical = buildRegistrationDocument('canonical', 300, {
             teamId: 'team-1',
             formId: 'form-1',
@@ -183,12 +195,12 @@ describe('parent dashboard registration application statuses', () => {
         const getDocs = vi.fn()
             .mockResolvedValueOnce({ docs: [missingDate, stringDate, canonical] })
             .mockResolvedValueOnce({ docs: [canonical, createdAtFallback] });
-        const { listApplications, dependencies } = buildListParentRegistrationApplicationsForProfile({
+        const { listApplicationsPage, dependencies } = buildListParentRegistrationApplicationsPage({
             registration: canonical.data(),
             getDocs
         });
 
-        const applications = await listApplications({
+        const { applications } = await listApplicationsPage({
             id: 'parent-1',
             email: 'parent@example.com'
         });
@@ -198,7 +210,31 @@ describe('parent dashboard registration application statuses', () => {
         );
         expect(getDocs).toHaveBeenCalledTimes(2);
         expect(dependencies.query).toHaveBeenCalledTimes(2);
-        expect(dependencies.query.mock.calls.every((call) => call.length === 2)).toBe(true);
+        expect(dependencies.limit).toHaveBeenCalledTimes(2);
+        expect(dependencies.limit).toHaveBeenCalledWith(10);
+        expect(dependencies.getTeam).toHaveBeenCalledTimes(1);
+    });
+
+    it('never enriches more than the fixed first-page size', async () => {
+        const registrationDocs = Array.from({ length: 12 }, (_, index) => (
+            buildRegistrationDocument(`registration-${index}`, 100 - index, {
+                programName: 'Spring Soccer'
+            })
+        ));
+        const getDocs = vi.fn().mockResolvedValue({ docs: registrationDocs });
+        const { listApplicationsPage, dependencies } = buildListParentRegistrationApplicationsPage({
+            registration: registrationDocs[0].data(),
+            getDocs
+        });
+
+        const page = await listApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        });
+
+        expect(page.applications).toHaveLength(10);
+        expect(dependencies.getTeam).toHaveBeenCalledTimes(10);
+        expect(dependencies.limit.mock.calls).toEqual([[10], [10]]);
     });
 
     it('deduplicates overlapping identity matches across complete query results', () => {
@@ -271,16 +307,45 @@ describe('parent dashboard registration application statuses', () => {
         const getDocs = vi.fn()
             .mockRejectedValueOnce(new Error('guardian index unavailable'))
             .mockResolvedValueOnce({ docs: [registrationDoc] });
-        const { listApplications } = buildListParentRegistrationApplicationsForProfile({
+        const { listApplicationsPage } = buildListParentRegistrationApplicationsPage({
             registration: registrationDoc.data(),
             getDocs
         });
 
-        const applications = await listApplications({
+        const { applications, errors } = await listApplicationsPage({
             id: 'parent-1',
             email: 'parent@example.com'
         });
 
         expect(applications.map((application) => application.id)).toEqual(['submitter-match']);
+        expect(errors).toHaveLength(1);
+    });
+
+    it('reports a registration-specific error when all identity queries fail', async () => {
+        const { listApplicationsPage } = buildListParentRegistrationApplicationsPage({
+            registration: {},
+            getDocs: vi.fn().mockRejectedValue(new Error('registration index unavailable'))
+        });
+
+        await expect(listApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        })).rejects.toThrow('Registration applications could not be loaded.');
+    });
+
+    it('reports a registration-specific error when page enrichment fails', async () => {
+        const registrationDoc = buildRegistrationDocument('registration-1', 100, {
+            programName: 'Spring Soccer'
+        });
+        const { listApplicationsPage } = buildListParentRegistrationApplicationsPage({
+            registration: registrationDoc.data(),
+            getDocs: vi.fn().mockResolvedValue({ docs: [registrationDoc] }),
+            getTeam: vi.fn().mockRejectedValue(new Error('team unavailable'))
+        });
+
+        await expect(listApplicationsPage({
+            id: 'parent-1',
+            email: 'parent@example.com'
+        })).rejects.toThrow('Registration application details could not be loaded.');
     });
 });

@@ -366,7 +366,7 @@ describe('parent scope normalization', () => {
         expect(result.children).toHaveLength(2);
     });
 
-    it('keeps players visible when the registration applications query fails (missing index)', async () => {
+    it('does not invoke registration loading during the player dashboard bootstrap', async () => {
         const getUserProfile = vi.fn().mockResolvedValue({
             parentOf: [
                 { teamId: 'team-active', playerId: 'player-active', teamName: 'Active Team', playerName: 'Avery Lee' }
@@ -375,10 +375,9 @@ describe('parent scope normalization', () => {
             parentPlayerKeys: ['team-active::player-active']
         });
         const updateUserProfile = vi.fn().mockResolvedValue(undefined);
-        // Simulate the Firestore "missing COLLECTION_GROUP index" failure.
-        const indexError = new Error('The query requires a COLLECTION_GROUP_ASC index for collection registrations and field guardian.email');
-        indexError.code = 'failed-precondition';
-        const listParentRegistrationApplicationsForProfile = vi.fn().mockRejectedValue(indexError);
+        const listParentRegistrationApplicationsForProfile = vi.fn().mockImplementation(() => (
+            new Promise(() => {})
+        ));
         const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
             activeLinks: [
                 {
@@ -404,11 +403,10 @@ describe('parent scope normalization', () => {
             getEvents: vi.fn().mockResolvedValue([])
         });
 
-        // Must not throw, and the player must still be returned.
         const result = await getParentDashboardData('parent-1');
 
-        expect(listParentRegistrationApplicationsForProfile).toHaveBeenCalled();
-        expect(result.registrationApplications).toEqual([]);
+        expect(listParentRegistrationApplicationsForProfile).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty('registrationApplications');
         expect(result.children).toEqual([
             {
                 teamId: 'team-active',
