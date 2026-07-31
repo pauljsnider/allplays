@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import {
+    redactDiagnosticText as redactText,
+    writeRedactedDiagnostic as writeDiagnostic
+} from './helpers/candidate-auth-diagnostic.js';
 
 const candidateHostUrl = process.env.CANDIDATE_HOST_URL || '';
 const authEmail = process.env.SMOKE_STAFF_EMAIL || process.env.SMOKE_AUTH_EMAIL || '';
@@ -13,45 +15,11 @@ function candidateUrl(path) {
 }
 
 function redactDiagnosticText(value) {
-    let redacted = String(value || '');
-    if (authPassword) {
-        redacted = redacted.replaceAll(authPassword, '[REDACTED]');
-    }
-    if (authEmail) {
-        redacted = redacted.replaceAll(authEmail, '[REDACTED_EMAIL]');
-    }
-    return redacted
-        .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[REDACTED_EMAIL]')
-        .slice(0, 500);
+    return redactText(value, authEmail, authPassword);
 }
 
 async function writeRedactedDiagnostic(page, testInfo, failure) {
-    const errorMessage = page.locator('[role="alert"]').first();
-    const submitButton = page.getByRole('button', { name: 'Sign in' }).last();
-    const loginHeading = page.getByRole('heading', { name: 'Sign in' });
-    const hasErrorMessage = (await errorMessage.count()) > 0;
-    const hasSubmitButton = (await submitButton.count()) > 0;
-    const hasLoginHeading = (await loginHeading.count()) > 0;
-    const errorText = hasErrorMessage
-        ? await errorMessage.textContent({ timeout: 1_000 }).catch(() => '')
-        : '';
-    const submitDisabled = hasSubmitButton
-        ? await submitButton.isDisabled({ timeout: 1_000 }).catch(() => null)
-        : null;
-    const loginFormVisible = hasLoginHeading
-        ? await loginHeading.isVisible({ timeout: 1_000 }).catch(() => false)
-        : false;
-    const diagnosticPath = testInfo.outputPath('candidate-auth-diagnostic.json');
-    await mkdir(path.dirname(diagnosticPath), { recursive: true });
-    await writeFile(diagnosticPath, `${JSON.stringify({
-        observedAt: new Date().toISOString(),
-        origin: new URL(candidateHostUrl).origin,
-        path: new URL(page.url()).pathname,
-        loginFormVisible,
-        submitDisabled,
-        visibleError: redactDiagnosticText(errorText),
-        failure: redactDiagnosticText(failure?.message)
-    }, null, 2)}\n`);
+    await writeDiagnostic(page, testInfo, failure, { candidateHostUrl, authEmail, authPassword });
 }
 
 test('candidate host accepts authentication and loads a protected landing page', async ({ page }, testInfo) => {
@@ -114,10 +82,10 @@ test('candidate host accepts authentication and loads a protected landing page',
     } catch (error) {
         const passwordInput = page.getByLabel('Password', { exact: true });
         const emailInput = page.getByLabel('Email');
-        if (await passwordInput.count()) {
+        if (await passwordInput.count().catch(() => 0)) {
             await passwordInput.fill('', { timeout: 1_000 }).catch(() => {});
         }
-        if (await emailInput.count()) {
+        if (await emailInput.count().catch(() => 0)) {
             await emailInput.fill('', { timeout: 1_000 }).catch(() => {});
         }
         await writeRedactedDiagnostic(page, testInfo, error);

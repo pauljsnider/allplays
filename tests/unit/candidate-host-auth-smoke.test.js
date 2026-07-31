@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { writeRedactedDiagnostic } from '../smoke/helpers/candidate-auth-diagnostic.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 const readRepoFile = (file) => readFileSync(path.join(repoRoot, file), 'utf8');
@@ -9,6 +12,7 @@ describe('candidate-host authenticated smoke coverage', () => {
     it('targets the candidate origin with protected CI credentials', () => {
         const workflow = readRepoFile('.github/workflows/post-deploy-smoke.yml');
         const spec = readRepoFile('tests/smoke/candidate-host-auth.spec.js');
+        const diagnosticHelper = readRepoFile('tests/smoke/helpers/candidate-auth-diagnostic.js');
 
         expect(workflow).toContain('npx playwright test tests/smoke/candidate-host-auth.spec.js');
         expect(workflow).toContain('CANDIDATE_HOST_URL: https://game-flow-c6311.web.app');
@@ -29,19 +33,63 @@ describe('candidate-host authenticated smoke coverage', () => {
         expect(spec).toContain('Candidate post-login assertion failed at ${candidateHostUrl}: unexpected route');
         expect(spec).toContain("toBe('/app/')");
         expect(spec).toContain("expect(landingUrl.hash).not.toMatch(/^#\\/auth");
-        expect(spec).toContain("testInfo.outputPath('candidate-auth-diagnostic.json')");
+        expect(diagnosticHelper).toContain("testInfo.outputPath('candidate-auth-diagnostic.json')");
         expect(spec).toContain('redactDiagnosticText');
         expect(spec).toContain('test.setTimeout(90_000)');
         expect(spec).toContain("toBeVisible({ timeout: 30_000 })");
         expect(spec).toContain("toContainText(/Your day|Your teams|Team/, { timeout: 25_000 })");
-        expect(spec).toContain('if (await passwordInput.count())');
-        expect(spec).toContain('if (await emailInput.count())');
+        expect(spec).toContain('if (await passwordInput.count().catch(() => 0))');
+        expect(spec).toContain('if (await emailInput.count().catch(() => 0))');
         expect(spec).not.toContain('page.screenshot');
 
         const diagnosticUpload = workflow.indexOf('Upload redacted candidate authentication diagnostic');
         const baseline = workflow.indexOf('Run production smoke baseline');
         expect(diagnosticUpload).toBeGreaterThan(-1);
         expect(diagnosticUpload).toBeLessThan(baseline);
+    });
+
+    it('writes a diagnostic when locator counts fail after the page closes', async () => {
+        const outputDir = await mkdtemp(path.join(os.tmpdir(), 'candidate-auth-diagnostic-'));
+        const diagnosticPath = path.join(outputDir, 'candidate-auth-diagnostic.json');
+        const closedLocator = {
+            count: () => Promise.reject(new Error('Target page, context or browser has been closed')),
+            first() {
+                return this;
+            },
+            last() {
+                return this;
+            }
+        };
+        const page = {
+            locator: () => closedLocator,
+            getByRole: () => closedLocator,
+            url: () => 'https://candidate.example/app/#/auth'
+        };
+
+        try {
+            await writeRedactedDiagnostic(
+                page,
+                { outputPath: () => diagnosticPath },
+                new Error('page closed for staff@example.com'),
+                {
+                    candidateHostUrl: 'https://candidate.example',
+                    authEmail: 'staff@example.com',
+                    authPassword: 'secret'
+                }
+            );
+
+            expect(existsSync(diagnosticPath)).toBe(true);
+            expect(JSON.parse(await readFile(diagnosticPath, 'utf8'))).toMatchObject({
+                origin: 'https://candidate.example',
+                path: '/app/',
+                loginFormVisible: false,
+                submitDisabled: null,
+                visibleError: '',
+                failure: 'page closed for [REDACTED_EMAIL]'
+            });
+        } finally {
+            rmSync(outputDir, { recursive: true, force: true });
+        }
     });
 
     it('does not enable App Check enforcement for candidate authentication', () => {
