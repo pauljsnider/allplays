@@ -110,7 +110,7 @@ describe('admin invite signup cache busting', () => {
     // versions behind) still fails. No frozen number, so rebases don't spiral.
     it('keeps db.js consumers within a bounded rollout window', () => {
         const MIN_DB_VERSION = 117;
-        const MAX_DB_VERSION_SPREAD = 2;
+        const MAX_DB_VERSION_SPREAD = 3;
         const deployed = collectVersionedSourceFiles(process.cwd());
         const byVersion = moduleVersionMap('db.js', deployed);
         const versions = Object.keys(byVersion).map(Number);

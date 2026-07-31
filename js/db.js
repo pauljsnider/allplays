@@ -6040,6 +6040,61 @@ function formatParentRegistrationStatusLabel(status = '') {
     return labels[normalized] || 'Pending Review';
 }
 
+function getParentRegistrationDocumentKey(registrationDoc) {
+    const registrationData = registrationDoc.data() || {};
+    return registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
+}
+
+function getParentRegistrationSubmittedAtSortParts(registrationDoc) {
+    const registration = registrationDoc.data() || {};
+    const submittedAt = registration.submittedAt || registration.createdAt;
+    if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
+        return {
+            seconds: submittedAt.seconds,
+            nanoseconds: submittedAt.nanoseconds
+        };
+    }
+
+    const milliseconds = submittedAt?.toMillis
+        ? submittedAt.toMillis()
+        : (submittedAt ? new Date(submittedAt).getTime() : 0);
+    if (!Number.isFinite(milliseconds)) return { seconds: 0, nanoseconds: 0 };
+
+    const seconds = Math.floor(milliseconds / 1000);
+    return {
+        seconds,
+        nanoseconds: Math.floor((milliseconds - (seconds * 1000)) * 1000000)
+    };
+}
+
+function compareParentRegistrationDocuments(a, b) {
+    const aSubmittedAt = getParentRegistrationSubmittedAtSortParts(a);
+    const bSubmittedAt = getParentRegistrationSubmittedAtSortParts(b);
+    if (aSubmittedAt.seconds !== bSubmittedAt.seconds) {
+        return bSubmittedAt.seconds - aSubmittedAt.seconds;
+    }
+    if (aSubmittedAt.nanoseconds !== bSubmittedAt.nanoseconds) {
+        return bSubmittedAt.nanoseconds - aSubmittedAt.nanoseconds;
+    }
+
+    const aKey = getParentRegistrationDocumentKey(a);
+    const bKey = getParentRegistrationDocumentKey(b);
+    if (aKey === bKey) return 0;
+    return aKey < bKey ? 1 : -1;
+}
+
+export function mergeParentRegistrationQueryResults(querySnapshots = []) {
+    const documentsByKey = new Map();
+    querySnapshots.forEach((snapshot) => {
+        (snapshot?.docs || []).forEach((registrationDoc) => {
+            const key = getParentRegistrationDocumentKey(registrationDoc);
+            if (!documentsByKey.has(key)) documentsByKey.set(key, registrationDoc);
+        });
+    });
+
+    return [...documentsByKey.values()].sort(compareParentRegistrationDocuments);
+}
+
 async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
@@ -6058,6 +6113,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
             where('submittedByUserId', '==', userId)
         ));
     }
+
     const queryResults = await Promise.all(registrationQueries.map(async (registrationQuery) => {
         try {
             return { snapshot: await getDocs(registrationQuery), error: null };
@@ -6069,14 +6125,9 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
     if (successfulResults.length === 0) {
         throw queryResults.find((result) => result.error)?.error || new Error('Registration applications could not be loaded.');
     }
-    const seenRegistrationPaths = new Set();
-    const registrationDocs = successfulResults.flatMap((result) => result.snapshot.docs).filter((registrationDoc) => {
-        const registrationData = registrationDoc.data() || {};
-        const dedupKey = registrationDoc.ref?.path || [registrationData.teamId, registrationData.formId, registrationDoc.id].join('/');
-        if (seenRegistrationPaths.has(dedupKey)) return false;
-        seenRegistrationPaths.add(dedupKey);
-        return true;
-    });
+    const registrationDocs = mergeParentRegistrationQueryResults(
+        successfulResults.map((result) => result.snapshot)
+    );
 
     const teamCache = new Map();
     const formCache = new Map();
@@ -6119,11 +6170,7 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
         };
     }));
 
-    return applications.sort((a, b) => {
-        const aDate = a.submittedAt?.toDate ? a.submittedAt.toDate() : (a.submittedAt ? new Date(a.submittedAt) : new Date(0));
-        const bDate = b.submittedAt?.toDate ? b.submittedAt.toDate() : (b.submittedAt ? new Date(b.submittedAt) : new Date(0));
-        return bDate - aDate;
-    });
+    return applications;
 }
 
 export async function getParentDashboardData(userId) {
