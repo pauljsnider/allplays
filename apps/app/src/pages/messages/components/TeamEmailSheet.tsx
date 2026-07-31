@@ -50,6 +50,7 @@ type TeamEmailSheetProps = {
   setSelectedRecipientTarget: (target: ChatTargetType) => void;
   setSelectedRecipientIds: (recipientIds: string[]) => void;
   switchConversation: (conversationId: string) => void | boolean;
+  onEditAudience: () => void;
   onClose: () => void;
 };
 
@@ -69,6 +70,7 @@ export default function TeamEmailSheet({
   setSelectedRecipientTarget,
   setSelectedRecipientIds,
   switchConversation,
+  onEditAudience,
   onClose
 }: TeamEmailSheetProps) {
   const [emailState, emailDispatch] = useReducer(emailReducer, initialEmailComposerState);
@@ -305,6 +307,7 @@ export default function TeamEmailSheet({
       onRetryRecipientOptions={() => {
         void ensureRecipientOptionsLoaded().catch(() => undefined);
       }}
+      onEditAudience={onEditAudience}
       onStatusClose={() => setEmailStatus(null)}
       onHistoryStatusClose={() => setEmailHistoryStatus(null)}
       onClose={onClose}
@@ -345,6 +348,7 @@ function TeamEmailSheetView({
   onRefreshHistory,
   onRefreshTemplates,
   onRetryRecipientOptions,
+  onEditAudience,
   onStatusClose,
   onHistoryStatusClose,
   onClose
@@ -381,6 +385,7 @@ function TeamEmailSheetView({
   onRefreshHistory: () => void;
   onRefreshTemplates: () => void;
   onRetryRecipientOptions: () => void;
+  onEditAudience: () => void;
   onStatusClose: () => void;
   onHistoryStatusClose: () => void;
   onClose: () => void;
@@ -520,8 +525,11 @@ function TeamEmailSheetView({
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
           Sends one backend roster email job. This is separate from chat posting, and delivery jobs are queued.
         </div>
-        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
-          Audience: {audienceSummary}
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
+          <span className="min-w-0">Audience: {audienceSummary}</span>
+          <button type="button" className="ghost-button !h-9 !min-h-9 flex-none text-xs" onClick={onEditAudience}>
+            Edit audience
+          </button>
         </div>
         {recipientOptionsLoading ? (
           <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-500">

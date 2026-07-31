@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthState } from '../../../lib/types';
@@ -63,6 +63,7 @@ function renderTeamEmailSheet(overrides: Record<string, unknown> = {}) {
     setSelectedRecipientTarget: vi.fn(),
     setSelectedRecipientIds: vi.fn(),
     switchConversation: vi.fn(),
+    onEditAudience: vi.fn(),
     onClose: vi.fn(),
     ...overrides
   };
@@ -91,6 +92,7 @@ describe('TeamEmailSheet compose-first workflow', () => {
       body: 'Here is the plan.'
     }]);
     chatServiceMocks.loadSentTeamEmails.mockResolvedValue([]);
+    chatServiceMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 1 });
   });
 
   afterEach(() => cleanup());
@@ -143,5 +145,51 @@ describe('TeamEmailSheet compose-first workflow', () => {
     fireEvent.submit(send.closest('form') as HTMLFormElement);
     expect(chatServiceMocks.sendTeamEmailMessage).not.toHaveBeenCalled();
     expect(screen.getByRole('status')).toHaveTextContent('Choose at least one selected member before sending.');
+  });
+
+  it('edits the audience and preserves composed content when recipients update', async () => {
+    const onEditAudience = vi.fn();
+    const view = renderTeamEmailSheet({ onEditAudience });
+
+    await screen.findByText('Saved drafts');
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Schedule change' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Practice starts at six.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Edit audience' }));
+
+    expect(onEditAudience).toHaveBeenCalledTimes(1);
+
+    view.rerender(<TeamEmailSheet {...view.props} open={false} />);
+    view.rerender(
+      <TeamEmailSheet
+        {...view.props}
+        open
+        selectedRecipientTarget="individuals"
+        selectedRecipientIds={['user:parent-1']}
+      />
+    );
+
+    expect(screen.getByText('Audience: Parent One')).toBeVisible();
+    expect(screen.getByLabelText('Subject')).toHaveValue('Schedule change');
+    expect(screen.getByLabelText('Message')).toHaveValue('Practice starts at six.');
+  });
+
+  it.each([
+    ['full team', 'full_team', [], 'full_team', []],
+    ['selected members', 'individuals', ['user:parent-1'], 'individuals', ['user:parent-1']]
+  ] as const)('keeps the %s send payload unchanged', async (_label, selectedRecipientTarget, selectedRecipientIds, targetType, recipientIds) => {
+    renderTeamEmailSheet({ selectedRecipientTarget, selectedRecipientIds });
+
+    await screen.findByText('Saved drafts');
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Schedule change' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Practice starts at six.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
+
+    await waitFor(() => expect(chatServiceMocks.sendTeamEmailMessage).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      subject: 'Schedule change',
+      body: 'Practice starts at six.',
+      targetType,
+      recipientIds
+    }));
   });
 });
