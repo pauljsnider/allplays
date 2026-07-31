@@ -57,9 +57,11 @@ function buildRegistrationDocument(id, submittedAt, overrides = {}, refPath = ''
         formId: `form-${id}`,
         programName: `Program ${id}`,
         status: 'pending',
-        submittedAt: typeof submittedAt === 'number' ? { toMillis: () => submittedAt } : submittedAt,
         ...overrides
     };
+    if (submittedAt !== undefined) {
+        registration.submittedAt = typeof submittedAt === 'number' ? { toMillis: () => submittedAt } : submittedAt;
+    }
     return {
         id,
         ref: { path: refPath || `teams/${registration.teamId}/registrationForms/${registration.formId}/registrations/${id}` },
@@ -96,7 +98,10 @@ function buildParentRegistrationApplicationsPageLoader({
         const identityConstraint = queryParts.find((part) => part?.type === 'where');
         const identity = identityConstraint.fieldPath === 'guardian.email' ? 'guardian-email' : 'submitter-uid';
         if (identity === failIdentity) throw new Error(`${identity} failed`);
-        const source = identity === 'guardian-email' ? guardianDocuments : submitterDocuments;
+        const orderField = queryParts.find((part) => part?.type === 'orderBy')?.fieldPath;
+        const source = (identity === 'guardian-email' ? guardianDocuments : submitterDocuments)
+            // Firestore omits documents that do not contain the ordered field.
+            .filter((registrationDoc) => registrationDoc.data()?.[orderField] != null);
         const queryLimit = queryParts.find((part) => part?.type === 'limit')?.value;
         const queryCursor = queryParts.find((part) => part?.type === 'startAfter')?.cursor;
         const startIndex = queryCursor ? source.indexOf(queryCursor) + 1 : 0;
@@ -253,7 +258,38 @@ describe('parent dashboard registration application statuses', () => {
         expect(getTeam).toHaveBeenCalledTimes(page.applications.length);
         expect(getTeam).not.toHaveBeenCalledWith('team-guardian-2');
         expect(getTeam).not.toHaveBeenCalledWith('team-submitter-2');
-        expect(limit.mock.calls).toEqual([[2], [2]]);
+        expect(limit.mock.calls).toEqual([[2], [2], [2], [2]]);
+    });
+
+    it('paginates a createdAt-only legacy registration through its bounded cursor stream', async () => {
+        const legacyRegistration = buildRegistrationDocument('legacy', undefined, {
+            createdAt: { toMillis: () => 40 }
+        });
+        expect(legacyRegistration.data()).not.toHaveProperty('submittedAt');
+        const { loadPage } = buildParentRegistrationApplicationsPageLoader({
+            guardianDocuments: [
+                buildRegistrationDocument('current', 50),
+                legacyRegistration
+            ],
+            pageSize: 1
+        });
+
+        const firstPage = await loadPage({ email: 'parent@example.com' });
+        const secondPage = await loadPage(
+            { email: 'parent@example.com' },
+            { cursor: firstPage.nextCursor }
+        );
+        const exhaustedPage = await loadPage(
+            { email: 'parent@example.com' },
+            { cursor: secondPage.nextCursor }
+        );
+
+        expect(firstPage.applications.map((application) => application.id)).toEqual(['current']);
+        expect(firstPage.hasMore).toBe(true);
+        expect(secondPage.applications.map((application) => application.id)).toEqual(['legacy']);
+        expect(secondPage.applications[0].submittedAt).toBe(legacyRegistration.data().createdAt);
+        expect(exhaustedPage.applications).toEqual([]);
+        expect(exhaustedPage.hasMore).toBe(false);
     });
 
     it('uses the bounded registration page in the production parent dashboard data flow', async () => {

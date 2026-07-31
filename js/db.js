@@ -6048,7 +6048,10 @@ function getParentRegistrationDocumentKey(registrationDoc) {
 }
 
 function getParentRegistrationSubmittedAtParts(registrationDoc) {
-    const submittedAt = registrationDoc.data()?.submittedAt;
+    const registration = registrationDoc.data() || {};
+    // `submittedAt` was introduced after some registrations had already been
+    // created. Keep the merge order aligned with the date shown to parents.
+    const submittedAt = registration.submittedAt || registration.createdAt;
     if (Number.isFinite(submittedAt?.seconds) && Number.isFinite(submittedAt?.nanoseconds)) {
         return {
             seconds: submittedAt.seconds,
@@ -6216,7 +6219,7 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     const email = normalizeParentRegistrationEmail(userProfile.email || auth.currentUser?.email);
     const userId = String(userProfile.id || userProfile.uid || auth.currentUser?.uid || '').trim();
     const cursor = options.cursor || {};
-    const queryDefinitions = [
+    const identityDefinitions = [
         email ? {
             identity: 'guardian-email',
             cursorKey: 'guardianEmail',
@@ -6230,19 +6233,34 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
             value: userId
         } : null
     ].filter(Boolean);
-    const nextCursor = {
-        guardianEmail: cursor.guardianEmail || null,
-        submittedByUserId: cursor.submittedByUserId || null
-    };
+    // Firestore excludes documents that do not contain an ordered field. Run
+    // a bounded legacy `createdAt` stream beside the current `submittedAt`
+    // stream so registrations created before `submittedAt` was introduced
+    // remain visible and pageable.
+    const queryDefinitions = identityDefinitions.flatMap((definition) => [
+        {
+            ...definition,
+            orderField: 'submittedAt'
+        },
+        {
+            ...definition,
+            cursorKey: `${definition.cursorKey}CreatedAt`,
+            orderField: 'createdAt'
+        }
+    ]);
+    const nextCursor = Object.fromEntries(queryDefinitions.map((definition) => [
+        definition.cursorKey,
+        cursor[definition.cursorKey] || null
+    ]));
 
-    if (queryDefinitions.length === 0) {
+    if (identityDefinitions.length === 0) {
         return { applications: [], nextCursor: null, retryCursor: null, hasMore: false, errors: [] };
     }
 
     const queryResults = await Promise.all(queryDefinitions.map(async (definition) => {
         const constraints = [
             where(definition.fieldPath, '==', definition.value),
-            orderBy('submittedAt', 'desc'),
+            orderBy(definition.orderField, 'desc'),
             orderBy(documentId(), 'desc')
         ];
         if (cursor[definition.cursorKey]) constraints.push(startAfter(cursor[definition.cursorKey]));
@@ -6287,8 +6305,14 @@ export async function listParentRegistrationApplicationsPage(userProfile = {}, o
     });
 
     const enrichment = await enrichParentRegistrationApplicationDocuments(pageDocuments);
+    const queryErrorsByIdentity = new Map();
+    queryResults.forEach((result) => {
+        if (result.error && !queryErrorsByIdentity.has(result.error.identity)) {
+            queryErrorsByIdentity.set(result.error.identity, result.error);
+        }
+    });
     const errors = [
-        ...queryResults.map((result) => result.error).filter(Boolean),
+        ...queryErrorsByIdentity.values(),
         ...enrichment.errors
     ];
     return {
