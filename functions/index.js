@@ -315,6 +315,7 @@ const {
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
+const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -3679,6 +3680,14 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
 });
 
 exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
+
+const createCoParentInviteCallableHandler = createCoParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError
+});
+
+exports.createCoParentInvite = functions.https.onCall(createCoParentInviteCallableHandler);
 
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
