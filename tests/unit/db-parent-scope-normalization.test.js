@@ -29,7 +29,7 @@ function buildNormalizeParentScopeLinks({ getTeam, getDoc, doc, db, isTeamActive
 function buildGetParentDashboardData({
     getUserProfile,
     updateUserProfile,
-    listParentRegistrationApplicationsForProfile,
+    listParentRegistrationApplicationsPage,
     listMyParentMembershipRequests = vi.fn().mockResolvedValue([]),
     mergeApprovedParentMembershipRequests = vi.fn((userProfile) => ({ changed: false, userUpdate: userProfile })),
     normalizeParentScopeLinks,
@@ -42,7 +42,7 @@ function buildGetParentDashboardData({
     return new Function(
         'getUserProfile',
         'updateUserProfile',
-        'listParentRegistrationApplicationsForProfile',
+        'listParentRegistrationApplicationsPage',
         'listMyParentMembershipRequests',
         'mergeApprovedParentMembershipRequests',
         'normalizeParentScopeLinks',
@@ -52,7 +52,7 @@ function buildGetParentDashboardData({
     )(
         getUserProfile,
         updateUserProfile,
-        listParentRegistrationApplicationsForProfile,
+        listParentRegistrationApplicationsPage,
         listMyParentMembershipRequests,
         mergeApprovedParentMembershipRequests,
         normalizeParentScopeLinks,
@@ -177,7 +177,7 @@ describe('parent scope normalization', () => {
             parentPlayerKeys: ['team-active::player-active', 'team-inactive::player-stale']
         });
         const updateUserProfile = vi.fn().mockResolvedValue(undefined);
-        const listParentRegistrationApplicationsForProfile = vi.fn().mockResolvedValue([]);
+        const listParentRegistrationApplicationsPage = vi.fn().mockResolvedValue({ applications: [] });
         const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
             activeLinks: [
                 {
@@ -199,7 +199,7 @@ describe('parent scope normalization', () => {
         const getParentDashboardData = buildGetParentDashboardData({
             getUserProfile,
             updateUserProfile,
-            listParentRegistrationApplicationsForProfile,
+            listParentRegistrationApplicationsPage,
             normalizeParentScopeLinks,
             getTeam,
             getEvents
@@ -242,7 +242,7 @@ describe('parent scope normalization', () => {
             parentPlayerKeys: []
         });
         const updateUserProfile = vi.fn().mockResolvedValue(undefined);
-        const listParentRegistrationApplicationsForProfile = vi.fn().mockResolvedValue([]);
+        const listParentRegistrationApplicationsPage = vi.fn().mockResolvedValue({ applications: [] });
         const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
             activeLinks: [
                 {
@@ -267,7 +267,7 @@ describe('parent scope normalization', () => {
         const getParentDashboardData = buildGetParentDashboardData({
             getUserProfile,
             updateUserProfile,
-            listParentRegistrationApplicationsForProfile,
+            listParentRegistrationApplicationsPage,
             normalizeParentScopeLinks,
             getTeam: vi.fn(),
             getEvents
@@ -339,7 +339,7 @@ describe('parent scope normalization', () => {
         const getParentDashboardData = buildGetParentDashboardData({
             getUserProfile,
             updateUserProfile,
-            listParentRegistrationApplicationsForProfile: vi.fn().mockResolvedValue([]),
+            listParentRegistrationApplicationsPage: vi.fn().mockResolvedValue({ applications: [] }),
             listMyParentMembershipRequests,
             mergeApprovedParentMembershipRequests,
             normalizeParentScopeLinks,
@@ -378,7 +378,7 @@ describe('parent scope normalization', () => {
         // Simulate the Firestore "missing COLLECTION_GROUP index" failure.
         const indexError = new Error('The query requires a COLLECTION_GROUP_ASC index for collection registrations and field guardian.email');
         indexError.code = 'failed-precondition';
-        const listParentRegistrationApplicationsForProfile = vi.fn().mockRejectedValue(indexError);
+        const listParentRegistrationApplicationsPage = vi.fn().mockRejectedValue(indexError);
         const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
             activeLinks: [
                 {
@@ -398,7 +398,7 @@ describe('parent scope normalization', () => {
         const getParentDashboardData = buildGetParentDashboardData({
             getUserProfile,
             updateUserProfile,
-            listParentRegistrationApplicationsForProfile,
+            listParentRegistrationApplicationsPage,
             normalizeParentScopeLinks,
             getTeam: vi.fn().mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true }),
             getEvents: vi.fn().mockResolvedValue([])
@@ -407,7 +407,9 @@ describe('parent scope normalization', () => {
         // Must not throw, and the player must still be returned.
         const result = await getParentDashboardData('parent-1');
 
-        expect(listParentRegistrationApplicationsForProfile).toHaveBeenCalled();
+        expect(listParentRegistrationApplicationsPage).toHaveBeenCalledWith(
+            expect.objectContaining({ parentOf: expect.any(Array) })
+        );
         expect(result.registrationApplications).toEqual([]);
         expect(result.children).toEqual([
             {
