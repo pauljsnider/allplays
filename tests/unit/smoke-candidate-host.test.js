@@ -126,6 +126,83 @@ describe('candidate host public smoke', () => {
         );
     });
 
+    it('accepts a stronger Firebase-managed HSTS policy', async () => {
+        const fetchImpl = createFetch({
+            '/': (path) => {
+                const response = successfulResponse(path);
+                response.headers.set(
+                    'Strict-Transport-Security',
+                    'max-age=31556926; includeSubDomains; preload'
+                );
+                return response;
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(9);
+    });
+
+    it('rejects an HSTS policy below the configured max-age', async () => {
+        const fetchImpl = createFetch({
+            '/': (path) => {
+                const response = successfulResponse(path);
+                response.headers.set('Strict-Transport-Security', 'max-age=300');
+                return response;
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/: header "Strict-Transport-Security" expected max-age at least 31536000 but observed "max-age=300"`
+        );
+    });
+
+    it('rejects an invalid HSTS max-age value', async () => {
+        const fetchImpl = createFetch({
+            '/': (path) => {
+                const response = successfulResponse(path);
+                response.headers.set('Strict-Transport-Security', 'max-age=31536000invalid');
+                return response;
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/: header "Strict-Transport-Security" expected max-age at least 31536000 but observed "max-age=31536000invalid"`
+        );
+    });
+
+    it('rejects duplicate HSTS max-age directives', async () => {
+        const fetchImpl = createFetch({
+            '/': (path) => {
+                const response = successfulResponse(path);
+                response.headers.set(
+                    'Strict-Transport-Security',
+                    'max-age=0; max-age=31536000; includeSubDomains'
+                );
+                return response;
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/: header "Strict-Transport-Security" rejected duplicate directive "max-age"`
+        );
+    });
+
+    it('rejects duplicate required HSTS directives', async () => {
+        const fetchImpl = createFetch({
+            '/': (path) => {
+                const response = successfulResponse(path);
+                response.headers.set(
+                    'Strict-Transport-Security',
+                    'max-age=31536000; includeSubDomains; IncludeSubDomains'
+                );
+                return response;
+            }
+        });
+
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).rejects.toThrow(
+            `${candidateOrigin}/: header "Strict-Transport-Security" rejected duplicate directive "includesubdomains"`
+        );
+    });
+
     it('fails with the requested URL when a route is unavailable', async () => {
         const fetchImpl = createFetch({
             '/app/': () => new Response('missing', { status: 404 })
