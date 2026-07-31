@@ -5,7 +5,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: preview-smoke-${{ github.event.pull_request.number || github.run_id }}
+  # The caller already cancels superseded runs per PR. Key this reusable workflow
+  # to the exact caller run so an older child cannot cancel a newer child after
+  # GitHub schedules overlapping reusable workflows out of order.
+  group: preview-smoke-${{ github.run_id }}
   cancel-in-progress: true
 
 permissions:
