@@ -1,8 +1,12 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { createFirestoreFixedWindowRateLimitReservation } = require('./rate-limit.cjs');
 
 const CO_PARENT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CO_PARENT_INVITE_SENDER_MAX_INVITES = 10;
+const CO_PARENT_INVITE_RECIPIENT_MAX_INVITES = 3;
 const INVITE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const INVITE_CODE_MAX_ATTEMPTS = 10;
 
@@ -52,12 +56,38 @@ function createDefaultInviteCode() {
     .join('');
 }
 
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function createCoParentInviteHandler({
   firestore,
   Timestamp,
   HttpsError,
-  createInviteCode = createDefaultInviteCode
+  createInviteCode = createDefaultInviteCode,
+  rateLimitCollectionName = 'coParentInviteRateLimits',
+  rateLimitWindowMs = CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS,
+  senderMaxInvites = CO_PARENT_INVITE_SENDER_MAX_INVITES,
+  recipientMaxInvites = CO_PARENT_INVITE_RECIPIENT_MAX_INVITES
 }) {
+  const configuredWindowMs = parsePositiveInteger(
+    rateLimitWindowMs,
+    CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS
+  );
+  const prepareSenderReservation = createFirestoreFixedWindowRateLimitReservation({
+    firestore,
+    collectionName: rateLimitCollectionName,
+    windowMs: configuredWindowMs,
+    maxRequests: parsePositiveInteger(senderMaxInvites, CO_PARENT_INVITE_SENDER_MAX_INVITES)
+  });
+  const prepareRecipientReservation = createFirestoreFixedWindowRateLimitReservation({
+    firestore,
+    collectionName: rateLimitCollectionName,
+    windowMs: configuredWindowMs,
+    maxRequests: parsePositiveInteger(recipientMaxInvites, CO_PARENT_INVITE_RECIPIENT_MAX_INVITES)
+  });
+
   return async function createCoParentInvite(data = {}, context = {}) {
     const callerUid = String(context.auth?.uid || '').trim();
     if (!callerUid) {
@@ -119,6 +149,25 @@ function createCoParentInviteHandler({
         };
       }
 
+      const senderReservation = prepareSenderReservation(`sender\n${callerUid}`, nowMillis);
+      const recipientReservation = prepareRecipientReservation(`recipient\n${email}`, nowMillis);
+      const senderLimitSnap = await transaction.get(senderReservation.ref);
+      const recipientLimitSnap = await transaction.get(recipientReservation.ref);
+      const senderDecision = senderReservation.evaluate(senderLimitSnap);
+      const recipientDecision = recipientReservation.evaluate(recipientLimitSnap);
+      if (!senderDecision.allowed || !recipientDecision.allowed) {
+        const retryAfterSeconds = Math.max(
+          ...[senderDecision, recipientDecision]
+            .filter((decision) => !decision.allowed)
+            .map((decision) => decision.retryAfterSeconds)
+        );
+        throw new HttpsError(
+          'resource-exhausted',
+          'Too many co-parent invites. Please wait and try again.',
+          { retryAfterSeconds }
+        );
+      }
+
       const code = String(createInviteCode()).trim().toUpperCase();
       if (!/^[A-Z0-9]{8}$/.test(code)) {
         throw new HttpsError('internal', 'Could not generate a co-parent invite code.');
@@ -146,6 +195,8 @@ function createCoParentInviteHandler({
         usedBy: null,
         usedAt: null
       };
+      senderReservation.commit(transaction, senderDecision);
+      recipientReservation.commit(transaction, recipientDecision);
       transaction.create(inviteRef, invite);
       transaction.set(idempotencyRef, {
         accessCode: code,
@@ -177,6 +228,9 @@ function createCoParentInviteHandler({
 }
 
 module.exports = {
+  CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS,
+  CO_PARENT_INVITE_RECIPIENT_MAX_INVITES,
+  CO_PARENT_INVITE_SENDER_MAX_INVITES,
   CO_PARENT_INVITE_TTL_MS,
   buildCoParentInviteDocumentId,
   createCoParentInviteHandler,
