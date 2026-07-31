@@ -93,7 +93,7 @@ describe('scoreboard widget embed', () => {
         expect(source).not.toContain('|| !isCompleted(game) || isLive(game)');
         expect(source).toContain('function renderGame(game)');
         expect(source).toContain('function isSharedScheduleMirror(game)');
-        expect(source).toContain("return !!String(game?.sharedScheduleSourceTeamId || '').trim();");
+        expect(source).toContain("return game?.isSharedGame === true || !!String(game?.sharedScheduleSourceTeamId || '').trim();");
         expect(source).toContain('const useStoredScoreOrder = isSharedScheduleMirror(game) || game.isHome !== false;');
         expect(source).toContain('const teamScore = useStoredScoreOrder ? homeScore : awayScore;');
         expect(source).toContain('const opponentScore = useStoredScoreOrder ? awayScore : homeScore;');

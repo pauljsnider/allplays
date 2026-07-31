@@ -107,7 +107,7 @@
         }
 
         function isSharedScheduleMirror(game) {
-            return !!String(game?.sharedScheduleSourceTeamId || '').trim();
+            return game?.isSharedGame === true || !!String(game?.sharedScheduleSourceTeamId || '').trim();
         }
 
         function renderGame(game) {

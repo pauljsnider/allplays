@@ -3,11 +3,15 @@ const test = require('node:test');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canProjectPublicGame,
   isStrictPublicTeam,
   normalizeTeamId,
   parsePublicGamesQuery,
+  publicHttpUrl,
   sanitizePublicLocation,
-  serializePublicGame
+  serializePublicCalendarEvent,
+  serializePublicGame,
+  serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {
@@ -20,6 +24,175 @@ test('strict public teams require an explicit public flag and cannot be inactive
   for (const status of ['archived', 'inactive', 'disabled', 'ARCHIVED']) {
     assert.equal(isStrictPublicTeam({ isPublic: true, active: true, status }), false);
   }
+});
+
+test('public team profile preserves public page features through a bounded allowlist', () => {
+  const profile = serializePublicTeamProfile('team-public', {
+    name: 'Current',
+    sport: 'Soccer',
+    description: 'Public team description',
+    isPublic: true,
+    active: true,
+    leagueUrl: 'https://league.example.test/standings',
+    twitchChannel: 'allplays_live',
+    streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk',
+    calendarUrls: [
+      'https://calendar.example.test/team.ics?token=public-feed',
+      'javascript:alert(1)',
+      'https://user:password@example.test/private.ics'
+    ],
+    standingsConfig: {
+      enabled: true,
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0, privateNote: 'secret' },
+      maxGoalDiff: 7,
+      tiebreakers: ['head_to_head', 'point_diff'],
+      adminEmail: 'private@example.test'
+    },
+    tournament: {
+      divisions: [{ divisionName: '10U Gold', adminEmail: 'private@example.test' }],
+      pools: [{ poolName: 'Pool A', contactPhone: '555-0100' }],
+      privateNotes: 'secret'
+    },
+    tournamentPoolOverrides: {
+      'group-public': {
+        groupKey: '["10U Gold","Pool A"]',
+        poolName: '10U Gold • Pool A',
+        teamOrder: ['Current', 'Lions'],
+        finalizedBy: { name: 'Private Admin', email: 'private@example.test' },
+        finalizedAt: '2026-07-26T12:00:00Z'
+      }
+    },
+    ownerId: 'private-owner',
+    ownerEmail: 'private@example.test',
+    adminEmails: ['private@example.test'],
+    teamPermissions: { chat: { enabled: true } },
+    availabilityPreferences: { noteVisibility: 'team' },
+    registrationSource: { externalTeamId: 'private-registration-id' }
+  });
+
+  assert.deepEqual(profile, {
+    id: 'team-public',
+    name: 'Current',
+    sport: 'Soccer',
+    photoUrl: null,
+    city: null,
+    state: null,
+    zip: null,
+    description: 'Public team description',
+    appAccess: false,
+    webAccess: true,
+    isPublic: true,
+    active: true,
+    leagueUrl: 'https://league.example.test/standings',
+    twitchChannel: 'allplays_live',
+    streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk',
+    youtubeEmbedUrl: null,
+    hasCalendarSources: true,
+    standingsConfig: {
+      enabled: true,
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      maxGoalDiff: 7,
+      tiebreakers: ['head_to_head', 'point_diff'],
+      twoTeamTiebreakers: [],
+      multiTeamTiebreakers: []
+    },
+    tournament: {
+      divisions: [{ divisionName: '10U Gold' }],
+      pools: [{ poolName: 'Pool A' }]
+    },
+    tournamentDivisions: [],
+    tournamentPools: [],
+    tournamentPoolOverrides: {
+      'group-public': {
+        groupKey: '["10U Gold","Pool A"]',
+        poolName: '10U Gold • Pool A',
+        teamOrder: ['Current', 'Lions']
+      }
+    }
+  });
+  const serialized = JSON.stringify(profile);
+  for (const privateMarker of [
+    'ownerId',
+    'ownerEmail',
+    'adminEmails',
+    'teamPermissions',
+    'availabilityPreferences',
+    'registrationSource',
+    'finalizedBy',
+    'finalizedAt',
+    'private@example.test',
+    'private-registration-id',
+    'token=public-feed'
+  ]) {
+    assert.equal(serialized.includes(privateMarker), false);
+  }
+});
+
+test('public calendar projection hides feed credentials and keeps only event presentation fields', () => {
+  const event = serializePublicCalendarEvent({
+    id: 'opaque-event',
+    type: 'game',
+    date: '2026-08-01T18:00:00.000Z',
+    endDate: '2026-08-01T20:00:00.000Z',
+    opponent: 'Falcons',
+    location: 'Public Field',
+    status: 'CONFIRMED',
+    sourceUrl: 'https://calendar.example.test/team.ics?token=secret',
+    description: 'Private calendar notes',
+    childNames: ['Private Child']
+  });
+
+  assert.deepEqual(event, {
+    id: 'opaque-event',
+    type: 'game',
+    startsAt: '2026-08-01T18:00:00.000Z',
+    endsAt: '2026-08-01T20:00:00.000Z',
+    title: null,
+    opponent: 'Falcons',
+    location: 'Public Field',
+    status: 'confirmed'
+  });
+  const serialized = JSON.stringify(event);
+  assert.equal(serialized.includes('token=secret'), false);
+  assert.equal(serialized.includes('Private calendar notes'), false);
+  assert.equal(serialized.includes('Private Child'), false);
+});
+
+test('public team profile rejects inactive teams and credential-bearing URLs', () => {
+  assert.equal(serializePublicTeamProfile('team-private', { isPublic: false }), null);
+  assert.equal(serializePublicTeamProfile('team-inactive', { isPublic: true, active: false }), null);
+  assert.equal(publicHttpUrl('https://user:password@example.test/private.ics'), null);
+  assert.equal(publicHttpUrl('javascript:alert(1)'), null);
+});
+
+test('game projections preserve individually shareable reports without exposing ordinary private-team games', () => {
+  const privateTeam = { isPublic: false, active: true };
+  const inactiveTeam = { isPublic: true, active: false };
+  const publicTeam = { isPublic: true, active: true };
+  const ordinaryGame = {
+    type: 'game',
+    date: '2026-08-02T20:00:00Z',
+    opponent: 'Tigers'
+  };
+
+  assert.equal(canProjectPublicGame(publicTeam, ordinaryGame), true);
+  assert.equal(canProjectPublicGame(privateTeam, ordinaryGame), false);
+  assert.equal(canProjectPublicGame(inactiveTeam, ordinaryGame), false);
+  for (const publicMarker of [
+    { visibility: 'public' },
+    { isPublic: true },
+    { public: true },
+    { shareable: true },
+    { isShareable: true },
+    { publicCalendar: true }
+  ]) {
+    assert.equal(canProjectPublicGame(privateTeam, { ...ordinaryGame, ...publicMarker }), true);
+    assert.equal(canProjectPublicGame(inactiveTeam, { ...ordinaryGame, ...publicMarker }), true);
+  }
+  assert.equal(canProjectPublicGame(publicTeam, { ...ordinaryGame, visibility: 'private', shareable: true }), false);
+  assert.equal(canProjectPublicGame(publicTeam, { ...ordinaryGame, notes: 'private coach note' }), true);
 });
 
 test('roster response includes only active players and returns whitelisted fields in jersey order', () => {
@@ -48,7 +221,10 @@ test('roster response includes only active players and returns whitelisted field
       id: 'team-1',
       name: 'Current',
       sport: 'Soccer',
-      photoUrl: 'https://images.example/team.png'
+      photoUrl: 'https://images.example/team.png',
+      city: null,
+      state: null,
+      zip: null
     },
     players: [
       { id: 'p5', name: 'Blake', number: '5', photoUrl: null, position: null },
@@ -79,6 +255,26 @@ test('games omit private/deleted/non-game events and remove imported assignment 
         status: 'completed',
         homeScore: 1,
         awayScore: 3,
+        tournament: {
+          divisionName: '10U Gold',
+          poolName: 'Pool A',
+          privateBracketNotes: 'Private bracket note'
+        },
+        opponentStats: {
+          opponent1: {
+            name: 'Opponent One',
+            number: '9',
+            photoUrl: 'https://images.example/opponent.png',
+            points: 3,
+            notes: 'Private player note',
+            parent_email: 'private@example.com'
+          }
+        },
+        teamName: 'Current',
+        sport: 'Soccer',
+        teamPhotoUrl: 'https://images.example/team.png',
+        opponentTeamPhoto: 'https://images.example/opponent-team.png',
+        statSheetPhotoUrl: 'https://images.example/stat-sheet.png',
         summary: 'A strong finish.',
         notes: 'Private scouting note',
         rsvpSummary: { going: 12 },
@@ -103,9 +299,29 @@ test('games omit private/deleted/non-game events and remove imported assignment 
   assert.equal(response.games[1].opponentScore, 1);
   assert.equal(response.games[1].result, 'win');
   assert.equal(response.games[1].summary, 'A strong finish.');
+  assert.deepEqual(response.games[1].tournament, {
+    divisionName: '10U Gold',
+    poolName: 'Pool A'
+  });
+  assert.deepEqual(response.games[1].opponentStats, {
+    opponent1: {
+      name: 'Opponent One',
+      number: '9',
+      photoUrl: 'https://images.example/opponent.png',
+      points: 3
+    }
+  });
+  assert.equal(response.games[1].teamName, 'Current');
+  assert.equal(response.games[1].sport, 'Soccer');
+  assert.equal(response.games[1].teamPhotoUrl, 'https://images.example/team.png');
+  assert.equal(response.games[1].opponentTeamPhoto, 'https://images.example/opponent-team.png');
+  assert.equal(response.games[1].statSheetPhotoUrl, 'https://images.example/stat-sheet.png');
   assert.equal(response.range.truncated, false);
   const json = JSON.stringify(response);
   assert.equal(json.includes('Private scouting note'), false);
+  assert.equal(json.includes('Private bracket note'), false);
+  assert.equal(json.includes('Private player note'), false);
+  assert.equal(json.includes('private@example.com'), false);
   assert.equal(json.includes('Parent Name'), false);
   assert.equal(json.includes('rsvpSummary'), false);
 });
@@ -132,6 +348,19 @@ test('game results require completed status and both scores', () => {
     homeScore: 4,
     awayScore: 1
   }).result, 'loss');
+});
+
+test('shared game projections retain their encoded document path identity', () => {
+  const sharedId = `shared_${encodeURIComponent(`tournaments/${'t'.repeat(90)}/sharedGames/${'g'.repeat(90)}`)}`;
+  const game = serializePublicGame({
+    id: sharedId,
+    isSharedGame: true,
+    type: 'game',
+    date: '2026-08-02T20:00:00Z'
+  });
+
+  assert.equal(sharedId.length > 128, true);
+  assert.equal(game.id, sharedId);
 });
 
 test('games response reports truncation after public filtering and chronological sorting', () => {

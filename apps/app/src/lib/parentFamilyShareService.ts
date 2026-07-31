@@ -38,14 +38,6 @@ export async function updateParentFamilyShareCalendars(tokenId: string, urls: st
     await updateFamilyShareTokenCalendars(tokenId, urls);
 }
 
-function getLegacyUrl(path: string, params: Record<string, string> = {}) {
-    const url = new URL(path, legacyOrigin);
-    Object.entries(params).forEach(([key, value]) => {
-        if (value) url.searchParams.set(key, value);
-    });
-    return url.toString();
-}
-
 function getAppUrl(hashPath: string) {
     const url = new URL('app/', legacyOrigin);
     url.hash = hashPath.startsWith('/') ? hashPath : `/${hashPath}`;
@@ -53,7 +45,9 @@ function getAppUrl(hashPath: string) {
 }
 
 export function getLegacyFamilyShareUrl(tokenId: string) {
-    return getLegacyUrl('family.html', { token: tokenId });
+    const url = new URL('family.html', legacyOrigin);
+    url.hash = new URLSearchParams({ token: tokenId }).toString();
+    return url.toString();
 }
 
 export function getFamilyShareUrl(tokenId: string) {

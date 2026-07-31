@@ -58,8 +58,17 @@ const authObserverMocks = vi.hoisted(() => ({
 }));
 
 const nativeAuthenticationMocks = vi.hoisted(() => ({
+  applyActionCode: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  getCurrentUser: vi.fn(),
+  getIdToken: vi.fn(),
   revokeAccessToken: vi.fn(),
-  signInWithApple: vi.fn()
+  sendEmailVerification: vi.fn(),
+  signInWithApple: vi.fn(),
+  signInWithEmailAndPassword: vi.fn(),
+  signInWithEmailLink: vi.fn(),
+  signOut: vi.fn(),
+  updatePassword: vi.fn()
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -152,20 +161,31 @@ describe('getNativeAuthIdToken', () => {
     expect(getIdToken).toHaveBeenCalledWith(true);
   });
 
-  it('prefers the native session token when both native and stale web state exist', async () => {
+  it('migrates a legacy native token into memory and scrubs persistent WebView storage', async () => {
     const getIdToken = vi.fn().mockResolvedValue('stale-web-token');
     authState.currentUser = { getIdToken } as any;
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'native-user',
-      email: 'native@example.com',
-      idToken: 'native-id-token',
-      refreshToken: 'native-refresh-token',
-      expirationTime: Date.now() + 10 * 60 * 1000,
-      provider: 'password'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'native-user',
+        email: 'native@example.com',
+        idToken: 'native-id-token',
+        refreshToken: 'native-refresh-token',
+        expirationTime: Date.now() + 10 * 60 * 1000,
+        provider: 'rest'
+      })
+    );
 
     await expect(getNativeAuthIdToken(false)).resolves.toBe('native-id-token');
     expect(getIdToken).not.toHaveBeenCalled();
+    expect(JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || '{}')).toEqual({
+      uid: 'native-user',
+      email: 'native@example.com',
+      displayName: null,
+      photoUrl: null,
+      emailVerified: false,
+      provider: 'rest'
+    });
   });
 });
 
@@ -215,10 +235,12 @@ describe('auth email validation', () => {
   });
 
   it('maps Firebase invalid-email errors to app copy', () => {
-    expect(describeAuthError({
-      code: 'auth/invalid-email',
-      message: 'Firebase: Error (auth/invalid-email).'
-    })).toBe('Enter a valid email address.');
+    expect(
+      describeAuthError({
+        code: 'auth/invalid-email',
+        message: 'Firebase: Error (auth/invalid-email).'
+      })
+    ).toBe('Enter a valid email address.');
   });
 
   it('does not disclose whether a sign-in email belongs to an account', () => {
@@ -226,29 +248,34 @@ describe('auth email validation', () => {
   });
 
   it('maps REST too-many-attempts responses to the throttle message', () => {
-    expect(describeAuthError({ restCode: 'TOO_MANY_ATTEMPTS_TRY_LATER' }))
-      .toBe('Too many attempts. Wait a few minutes and try again.');
-    expect(describeAuthError({ code: 'auth/too-many-requests' }))
-      .toBe('Too many attempts. Wait a few minutes and try again.');
+    expect(describeAuthError({ restCode: 'TOO_MANY_ATTEMPTS_TRY_LATER' })).toBe('Too many attempts. Wait a few minutes and try again.');
+    expect(describeAuthError({ code: 'auth/too-many-requests' })).toBe('Too many attempts. Wait a few minutes and try again.');
   });
 
   it('distinguishes offline, timeout, and reachable-network authentication failures', () => {
     expect(classifyAuthConnectivity({ code: 'auth/network-request-failed' }, false)).toBe('offline');
-    expect(classifyAuthConnectivity({
-      code: 'auth/network-request-failed',
-      message: 'Sign-in timed out.'
-    }, true)).toBe('timeout');
-    expect(classifyAuthConnectivity({ code: 'auth/network-request-failed' }, true))
-      .toBe('service-unreachable');
+    expect(
+      classifyAuthConnectivity(
+        {
+          code: 'auth/network-request-failed',
+          message: 'Sign-in timed out.'
+        },
+        true
+      )
+    ).toBe('timeout');
+    expect(classifyAuthConnectivity({ code: 'auth/network-request-failed' }, true)).toBe('service-unreachable');
   });
 
   it('gives network failures retryable guidance without exposing implementation details', () => {
-    expect(describeAuthError({
-      code: 'auth/network-request-failed',
-      message: 'Sign-in timed out.'
-    })).toBe('Sign-in services took too long to respond. Try again.');
-    expect(describeAuthError({ code: 'auth/network-request-failed' }))
-      .toBe('ALL PLAYS could not reach sign-in services. Check your connection and try again.');
+    expect(
+      describeAuthError({
+        code: 'auth/network-request-failed',
+        message: 'Sign-in timed out.'
+      })
+    ).toBe('Sign-in services took too long to respond. Try again.');
+    expect(describeAuthError({ code: 'auth/network-request-failed' })).toBe(
+      'ALL PLAYS could not reach sign-in services. Check your connection and try again.'
+    );
   });
 });
 
@@ -368,20 +395,23 @@ describe('signUpWithEmail', () => {
     legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
       user: { uid: 'new-user', email: 'player@example.com' }
     });
+    nativeAuthenticationMocks.sendEmailVerification.mockResolvedValue(undefined);
   });
 
   it('normalizes signup input and delegates to the shared access-code redemption flow', async () => {
     await signUpWithEmail(' Player@Example.COM ', 'secret1', ' 85nsbz7k ');
 
-    expect(legacySignupFlowMocks.executeEmailPasswordSignup).toHaveBeenCalledWith(expect.objectContaining({
-      email: 'player@example.com',
-      password: 'secret1',
-      activationCode: '85NSBZ7K',
-      dependencies: expect.objectContaining({
-        markAccessCodeAsUsed: legacyAuthMocks.markAccessCodeAsUsed,
-        validateAccessCode: legacyAuthMocks.validateAccessCode
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'player@example.com',
+        password: 'secret1',
+        activationCode: '85NSBZ7K',
+        dependencies: expect.objectContaining({
+          markAccessCodeAsUsed: legacyAuthMocks.markAccessCodeAsUsed,
+          validateAccessCode: expect.any(Function)
+        })
       })
-    }));
+    );
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {
@@ -455,11 +485,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     const result = await signInWithGoogleAccount('site1234');
 
-    expect(legacyInviteFlowMocks.processInvite).toHaveBeenCalledWith(
-      'existing-google-user',
-      'SITE1234',
-      'member@example.com'
-    );
+    expect(legacyInviteFlowMocks.processInvite).toHaveBeenCalledWith('existing-google-user', 'SITE1234', 'member@example.com');
     expect(result).toMatchObject({ activationCodeRedeemed: true, wasNewUser: false });
   });
 
@@ -571,48 +597,73 @@ describe('native REST sign-in', () => {
     installTestLocalStorage();
     window.localStorage.clear();
     installIndexedDbMock();
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('accounts:signInWithPassword')) {
-        return createJsonResponse({
-          localId: 'new-user',
-          email: 'new@example.com',
-          idToken: 'new-id-token',
-          refreshToken: 'new-refresh-token',
-          expiresIn: '3600'
-        });
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: {
+        uid: 'apple-user',
+        email: 'apple@example.com',
+        displayName: 'Apple User',
+        emailVerified: true
       }
-      if (url.includes('accounts:signInWithIdp')) {
-        return createJsonResponse({
-          localId: 'apple-user',
-          email: 'apple@example.com',
-          idToken: 'apple-firebase-id-token',
-          refreshToken: 'apple-refresh-token',
-          expiresIn: '3600',
-          isNewUser: true
-        });
+    });
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-plugin-id-token' });
+    nativeAuthenticationMocks.signInWithEmailAndPassword.mockResolvedValue({
+      user: {
+        uid: 'new-user',
+        email: 'new@example.com',
+        displayName: 'New User',
+        emailVerified: true
       }
-      return createJsonResponse({
-        users: [{
-          email: url.includes('accounts:lookup') ? 'apple@example.com' : 'new@example.com',
-          emailVerified: true,
-          displayName: 'Apple User',
-          createdAt: '1700000000000',
-          lastLoginAt: '1700000000001'
-        }]
-      });
-    }));
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('accounts:signInWithPassword')) {
+          return createJsonResponse({
+            localId: 'new-user',
+            email: 'new@example.com',
+            idToken: 'new-id-token',
+            refreshToken: 'new-refresh-token',
+            expiresIn: '3600'
+          });
+        }
+        if (url.includes('accounts:signInWithIdp')) {
+          return createJsonResponse({
+            localId: 'apple-user',
+            email: 'apple@example.com',
+            idToken: 'apple-firebase-id-token',
+            refreshToken: 'apple-refresh-token',
+            expiresIn: '3600',
+            isNewUser: true
+          });
+        }
+        return createJsonResponse({
+          users: [
+            {
+              email: url.includes('accounts:lookup') ? 'apple@example.com' : 'new@example.com',
+              emailVerified: true,
+              displayName: 'Apple User',
+              createdAt: '1700000000000',
+              lastLoginAt: '1700000000001'
+            }
+          ]
+        });
+      })
+    );
   });
 
   it('clears cached user data before replacing a persisted native REST session with a different uid', async () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'previous-user',
-      email: 'previous@example.com',
-      idToken: 'previous-id-token',
-      refreshToken: 'previous-refresh-token',
-      expirationTime: Date.now() + 3600_000,
-      apiKey: 'test-api-key',
-      provider: 'rest'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'previous-user',
+        email: 'previous@example.com',
+        idToken: 'previous-id-token',
+        refreshToken: 'previous-refresh-token',
+        expirationTime: Date.now() + 3600_000,
+        apiKey: 'test-api-key',
+        provider: 'rest'
+      })
+    );
 
     const result = await signInWithEmail('new@example.com', 'password123');
 
@@ -622,25 +673,35 @@ describe('native REST sign-in', () => {
   });
 
   it('exposes the persisted native uid when the Firebase JS auth user is unavailable', () => {
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'persisted-user',
-      email: 'persisted@example.com',
-      idToken: 'persisted-id-token',
-      refreshToken: 'persisted-refresh-token',
-      expirationTime: Date.now() + 3600_000,
-      apiKey: 'test-api-key',
-      provider: 'rest'
-    }));
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'persisted-user',
+        email: 'persisted@example.com',
+        idToken: 'persisted-id-token',
+        refreshToken: 'persisted-refresh-token',
+        expirationTime: Date.now() + 3600_000,
+        apiKey: 'test-api-key',
+        provider: 'rest'
+      })
+    );
 
     expect(getNativeAuthUserId()).toBe('persisted-user');
   });
 
-  it('exchanges the Apple plugin token and nonce, persists the REST session, and redeems the join code', async () => {
+  it('uses native Apple Firebase auth, persists metadata only, and redeems the join code', async () => {
     nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
+      user: {
+        uid: 'apple-user',
+        email: 'apple@example.com',
+        displayName: 'Apple User',
+        emailVerified: true
+      },
       credential: {
         idToken: 'apple-provider-id-token',
         nonce: 'apple-raw-nonce'
-      }
+      },
+      additionalUserInfo: { isNewUser: true }
     });
     legacyAuthMocks.validateAccessCode.mockResolvedValue({
       valid: true,
@@ -652,19 +713,11 @@ describe('native REST sign-in', () => {
 
     const result = await signInWithAppleAccount('apple123');
 
-    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: true });
+    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: false });
     const fetchMock = vi.mocked(fetch);
     const idpCall = fetchMock.mock.calls.find(([url]) => String(url).includes('accounts:signInWithIdp'));
-    expect(idpCall).toBeTruthy();
-    const request = JSON.parse(String(idpCall?.[1]?.body || '{}'));
-    const postBody = new URLSearchParams(request.postBody);
-    expect(postBody.get('providerId')).toBe('apple.com');
-    expect(postBody.get('id_token')).toBe('apple-provider-id-token');
-    expect(postBody.get('nonce')).toBe('apple-raw-nonce');
-    expect(legacyAuthMocks.validateAccessCode).toHaveBeenCalledWith(
-      'APPLE123',
-      { nativeAuthToken: 'apple-firebase-id-token' }
-    );
+    expect(idpCall).toBeFalsy();
+    expect(legacyAuthMocks.validateAccessCode).toHaveBeenCalledWith('APPLE123', { nativeAuthToken: 'native-plugin-id-token' });
     expect(legacyAuthMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('apple-code-id', 'apple-user');
     expect(result).toMatchObject({
       nativeRest: true,
@@ -674,38 +727,48 @@ describe('native REST sign-in', () => {
     });
     expect(JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || '{}')).toMatchObject({
       uid: 'apple-user',
-      idToken: 'apple-firebase-id-token',
-      refreshToken: 'apple-refresh-token',
-      provider: 'rest'
+      provider: 'native-plugin'
     });
+    expect(window.localStorage.getItem('allplays-native-auth-session')).not.toContain('idToken');
+    expect(window.localStorage.getItem('allplays-native-auth-session')).not.toContain('refreshToken');
   });
 
   it('preserves existing profile fields when Apple omits them on a later sign-in', async () => {
     nativeAuthenticationMocks.signInWithApple.mockResolvedValue({
+      user: {
+        uid: 'apple-user',
+        email: 'apple@example.com',
+        emailVerified: true
+      },
       credential: {
         idToken: 'apple-provider-id-token',
         nonce: 'apple-raw-nonce'
       }
     });
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('accounts:signInWithIdp')) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('accounts:signInWithIdp')) {
+          return createJsonResponse({
+            localId: 'apple-user',
+            email: 'apple@example.com',
+            idToken: 'apple-firebase-id-token',
+            refreshToken: 'apple-refresh-token',
+            expiresIn: '3600',
+            isNewUser: false
+          });
+        }
         return createJsonResponse({
-          localId: 'apple-user',
-          email: 'apple@example.com',
-          idToken: 'apple-firebase-id-token',
-          refreshToken: 'apple-refresh-token',
-          expiresIn: '3600',
-          isNewUser: false
+          users: [
+            {
+              email: 'apple@example.com',
+              emailVerified: true,
+              providerUserInfo: [{ providerId: 'apple.com' }]
+            }
+          ]
         });
-      }
-      return createJsonResponse({
-        users: [{
-          email: 'apple@example.com',
-          emailVerified: true,
-          providerUserInfo: [{ providerId: 'apple.com' }]
-        }]
-      });
-    }));
+      })
+    );
 
     await signInWithAppleAccount();
 
@@ -728,14 +791,15 @@ describe('native REST sign-in', () => {
 
     await revokeCurrentAppleAuthorizationForDeletion();
 
-    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: true });
+    expect(nativeAuthenticationMocks.signInWithApple).toHaveBeenCalledWith({ skipNativeAuth: false });
     expect(nativeAuthenticationMocks.revokeAccessToken).toHaveBeenCalledWith({
       token: 'fresh-apple-authorization-code'
     });
     expect(JSON.parse(window.localStorage.getItem('allplays-native-auth-session') || '{}')).toMatchObject({
       uid: 'apple-user',
-      idToken: 'apple-firebase-id-token'
+      provider: 'native-plugin'
     });
+    expect(window.localStorage.getItem('allplays-native-auth-session')).not.toContain('idToken');
   });
 });
 

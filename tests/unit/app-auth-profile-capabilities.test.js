@@ -109,9 +109,9 @@ describe('React app auth/profile capability parity', () => {
         expect(authPage).not.toContain('<Link to="/reset-password"');
         expect(authPage).not.toContain('Enter join code');
         expectContains(authService, [
-            'signInWithNativeRestSession',
             'signInWithNativeGoogleCredential',
-            'skipNativeAuth: true',
+            'skipNativeAuth: false',
+            'persistNativePluginAuthSession',
             'completeGoogleRedirect',
             'queuePasswordResetEmail'
         ]);
@@ -127,9 +127,10 @@ describe('React app auth/profile capability parity', () => {
             "Capacitor.getPlatform?.() === 'android'",
             'options.useCredentialManager = false',
             "FirebaseAuthentication.signInWithGoogle(getNativeGoogleSignInOptions())",
-            "'accounts:signInWithIdp'",
-            'Native Google: exchanging token with Firebase Auth REST.'
+            'persistNativePluginAuthSession',
+            'FirebaseAuthentication.getIdToken'
         ]);
+        expect(authService).not.toContain('Native Google: exchanging token with Firebase Auth REST.');
         expect(authService).not.toContain('signInWithCredential(auth');
         expect(authService).not.toContain('Native Google: signing into Firebase Web Auth.');
         expectContains(iosProject, [

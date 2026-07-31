@@ -231,6 +231,7 @@
             ],
             "cloudFunctions": [
                 "cleanupPublicUserProfileOnAuthDelete",
+                "listPublicTeams",
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
                 "notifyParentMembershipRequestUpdated",
@@ -306,7 +307,9 @@
                 "createScopedRsvpToken",
                 "dispatchDuePreEventReminders",
                 "fetchCalendarIcs",
+                "getPublicGameProjection",
                 "getPublicRsvp",
+                "getPublicTeamGamesProjection",
                 "notifyGameCreated",
                 "notifyGameUpdated",
                 "notifyScheduleImportBatchCompleted",
@@ -767,6 +770,7 @@
                 "createPublicOpportunity",
                 "getOpportunityInquiry",
                 "getPublicOpportunity",
+                "getPublicTeamCalendarProjection",
                 "getPublicTeamProfile",
                 "listManagedPublicOpportunityTeams",
                 "listMyPublicOpportunities",
@@ -799,7 +803,8 @@
                 "apps/app/src/pages/PublicTeamDetail.test.tsx"
             ],
             "workflowTests": [
-                "tests/smoke/app-discover.spec.js"
+                "tests/smoke/app-discover.spec.js",
+                "tests/smoke/team-schedule-calendar.spec.js"
             ],
             "knownGaps": []
         },

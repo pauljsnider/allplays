@@ -69,6 +69,26 @@ function makeFirestore({ players = [], games = [], metrics = {} } = {}) {
   }
 
   return {
+    collectionGroup(path) {
+      if (path !== 'sharedGames') {
+        throw new Error(`Unexpected collection group: ${path}`);
+      }
+      const query = {
+        where() {
+          return query;
+        },
+        orderBy() {
+          return query;
+        },
+        limit() {
+          return query;
+        },
+        async get() {
+          return makeQuerySnapshot([]);
+        }
+      };
+      return query;
+    },
     collection(path) {
       if (path.endsWith('/players')) {
         return {

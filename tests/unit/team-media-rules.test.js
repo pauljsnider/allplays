@@ -15,7 +15,7 @@ function teamMediaUploadCreateRule() {
 }
 
 function canReadTeamDocumentRule() {
-    const start = rules.indexOf('function canReadTeamDocument(data) {');
+    const start = rules.indexOf('function canReadTeamDocument(teamId, data) {');
     const end = rules.indexOf('function isTeamOwnerOrGlobalAdmin(teamId) {', start);
 
     expect(start).toBeGreaterThanOrEqual(0);
@@ -26,7 +26,7 @@ function canReadTeamDocumentRule() {
 
 function canReadManagedTeamDocumentRule() {
     const start = rules.indexOf('function canReadManagedTeamDocument(data) {');
-    const end = rules.indexOf('function canReadPublicTeamDocument(data) {', start);
+    const end = rules.indexOf('function canReadTeamMediaManagerTeamDocument(data) {', start);
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -36,7 +36,7 @@ function canReadManagedTeamDocumentRule() {
 
 function canListManagedTeamDocumentRule() {
     const start = rules.indexOf('function canListManagedTeamDocument(data) {');
-    const end = rules.indexOf('function canReadTeamDocument(data) {', start);
+    const end = rules.indexOf('function canReadTeamDocument(teamId, data) {', start);
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -115,7 +115,7 @@ describe('team media Firestore rules', () => {
         expect(listRule).toContain('currentAuthEmailMatchesTeamOwner(data)');
         expect(rules).toContain("team.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
         expect(rules).toContain("team.get('ownerEmailLower', '') == request.auth.token.email.lower()");
-        expect(rules).toContain('allow get: if canReadTeamDocument(resource.data);');
+        expect(rules).toContain('allow get: if canReadTeamDocument(teamId, resource.data);');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
 
         expect(teamMediaManagerTeamReadWouldBeAllowed({

@@ -862,82 +862,27 @@ export async function discoverPublicTeams(options = {}) {
         ? Math.min(Math.max(Math.floor(rawPageSize), 1), 100)
         : DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE;
     const searchText = normalizePublicTeamSearchInput(options.searchText || options.locationFilter || '');
-    const cursor = options.cursor || null;
-    const teamsRef = collection(db, 'teams');
-
-    if (!searchText) {
-        const constraints = [where('isPublic', '==', true), orderBy('name')];
-        if (cursor) {
-            constraints.push(startAfterQuery(cursor));
-        }
-        constraints.push(limitQuery(pageSize));
-        const snapshot = await getDocs(query(teamsRef, ...constraints));
-        const teams = filterTeamsByActive(snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() })), false);
-        return {
-            teams,
-            nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
-        };
-    }
-
-    let strategies = buildPublicTeamSearchStrategies(searchText);
-    if (!strategies.length) {
-        return { teams: [], nextCursor: null };
-    }
-
-    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
-    if (previousPageCursor.bufferedTeams.length >= pageSize) {
-        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
-        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
-        return {
-            teams,
-            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
-        };
-    }
-
-    strategies = strategies.map((strategy, index) => ({
-        ...strategy,
-        startAfterConstraint: previousPageCursor.strategyCursors[index]
-            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
-            : []
-    }));
-    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
-        teamsRef,
-        where('isPublic', '==', true),
-        where(strategy.field, '>=', strategy.start),
-        where(strategy.field, '<=', strategy.end),
-        orderBy(strategy.field),
-        ...strategy.startAfterConstraint,
-        limitQuery(pageSize)
-    ))));
-
-    const teamsById = new Map(previousPageCursor.bufferedTeams
-        .filter((team) => team?.id)
-        .map((team) => [team.id, team]));
-    snapshots.forEach((snapshot, index) => {
-        const strategy = strategies[index];
-        snapshot.docs.forEach((teamDoc) => {
-            const team = { id: teamDoc.id, ...teamDoc.data() };
-            if (typeof strategy.filter === 'function' && !strategy.filter(team)) {
-                return;
-            }
-            teamsById.set(team.id, team);
-        });
+    const callable = httpsCallable(functions, 'listPublicTeams');
+    const response = await callable({
+        searchText,
+        pageSize,
+        cursor: typeof options.cursor === 'string' ? options.cursor : null
     });
-
-    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
-    const teams = sortedTeams.slice(0, pageSize);
-    const bufferedTeams = sortedTeams.slice(pageSize);
-    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
-        ? snapshot.docs[snapshot.docs.length - 1]
-        : previousPageCursor.strategyCursors[index] || null);
-    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
-
     return {
-        teams,
-        nextCursor: hasMorePages
-            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
-            : null
+        teams: filterTeamsByActive(Array.isArray(response?.data?.items) ? response.data.items : [], false),
+        nextCursor: typeof response?.data?.nextCursor === 'string' ? response.data.nextCursor : null
     };
+}
+
+async function getAllPublicTeamProjections() {
+    const teams = [];
+    let cursor = null;
+    do {
+        const page = await discoverPublicTeams({ pageSize: 100, cursor });
+        teams.push(...page.teams);
+        cursor = page.nextCursor;
+    } while (cursor && teams.length < 1000);
+    return teams;
 }
 
 export async function getPublicTeamRosterCount(teamId) {
@@ -999,14 +944,12 @@ export async function getTeams(options = {}) {
         teams = (await getAllOrderedCollectionDocuments(teamsRef, "name"))
             .map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
-        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
-            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+        teams = await getAllPublicTeamProjections();
     } else {
         const currentUser = auth.currentUser;
         const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
-        const teamSnapshots = await Promise.all([
-            getDocs(query(teamsRef, where("isPublic", "==", true))),
+        const [publicTeams, ...teamSnapshots] = await Promise.all([
+            getAllPublicTeamProjections(),
             currentUser?.uid
                 ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
                 : Promise.resolve({ docs: [] }),
@@ -1018,7 +961,7 @@ export async function getTeams(options = {}) {
                     })
                 : Promise.resolve({ docs: [] })
         ]);
-        const teamsById = new Map();
+        const teamsById = new Map(publicTeams.map((team) => [team.id, team]));
         teamSnapshots.forEach((snapshot) => {
             snapshot.docs.forEach(doc => teamsById.set(doc.id, { id: doc.id, ...doc.data() }));
         });
@@ -1060,13 +1003,26 @@ export async function getTeams(options = {}) {
 export async function getTeam(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const docRef = doc(db, "teams", teamId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
+    try {
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return null;
         const team = { id: docSnap.id, ...docSnap.data() };
         if (!includeInactive && !isTeamActive(team)) return null;
         return team;
-    } else {
-        return null;
+    } catch (error) {
+        if (!isPermissionDeniedError(error)) throw error;
+        const callable = httpsCallable(functions, 'getPublicTeamProfile');
+        try {
+            const response = await callable({ teamId });
+            const team = response?.data?.item || null;
+            if (!team || (!includeInactive && !isTeamActive(team))) return null;
+            return team;
+        } catch (projectionError) {
+            if (projectionError?.code === 'functions/not-found' || projectionError?.code === 'not-found') {
+                return null;
+            }
+            throw projectionError;
+        }
     }
 }
 
@@ -3833,6 +3789,173 @@ function mergeGamesById(primaryGames, supplementalGames = []) {
     return Array.from(gamesById.values());
 }
 
+function isPermissionDeniedError(error) {
+    const code = String(error?.code || '').toLowerCase();
+    return code === 'permission-denied' || code.endsWith('/permission-denied');
+}
+
+function toPublicProjectionDate(value) {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) return undefined;
+    return value.toISOString().slice(0, 10);
+}
+
+function shiftPublicProjectionDate(value, yearOffset) {
+    const shifted = new Date(value);
+    const targetYear = shifted.getUTCFullYear() + yearOffset;
+    const month = shifted.getUTCMonth();
+    const day = shifted.getUTCDate();
+    shifted.setUTCDate(1);
+    shifted.setUTCFullYear(targetYear);
+    shifted.setUTCMonth(month);
+    const lastDay = new Date(Date.UTC(targetYear, month + 1, 0)).getUTCDate();
+    shifted.setUTCDate(Math.min(day, lastDay));
+    return shifted;
+}
+
+function getPublicProjectionRange(options = {}) {
+    let fromDate = options?.startDate instanceof Date && !Number.isNaN(options.startDate.getTime())
+        ? options.startDate
+        : null;
+    let toDate = options?.endDate instanceof Date && !Number.isNaN(options.endDate.getTime())
+        ? options.endDate
+        : null;
+    if (!fromDate && !toDate) {
+        const now = new Date();
+        fromDate = shiftPublicProjectionDate(now, -7);
+        toDate = shiftPublicProjectionDate(now, 2);
+    } else if (fromDate && !toDate) {
+        toDate = shiftPublicProjectionDate(fromDate, 9);
+    } else if (!fromDate && toDate) {
+        fromDate = shiftPublicProjectionDate(toDate, -9);
+    }
+    return {
+        from: toPublicProjectionDate(fromDate),
+        to: toPublicProjectionDate(toDate)
+    };
+}
+
+function mapPublicGameProjection(game = {}, teamId = '') {
+    const startsAt = game?.startsAt ? new Date(game.startsAt) : null;
+    const endsAt = game?.endsAt ? new Date(game.endsAt) : null;
+    const isHome = game?.isHome !== false;
+    const teamScore = Number.isFinite(game?.teamScore) ? game.teamScore : null;
+    const opponentScore = Number.isFinite(game?.opponentScore) ? game.opponentScore : null;
+    return {
+        id: String(game?.id || ''),
+        teamId,
+        type: 'game',
+        date: startsAt && !Number.isNaN(startsAt.getTime()) ? startsAt : null,
+        endDate: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
+        opponent: String(game?.opponent || 'TBD'),
+        location: String(game?.location || ''),
+        isHome,
+        status: String(game?.status || 'scheduled'),
+        liveStatus: String(game?.status || 'scheduled'),
+        homeScore: isHome ? teamScore : opponentScore,
+        awayScore: isHome ? opponentScore : teamScore,
+        summary: game?.summary || null,
+        publicSummary: game?.summary || null,
+        videoUrl: game?.videoUrl || null,
+        seasonLabel: game?.seasonLabel || null,
+        competitionType: game?.competitionType || null,
+        countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
+        tournament: game?.tournament || null,
+        opponentStats: game?.opponentStats || {},
+        teamName: game?.teamName || null,
+        homeTeamName: game?.homeTeamName || null,
+        sport: game?.sport || null,
+        teamPhotoUrl: game?.teamPhotoUrl || null,
+        homeTeamPhoto: game?.homeTeamPhoto || game?.teamPhotoUrl || null,
+        opponentTeamPhoto: game?.opponentTeamPhoto || null,
+        statSheetPhotoUrl: game?.statSheetPhotoUrl || null,
+        isSharedGame: game?.isSharedGame === true || String(game?.id || '').startsWith('shared_'),
+        isPublicProjection: true
+    };
+}
+
+function normalizeTournamentStandingsGroups(options = {}) {
+    const rawTournamentGroups = Array.isArray(options?.tournamentGroups)
+        ? options.tournamentGroups
+        : options?.tournamentGroup ? [options.tournamentGroup] : [];
+    const tournamentGroupsByKey = new Map();
+    rawTournamentGroups.forEach((group) => {
+        if (!group || typeof group !== 'object') return;
+        const normalized = {
+            poolName: String(group.poolName || '').trim(),
+            divisionName: String(group.divisionName || group.division || '').trim()
+        };
+        if (!normalized.poolName && !normalized.divisionName) return;
+        tournamentGroupsByKey.set(JSON.stringify([normalized.divisionName, normalized.poolName]), normalized);
+    });
+    return Array.from(tournamentGroupsByKey.values());
+}
+
+async function getPublicGamesProjection(teamId, options = {}) {
+    const callable = httpsCallable(functions, 'getPublicTeamGamesProjection');
+    const range = getPublicProjectionRange(options);
+    const response = await callable({
+        teamId,
+        from: range.from,
+        to: range.to,
+        limit: 500
+    });
+    const games = (Array.isArray(response?.data?.games) ? response.data.games : [])
+        .map((game) => mapPublicGameProjection(game, teamId))
+        .filter((game) => game.id && game.date);
+    const tournamentGroups = normalizeTournamentStandingsGroups(options);
+    return tournamentGroups.length
+        ? games.filter((game) => tournamentGroups.some((group) => matchesTournamentStandingsGroup(game, group)))
+        : games;
+}
+
+export async function getPublicTeamCalendarEvents(teamId, options = {}) {
+    const callable = httpsCallable(functions, 'getPublicTeamCalendarProjection');
+    const range = getPublicProjectionRange(options);
+    const response = await callable({
+        teamId,
+        from: range.from,
+        to: range.to,
+        limit: 500
+    });
+    return (Array.isArray(response?.data?.events) ? response.data.events : [])
+        .map((event) => {
+            const startsAt = event?.startsAt ? new Date(event.startsAt) : null;
+            const endsAt = event?.endsAt ? new Date(event.endsAt) : null;
+            if (!startsAt || Number.isNaN(startsAt.getTime())) return null;
+            const type = event?.type === 'practice' ? 'practice' : 'game';
+            const status = String(event?.status || 'scheduled').toUpperCase();
+            const summary = type === 'practice'
+                ? String(event?.title || 'Practice')
+                : `vs. ${String(event?.opponent || 'TBD')}`;
+            return {
+                id: String(event?.id || ''),
+                uid: String(event?.id || ''),
+                dtstart: startsAt,
+                dtend: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
+                summary,
+                location: String(event?.location || 'TBD'),
+                status,
+                isPublicProjection: true
+            };
+        })
+        .filter(Boolean);
+}
+
+async function getPublicGameProjection(teamId, gameId) {
+    const callable = httpsCallable(functions, 'getPublicGameProjection');
+    try {
+        const response = await callable({ teamId, gameId });
+        return response?.data?.item
+            ? mapPublicGameProjection(response.data.item, teamId)
+            : null;
+    } catch (error) {
+        if (String(error?.code || '').endsWith('/not-found') || error?.code === 'not-found') {
+            return null;
+        }
+        throw error;
+    }
+}
+
 async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate) {
     if (!startDate && !endDate) return [];
     const snapshot = await getDocs(query(gamesRef, where("isSeriesMaster", "==", true)));
@@ -3849,20 +3972,7 @@ async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endD
 export async function getGames(teamId, options = {}) {
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
-    const rawTournamentGroups = Array.isArray(options?.tournamentGroups)
-        ? options.tournamentGroups
-        : options?.tournamentGroup ? [options.tournamentGroup] : [];
-    const tournamentGroupsByKey = new Map();
-    rawTournamentGroups.forEach((group) => {
-        if (!group || typeof group !== 'object') return;
-        const normalized = {
-            poolName: String(group.poolName || '').trim(),
-            divisionName: String(group.divisionName || group.division || '').trim()
-        };
-        if (!normalized.poolName && !normalized.divisionName) return;
-        tournamentGroupsByKey.set(JSON.stringify([normalized.divisionName, normalized.poolName]), normalized);
-    });
-    const tournamentGroups = Array.from(tournamentGroupsByKey.values());
+    const tournamentGroups = normalizeTournamentStandingsGroups(options);
     const hasTournamentGroup = tournamentGroups.length > 0;
     const gamesRef = getTeamGameCollectionRef(teamId);
     let teamGames = [];
@@ -3891,6 +4001,9 @@ export async function getGames(teamId, options = {}) {
             teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         }
     } catch (error) {
+        if (isPermissionDeniedError(error)) {
+            return getPublicGamesProjection(teamId, options);
+        }
         // Tournament group equality queries use single fields and need no
         // composite index. Never replace them with an unbounded history read.
         if (hasTournamentGroup) throw error;
@@ -3925,6 +4038,33 @@ export async function getGames(teamId, options = {}) {
     return (startDate || endDate)
         ? merged.filter(game => isGameWithinDateRange(game, startDate, endDate))
         : merged;
+}
+
+export async function getOfficiatingGames(teamId, user = auth.currentUser) {
+    const uid = String(user?.uid || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!teamId || (!uid && !email)) return [];
+    const gamesRef = getTeamGameCollectionRef(teamId);
+    const queries = [];
+    if (uid) {
+        queries.push(query(gamesRef, where('officiatingAuthorizedUserIds', 'array-contains', uid)));
+    }
+    if (email) {
+        queries.push(query(gamesRef, where('officiatingAuthorizedEmails', 'array-contains', email)));
+    }
+    const snapshots = await Promise.allSettled(queries.map((officialQuery) => getDocs(officialQuery)));
+    const gamesById = new Map();
+    snapshots.forEach((result) => {
+        if (result.status !== 'fulfilled') return;
+        result.value.docs.forEach((gameDoc) => {
+            gamesById.set(gameDoc.id, { id: gameDoc.id, ...gameDoc.data() });
+        });
+    });
+    if (!snapshots.some((result) => result.status === 'fulfilled')) {
+        throw snapshots[0]?.reason || new Error('Unable to load officiating assignments.');
+    }
+    return Array.from(gamesById.values())
+        .sort((left, right) => (toComparableGameDate(left?.date)?.getTime() || 0) - (toComparableGameDate(right?.date)?.getTime() || 0));
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {
@@ -3997,7 +4137,15 @@ export async function getAggregatedStatsDocumentForPlayer(teamId, gameId, player
 
 export async function getGame(teamId, gameId) {
     const docRef = getGameDocRef(teamId, gameId);
-    const docSnap = await getDoc(docRef);
+    let docSnap;
+    try {
+        docSnap = await getDoc(docRef);
+    } catch (error) {
+        if (isPermissionDeniedError(error)) {
+            return getPublicGameProjection(teamId, gameId);
+        }
+        throw error;
+    }
     if (docSnap.exists()) {
         const data = docSnap.data();
         if (isSharedGameSyntheticId(gameId)) {
@@ -4024,7 +4172,23 @@ export async function getGame(teamId, gameId) {
 
 export function subscribeGame(teamId, gameId, callback, onError) {
     const docRef = getGameDocRef(teamId, gameId);
-    return onSnapshot(docRef, (snapshot) => {
+    let stopped = false;
+    let projectionTimer = null;
+    let projectionPollingStarted = false;
+    const pollProjection = async () => {
+        try {
+            callback(await getPublicGameProjection(teamId, gameId));
+        } catch (error) {
+            if (typeof onError === 'function') onError(error);
+        }
+    };
+    const startProjectionPolling = () => {
+        if (projectionPollingStarted || stopped) return;
+        projectionPollingStarted = true;
+        void pollProjection();
+        projectionTimer = globalThis.setInterval(() => void pollProjection(), 15000);
+    };
+    const unsubscribe = onSnapshot(docRef, (snapshot) => {
         if (!snapshot.exists()) {
             callback(null);
             return;
@@ -4048,7 +4212,18 @@ export function subscribeGame(teamId, gameId, callback, onError) {
             id: snapshot.id,
             ...data
         });
-    }, onError);
+    }, (error) => {
+        if (isPermissionDeniedError(error)) {
+            startProjectionPolling();
+            return;
+        }
+        if (typeof onError === 'function') onError(error);
+    });
+    return () => {
+        stopped = true;
+        unsubscribe();
+        if (projectionTimer !== null) globalThis.clearInterval(projectionTimer);
+    };
 }
 
 export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {

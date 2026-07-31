@@ -220,6 +220,34 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
     return fetchMock;
 }
 
+function mockNativeGoogle({ isNewUser = false } = {}) {
+    const user = {
+        uid: 'native-google-user',
+        email: 'parent@example.com',
+        emailVerified: true,
+        displayName: 'Parent User',
+        photoUrl: 'https://example.com/photo.png',
+        providerId: 'firebase',
+        providerData: [{
+            providerId: 'google.com',
+            uid: 'google-user',
+            email: 'parent@example.com',
+            displayName: 'Parent User',
+            photoUrl: 'https://example.com/photo.png'
+        }],
+        metadata: {
+            creationTime: isNewUser ? Date.now() : Date.now() - 86_400_000,
+            lastSignInTime: Date.now()
+        }
+    };
+    nativeAuthMocks.signInWithGoogle.mockResolvedValue({
+        user,
+        additionalUserInfo: { isNewUser }
+    });
+    nativeAuthMocks.getCurrentUser.mockResolvedValue({ user });
+    nativeAuthMocks.getIdToken.mockResolvedValue({ token: 'firebase-id-token' });
+}
+
 async function loadAuthService() {
     vi.resetModules();
     return import('../../apps/app/src/lib/authService.ts');
@@ -232,12 +260,7 @@ beforeEach(() => {
     capacitorState.plugins = new Set(['FirebaseAuthentication']);
     firebaseMocks.auth.currentUser = null;
     dbMocks.updateUserProfile.mockResolvedValue(undefined);
-    nativeAuthMocks.signInWithGoogle.mockResolvedValue({
-        credential: {
-            idToken: 'google-id-token',
-            accessToken: 'google-access-token'
-        }
-    });
+    mockNativeGoogle();
     Object.defineProperty(window, 'localStorage', {
         configurable: true,
         value: createMemoryStorage()
@@ -257,13 +280,13 @@ afterEach(() => {
 });
 
 describe('React app native Google auth', () => {
-    it('uses the previous Google account picker path on Android and stores a REST-backed app session', async () => {
+    it('uses the previous Google account picker path on Android and stores metadata only', async () => {
         const { signInWithGoogleAccount } = await loadAuthService();
 
         const result = await signInWithGoogleAccount();
 
         expect(nativeAuthMocks.signInWithGoogle).toHaveBeenCalledWith({
-            skipNativeAuth: true,
+            skipNativeAuth: false,
             useCredentialManager: false
         });
         expect(firebaseMocks.signInWithCredential).not.toHaveBeenCalled();
@@ -284,10 +307,10 @@ describe('React app native Google auth', () => {
         expect(savedSession).toMatchObject({
             uid: 'native-google-user',
             email: 'parent@example.com',
-            idToken: 'firebase-id-token',
-            refreshToken: 'firebase-refresh-token',
-            provider: 'rest'
+            provider: 'native-plugin'
         });
+        expect(savedSession).not.toHaveProperty('idToken');
+        expect(savedSession).not.toHaveProperty('refreshToken');
     });
 
     it('keeps iOS on native Google sign-in without forcing Android Credential Manager options', async () => {
@@ -297,13 +320,13 @@ describe('React app native Google auth', () => {
         await signInWithGoogleAccount();
 
         expect(nativeAuthMocks.signInWithGoogle).toHaveBeenCalledWith({
-            skipNativeAuth: true
+            skipNativeAuth: false
         });
         expect(firebaseMocks.signInWithCredential).not.toHaveBeenCalled();
     });
 
-    it('passes the native REST ID token when validating a new Google account activation code', async () => {
-        mockFirebaseAuthRest({ isNewUser: true });
+    it('passes an on-demand native ID token when validating a new Google account activation code', async () => {
+        mockNativeGoogle({ isNewUser: true });
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             codeId: 'native-code',
@@ -323,7 +346,7 @@ describe('React app native Google auth', () => {
     });
 
     it('redeems co-parent invites during React app Google signup instead of generic code consumption', async () => {
-        mockFirebaseAuthRest({ isNewUser: true });
+        mockNativeGoogle({ isNewUser: true });
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             codeId: 'coparent-code',

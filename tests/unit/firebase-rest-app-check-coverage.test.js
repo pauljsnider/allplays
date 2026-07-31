@@ -75,8 +75,13 @@ describe('raw Firebase REST App Check coverage', () => {
 
         expect(source).toContain('resolveImageFirebaseConfig');
         expect(source).not.toContain('getPrimaryAppCheckHeaders');
+        expect(source).toContain('createEphemeralImageUploadIdToken');
+        expect(source).toContain('deleteEphemeralImageUploadUser');
+        expect(source).toContain('accounts:delete');
         expect(source).toContain('identitytoolkit.googleapis.com');
         expect(source).toContain('firebasestorage.googleapis.com');
+        expect(source).not.toContain('window.localStorage');
+        expect(source).not.toContain('refresh_token');
     });
 
     it('allows App Check through CORS on raw functions that receive attested browser requests', () => {

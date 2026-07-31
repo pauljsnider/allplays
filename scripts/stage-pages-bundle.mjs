@@ -200,8 +200,26 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
         if (/<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy\b/i.test(html)) {
             throw new Error(`Staged HTML already contains a CSP meta tag: ${relativePath}`);
         }
-        if (/<meta\b[^>]*name\s*=\s*["']?referrer\b/i.test(html)) {
-            throw new Error(`Staged HTML already contains a referrer meta tag: ${relativePath}`);
+        const referrerMetaMatches = [...html.matchAll(
+            /<meta\b[^>]*name\s*=\s*["']?referrer["']?[^>]*>/gi
+        )];
+        if (referrerMetaMatches.length > 1) {
+            throw new Error(`Staged HTML already contains multiple referrer meta tags: ${relativePath}`);
+        }
+        let hasApprovedReferrerMeta = false;
+        if (referrerMetaMatches.length === 1) {
+            const contentMatch = referrerMetaMatches[0][0].match(
+                /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i
+            );
+            const existingPolicy = String(contentMatch?.[1] ?? contentMatch?.[2] ?? contentMatch?.[3] ?? '')
+                .trim()
+                .toLowerCase();
+            if (![policies.referrerPolicy, 'no-referrer'].includes(existingPolicy)) {
+                throw new Error(
+                    `Staged HTML already contains a referrer meta tag that is not an approved policy: ${relativePath}`
+                );
+            }
+            hasApprovedReferrerMeta = true;
         }
 
         const headMatch = /<head\b[^>]*>/i.exec(html);
@@ -211,7 +229,9 @@ export function injectPagesSecurityMeta(destinationDir, { rootDir = defaultRootD
 
         const securityMeta = [
             `<meta http-equiv="Content-Security-Policy" content="${escapeHtmlAttribute(csp)}">`,
-            `<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`
+            ...(!hasApprovedReferrerMeta
+                ? [`<meta name="referrer" content="${escapeHtmlAttribute(policies.referrerPolicy)}">`]
+                : [])
         ].join('\n    ');
         const afterHead = headMatch.index + headMatch[0].length;
         const headCloseIndex = html.search(/<\/head\s*>/i);

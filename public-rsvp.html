@@ -3,7 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
     <title>RSVP | ALL PLAYS</title>
+    <script>
+        (() => {
+            const legacyParams = new URLSearchParams(window.location.search);
+            const fragmentParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+            const token = fragmentParams.get('token') || legacyParams.get('token') || '';
+            const response = fragmentParams.get('response') || legacyParams.get('response') || '';
+            window.__ALLPLAYS_PUBLIC_RSVP_LINK__ = Object.freeze({ token, response });
+            if (token || response) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
@@ -72,9 +85,9 @@
     <script type="module">
         import { auth } from './js/firebase.js?v=22';
 
-        const params = new URLSearchParams(window.location.search);
-        const token = params.get('token') || '';
-        const requestedResponse = params.get('response') || '';
+        const linkState = window.__ALLPLAYS_PUBLIC_RSVP_LINK__ || {};
+        const token = linkState.token || '';
+        const requestedResponse = linkState.response || '';
         const validResponses = new Set(['going', 'maybe', 'not_going']);
 
         const states = {
@@ -122,7 +135,11 @@
             }
 
             try {
-                const payload = await callPublicRsvp(`getPublicRsvp?token=${encodeURIComponent(token)}`);
+                const payload = await callPublicRsvp('getPublicRsvp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
                 renderContext(payload.context || {});
                 if (validResponses.has(requestedResponse)) {
                     const input = document.querySelector(`input[name="response"][value="${requestedResponse}"]`);

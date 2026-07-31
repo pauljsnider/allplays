@@ -38,11 +38,12 @@ function parseCalendarMonthLabel(label) {
     return new Date(Date.UTC(Number(yearText), monthIndex, 1));
 }
 
-function buildDbStub({ team, games, trackedUids }) {
+function buildDbStub({ team, games, trackedUids, publicCalendarEvents = [] }) {
     return `
 const team = ${JSON.stringify(team)};
 const games = ${JSON.stringify(games)};
 const trackedUids = ${JSON.stringify(trackedUids)};
+const publicCalendarEvents = ${JSON.stringify(publicCalendarEvents)};
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -58,6 +59,14 @@ export async function getPlayers() {
 
 export async function getGames() {
     return clone(games);
+}
+
+export async function getPublicTeamCalendarEvents() {
+    return clone(publicCalendarEvents).map((event) => ({
+        ...event,
+        dtstart: new Date(event.dtstart),
+        dtend: event.dtend ? new Date(event.dtend) : null
+    }));
 }
 
 export async function getConfigs() {
@@ -555,6 +564,44 @@ test('team schedule calendar shows only practices in the dedicated practice filt
     await expect(page.locator('#schedule-day-modal-content')).toContainText('Practice');
     await expect(page.locator('#schedule-day-modal-content')).toContainText('Gym 1');
     await expect(page.locator('#schedule-day-modal-content')).not.toContainText('Rivals FC');
+});
+
+test('public team schedule uses projected calendar events without a browser-visible feed URL', async ({ page, baseURL }) => {
+    const now = new Date();
+    const practiceDate = addDays(now, 7, 18);
+    const scenario = {
+        team: {
+            name: 'Public Team',
+            sport: 'Soccer',
+            isPublic: true,
+            hasCalendarSources: true
+        },
+        games: [],
+        trackedUids: [],
+        calendarEvents: [],
+        publicCalendarEvents: [{
+            id: 'opaque-calendar-event',
+            uid: 'opaque-calendar-event',
+            dtstart: makeIso(practiceDate),
+            summary: 'Public Team Practice',
+            location: 'Public Gym',
+            status: 'SCHEDULED',
+            isPublicProjection: true
+        }]
+    };
+
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-header')).toContainText('Public Team');
+    await page.locator('#schedule-view-calendar').click();
+    await page.locator('#schedule-filter-upcoming-practices').click();
+    await gotoCalendarMonth(page, now, practiceDate);
+
+    const dayCell = page.locator(`[data-schedule-day="${practiceDate.getUTCDate()}"]`);
+    await expect(dayCell).toContainText('Practice');
+    await dayCell.click();
+    await expect(page.locator('#schedule-day-modal-content')).toContainText('Public Gym');
 });
 
 test('team schedule print uses the selected range and black-and-white layout', async ({ page, baseURL }) => {

@@ -455,15 +455,33 @@ service cloud.firestore {
              hasTeamOwnerOrAdminAccess(data);
     }
 
-    function canReadPublicTeamDocument(data) {
-      return data.isPublic is bool && data.isPublic == true;
-    }
-
     function canReadTeamMediaManagerTeamDocument(data) {
       let permission = data.get('teamPermissions', {}).get('teamMediaManagement', {});
       return isSignedIn() &&
              permission.get('mode', '') == 'selected' &&
              request.auth.uid in permission.get('memberIds', []);
+    }
+
+    function canReadScopedTeamHelperDocument(data) {
+      let permissions = data.get('teamPermissions', {});
+      let scorekeeping = permissions.get('scorekeeping', {});
+      let videography = permissions.get('videography', {});
+      let streaming = permissions.get('streaming', {});
+      let media = permissions.get('teamMediaManagement', {});
+      return isSignedIn() &&
+             (
+               (scorekeeping.get('mode', '') == 'selected' &&
+                request.auth.uid in scorekeeping.get('memberIds', [])) ||
+               (videography.get('mode', '') == 'selected' &&
+                request.auth.uid in videography.get('memberIds', [])) ||
+               (streaming.get('mode', '') == 'selected' &&
+                request.auth.uid in streaming.get('memberIds', [])) ||
+               (media.get('mode', '') == 'selected' &&
+                request.auth.uid in media.get('memberIds', [])) ||
+               (data.get('streamAccessMode', '') in ['selected_volunteers', 'selected'] &&
+                request.auth.token.email is string &&
+                request.auth.token.email.lower() in data.get('streamVolunteerEmails', []))
+             );
     }
 
     function canListManagedTeamDocument(data) {
@@ -473,9 +491,10 @@ service cloud.firestore {
               currentAuthEmailMatchesAdminList(data.get('adminEmails', [])));
     }
 
-    function canReadTeamDocument(data) {
-      return canReadPublicTeamDocument(data) ||
-             canReadManagedTeamDocument(data) ||
+    function canReadTeamDocument(teamId, data) {
+      return canReadManagedTeamDocument(data) ||
+             isParentForTeam(teamId) ||
+             canReadScopedTeamHelperDocument(data) ||
              canReadTeamMediaManagerTeamDocument(data);
     }
 
@@ -570,6 +589,35 @@ service cloud.firestore {
                (mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)) ||
                (mode == 'selected' && request.auth.uid in permission.get('memberIds', [])) ||
                (legacyMode in ['confirmed_members', 'all_confirmed'] && hasConfirmedGameRsvp(teamId, gameId)) ||
+               (legacyMode in ['selected_volunteers', 'selected'] &&
+                request.auth.token.email is string &&
+                request.auth.token.email.lower() in teamData.get('streamVolunteerEmails', []))
+             );
+    }
+
+    function canReadScopedGameHelper(teamId, gameId) {
+      let teamData = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permissions = teamData.get('teamPermissions', {});
+      let scorekeeping = permissions.get('scorekeeping', {});
+      let videography = permissions.get('videography', {});
+      let streaming = permissions.get('streaming', {});
+      let legacyMode = teamData.get('streamAccessMode', 'admins');
+      return isSignedIn() &&
+             isSafeDocumentId(teamId) &&
+             isSafeDocumentId(gameId) &&
+             (
+               (scorekeeping.get('mode', '') == 'selected' &&
+                request.auth.uid in scorekeeping.get('memberIds', [])) ||
+               (videography.get('mode', '') == 'selected' &&
+                request.auth.uid in videography.get('memberIds', [])) ||
+               (streaming.get('mode', '') == 'selected' &&
+                request.auth.uid in streaming.get('memberIds', [])) ||
+               (scorekeeping.get('mode', '') == 'all_confirmed' &&
+                hasConfirmedGameRsvp(teamId, gameId)) ||
+               (streaming.get('mode', '') == 'all_confirmed' &&
+                hasConfirmedGameRsvp(teamId, gameId)) ||
+               (legacyMode in ['confirmed_members', 'all_confirmed'] &&
+                hasConfirmedGameRsvp(teamId, gameId)) ||
                (legacyMode in ['selected_volunteers', 'selected'] &&
                 request.auth.token.email is string &&
                 request.auth.token.email.lower() in teamData.get('streamVolunteerEmails', []))
@@ -1152,28 +1200,28 @@ service cloud.firestore {
     }
 
     function canReadGameDocument(teamId, gameId, data) {
-      let teamPath = /databases/$(database)/documents/teams/$(teamId);
       return isTeamOwnerOrAdmin(teamId) ||
              isParentForTeam(teamId) ||
-             canScorekeepGame(teamId, gameId) ||
-             canVideographGame(teamId, gameId) ||
              isAuthorizedOfficialForGame(data) ||
-             (exists(teamPath) && canReadPublicGameDocument(get(teamPath).data, data));
+             canReadScopedGameHelper(teamId, gameId);
     }
 
     function canReadGameSubcollectionDocument(teamId, gameId) {
       let gamePath = /databases/$(database)/documents/teams/$(teamId)/games/$(gameId);
-      return exists(gamePath) && canReadGameDocument(teamId, gameId, get(gamePath).data);
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      return exists(gamePath) &&
+             (
+               canReadGameDocument(teamId, gameId, get(gamePath).data) ||
+               (exists(teamPath) &&
+                canReadPublicGameDocument(get(teamPath).data, get(gamePath).data))
+             );
     }
 
     function canReadCollectionGroupGameDocument(teamPath, data) {
       let parentTeamPath = /databases/$(database)/documents/$(teamPath);
       let parentTeam = get(parentTeamPath).data;
       return parentTeam != null &&
-             (
-               canReadManagedTeamDocument(parentTeam) ||
-               canReadPublicGameDocument(parentTeam, data)
-             );
+             canReadManagedTeamDocument(parentTeam);
     }
 
     function canReadSharedGameForExistingTeam(data, teamId) {
@@ -1182,8 +1230,7 @@ service cloud.firestore {
       return teamData != null &&
              (
                isTeamOwnerOrAdmin(teamId) ||
-               isParentForTeam(teamId) ||
-               canReadPublicGameDocument(teamData, data)
+               isParentForTeam(teamId)
              );
     }
 
@@ -1198,10 +1245,30 @@ service cloud.firestore {
              canReadSharedGameForTeamId(data, data.get('awayTeamId', null));
     }
 
+    function canReadPublicSharedGameForExistingTeam(data, teamId) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      let teamData = get(teamPath).data;
+      return teamData != null && canReadPublicGameDocument(teamData, data);
+    }
+
+    function canReadPublicSharedGameForTeamId(data, teamId) {
+      return teamId is string &&
+             teamId.size() > 0 &&
+             canReadPublicSharedGameForExistingTeam(data, teamId);
+    }
+
+    function canReadPublicSharedGameDocument(data) {
+      return canReadPublicSharedGameForTeamId(data, data.get('homeTeamId', null)) ||
+             canReadPublicSharedGameForTeamId(data, data.get('awayTeamId', null));
+    }
+
     function canReadSharedGameSubcollectionDocument(sharedGamePath) {
       let sharedGame = get(sharedGamePath).data;
       return sharedGame != null &&
-             canReadCollectionGroupSharedGameDocument(sharedGame);
+             (
+               canReadCollectionGroupSharedGameDocument(sharedGame) ||
+               canReadPublicSharedGameDocument(sharedGame)
+             );
     }
 
     function isTrackingItemPayloadValid(teamId, data) {
@@ -3119,11 +3186,11 @@ service cloud.firestore {
       allow write: if isGlobalAdmin();
     }
 
-    // Teams - only public teams are readable by anonymous browse/listing paths.
+    // Canonical team documents contain private staff/contact configuration.
+    // Anonymous discovery and detail reads use sanitized callable projections.
     match /teams/{teamId} {
-      allow get: if canReadTeamDocument(resource.data);
+      allow get: if canReadTeamDocument(teamId, resource.data);
       allow list: if isBoundedGlobalAdminListQuery() ||
-                     canReadPublicTeamDocument(resource.data) ||
                      canListManagedTeamDocument(resource.data);
       allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;
       allow update: if isVerifiedForSensitiveWrite() &&

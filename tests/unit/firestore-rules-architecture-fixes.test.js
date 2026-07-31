@@ -36,7 +36,7 @@ describe('firestore.rules architecture fixes', () => {
         expect(helperRules).toContain('request.query.limit <= 100');
         expect(userRules).toContain('allow get: if isGlobalAdmin() || isOwner(userId);');
         expect(userRules).toContain('allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);');
-        expect(teamRules).toContain('allow get: if canReadTeamDocument(resource.data);');
+        expect(teamRules).toContain('allow get: if canReadTeamDocument(teamId, resource.data);');
         expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
         expect(userRules).not.toContain('allow read: if isGlobalAdmin()');
         expect(teamRules).not.toContain('allow read: if canReadTeamDocument(resource.data);');
@@ -87,16 +87,15 @@ describe('firestore.rules architecture fixes', () => {
         expect(indexedOfficialFields).toEqual(expect.arrayContaining(['email', 'name', 'phone']));
     });
 
-    it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
+    it('removes public canonical team lists while keeping managed and admin lists bounded', () => {
         const teamsStart = rules.indexOf('match /teams/{teamId}');
         const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;
         const teamRules = rules.slice(teamsStart, teamsEnd);
 
-        expect(rules).toContain('function canReadPublicTeamDocument(data)');
         expect(rules).toContain('function canListManagedTeamDocument(data)');
         expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
-        expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
         expect(teamRules).toContain('canListManagedTeamDocument(resource.data);');
+        expect(teamRules).not.toContain('canReadPublicTeamDocument(resource.data)');
         expect(teamRules).not.toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
     });
 

@@ -53,7 +53,10 @@ test('homepage serializer exposes only public game and team fields', () => {
       id: 'team-public',
       name: 'Public Tigers',
       sport: 'Soccer',
-      photoUrl: null
+      photoUrl: null,
+      city: null,
+      state: null,
+      zip: null
     }
   });
   const json = JSON.stringify(game);

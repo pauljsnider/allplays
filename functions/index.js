@@ -101,17 +101,27 @@ const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = requi
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canProjectPublicGame,
   isStrictPublicTeam,
   normalizeTeamId,
   parsePublicGamesQuery,
-  serializePublicGame
+  serializePublicCalendarEvent,
+  serializePublicGame,
+  serializePublicTeamDiscovery,
+  serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
+const {
+  PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
+  normalizePublicTeamSearch,
+  paginatePublicTeams
+} = require('./public-team-discovery-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
   PUBLIC_HOMEPAGE_MAX_UNIQUE_TEAM_LOOKUPS,
   buildPublicHomepageCandidateBatch,
   buildPublicHomepageGamesResponse,
   buildPublicHomepageTeamIdBatch,
+  projectSharedGameForPublicTeam,
   serializePublicHomepageCandidates
 } = require('./public-homepage-games-core.cjs');
 const {
@@ -124,6 +134,10 @@ const {
   shouldPersistRecomputedPublicRsvpSummary,
   refreshPublicRsvpSummary
 } = require('./public-rsvp-summary-core.cjs');
+const {
+  isPublicRsvpReplay,
+  normalizePublicRsvpResponse
+} = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
@@ -431,6 +445,28 @@ const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
   maxRequests: 20,
   maxKeys: 10_000
 });
+const checkPublicRsvpReadRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 60,
+  maxKeys: 10_000
+});
+const checkPublicRsvpWriteRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 20,
+  maxKeys: 10_000
+});
+const publicRsvpDurableRateLimiters = new Map();
+function getPublicRsvpDurableRateLimiter(operation) {
+  if (!publicRsvpDurableRateLimiters.has(operation)) {
+    publicRsvpDurableRateLimiters.set(operation, createFirestoreFixedWindowRateLimiter({
+      firestore,
+      collectionName: 'publicRsvpRateLimits',
+      windowMs: 10 * 60_000,
+      maxRequests: operation === 'write' ? 20 : 60
+    }));
+  }
+  return publicRsvpDurableRateLimiters.get(operation);
+}
 const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
   windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
   maxRequests: 120,
@@ -6455,7 +6491,70 @@ async function getPublicTeamGames(teamId, range) {
   if (games.length <= range.limit && scannedDocuments >= PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
     throw new Error('Public games scan limit exceeded.');
   }
-  return games;
+
+  const sharedGamesRef = firestore.collectionGroup('sharedGames');
+  const sharedQueries = [
+    sharedGamesRef.where('homeTeamId', '==', teamId),
+    sharedGamesRef.where('awayTeamId', '==', teamId)
+  ].map((query) => query
+    .where('date', '>=', range.fromDate)
+    .where('date', '<=', range.toDate)
+    .orderBy('date')
+    .limit(PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS + 1)
+    .get());
+  const sharedSnapshots = await Promise.all(sharedQueries);
+  const sharedGamesByPath = new Map();
+  sharedSnapshots.forEach((snapshot) => {
+    if (snapshot.size > PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
+      throw new Error('Public shared games scan limit exceeded.');
+    }
+    snapshot.docs.forEach((docSnap) => {
+      const projected = projectSharedGameForPublicTeam({
+        id: docSnap.id,
+        ...(docSnap.data() || {}),
+        _sharedGamePath: docSnap.ref.path,
+        isSharedGame: true
+      }, teamId);
+      if (projected && serializePublicGame(projected)) {
+        sharedGamesByPath.set(docSnap.ref.path, projected);
+      }
+    });
+  });
+  return [...games, ...sharedGamesByPath.values()];
+}
+
+function decodePublicSharedGamePath(gameId) {
+  if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
+  try {
+    const path = decodeURIComponent(gameId.slice('shared_'.length));
+    const segments = path.split('/').filter(Boolean);
+    return segments.length >= 2 &&
+      segments.length % 2 === 0 &&
+      segments[segments.length - 2] === 'sharedGames' &&
+      segments.every((segment) => /^[A-Za-z0-9_-]{1,128}$/.test(segment))
+      ? segments.join('/')
+      : '';
+  } catch {
+    return '';
+  }
+}
+
+async function getPublicGameProjection(teamId, gameId, team) {
+  const sharedPath = decodePublicSharedGamePath(gameId);
+  const canonicalGameId = sharedPath ? '' : normalizeTeamId(gameId);
+  if (!sharedPath && !canonicalGameId) return null;
+  const gameRef = sharedPath
+    ? firestore.doc(sharedPath)
+    : firestore.doc(`teams/${teamId}/games/${canonicalGameId}`);
+  const gameSnap = await gameRef.get();
+  if (!gameSnap.exists) return null;
+  const rawGame = {
+    id: gameSnap.id,
+    ...(gameSnap.data() || {}),
+    ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
+  };
+  const game = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
+  return game && canProjectPublicGame(team, game) ? serializePublicGame(game) : null;
 }
 
 function sendPublicTeamApiSuccess(req, res, body) {
@@ -13588,7 +13687,7 @@ exports.notifyPracticePacketCompleted = functions.firestore
 
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
-const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
+const PUBLIC_RSVP_MAX_BODY_BYTES = 4096;
 
 exports.notifyPracticePacketAssigned = functions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
@@ -13605,7 +13704,7 @@ function writePublicRsvpCors(req, res) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
-  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
 }
 
@@ -13613,9 +13712,28 @@ function publicRsvpJsonError(res, status, error) {
   res.status(status).json({ ok: false, error });
 }
 
-function normalizePublicRsvpResponse(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  return PUBLIC_RSVP_RESPONSES.has(normalized) ? normalized : '';
+function getPublicRsvpBodyByteLength(req) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody.length;
+  return Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
+}
+
+async function assertPublicRsvpRequestAllowed(req, res, operation) {
+  const checker = operation === 'write' ? checkPublicRsvpWriteRateLimit : checkPublicRsvpReadRateLimit;
+  const inMemory = checker(req);
+  if (!inMemory.allowed) {
+    res.set('Retry-After', String(inMemory.retryAfterSeconds));
+    publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
+    return false;
+  }
+  const durable = await getPublicRsvpDurableRateLimiter(operation)(
+    `${operation}:network:${getRequestIp(req)}`
+  );
+  if (!durable.allowed) {
+    res.set('Retry-After', String(durable.retryAfterSeconds));
+    publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
+    return false;
+  }
+  return true;
 }
 
 function normalizePublicRsvpEmail(value) {
@@ -13982,13 +14100,7 @@ async function getPublicRsvpTokenData(token) {
 }
 
 async function assertUsablePublicRsvpToken(tokenData) {
-  if (!tokenData || tokenData.revoked === true || tokenData.disabled === true) {
-    throw new Error('Invalid RSVP link.');
-  }
-  const expiresAt = coercePublicRsvpDate(tokenData.expiresAt);
-  if (expiresAt && expiresAt <= new Date()) {
-    throw new Error('This RSVP link has expired.');
-  }
+  assertPublicRsvpTokenMetadataUsable(tokenData);
   const [teamSnap, eventRecord, playerSnap] = await Promise.all([
     firestore.doc(`teams/${tokenData.teamId}`).get(),
     loadPublicRsvpEvent(tokenData.teamId, tokenData.gameId),
@@ -14002,6 +14114,21 @@ async function assertUsablePublicRsvpToken(tokenData) {
     throw new Error('Invalid RSVP link.');
   }
   return { team: teamSnap.data() || {}, event: eventRecord.data, player };
+}
+
+function assertPublicRsvpTokenMetadataUsable(tokenData) {
+  if (!tokenData || tokenData.revoked === true || tokenData.disabled === true) {
+    throw new Error('Invalid RSVP link.');
+  }
+  const expiresAt = coercePublicRsvpDate(tokenData.expiresAt);
+  if (expiresAt && expiresAt <= new Date()) {
+    throw new Error('This RSVP link has expired.');
+  }
+  if (!normalizePublicRsvpText(tokenData.teamId) ||
+      !normalizePublicRsvpText(tokenData.gameId) ||
+      !normalizePublicRsvpText(tokenData.playerId)) {
+    throw new Error('Invalid RSVP link.');
+  }
 }
 
 function buildPublicRsvpContext({ team, event, player }) {
@@ -14102,9 +14229,9 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       const tokenHash = publicRsvpHashToken(rawToken);
       const context = buildPublicRsvpContext({ team, event: eventRecord.data, player });
       const links = {
-        going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=going`,
-        maybe: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=maybe`,
-        not_going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=not_going`
+        going: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=going`,
+        maybe: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=maybe`,
+        not_going: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=not_going`
       };
       batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
         teamId,
@@ -14233,13 +14360,18 @@ exports.getPublicRsvp = functions.https.onRequest(async (req, res) => {
     res.status(204).send('');
     return;
   }
-  if (req.method !== 'GET') {
+  if (req.method !== 'POST') {
     publicRsvpJsonError(res, 405, 'Method not allowed');
+    return;
+  }
+  if (getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
+    publicRsvpJsonError(res, 413, 'RSVP request is too large.');
     return;
   }
 
   try {
-    const token = normalizePublicRsvpText(req.query?.token);
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'read')) return;
+    const token = normalizePublicRsvpText(req.body?.token);
     if (!token) {
       publicRsvpJsonError(res, 400, 'Missing RSVP link token.');
       return;
@@ -14262,56 +14394,79 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     publicRsvpJsonError(res, 405, 'Method not allowed');
     return;
   }
+  if (getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
+    publicRsvpJsonError(res, 413, 'RSVP request is too large.');
+    return;
+  }
 
   try {
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'write')) return;
     const token = normalizePublicRsvpText(req.body?.token);
     const response = normalizePublicRsvpResponse(req.body?.response);
     if (!token || !response) {
       publicRsvpJsonError(res, 400, 'Choose Going, Maybe, or Can\'t Go.');
       return;
     }
-    const { tokenHash, tokenData } = await getPublicRsvpTokenData(token);
+    const { tokenHash, tokenRef, tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     const docId = `public_${tokenHash.slice(0, 24)}`;
     const jobRef = firestore.collection('publicRsvpSummaryRefreshJobs').doc();
     const playerStateRef = getPublicRsvpSummaryPlayerStateRef(tokenData.teamId, tokenData.gameId, tokenData.playerId);
     const summaryStateRef = getPublicRsvpSummaryStateRef(tokenData.teamId, tokenData.gameId);
-    const batch = firestore.batch();
-    batch.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
-      userId: docId,
-      parentEmail: admin.firestore.FieldValue.delete(),
-      email: admin.firestore.FieldValue.delete(),
-      guardianEmail: admin.firestore.FieldValue.delete(),
-      displayName: normalizePublicRsvpDisplayName(tokenData.parentName),
-      playerIds: [tokenData.playerId],
-      response,
-      note: null,
-      publicRsvp: true,
-      respondedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
-      lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastResponse: response
-    }, { merge: true });
-    batch.set(playerStateRef, {
-      latestJobId: jobRef.id,
-      latestResponse: response,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(summaryStateRef, {
-      latestQueuedJobId: jobRef.id,
-      latestQueuedPlayerId: tokenData.playerId,
-      queuedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-    batch.set(jobRef, {
-      teamId: tokenData.teamId,
-      gameId: tokenData.gameId,
-      playerId: tokenData.playerId,
-      response,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    let deduplicated = false;
+    await firestore.runTransaction(async (transaction) => {
+      const latestTokenSnap = await transaction.get(tokenRef);
+      const latestTokenData = latestTokenSnap.exists ? latestTokenSnap.data() || {} : null;
+      assertPublicRsvpTokenMetadataUsable(latestTokenData);
+      if (latestTokenData.teamId !== tokenData.teamId ||
+          latestTokenData.gameId !== tokenData.gameId ||
+          latestTokenData.playerId !== tokenData.playerId) {
+        throw new Error('This RSVP link is no longer valid.');
+      }
+      if (isPublicRsvpReplay(latestTokenData.lastResponse, response)) {
+        deduplicated = true;
+        return;
+      }
+      transaction.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
+        userId: docId,
+        parentEmail: admin.firestore.FieldValue.delete(),
+        email: admin.firestore.FieldValue.delete(),
+        guardianEmail: admin.firestore.FieldValue.delete(),
+        displayName: normalizePublicRsvpDisplayName(tokenData.parentName),
+        playerIds: [tokenData.playerId],
+        response,
+        note: null,
+        publicRsvp: true,
+        respondedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(tokenRef, {
+        lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastResponse: response
+      }, { merge: true });
+      transaction.set(playerStateRef, {
+        latestJobId: jobRef.id,
+        latestResponse: response,
+        queuedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(summaryStateRef, {
+        latestQueuedJobId: jobRef.id,
+        latestQueuedPlayerId: tokenData.playerId,
+        queuedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.set(jobRef, {
+        teamId: tokenData.teamId,
+        gameId: tokenData.gameId,
+        playerId: tokenData.playerId,
+        response,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     });
-    await batch.commit();
-    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary: null });
+    res.status(200).json({
+      ok: true,
+      deduplicated,
+      context: buildPublicRsvpContext(records),
+      summary: null
+    });
   } catch (error) {
     publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
   }
@@ -15116,18 +15271,144 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
+  const item = serializePublicTeamProfile(teamSnap.id, team);
+  if (!item) {
+    throwOpportunityError('not-found', 'Public team not found.');
+  }
+  return { item };
+});
+
+exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
+  const searchText = normalizePublicTeamSearch(data?.searchText);
+  const teamsSnap = await firestore.collection('teams')
+    .where('isPublic', '==', true)
+    .limit(PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1)
+    .get();
+  if (teamsSnap.size > PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS) {
+    throwOpportunityError('resource-exhausted', 'Public team discovery is temporarily unavailable.');
+  }
+  const teams = teamsSnap.docs
+    .map((teamSnap) => serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {}))
+    .filter(Boolean);
+  const page = paginatePublicTeams(teams, {
+    searchText,
+    pageSize: data?.pageSize,
+    cursor: data?.cursor
+  });
   return {
-    item: {
-      id: teamSnap.id,
-      name: cleanOpportunityText(team.name, 100),
-      sport: cleanOpportunityText(team.sport, 60) || null,
-      description: cleanOpportunityText(team.description, 1000) || null,
-      photoUrl: cleanOpportunityText(team.photoUrl, 1000) || null,
-      city: cleanOpportunityText(team.city, 80) || null,
-      state: cleanOpportunityText(team.state, 40) || null,
-      zip: cleanOpportunityText(team.zip, 10) || null
-    }
+    items: page.items,
+    nextCursor: page.nextCursor
   };
+});
+
+exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-games');
+  const teamId = normalizeTeamId(data?.teamId);
+  if (!teamId) throwOpportunityError('invalid-argument', 'A valid teamId is required.');
+  const range = parsePublicGamesQuery({
+    from: data?.from,
+    to: data?.to,
+    limit: data?.limit
+  });
+  if (range.error) throwOpportunityError('invalid-argument', range.error);
+  const team = await getStrictPublicTeam(teamId);
+  if (!team) throwOpportunityError('not-found', 'Public team not found.');
+  const games = await getPublicTeamGames(teamId, range);
+  return buildPublicGamesResponse({
+    teamId,
+    team,
+    games,
+    from: range.from,
+    to: range.to,
+    limit: range.limit
+  });
+});
+
+exports.getPublicTeamCalendarProjection = functions
+  .runWith({ timeoutSeconds: 30, memory: '256MB' })
+  .https.onCall(async (data, context = {}) => {
+    assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-calendar');
+    const teamId = normalizeTeamId(data?.teamId);
+    if (!teamId) throwOpportunityError('invalid-argument', 'A valid teamId is required.');
+    const range = parsePublicGamesQuery({
+      from: data?.from,
+      to: data?.to,
+      limit: data?.limit
+    });
+    if (range.error) throwOpportunityError('invalid-argument', range.error);
+    const team = await getStrictPublicTeam(teamId);
+    if (!team) throwOpportunityError('not-found', 'Public team not found.');
+
+    const calendarUrls = [];
+    const seenUrls = new Set();
+    (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
+      const normalizedUrl = normalizeFamilyShareText(url);
+      if (
+        !normalizedUrl ||
+        seenUrls.has(normalizedUrl) ||
+        calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS
+      ) return;
+      seenUrls.add(normalizedUrl);
+      calendarUrls.push(normalizedUrl);
+    });
+
+    const settled = await Promise.allSettled(calendarUrls.map((url, index) => (
+      fetchFamilyShareCalendarEvents({
+        url,
+        index,
+        children: [],
+        teamId,
+        teamName: team.name
+      })
+    )));
+    const warnings = [];
+    const projectedEvents = [];
+    settled.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        projectedEvents.push(...result.value);
+        return;
+      }
+      functions.logger.warn('Public team calendar projection failed', {
+        teamId,
+        sourceIndex: index,
+        errorCode: result.reason?.statusCode || result.reason?.code || result.reason?.name || 'calendar-fetch-failed'
+      });
+      warnings.push(`Calendar source ${index + 1} could not be loaded.`);
+    });
+    const events = projectedEvents
+      .map(serializePublicCalendarEvent)
+      .filter(Boolean)
+      .filter((event) => {
+        const startsAt = new Date(event.startsAt);
+        return startsAt >= range.fromDate && startsAt <= range.toDate;
+      })
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.id.localeCompare(right.id));
+
+    return {
+      events: events.slice(0, range.limit),
+      warnings,
+      range: {
+        from: range.from,
+        to: range.to,
+        truncated: events.length > range.limit
+      }
+    };
+  });
+
+exports.getPublicGameProjection = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-game');
+  const teamId = normalizeTeamId(data?.teamId);
+  const gameId = typeof data?.gameId === 'string' ? data.gameId.trim() : '';
+  if (!teamId || !gameId || gameId.length > 1000) {
+    throwOpportunityError('invalid-argument', 'Valid teamId and gameId values are required.');
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throwOpportunityError('not-found', 'Public game not found.');
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const game = await getPublicGameProjection(teamId, gameId, team);
+  if (!game) throwOpportunityError('not-found', 'Public game not found.');
+  return { item: game };
 });
 
 exports.reportPublicOpportunity = functions.https.onCall(async (data, context = {}) => {
