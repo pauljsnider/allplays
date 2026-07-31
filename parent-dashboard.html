@@ -438,6 +438,7 @@
         let registrationApplications = [];
         let registrationNextCursor = null;
         let registrationRetryCursor = null;
+        let registrationRetryAvailable = false;
         let registrationErrors = [];
         let registrationLoadInFlight = false;
         let registrationUser = null;
@@ -2608,6 +2609,7 @@
             registrationApplications = [];
             registrationNextCursor = null;
             registrationRetryCursor = null;
+            registrationRetryAvailable = false;
             registrationErrors = [];
             await loadRegistrationApplicationsPage(null);
         }
@@ -2651,8 +2653,9 @@
                     page.applications || []
                 );
                 registrationErrors = page.errors || [];
-                registrationRetryCursor = registrationErrors.length > 0
-                    ? (page.retryCursor || cursor || {})
+                registrationRetryAvailable = registrationErrors.length > 0;
+                registrationRetryCursor = registrationRetryAvailable
+                    ? (page.retryCursor ?? cursor)
                     : null;
                 registrationNextCursor = page.nextCursor || null;
             } catch (error) {
@@ -2660,7 +2663,8 @@
                 registrationErrors = [{
                     message: 'Registration applications could not be loaded. Retry this registration page.'
                 }];
-                registrationRetryCursor = cursor || {};
+                registrationRetryAvailable = true;
+                registrationRetryCursor = cursor;
             } finally {
                 registrationLoadInFlight = false;
                 renderRegistrationApplications(registrationApplications, registrationErrors);
@@ -2717,7 +2721,7 @@
                     </div>
                 `;
             }).join('');
-            const loadMoreHtml = !registrationRetryCursor && registrationNextCursor
+            const loadMoreHtml = !registrationRetryAvailable && registrationNextCursor
                 ? `<button type="button" id="registration-load-more-btn" class="w-full rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-60" ${options.loading ? 'disabled' : ''}>${options.loading ? 'Loading...' : 'Load more'}</button>`
                 : '';
             container.innerHTML = errorHtml + applicationsHtml + loadMoreHtml;

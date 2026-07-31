@@ -191,6 +191,32 @@ function buildMergeRegistrationApplications() {
     return new Function(`${html.slice(start, end)}\nreturn mergeRegistrationApplications;`)();
 }
 
+function buildRegistrationApplicationsPageLoader(listParentRegistrationApplicationsPage) {
+    const html = readRepoFile('parent-dashboard.html');
+    const start = html.indexOf('async function loadRegistrationApplicationsPage');
+    const end = html.indexOf('\n        function renderRegistrationApplications', start);
+    const functionSource = html.slice(start, end);
+    return new Function('listParentRegistrationApplicationsPage', `
+        let registrationUser = { uid: 'parent-1' };
+        let registrationApplications = [];
+        let registrationNextCursor = null;
+        let registrationRetryCursor = null;
+        let registrationRetryAvailable = false;
+        let registrationErrors = [];
+        let registrationLoadInFlight = false;
+        const mergeRegistrationApplications = (existing, incoming) => [...existing, ...incoming];
+        const renderRegistrationApplications = () => {};
+        ${functionSource}
+        return {
+            loadRegistrationApplicationsPage,
+            getRetryState: () => ({
+                available: registrationRetryAvailable,
+                cursor: registrationRetryCursor
+            })
+        };
+    `)(listParentRegistrationApplicationsPage);
+}
+
 describe('parent dashboard registration application statuses', () => {
     it('loads the bounded first registration page without blocking or rerunning dashboard bootstrap', () => {
         const html = readRepoFile('parent-dashboard.html');
@@ -229,10 +255,27 @@ describe('parent dashboard registration application statuses', () => {
         expect(() => new Function(loaderSource)).not.toThrow();
         expect(loaderSource).toContain('listParentRegistrationApplicationsPage(registrationUser, { cursor })');
         expect(loaderSource).toContain('registrationApplications = mergeRegistrationApplications(');
-        expect(loaderSource).toContain('registrationRetryCursor = cursor || {};');
+        expect(loaderSource).toContain('registrationRetryAvailable = true;');
+        expect(loaderSource).toContain('registrationRetryCursor = cursor;');
         expect(html).toContain('Registration applications could not be loaded. Retry this registration page.');
         expect(html).toContain("const errorHtml = errors.length > 0");
         expect(html).toContain('id="registration-retry-btn"');
+    });
+
+    it('retries an initial-page exception with the original null cursor', async () => {
+        const listPage = vi.fn()
+            .mockRejectedValueOnce(new Error('temporary failure'))
+            .mockResolvedValueOnce({ applications: [], errors: [], nextCursor: null });
+        const loader = buildRegistrationApplicationsPageLoader(listPage);
+
+        await loader.loadRegistrationApplicationsPage(null);
+
+        expect(loader.getRetryState()).toEqual({ available: true, cursor: null });
+
+        await loader.loadRegistrationApplicationsPage(loader.getRetryState().cursor);
+
+        expect(listPage).toHaveBeenNthCalledWith(2, { uid: 'parent-1' }, { cursor: null });
+        expect(loader.getRetryState()).toEqual({ available: false, cursor: null });
     });
 
     it('appends registration pages newest-first without rerunning dashboard bootstrap', () => {

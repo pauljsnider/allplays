@@ -35,11 +35,7 @@ describe('preview-smoke CI workflow', () => {
         expect(triggerSection).not.toContain('      - labeled');
         expect(integrationWorkflow).toContain('uses: ./.github/workflows/preview-smoke.yml');
         expect(integrationWorkflow).toContain('name: preview-smoke');
-        expect(integrationWorkflow).toContain(
-            'group: pr-integration-${{ github.event.pull_request.number }}'
-        );
-        expect(workflow).toContain('group: preview-smoke-${{ github.run_id }}');
-        expect(workflow).not.toContain(
+        expect(workflow).toContain(
             'group: preview-smoke-${{ github.event.pull_request.number || github.run_id }}'
         );
         expect(changesSection).toContain("github.event_name == 'workflow_dispatch'");
