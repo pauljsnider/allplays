@@ -1,16 +1,14 @@
 import { Camera, CameraResultType, CameraSource, type CameraPhoto } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
-import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
-import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
 import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
+import { uploadNativeUserProfilePhoto } from './nativeStorageUpload';
 
 const profileTimeoutMs = 8000;
 const nativeImageUploadTimeoutMs = 20000;
 const profilePhotoMaxDimensionPx = 1024;
 const profilePhotoMaxBytes = 512 * 1024;
 const profilePhotoQuality = 0.82;
-const logger = createLogger('profile-photo-service');
 
 export type ProfilePhotoSource = 'camera' | 'photos';
 
@@ -220,107 +218,13 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
   }
 }
 
-async function createEphemeralImageUploadIdToken(apiKey: string) {
-  const response = await withTimeout(
-    fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ returnSecureToken: true })
-    }),
-    'Image upload auth',
-    profileTimeoutMs
-  );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || !payload.idToken) {
-    throw new Error(payload?.error?.message || 'Image upload auth failed.');
-  }
-  return String(payload.idToken);
-}
-
-async function deleteEphemeralImageUploadUser(apiKey: string, idToken: string) {
-  try {
-    const response = await withTimeout(
-      fetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(apiKey)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ idToken })
-      }),
-      'Image upload auth cleanup',
-      profileTimeoutMs
-    );
-    if (!response.ok) {
-      logger.warn('Unable to remove the temporary image upload identity.', { status: response.status });
-    }
-  } catch (error) {
-    logger.warn('Unable to remove the temporary image upload identity.', { error });
-  }
-}
-
 export async function nativeUploadProfilePhoto(file: File, uid = '') {
-  const imageConfig = resolveImageFirebaseConfig();
-  const bucket = imageConfig.storageBucket;
-  if (!imageConfig.apiKey || !bucket) {
-    throw new Error('Image upload Firebase config is missing.');
-  }
-
-  // The image bucket is a separate Firebase project, so a primary-project user
-  // token is not valid here. Mint the same anonymous image-project credential
-  // used by the web SDK for this upload only; never persist or refresh it.
-  const idToken = await createEphemeralImageUploadIdToken(imageConfig.apiKey);
-  const safeName = String(file.name || 'profile-photo').replace(/[^\w.-]+/g, '_');
-  const safeUid = String(uid || '')
-    .trim()
-    .replace(/[^\w.-]+/g, '_');
-  const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${safeName}`;
-  try {
-    const response = await withTimeout(
-      fetch(
-        `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            'Content-Type': file.type || 'application/octet-stream'
-          },
-          body: file
-        }
-      ),
-      'Profile photo upload',
-      nativeImageUploadTimeoutMs
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error?.message || `Profile photo upload failed (${response.status}).`);
-    }
-
-    const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-    if (token) {
-      return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`;
-    }
-
-    return `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
-  } finally {
-    await deleteEphemeralImageUploadUser(imageConfig.apiKey, idToken);
-  }
+  return uploadNativeUserProfilePhoto(file, uid);
 }
 
 export async function uploadProfilePhoto(file: File, uid = '') {
   if (isNativeRuntime()) {
-    try {
-      return await nativeUploadProfilePhoto(file, uid);
-    } catch (error) {
-      logger.warn('Native profile photo upload failed, falling back to SDK upload.', { error });
-    }
-  }
-
-  try {
-    return await withTimeout(uploadUserPhoto(file, uid) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
-  } catch (error) {
-    logger.warn('Falling back to REST profile photo upload.', { error });
     return nativeUploadProfilePhoto(file, uid);
   }
+  return withTimeout(uploadUserPhoto(file, uid) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
 }

@@ -65,6 +65,9 @@ const friendMessageMocks = vi.hoisted(() => ({
   canMessageAcceptedFriend: vi.fn(),
   sendAuthorizedDirectMessage: vi.fn()
 }));
+const nativeStorageMocks = vi.hoisted(() => ({
+  deleteNativePrimaryStorageFile: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -96,6 +99,7 @@ vi.mock('./uxTiming', () => ({
 }));
 
 vi.mock('./friendMessageService', () => friendMessageMocks);
+vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -408,6 +412,22 @@ describe('chat Firestore mappers', () => {
 });
 
 describe('sendTeamChatMessage attachment uploads', () => {
+  it('uses authenticated native Storage cleanup instead of the signed-out web SDK', async () => {
+    nativeRuntime.isNativePlatform = true;
+    const { deleteTeamChatAttachments } = await import('./chatService');
+
+    await deleteTeamChatAttachments([{
+      ...createUploadedAttachment(new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })),
+      type: 'image' as const,
+      path: 'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    }]);
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    );
+    expect(legacyChatServiceMocks.deleteUploadedChatAttachments).not.toHaveBeenCalled();
+  });
+
   it('rechecks friend access at send time and stores server-verifiable direct metadata', async () => {
     legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
       id: 'direct_user-1__user%3Afriend-1',

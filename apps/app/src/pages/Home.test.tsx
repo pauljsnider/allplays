@@ -14,6 +14,7 @@ const socialServiceMocks = vi.hoisted(() => ({
   blockFriend: vi.fn(),
   commentOnSocialPost: vi.fn(),
   createSocialPost: vi.fn(),
+  discardSocialPostMediaUpload: vi.fn(),
   hideSocialPost: vi.fn(),
   loadSocialHome: vi.fn(),
   removeFriend: vi.fn(),
@@ -171,6 +172,65 @@ const emptyHome = {
     teams: 0
   }
 };
+
+function buildSwitchableComposerHome() {
+  const secondPlayer = {
+    teamId: 'team-2',
+    teamName: 'Storm',
+    playerId: 'player-2',
+    playerName: 'Sam Player',
+    nextEvent: null,
+    rsvpNeeded: 0,
+    packetsReady: 0,
+    openAssignments: 0,
+    unreadCount: 0
+  };
+  const secondTeam = {
+    teamId: 'team-2',
+    teamName: 'Storm',
+    role: 'Parent',
+    sport: 'Soccer',
+    players: [{
+      teamId: 'team-2',
+      teamName: 'Storm',
+      playerId: 'player-2',
+      playerName: 'Sam Player'
+    }],
+    nextEvent: null,
+    eventCount: 1,
+    unreadCount: 0,
+    openActions: 0
+  };
+  const game = (id: string, opponent: string, date: string) => ({
+    eventKey: `team-1::${id}::player-1`,
+    id,
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date(date),
+    location: 'Main Gym',
+    opponent,
+    title: null,
+    childId: 'player-1',
+    childName: 'Pat Player',
+    isDbGame: true,
+    isCancelled: false,
+    status: id === 'game-3' ? 'scheduled' : 'completed',
+    myRsvp: 'going',
+    assignments: []
+  });
+  return {
+    ...baseHome,
+    players: [...baseHome.players, secondPlayer],
+    teams: [...baseHome.teams, secondTeam],
+    feedGames: [
+      game('game-1', 'Falcons', '2026-07-10T18:00:00Z'),
+      game('game-2', 'Rockets', '2026-07-11T18:00:00Z'),
+      game('game-3', 'Owls', '2026-08-09T18:00:00Z')
+    ],
+    metrics: { ...baseHome.metrics, players: 2, teams: 2 }
+  };
+}
 
 function buildLargeHomeModel() {
   return {
@@ -343,6 +403,14 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: baseHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(baseHome);
     socialServiceMocks.loadSocialHome.mockResolvedValue(baseSocial);
+    socialServiceMocks.discardSocialPostMediaUpload.mockResolvedValue(undefined);
+    socialServiceMocks.uploadSocialPostMedia.mockResolvedValue({
+      type: 'image',
+      url: 'https://primary.example/social.jpg',
+      name: 'social.jpg',
+      thumbnailUrl: null,
+      storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
+    });
     scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
     opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
   });
@@ -996,6 +1064,144 @@ describe('Home', () => {
       expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('switches player context with the selected team before creating a player post', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: switchableHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(switchableHome);
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-player-2');
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=player_moment');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pat Player · Bears' }));
+    fireEvent.change(within(dialog).getByLabelText('Team'), { target: { value: 'team-2' } });
+
+    const playerSelect = within(dialog).getByLabelText('Player') as HTMLSelectElement;
+    expect(playerSelect.value).toBe('team-2::player-2');
+    expect(within(playerSelect).queryByRole('option', { name: 'Pat Player · Bears' })).toBeNull();
+    expect(within(playerSelect).getByRole('option', { name: 'Sam Player · Storm' })).toBeTruthy();
+
+    fireEvent.change(within(dialog).getByPlaceholderText('What stood out today?'), { target: { value: 'Great hustle.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.createSocialPost).toHaveBeenCalledWith(signedInAuth.user, expect.objectContaining({
+        teamId: 'team-2',
+        teamName: 'Storm',
+        playerIds: ['player-2'],
+        playerNames: ['Sam Player'],
+        sourceType: 'player',
+        sourceId: 'player-2',
+        route: '/players/team-2/player-2'
+      }));
+    });
+  });
+
+  it('does not create a player post after switching to a team with no selectable player', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const noStormPlayerHome = {
+      ...switchableHome,
+      players: switchableHome.players.filter((player) => player.teamId !== 'team-2')
+    };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: noStormPlayerHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(noStormPlayerHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=player_moment');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Pat Player · Bears' }));
+    fireEvent.change(within(dialog).getByLabelText('Team'), { target: { value: 'team-2' } });
+    fireEvent.change(within(dialog).getByPlaceholderText('What stood out today?'), { target: { value: 'Great effort.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    expect(await within(dialog).findByText('Choose a player for this post.')).toBeTruthy();
+    expect(socialServiceMocks.createSocialPost).not.toHaveBeenCalled();
+  });
+
+  it('switches game context and stores a game source with a direct schedule route', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: switchableHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(switchableHome);
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-game-2');
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Falcons/ }));
+    const gameSelect = within(dialog).getByLabelText('Game') as HTMLSelectElement;
+    fireEvent.change(gameSelect, {
+      target: { value: 'team-1::game-2::2026-07-11T18:00:00.000Z' }
+    });
+    expect(within(gameSelect).getByRole('option', { name: /Rockets/ })).toBeTruthy();
+    expect(within(gameSelect).queryByRole('option', { name: /Owls/ })).toBeNull();
+
+    fireEvent.change(within(dialog).getByPlaceholderText('How did the game go?'), { target: { value: 'Strong finish.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.createSocialPost).toHaveBeenCalledWith(signedInAuth.user, expect.objectContaining({
+        teamId: 'team-1',
+        teamName: 'Bears',
+        playerIds: [],
+        sourceType: 'game',
+        sourceId: 'game-2',
+        route: '/schedule/team-1/game-2?childId=player-1'
+      }));
+    });
+  });
+
+  it('requires a completed game before uploading media for a recap', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const upcomingOnlyHome = { ...switchableHome, feedGames: switchableHome.feedGames.filter((game) => game.id === 'game-3') };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: upcomingOnlyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(upcomingOnlyHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.change(within(dialog).getByPlaceholderText('How did the game go?'), { target: { value: 'Recap note.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    expect(await within(dialog).findByText('Choose a completed game for this recap.')).toBeTruthy();
+    expect(socialServiceMocks.uploadSocialPostMedia).not.toHaveBeenCalled();
+    expect(socialServiceMocks.createSocialPost).not.toHaveBeenCalled();
+  });
+
+  it('does not offer an in-progress game as a recap after its kickoff time', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const liveGame = {
+      ...switchableHome.feedGames[0],
+      id: 'game-live',
+      eventKey: 'team-1::game-live::player-1',
+      status: 'scheduled',
+      liveStatus: 'live'
+    };
+    const liveOnlyHome = { ...switchableHome, feedGames: [liveGame] };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: liveOnlyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(liveOnlyHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Bears' }));
+
+    expect(within(dialog).getByLabelText('Game')).toHaveValue('');
+    expect(within(dialog).getByRole('option', { name: 'No games on this team' })).toBeTruthy();
+  });
+
+  it('removes uploaded feed media when post creation fails', async () => {
+    socialServiceMocks.createSocialPost.mockRejectedValueOnce(new Error('Post write failed.'));
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=team_media');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.change(within(dialog).getByLabelText(/choose photo or video/i), {
+      target: { files: [new File(['image'], 'social.jpg', { type: 'image/jpeg' })] }
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Post' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.discardSocialPostMediaUpload).toHaveBeenCalledWith(expect.objectContaining({
+        storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
+      }));
+    });
+    expect(await within(dialog).findByText('Post write failed.')).toBeTruthy();
   });
 
   it('shows a newly created post before background feed reconciliation completes', async () => {

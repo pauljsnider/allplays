@@ -19,6 +19,7 @@ import {
     getPracticeSession as legacyGetPracticeSession,
     getPracticeSessionByEvent as legacyGetPracticeSessionByEvent,
     getPracticeSessions as legacyGetPracticeSessions,
+    getPublicTeamCalendarEvents as legacyGetPublicTeamCalendarEvents,
     getRsvpBreakdownByPlayer as legacyGetRsvpBreakdownByPlayer,
     getRsvpSummaries as legacyGetRsvpSummaries,
     getMyRsvps as legacyGetMyRsvps,
@@ -117,6 +118,13 @@ export type PracticeSessionsQueryOptions = { startDate?: Date | null; endDate?: 
 
 export async function getPracticeSessions(teamId: string, options: PracticeSessionsQueryOptions = {}) {
     return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
+}
+
+export async function getPublicTeamCalendarEvents(
+    teamId: string,
+    options: { startDate?: Date | null; endDate?: Date | null } = {}
+) {
+    return await Promise.resolve(legacyGetPublicTeamCalendarEvents(teamId, options));
 }
 
 export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {

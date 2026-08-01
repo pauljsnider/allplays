@@ -1327,6 +1327,22 @@ export async function uploadTeamChatAttachment(teamId: string, file: File, conve
   }
 }
 
+export async function deleteTeamChatAttachments(attachments: ChatAttachment[]) {
+  const cleanupAttachments = (Array.isArray(attachments) ? attachments : [])
+    .filter((attachment) => Boolean(attachment?.path));
+  if (!cleanupAttachments.length) return;
+  if (isNativeRuntime()) {
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    const results = await Promise.allSettled(cleanupAttachments.map((attachment) => (
+      deleteNativePrimaryStorageFile(String(attachment.path))
+    )));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    return;
+  }
+  await deleteUploadedChatAttachments(cleanupAttachments);
+}
+
 async function uploadTeamChatAttachments({
   teamId,
   files,
@@ -1591,7 +1607,7 @@ export async function sendTeamChatMessage({
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
-        await deleteUploadedChatAttachments(cleanupAttachments);
+        await deleteTeamChatAttachments(cleanupAttachments);
       } catch (cleanupError) {
         logger.error('Failed to clean up uploaded chat attachments.', { error: cleanupError });
       }

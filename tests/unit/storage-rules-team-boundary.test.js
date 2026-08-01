@@ -34,8 +34,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 await firestore.doc('users/member-a').set({
                     isAdmin: false,
                     parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-a'],
                     teamMediaUploadTeamIds: ['team-a']
                 });
+                await firestore.doc('teams/team-a/players/player-a').set({ parentIds: ['member-a'] });
+                await firestore.doc('teams/team-b/players/player-b').set({ parentIds: ['owner-b'] });
                 await firestore.doc('users/member-a-nonparticipant').set({
                     isAdmin: false,
                     parentTeamIds: ['team-a']
@@ -81,6 +84,98 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
             await assertFails(
                 memberStorage.ref('team-media/team-b/folder-b/member-a/new.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('allows only the signed-in profile owner or linked player editor to upload profile photos', async () => {
+            const memberStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const unrelatedStorage = testEnv.authenticatedContext('unrelated', {
+                email: 'unrelated@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(
+                memberStorage.ref('profile-photos/users/member-a/profile.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                unrelatedStorage.ref('profile-photos/users/member-a/spoofed.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/player.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-b/players/player-b/member-a/cross-team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/not-an-image.txt').put(
+                    new Uint8Array([1]),
+                    { contentType: 'text/plain' }
+                )
+            );
+        });
+
+        it('keeps own and linked-player profile photos available to signed-in users when verified-email enforcement is active', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+            const unverifiedParentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: false
+            }).storage();
+
+            await assertSucceeds(
+                unverifiedParentStorage.ref('profile-photos/users/member-a/unverified-profile.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                unverifiedParentStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/unverified-player.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('allows only a verified team manager to upload a native team photo', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const memberStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(
+                ownerStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-a/team/member-a/team.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
