@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 function readProjectFile(path) {
@@ -60,18 +60,16 @@ describe('Capacitor native config', () => {
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
 
-    it('pins the app Vite dependency version in both lockfiles', () => {
+    it('pins the app Vite dependency version in the npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
 
+        expect(existsSync('apps/app/pnpm-lock.yaml')).toBe(false);
         expect(appPackage.devDependencies.vite).toBe('^8.1.5');
         expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.1.5');
         expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.1.5');
-        expect(appPnpmLock).toContain('vite@8.1.5:');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
-        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
@@ -152,27 +150,22 @@ describe('Capacitor native config', () => {
         expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
     });
 
-    it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
+    it('keeps Vitest and coverage peer versions aligned in the app npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const vitestVersion = appPackage.devDependencies.vitest.replace(/^\^/, '');
 
         expect(appPackage.devDependencies['@vitest/coverage-v8']).toBe(`^${vitestVersion}`);
         expect(appPackageLock.packages[''].devDependencies.vitest).toBe(`^${vitestVersion}`);
         expect(appPackageLock.packages['node_modules/vitest'].version).toBe(vitestVersion);
         expect(appPackageLock.packages['node_modules/@vitest/coverage-v8'].peerDependencies.vitest).toBe(vitestVersion);
-        expect(appPnpmLock).toContain(`version: ${vitestVersion}(vitest@${vitestVersion})`);
-        expect(appPnpmLock).toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@${vitestVersion})':`);
-        expect(appPnpmLock).not.toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@4.1.9)'`);
     });
 
-    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and lockfiles', () => {
+    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and npm lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
-        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
             firebase: { specifier: '12.16.0', version: '12.16.0' }
@@ -186,10 +179,6 @@ describe('Capacitor native config', () => {
             expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
             expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
         });
-
-        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.1':");
-        expect(appPnpmLock).toContain('firebase@12.16.0:');
-        expect(appPnpmLock).not.toContain('firebase@12.15.0:');
     });
 
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {

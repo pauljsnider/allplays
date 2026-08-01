@@ -1,9 +1,11 @@
-# AllPlays landing process
+# ALL PLAYS landing process
 
-AllPlays supports concurrent work by humans, Codex sessions, and PaulBot while
+ALL PLAYS supports concurrent work by humans, Codex sessions, and PaulBot while
 serializing the expensive final integration step.
 
 ## Ownership
+
+`external-claim` is controller ownership metadata.
 
 1. Add `external-claim` to an issue and its pull request before working from a
    machine or agent session outside PaulBot.
@@ -14,7 +16,12 @@ serializing the expensive final integration step.
    checks, and merges it.
 
 Do not push additional commits after handing a pull request to the landing
-worker. If more development is necessary, restore `external-claim` first.
+worker. Before handoff, the current producer may restore `external-claim` when
+more development is necessary. After handoff, a Codex, Claude, Q, or human
+coding session must not restore the label or reclaim remediation in response to
+a PaulBot finding. Only an explicit operator-requested ownership transfer may
+return the pull request to an external producer; otherwise PaulBot remains the
+sole writer through review, remediation, checks, and merge.
 
 ## CI stages
 
@@ -29,7 +36,7 @@ worker. If more development is necessary, restore `external-claim` first.
 - Production deployment remains a post-merge `master` workflow.
 
 `external-claim` is controller ownership metadata, not a CI trigger. Label
-changes do not cancel or restart code validation. At handoff PaulBot consumes
+changes do not launch, cancel, or replace CI. At handoff PaulBot consumes
 the frozen exact head's existing results and narrowly wakes a missing current
 head check only when necessary; `paulbot-review-gate` and the mutation gate
 prevent a claimed PR from entering automated landing.

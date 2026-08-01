@@ -1,6 +1,7 @@
-# Game Flow
+# ALL PLAYS
 
-A static HTML + JavaScript sports team management and stat tracking application, powered by Firebase.
+ALL PLAYS is a sports team management and stat tracking application powered by
+Firebase.
 
 ## Features
 
