@@ -2,7 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Outlet, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildTeamSchedulePreviewEvents, calculateRosterRenderWindow, rosterRenderLimits, TeamDetail } from './TeamDetail';
+import { buildTeamSchedulePreviewEvents, TeamDetail } from './TeamDetail';
+import { calculateRosterRenderWindow, rosterRenderLimits } from './team-detail/RosterTab';
 import { clearScrollRestorationForTests, ScrollRestoration } from '../components/ScrollRestoration';
 import { buildPrivateAiLaunchPrompt, parsePrivateAiLaunchContext } from '../lib/privateAiLaunch';
 import type { AuthState } from '../lib/types';
@@ -60,8 +61,13 @@ const rosterAiImportMocks = vi.hoisted(() => ({
   updateRosterAiImportPreviewRow: vi.fn((rows: any[] = [], rowNumber: number, changes: any) => rows.map((row) => row.rowNumber === rowNumber ? { ...row, ...changes, errors: [], duplicatePlayerId: '', duplicatePlayerName: '' } : row))
 }));
 
+const rosterTabLoaderMocks = vi.hoisted(() => ({
+  loadRosterTab: vi.fn(() => import('./team-detail/RosterTab').then((module) => ({ default: module.RosterTab })))
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
+vi.mock('./team-detail/rosterTabLoader', () => rosterTabLoaderMocks);
 vi.mock('../lib/publicActions', () => ({
   copyPublicText: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -399,6 +405,62 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts the roster import only when selected and reuses it after resolution', async () => {
+    const rosterModule = createDeferred<{ default: typeof import('./team-detail/RosterTab').RosterTab }>();
+    rosterTabLoaderMocks.loadRosterTab.mockReturnValueOnce(rosterModule.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).not.toHaveBeenCalled();
+    expect(screen.queryByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    expect(rosterTabLoaderMocks.loadRosterTab).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(screen.getByRole('status', { name: 'Loading roster' })).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
+
+    const { RosterTab } = await import('./team-detail/RosterTab');
+    await act(async () => rosterModule.resolve({ default: RosterTab }));
+    expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a rejected roster import local and retries it with a fresh lazy component', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    rosterTabLoaderMocks.loadRosterTab.mockRejectedValueOnce(new Error('Roster chunk unavailable.'));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
+    expect(screen.queryByRole('alert', { name: 'Screen error' })).toBeNull();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(2);
   });
 
   it('uses the lightweight bootstrap on roster and loads the authoritative schedule when schedule opens', async () => {

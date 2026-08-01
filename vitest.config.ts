@@ -46,6 +46,7 @@ export default defineConfig({
       '@capacitor/camera': resolveModule('@capacitor/camera'),
       '@capacitor/filesystem': resolveModule('@capacitor/filesystem'),
       '@capacitor/share': resolveModule('@capacitor/share'),
+      '@capacitor-firebase/app-check': resolveModule('@capacitor-firebase/app-check'),
       '@capacitor-firebase/messaging': resolveModule('@capacitor-firebase/messaging'),
       '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge'),
       'dompurify': resolveModule('dompurify'),
