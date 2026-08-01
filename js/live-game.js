@@ -16,7 +16,7 @@ import {
   subscribeGame,
   updateGame,
   uploadGameClip
-} from './db.js?v=136';
+} from './db.js?v=137';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=21';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
@@ -2221,11 +2221,16 @@ function startEngagements() {
   });
   state.unsubscribers.push(unsubReactions);
 
-  const unsubPresence = trackViewerPresence(state.teamId, state.gameId, (count) => {
-    state.viewerCount = count;
-    if (els.viewerCount) els.viewerCount.textContent = `${count} watching`;
-  });
-  state.unsubscribers.push(unsubPresence);
+  // Public viewers read a sanitized projection and cannot write or listen to
+  // the canonical game document. Presence needs a dedicated public endpoint;
+  // do not generate a guaranteed permission denial in the meantime.
+  if (!state.game?.isPublicProjection) {
+    const unsubPresence = trackViewerPresence(state.teamId, state.gameId, (count) => {
+      state.viewerCount = count;
+      if (els.viewerCount) els.viewerCount.textContent = `${count} watching`;
+    });
+    state.unsubscribers.push(unsubPresence);
+  }
 }
 
 function startLiveEvents() {
@@ -2948,7 +2953,7 @@ async function init() {
   }, (error) => {
     console.warn('Game subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
-  });
+  }, { publicProjection: game.isPublicProjection === true });
   state.unsubscribers.push(unsubGame);
 
   if (els.watchReplayBtn) {

@@ -46,6 +46,40 @@ describe('Capacitor native config', () => {
         expect(appPnpmLockSource).not.toMatch(/@capacitor\/core(?:@|': )8\.4\.2/);
     });
 
+    it('keeps the synchronized iOS SwiftPM runtime aligned with the JavaScript lockfile', () => {
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
+        const iosPackageResolvedSource = readProjectFile(
+            'ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+        );
+        const iosPackageResolved = JSON.parse(iosPackageResolvedSource);
+        const expectedRuntimeVersion = rootPackageLock.packages['node_modules/@capacitor/ios'].version;
+        const capacitorPins = iosPackageResolved.pins.filter(
+            (pin) => pin.identity === 'capacitor-swift-pm'
+        );
+        const ionCameraPins = iosPackageResolved.pins.filter(
+            (pin) => pin.identity === 'ion-ios-camera'
+        );
+
+        expect(iosPackage).toContain(
+            `.package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "${expectedRuntimeVersion}")`
+        );
+        expect(capacitorPins).toHaveLength(1);
+        expect(capacitorPins[0]).toMatchObject({
+            location: 'https://github.com/ionic-team/capacitor-swift-pm.git',
+            state: { version: expectedRuntimeVersion }
+        });
+        expect(ionCameraPins).toHaveLength(1);
+        expect(ionCameraPins[0]).toMatchObject({
+            location: 'https://github.com/ionic-team/ion-ios-camera.git',
+            state: { version: '1.0.5' }
+        });
+        expect(iosPackage).not.toContain('exact: "8.4.2"');
+        expect(iosPackageResolvedSource).not.toMatch(
+            /"identity"\s*:\s*"capacitor-swift-pm"[\s\S]*?"version"\s*:\s*"8\.4\.2"/
+        );
+    });
+
     it('declares splash screen and status bar plugins in app and native manifests', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
