@@ -94,7 +94,8 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 - Public Firebase config in app/native bundles is expected; do not commit service account keys, private API keys, provisioning profiles, or signing certificates.
 - Pull-request CI has two code-head entrypoints: `pr-fast` for unit and app
   quality checks, and `pr-integration` for reusable regression, native, preview
-  smoke, and untrusted preview-artifact work. Preserve the stable
+  smoke work. Draft heads intentionally skip heavy jobs; `ready_for_review`
+  starts exact-head validation. Preserve the stable
   `unit-tests`, `cache-bust-guard`, `app-quality`, `mobile-build`, and
   `preview-smoke` contexts.
 - `external-claim` is ownership metadata and must not trigger or restart CI.
@@ -105,5 +106,7 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
   `.github/workflows/app-github-pages.yml` is manual validation only.
 - Keep the untrusted reusable `deploy-preview.yml` builder separate from the
   default-branch `deploy-preview-trusted.yml` OIDC workflow. The trusted
-  verifier is bound to the successful `pr-integration` run and exact current
-  head.
+  verifier accepts only an explicit `pr-preview` dispatch containing a ready
+  same-repository PR number and its exact current head SHA after that head has
+  passed `pr-integration`. Normal PR pushes and labels must not deploy Firebase
+  preview channels.

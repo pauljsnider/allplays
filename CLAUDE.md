@@ -197,6 +197,6 @@ firebase deploy --only hosting
 
 GitHub Pages: `.github/workflows/app-github-pages.yml` stages the legacy root site plus the React app under `/app/` with `scripts/stage-pages-bundle.mjs`.
 
-Firebase previews: `.github/workflows/deploy-preview.yml` deploys a staged preview bundle so PR preview URLs include `/app/`.
+Firebase previews: after `pr-integration` succeeds, dispatch `.github/workflows/pr-preview.yml` with a ready same-repository PR number and its exact current head SHA. Its permissionless builder stages `/app/`; the separate default-branch trusted workflow verifies the integration result and live PR/head before deploying. Normal PR pushes and labels do not deploy a Firebase preview.
 
 Production smoke: `post-deploy-smoke` and `scheduled-prod-smoke` check the legacy site plus the deployed `/app/` boot route.

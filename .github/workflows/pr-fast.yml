@@ -6,6 +6,7 @@ on:
       - opened
       - synchronize
       - reopened
+      - ready_for_review
 
 permissions: {}
 
@@ -15,6 +16,7 @@ concurrency:
 
 jobs:
   cache-bust-guard:
+    if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -38,6 +40,7 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
 
   unit-tests:
+    if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,6 +105,7 @@ jobs:
         run: npm run test:functions:team-email
 
   app-quality:
+    if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
