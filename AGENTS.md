@@ -107,5 +107,6 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 - Keep the untrusted reusable `deploy-preview.yml` builder separate from the
   default-branch `deploy-preview-trusted.yml` OIDC workflow. The trusted
   verifier accepts only an explicit `pr-preview` dispatch containing a ready
-  same-repository PR number and its exact current head SHA. Normal PR pushes
-  and labels must not deploy Firebase preview channels.
+  same-repository PR number and its exact current head SHA after that head has
+  passed `pr-integration`. Normal PR pushes and labels must not deploy Firebase
+  preview channels.

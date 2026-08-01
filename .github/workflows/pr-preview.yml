@@ -1,5 +1,5 @@
 name: pr-preview
-run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}
+run-name: "PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}"
 
 on:
   workflow_dispatch:

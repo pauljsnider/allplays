@@ -56,6 +56,21 @@ jobs:
             exit 1
           fi
 
+          integration_runs_json="$RUNNER_TEMP/firebase-preview-integration-runs.json"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/pr-integration.yml/runs" \
+            -f event=pull_request \
+            -f status=success \
+            -f head_sha="$expected_head_sha" \
+            -F per_page=100 > "$integration_runs_json"
+          if ! jq -e \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg sha "$expected_head_sha" \
+            'any(.workflow_runs[]?; .event == "pull_request" and .status == "completed" and .conclusion == "success" and .head_sha == $sha and .head_repository.full_name == $repo)' \
+            "$integration_runs_json" >/dev/null; then
+            echo "No successful exact-head pr-integration run exists for this preview request." >&2
+            exit 1
+          fi
+
           artifacts_json="$RUNNER_TEMP/firebase-preview-source-artifacts.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/artifacts?per_page=100" > "$artifacts_json"
 

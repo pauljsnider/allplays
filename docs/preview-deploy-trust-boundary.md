@@ -11,7 +11,8 @@ repository token with write permissions. The reusable builder may only build,
 stage public Hosting content, and upload the single
 `firebase-preview-hosting-bundle` artifact. Required regression and local
 preview-smoke validation remain in `pr-integration`; a Firebase channel deploy
-is not a merge prerequisite and must not run on every pushed PR head.
+requires a successful `pr-integration` run for the exact requested head, but is
+not a merge prerequisite and must not run on every pushed PR head.
 
 The `deploy-preview-trusted` workflow is the only preview deployer. GitHub runs
 its `workflow_run` definition from the default branch. It checks out only the

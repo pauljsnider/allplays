@@ -70,13 +70,14 @@ describe('pull request CI consolidation', () => {
     it('keeps credentialed preview work off the required PR path', () => {
         const integration = workflow('pr-integration.yml');
         const preview = workflow('pr-preview.yml');
+        const parsedPreview = parseYaml(preview);
         const agentGuidance = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
 
         expect(integration).not.toContain('uses: ./.github/workflows/deploy-preview.yml');
         expect(preview).toContain('workflow_dispatch:');
-        expect(preview).toContain('run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
+        expect(parsedPreview['run-name']).toBe('PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
         expect(preview).toContain('uses: ./.github/workflows/deploy-preview.yml');
-        expect(agentGuidance).toContain('Normal PR pushes\n  and labels must not deploy Firebase preview channels.');
+        expect(agentGuidance).toContain('passed `pr-integration`. Normal PR pushes and labels must not deploy Firebase');
     });
 
     it('reuses version-bound Playwright browsers in the regression workflow', () => {
@@ -133,6 +134,10 @@ describe('pull request CI consolidation', () => {
         );
 
         expect(trusted).toContain('      - pr-preview');
+        expect(trusted).toContain('actions/workflows/pr-integration.yml/runs');
+        expect(trusted).toContain('-f status=success');
+        expect(trusted).toContain('-f head_sha="$expected_head_sha"');
+        expect(trusted).toContain('No successful exact-head pr-integration run exists for this preview request.');
         expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-preview'");
         expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-preview.yml'");
     });

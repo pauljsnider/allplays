@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import {
     MAX_PREVIEW_ARCHIVE_BYTES,
@@ -197,9 +198,13 @@ describe('preview deployment workflow trust boundary', () => {
     });
 
     it('builds the untrusted preview artifact only after an exact-head manual dispatch', () => {
+        const parsedPreviewRequestWorkflow = parseYaml(previewRequestWorkflow);
+
         expect(previewRequestWorkflow).toContain('name: pr-preview');
         expect(previewRequestWorkflow).toContain('workflow_dispatch:');
-        expect(previewRequestWorkflow).toContain('run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
+        expect(parsedPreviewRequestWorkflow['run-name']).toBe(
+            'PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}'
+        );
         expect(previewRequestWorkflow).toContain('group: pr-preview-${{ inputs.pr_number }}');
         expect(previewRequestWorkflow).toContain('cancel-in-progress: true');
         expect(previewRequestWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
@@ -212,6 +217,11 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
         expect(trustedWorkflow).toContain('pull-requests: read');
         expect(trustedWorkflow).toContain('Preview dispatch is not bound to the current ready same-repository PR head.');
+        expect(trustedWorkflow).toContain('actions/workflows/pr-integration.yml/runs');
+        expect(trustedWorkflow).toContain('-f event=pull_request');
+        expect(trustedWorkflow).toContain('-f status=success');
+        expect(trustedWorkflow).toContain('-f head_sha="$expected_head_sha"');
+        expect(trustedWorkflow).toContain('No successful exact-head pr-integration run exists for this preview request.');
         expect(trustedWorkflow).toContain('WORKFLOW_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
