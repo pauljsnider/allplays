@@ -132,6 +132,56 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
+        it('keeps own and linked-player profile photos available to signed-in users when verified-email enforcement is active', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+            const unverifiedParentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: false
+            }).storage();
+
+            await assertSucceeds(
+                unverifiedParentStorage.ref('profile-photos/users/member-a/unverified-profile.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                unverifiedParentStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/unverified-player.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('allows only a verified team manager to upload a native team photo', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const memberStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(
+                ownerStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-a/team/member-a/team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });

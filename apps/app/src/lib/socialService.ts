@@ -20,7 +20,7 @@ import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
 import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
-import { uploadTeamChatAttachment } from './chatService';
+import { deleteTeamChatAttachments, uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
 import { getPublicTeamDetail } from './publicTeamsService';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
@@ -67,6 +67,10 @@ export type CreateSocialPostInput = {
   href?: string | null;
   media?: SocialMedia[];
   visibleUserIds?: string[];
+};
+
+export type SocialMediaUpload = SocialMedia & {
+  storagePath: string;
 };
 
 export type FriendProfileModel = {
@@ -610,7 +614,7 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
   return mapSocialPost({ id: postRef.id, ...postData });
 }
 
-export async function uploadSocialPostMedia(teamId: string, file: File): Promise<SocialMedia> {
+export async function uploadSocialPostMedia(teamId: string, file: File): Promise<SocialMediaUpload> {
   if (!teamId) {
     throw new Error('Choose a team before adding media.');
   }
@@ -622,8 +626,22 @@ export async function uploadSocialPostMedia(teamId: string, file: File): Promise
     type: attachment.type,
     url: attachment.url,
     name: attachment.name || file.name || null,
-    thumbnailUrl: attachment.thumbnailUrl || null
+    thumbnailUrl: attachment.thumbnailUrl || null,
+    storagePath: String(attachment.path || '')
   };
+}
+
+export async function discardSocialPostMediaUpload(media: SocialMediaUpload | null | undefined) {
+  if (!media?.storagePath) return;
+  await deleteTeamChatAttachments([{
+    type: media.type,
+    url: media.url,
+    path: media.storagePath,
+    name: media.name || null,
+    mimeType: null,
+    size: null,
+    thumbnailUrl: media.thumbnailUrl || null
+  }]);
 }
 
 export async function reactToSocialPost(postId: string, user: AuthUser, reactionKey = 'like') {

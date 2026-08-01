@@ -25,7 +25,8 @@ const socialMocks = vi.hoisted(() => ({
     respondToFriendRequest: vi.fn(),
     removeFriend: vi.fn(),
     blockFriend: vi.fn(),
-    uploadSocialPostMedia: vi.fn()
+    uploadSocialPostMedia: vi.fn(),
+    discardSocialPostMediaUpload: vi.fn()
 }));
 
 const playerMocks = vi.hoisted(() => ({
@@ -172,6 +173,15 @@ function buttonByAriaLabel(container, label) {
 async function clickButton(container, text) {
     await act(async () => {
         buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
+async function clickButtonContaining(container, text) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.includes(text));
+    if (!button) throw new Error(`Button containing text not found: ${text}`);
+    await act(async () => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 }
@@ -361,6 +371,7 @@ beforeEach(() => {
                 openActions: 2
             }
         ],
+        feedGames: [statEvent, nextEvent],
         upcomingEvents: [nextEvent, practice],
         actionItems: [
             {
@@ -480,7 +491,8 @@ beforeEach(() => {
         type: 'image',
         url: 'https://img.example.test/social.png',
         name: 'social.png',
-        thumbnailUrl: null
+        thumbnailUrl: null,
+        storagePath: 'chat-attachments/team-1/social/social.png'
     });
 
     playerMocks.loadParentPlayerDetail.mockResolvedValue({
@@ -756,7 +768,7 @@ describe('React app Home and player drill-in integration', () => {
         const { container } = await renderApp('/home?section=feed&social=create&type=game_recap');
         await waitForText(container, 'What happened?');
 
-        await clickButton(container, 'Bears');
+        await clickButtonContaining(container, 'vs. Falcons');
         await waitForText(container, 'Audience');
         expect(findLabel(container, 'Player')).toBeNull();
 
@@ -768,13 +780,13 @@ describe('React app Home and player drill-in integration', () => {
         await clickLastButton(container, 'Post');
         expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
             type: 'game_recap',
-            title: 'Bears game recap',
+            title: 'Bears vs. Falcons recap',
             caption: 'Hard fought game today.',
             teamId: 'team-1',
             playerIds: ['player-1'],
             playerNames: ['Pat Star'],
-            sourceType: 'player',
-            sourceId: 'player-1'
+            sourceType: 'game',
+            sourceId: 'game-final'
         }));
     });
 
@@ -828,6 +840,18 @@ describe('React app Home and player drill-in integration', () => {
                     openActions: 0
                 }
             ],
+            feedGames: [
+                event({ id: 'bears-final', date: new Date('2000-06-01T18:00:00Z'), status: 'completed' }),
+                event({
+                    id: 'wolves-final',
+                    teamId: 'team-2',
+                    teamName: 'Wolves',
+                    childId: 'player-2',
+                    childName: 'Sam Swift',
+                    date: new Date('2000-06-02T18:00:00Z'),
+                    status: 'completed'
+                })
+            ],
             upcomingEvents: [],
             actionItems: [],
             fees: [],
@@ -844,7 +868,7 @@ describe('React app Home and player drill-in integration', () => {
         await waitForText(container, 'What happened?');
         await clickButton(container, 'Change share type');
         await clickButton(container, 'Recap');
-        await clickButton(container, 'Bears');
+        await clickButtonContaining(container, 'vs. Falcons');
         await waitForText(container, 'Audience');
 
         expect(findLabel(container, 'Player')).toBeNull();
@@ -855,15 +879,14 @@ describe('React app Home and player drill-in integration', () => {
         await clickLastButton(container, 'Post');
         expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
             type: 'game_recap',
-            title: 'Wolves game recap',
+            title: 'Wolves vs. Falcons recap',
             caption: 'Great team win today.',
             teamId: 'team-2',
             teamName: 'Wolves',
             playerIds: [],
             playerNames: [],
-            sourceType: 'team',
-            sourceId: 'team-2',
-            route: '/schedule?teamId=team-2'
+            sourceType: 'game',
+            sourceId: 'wolves-final'
         }));
     });
 

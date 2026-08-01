@@ -37,6 +37,7 @@ import {
   blockFriend,
   commentOnSocialPost,
   createSocialPost,
+  discardSocialPostMediaUpload,
   hideSocialPost,
   loadSocialHome,
   removeFriend,
@@ -46,7 +47,8 @@ import {
   sendFriendRequest,
   reactToSocialPost,
   uploadSocialPostMedia,
-  type CreateSocialPostInput
+  type CreateSocialPostInput,
+  type SocialMediaUpload
 } from '../lib/socialService';
 import {
   getEventDetailPath,
@@ -472,6 +474,7 @@ export function Home({ auth }: { auth: AuthState }) {
       void refreshSocial(home, { preserveStatus: true });
     } catch (postError: any) {
       setSocialStatus({ tone: 'error', message: postError?.message || 'Unable to create post.' });
+      throw postError;
     }
   };
 
@@ -1966,7 +1969,7 @@ function SocialComposerModal({
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
   const [teamId, setTeamId] = useState(initialTeamId);
   const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
-  const [gameKey, setGameKey] = useState(() => getComposerGameKey((home.feedGames || []).find((event) => event.teamId === initialTeamId) || null));
+  const [gameKey, setGameKey] = useState(() => getComposerGameKey(getComposerGamesForType(home.feedGames || [], initialTeamId, initialPreset.type)[0] || null));
   const [playerTaggingEnabled, setPlayerTaggingEnabled] = useState(initialPreset.prefersPlayer);
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -1984,7 +1987,7 @@ function SocialComposerModal({
   const selectedPlayer = playerSelectionEnabled
     ? teamPlayers.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
     : null;
-  const teamGames = (home.feedGames || []).filter((event) => event.teamId === selectedTeam?.teamId);
+  const teamGames = getComposerGamesForType(home.feedGames || [], selectedTeam?.teamId || '', type);
   const selectedGame = supportsGameSelection
     ? teamGames.find((event) => getComposerGameKey(event) === gameKey) || teamGames[0] || null
     : null;
@@ -2014,7 +2017,7 @@ function SocialComposerModal({
     }
     if (nextPreset.type === 'game_recap' || nextPreset.type === 'upcoming_game') {
       const nextTeamId = home.teams.find((team) => team.teamId === teamId)?.teamId || home.teams[0]?.teamId || '';
-      const nextGame = (home.feedGames || []).find((event) => event.teamId === nextTeamId) || null;
+      const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, nextPreset.type)[0] || null;
       setGameKey(getComposerGameKey(nextGame));
     }
   };
@@ -2023,7 +2026,7 @@ function SocialComposerModal({
     setTeamId(nextTeamId);
     const nextPlayer = home.players.find((player) => player.teamId === nextTeamId) || null;
     setPlayerKey(playerSelectionEnabled && nextPlayer ? `${nextPlayer.teamId}::${nextPlayer.playerId}` : '');
-    const nextGame = (home.feedGames || []).find((event) => event.teamId === nextTeamId) || null;
+    const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, type)[0] || null;
     setGameKey(getComposerGameKey(nextGame));
   };
 
@@ -2031,14 +2034,30 @@ function SocialComposerModal({
     event.preventDefault();
     setLocalError('');
     setSubmitting(true);
+    let uploadedMedia: SocialMediaUpload | null = null;
     try {
+      if (!selectedTeam) {
+        throw new Error('Choose a team for this post.');
+      }
+      if (activePreset.prefersPlayer && !selectedPlayer) {
+        throw new Error('Choose a player for this post.');
+      }
+      if (supportsGameSelection && !selectedGame) {
+        throw new Error(type === 'game_recap' ? 'Choose a completed game for this recap.' : 'Choose an upcoming game for this post.');
+      }
       if (activePreset.requiresMedia && !mediaFile) {
         throw new Error('Add a photo or video for this share.');
       }
       if (!caption.trim() && !mediaFile) {
         throw new Error('Add a short note or attach a photo/video.');
       }
-      const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
+      uploadedMedia = mediaFile ? await uploadSocialPostMedia(selectedTeam.teamId, mediaFile) : null;
+      const media = uploadedMedia ? [{
+        type: uploadedMedia.type,
+        url: uploadedMedia.url,
+        name: uploadedMedia.name,
+        thumbnailUrl: uploadedMedia.thumbnailUrl
+      }] : [];
       await onSubmit({
         type,
         visibility,
@@ -2056,6 +2075,9 @@ function SocialComposerModal({
         visibleUserIds
       });
     } catch (error: any) {
+      if (uploadedMedia) {
+        await discardSocialPostMediaUpload(uploadedMedia).catch(() => undefined);
+      }
       setLocalError(error?.message || 'Unable to create post.');
     } finally {
       setSubmitting(false);
@@ -2273,6 +2295,16 @@ function SocialTypeIcon({ type }: { type: SocialPostType }) {
 
 function getComposerGameKey(event: ParentScheduleEvent | null) {
   return event ? `${event.teamId}::${event.id}::${event.date.toISOString()}` : '';
+}
+
+function getComposerGamesForType(events: ParentScheduleEvent[], teamId: string, type: SocialPostType) {
+  const now = Date.now();
+  return events.filter((event) => {
+    if (event.teamId !== teamId) return false;
+    if (type === 'game_recap') return event.date.getTime() < now;
+    if (type === 'upcoming_game') return event.date.getTime() >= now;
+    return true;
+  });
 }
 
 function getComposerGameLabel(event: ParentScheduleEvent) {

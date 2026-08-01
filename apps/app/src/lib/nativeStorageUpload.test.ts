@@ -19,7 +19,9 @@ vi.mock('./authService', () => ({
 vi.mock('./adapters/legacyFirebaseAppCheck', () => appCheckMocks);
 
 import {
+  deleteNativePrimaryStorageFile,
   uploadNativePlayerPhoto,
+  uploadNativeTeamPhotoFile,
   uploadNativeUserProfilePhoto
 } from './nativeStorageUpload';
 
@@ -57,7 +59,8 @@ describe('native primary Storage profile uploads', () => {
       headers: expect.objectContaining({
         Authorization: 'Bearer native-id-token',
         'X-Firebase-AppCheck': 'app-check-token'
-      })
+      }),
+      signal: expect.any(AbortSignal)
     }));
     expect(url).toContain('/b/primary-bucket.example/o/stored-path?alt=media&token=download-token');
   });
@@ -81,5 +84,33 @@ describe('native primary Storage profile uploads', () => {
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
     );
+  });
+
+  it('scopes a team photo to its team and signed-in manager', async () => {
+    const file = new File(['photo'], 'team logo.png', { type: 'image/png' });
+
+    await uploadNativeTeamPhotoFile(file, 'team-1');
+
+    const expectedPath = 'profile-photos/teams/team-1/team/user-1/12345_team_logo.png';
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
+      expect.objectContaining({ body: file })
+    );
+  });
+
+  it('deletes a failed native upload with the same auth and App Check boundary', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 204 } as Response);
+    const path = 'profile-photos/teams/team-1/players/player-1/user-1/photo.jpg';
+
+    await deleteNativePrimaryStorageFile(path);
+
+    const expectedUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(path)}`;
+    expect(fetch).toHaveBeenCalledWith(expectedUrl, expect.objectContaining({
+      method: 'DELETE',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer native-id-token',
+        'X-Firebase-AppCheck': 'app-check-token'
+      })
+    }));
   });
 });

@@ -119,13 +119,19 @@ const appDataCacheMocks = vi.hoisted(() => ({
 vi.mock('./appDataCache', () => appDataCacheMocks);
 const nativeRuntimeState = vi.hoisted(() => ({ isNative: false }));
 const nativeStorageMocks = vi.hoisted(() => ({
-  uploadNativePlayerPhoto: vi.fn()
+  deleteNativePrimaryStorageFile: vi.fn(),
+  uploadNativePlayerPhoto: vi.fn(),
+  uploadNativePlayerPhotoFile: vi.fn()
+}));
+const nativeFirestoreMutationMocks = vi.hoisted(() => ({
+  commitNativeFirestoreWrites: vi.fn()
 }));
 
 vi.mock('./nativeRuntime', () => ({
   isNativeRuntime: () => nativeRuntimeState.isNative
 }));
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
+vi.mock('./nativeFirestoreMutation', () => nativeFirestoreMutationMocks);
 
 import {
   loadParentPlayerAthleteProfile,
@@ -599,7 +605,10 @@ describe('saveStaffPlayerRosterDetails', () => {
 
   it('uses authenticated primary Storage for native roster photos', async () => {
     nativeRuntimeState.isNative = true;
-    nativeStorageMocks.uploadNativePlayerPhoto.mockResolvedValue('https://primary.example/kid.jpg');
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/kid.jpg',
+      path: 'profile-photos/teams/team-1/players/player-1/coach-1/kid.jpg'
+    });
     const file = new File(['photo'], 'kid.jpg', { type: 'image/jpeg' });
 
     await saveStaffPlayerRosterDetails({
@@ -611,11 +620,59 @@ describe('saveStaffPlayerRosterDetails', () => {
       photoFile: file
     });
 
-    expect(nativeStorageMocks.uploadNativePlayerPhoto).toHaveBeenCalledWith(file, 'team-1', 'player-1');
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).toHaveBeenCalledWith(file, 'team-1', 'player-1');
     expect(legacyPlayerDbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
-    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
-      photoUrl: 'https://primary.example/kid.jpg'
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenCalledWith([
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1', 'players', 'player-1'],
+        data: expect.objectContaining({ photoUrl: 'https://primary.example/kid.jpg' })
+      })
+    ]);
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
+  });
+
+  it('removes a native roster photo when its player update fails', async () => {
+    nativeRuntimeState.isNative = true;
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/kid.jpg',
+      path: 'profile-photos/teams/team-1/players/player-1/coach-1/kid.jpg'
     });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(new Error('write failed'));
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player' },
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('write failed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      'profile-photos/teams/team-1/players/player-1/coach-1/kid.jpg'
+    );
+  });
+
+  it('keeps a native roster photo when the player commit outcome is uncertain', async () => {
+    nativeRuntimeState.isNative = true;
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/kid.jpg',
+      path: 'profile-photos/teams/team-1/players/player-1/coach-1/kid.jpg'
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player' },
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
   });
 
   it('updates only dirty public roster fields and clears app cache', async () => {
@@ -691,7 +748,10 @@ describe('updateParentPlayerEditableProfile native photo upload', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     nativeRuntimeState.isNative = true;
-    nativeStorageMocks.uploadNativePlayerPhoto.mockResolvedValue('https://primary.example/parent-kid.jpg');
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/parent-kid.jpg',
+      path: 'profile-photos/teams/team-1/players/player-1/parent-1/kid.jpg'
+    });
   });
 
   it('uses the linked player path and saves the resulting URL', async () => {
@@ -707,11 +767,19 @@ describe('updateParentPlayerEditableProfile native photo upload', () => {
       photoFile: file
     });
 
-    expect(nativeStorageMocks.uploadNativePlayerPhoto).toHaveBeenCalledWith(file, 'team-1', 'player-1');
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).toHaveBeenCalledWith(file, 'team-1', 'player-1');
     expect(legacyPlayerDbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
-    expect(legacyPlayerDbMocks.updatePlayerProfile).toHaveBeenCalledWith('team-1', 'player-1', {
-      photoUrl: 'https://primary.example/parent-kid.jpg'
-    });
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenCalledWith([
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1', 'players', 'player-1', 'private', 'profile']
+      }),
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1', 'players', 'player-1'],
+        data: expect.objectContaining({ photoUrl: 'https://primary.example/parent-kid.jpg' })
+      })
+    ]);
+    expect(legacyPlayerDbMocks.updatePlayerPrivateProfile).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayerProfile).not.toHaveBeenCalled();
   });
 });
 

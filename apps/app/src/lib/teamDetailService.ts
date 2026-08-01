@@ -69,6 +69,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
+import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { ParentScheduleEvent } from './scheduleLogic';
@@ -544,7 +545,7 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
 }
 
 function isNativeRuntime() {
-  return window.location.protocol === 'capacitor:';
+  return isNativeAppRuntime();
 }
 
 function getProjectId() {
@@ -1377,10 +1378,20 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
   const position = cleanString(publicValues.position);
 
+  const nativeRuntime = isNativeRuntime();
+  const nativeMutation = nativeRuntime ? await import('./nativeFirestoreMutation') : null;
+  const playerId = nativeMutation ? nativeMutation.createNativeFirestoreDocumentId() : '';
   let photoUrl: string | null = null;
+  let nativePhotoPath = '';
   if (input?.photoFile) {
     validateLegacyRosterPhotoFile(input.photoFile);
-    photoUrl = await uploadPlayerPhoto(input.photoFile);
+    if (nativeRuntime) {
+      const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId));
+      photoUrl = uploaded.url;
+      nativePhotoPath = uploaded.path;
+    } else {
+      photoUrl = await uploadPlayerPhoto(input.photoFile);
+    }
   }
 
   const player = {
@@ -1393,12 +1404,37 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     }
   };
 
-  const playerId = await addPlayer(normalizedTeamId, player);
-  await setPlayerPrivateRosterProfileFields(normalizedTeamId, playerId, privateValues);
+  let savedPlayerId = playerId;
+  try {
+    if (nativeMutation) {
+      await nativeMutation.commitNativeFirestoreWrites([
+        {
+          pathSegments: ['teams', normalizedTeamId, 'players', playerId],
+          data: { ...player, active: true, createdAt: new Date() },
+          createOnly: true
+        },
+        {
+          pathSegments: ['teams', normalizedTeamId, 'players', playerId, 'private', 'profile'],
+          data: {
+            ...(Object.keys(privateValues).length ? { rosterFields: privateValues } : {}),
+            updatedAt: new Date()
+          }
+        }
+      ]);
+    } else {
+      savedPlayerId = await addPlayer(normalizedTeamId, player);
+      await setPlayerPrivateRosterProfileFields(normalizedTeamId, savedPlayerId, privateValues);
+    }
+  } catch (error) {
+    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
+      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    }
+    throw error;
+  }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
-    playerId,
+    playerId: savedPlayerId,
     player
   };
 }
@@ -1624,12 +1660,21 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   const parsedLivestream = parseTeamLivestreamInput(rawStreamUrl);
   if (rawStreamUrl && !parsedLivestream) throw new Error('Livestream link must be a valid YouTube or Twitch URL.');
 
+  const nativeRuntime = isNativeRuntime();
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
+  let nativePhotoPath = '';
   if (input?.photoFile) {
-    photoUrl = await uploadTeamPhoto(input.photoFile);
+    validateLegacyRosterPhotoFile(input.photoFile);
+    if (nativeRuntime) {
+      const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativeTeamPhotoFile(input.photoFile!, normalizedTeamId));
+      photoUrl = uploaded.url;
+      nativePhotoPath = uploaded.path;
+    } else {
+      photoUrl = await uploadTeamPhoto(input.photoFile);
+    }
   }
 
-  await updateTeam(normalizedTeamId, {
+  const payload = {
     name,
     sport: cleanString(input?.sport),
     zip: normalizeTeamZip(input?.zip),
@@ -1640,7 +1685,23 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
     youtubeEmbedUrl: null,
     updatedAt: new Date()
-  });
+  };
+
+  try {
+    if (nativeRuntime) {
+      await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites([{
+        pathSegments: ['teams', normalizedTeamId],
+        data: payload
+      }]));
+    } else {
+      await updateTeam(normalizedTeamId, payload);
+    }
+  } catch (error) {
+    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
+      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    }
+    throw error;
+  }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }

@@ -320,23 +320,34 @@ service firebase.storage {
     match /profile-photos/users/{userId}/{fileName} {
       allow get: if isSignedIn();
       allow list: if false;
-      allow create: if isVerifiedForSensitiveWrite() &&
+      allow create: if isSignedIn() &&
         request.auth.uid == userId &&
         isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
-      allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
+      allow delete: if isSignedIn() && request.auth.uid == userId;
       allow update: if false;
     }
 
     match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
-      allow create: if isVerifiedForSensitiveWrite() &&
+      allow create: if isSignedIn() &&
         request.auth.uid == userId &&
         (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId)) &&
         isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
-      allow delete: if isVerifiedForSensitiveWrite() &&
+      allow delete: if isSignedIn() &&
         (isTeamOwnerOrAdmin(teamId) ||
          (request.auth.uid == userId && isParentForPlayer(teamId, playerId)));
+      allow update: if false;
+    }
+
+    match /profile-photos/teams/{teamId}/team/{userId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
       allow update: if false;
     }
   }

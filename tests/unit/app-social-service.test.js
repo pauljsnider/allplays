@@ -25,7 +25,8 @@ const homeMocks = vi.hoisted(() => ({
 }));
 
 const chatMocks = vi.hoisted(() => ({
-    uploadTeamChatAttachment: vi.fn()
+    uploadTeamChatAttachment: vi.fn(),
+    deleteTeamChatAttachments: vi.fn()
 }));
 
 const publicTeamMocks = vi.hoisted(() => ({
@@ -85,7 +86,8 @@ beforeEach(() => {
         type: 'image',
         url: 'https://img.example.test/upload.png',
         name: 'upload.png',
-        thumbnailUrl: null
+        thumbnailUrl: null,
+        path: 'chat-attachments/team-1/social/upload.png'
     });
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
 });
@@ -669,8 +671,28 @@ describe('React app social service', () => {
             type: 'image',
             url: 'https://img.example.test/upload.png',
             name: 'upload.png',
-            thumbnailUrl: null
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
         });
+    });
+
+    it('discards an uploaded social attachment when its post is not saved', async () => {
+        const { discardSocialPostMediaUpload } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await discardSocialPostMediaUpload({
+            type: 'image',
+            url: 'https://img.example.test/upload.png',
+            name: 'upload.png',
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
+        });
+
+        expect(chatMocks.deleteTeamChatAttachments).toHaveBeenCalledWith([
+            expect.objectContaining({
+                url: 'https://img.example.test/upload.png',
+                path: 'chat-attachments/team-1/social/upload.png'
+            })
+        ]);
     });
 
     it('hides social posts only for the current viewer', async () => {
