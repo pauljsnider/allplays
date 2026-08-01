@@ -881,7 +881,7 @@ async function getAllPublicTeamProjections() {
         const page = await discoverPublicTeams({ pageSize: 100, cursor });
         teams.push(...page.teams);
         cursor = page.nextCursor;
-    } while (cursor && teams.length < 1000);
+    } while (cursor);
     return teams;
 }
 

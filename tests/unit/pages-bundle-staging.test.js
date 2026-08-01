@@ -223,8 +223,13 @@ describe('pages bundle staging', () => {
     it('stages every public-boundary db consumer with the fresh module key', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const destinationDir = path.join(makeTempDir(), 'site');
+        const appDistDir = path.join(makeTempDir(), 'app-dist');
+        writeFile(
+            path.join(appDistDir, 'index.html'),
+            '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
+        );
 
-        stagePagesBundle(destinationDir, { rootDir: repoRoot });
+        stagePagesBundle(destinationDir, { rootDir: repoRoot, appDistDir });
 
         const stagedSources = [];
         function collectSources(directory) {

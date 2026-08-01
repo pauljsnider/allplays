@@ -365,14 +365,19 @@ function copyPublicRoot(rootDir, destinationDir, currentDir = rootDir) {
     }
 }
 
-export function stagePagesBundle(destinationDir, { rootDir = defaultRootDir } = {}) {
+export function stagePagesBundle(
+    destinationDir,
+    { rootDir = defaultRootDir, appDistDir: appDistDirOverride = null } = {}
+) {
     if (!destinationDir) {
         throw new Error('Destination directory is required.');
     }
 
     const resolvedRoot = path.resolve(rootDir);
     const resolvedDestination = path.resolve(destinationDir);
-    const appDistDir = path.join(resolvedRoot, 'apps', 'app', 'dist');
+    const appDistDir = appDistDirOverride
+        ? path.resolve(appDistDirOverride)
+        : path.join(resolvedRoot, 'apps', 'app', 'dist');
     const appDestinationDir = path.join(resolvedDestination, 'app');
 
     if (!fs.existsSync(appDistDir)) {

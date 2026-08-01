@@ -52,3 +52,16 @@ test('homepage collection-group query shapes have deployed index definitions', (
     );
   }
 });
+
+test('public team shared-game schedule queries have deployed composite indexes', () => {
+  for (const teamField of ['homeTeamId', 'awayTeamId']) {
+    assert.equal(
+      hasComposite('sharedGames', [
+        { fieldPath: teamField, order: 'ASCENDING' },
+        { fieldPath: 'date', order: 'ASCENDING' }
+      ]),
+      true,
+      `sharedGames ${teamField}/date schedule query needs a composite collection-group index`
+    );
+  }
+});

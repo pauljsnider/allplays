@@ -264,4 +264,33 @@ describe('complete legacy collection helpers', () => {
         expect(firebaseMocks.limit).toHaveBeenNthCalledWith(2, 100);
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstPage.at(-1));
     });
+
+    it('returns public teams beyond the former 1,000-team cutoff', async () => {
+        const pages = Array.from({ length: 11 }, (_, pageIndex) => {
+            const pageSize = pageIndex === 10 ? 1 : 100;
+            return {
+                data: {
+                    items: Array.from({ length: pageSize }, (_, itemIndex) => ({
+                        id: `public-team-${(pageIndex * 100) + itemIndex + 1}`,
+                        name: `Public Team ${(pageIndex * 100) + itemIndex + 1}`,
+                        isPublic: true
+                    })),
+                    nextCursor: pageIndex < 10 ? `public-page-${pageIndex + 2}` : null
+                }
+            };
+        });
+        pages.forEach((page) => firebaseMocks.listPublicTeams.mockResolvedValueOnce(page));
+
+        const { getTeams } = await import('../../js/db.js?v=136-public-team-complete');
+        const teams = await getTeams({ publicOnly: true });
+
+        expect(teams).toHaveLength(1001);
+        expect(teams.at(-1)?.id).toBe('public-team-1001');
+        expect(firebaseMocks.listPublicTeams).toHaveBeenCalledTimes(11);
+        expect(firebaseMocks.listPublicTeams).toHaveBeenNthCalledWith(11, {
+            searchText: '',
+            pageSize: 100,
+            cursor: 'public-page-11'
+        });
+    });
 });
