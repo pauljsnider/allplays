@@ -113,7 +113,11 @@ npm run ops:verify-firestore-recovery -- --project="$ALLPLAYS_FIRESTORE_PROJECT_
 The command prints only recovery metadata. It does not read application
 documents or mutate a database. `--max-backup-age-hours` is limited to a finite
 value from 1 through 168 hours so a typo such as `Infinity`, `NaN`, `0`, or an
-unreasonably large threshold cannot silently disable freshness monitoring.
+unreasonably large threshold cannot silently disable freshness monitoring. A
+historical READY backup nearing its scheduled expiration is excluded from
+recovery evidence without failing the posture when another fresh backup remains
+usable through the next six-hour check window. Verification fails when no READY
+backup survives that window.
 
 ## Health-check failure
 
