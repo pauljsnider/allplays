@@ -40,6 +40,12 @@ const profileServiceMocks = vi.hoisted(() => ({
   saveProfileDocument: vi.fn(async () => undefined)
 }));
 
+const profilePhotoServiceMocks = vi.hoisted(() => ({
+  acquireProfilePhoto: vi.fn(),
+  normalizeProfilePhoto: vi.fn(async (file: File) => file),
+  uploadProfilePhoto: vi.fn(async () => 'https://example.test/profile-photo.jpg')
+}));
+
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(async () => undefined),
   getPushNotificationPermissionStatus: vi.fn(async () => ({
@@ -64,6 +70,7 @@ const initialLoadTelemetryMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/profileService', () => profileServiceMocks);
+vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
 vi.mock('../lib/pushService', () => pushServiceMocks);
 vi.mock('../lib/inviteUrls', () => ({
   buildAppAcceptInviteUrl: vi.fn((code: string) => `https://example.test/app/#/accept-invite?code=${code}`)
@@ -123,8 +130,8 @@ const auth: AuthState = {
   isCoach: false,
   isAdmin: false,
   isPlatformAdmin: false,
-  refresh: vi.fn(),
-  signOut: vi.fn()
+  refresh: vi.fn(async () => null),
+  signOut: vi.fn(async () => undefined)
 };
 
 function TestRouteControls() {
@@ -209,6 +216,14 @@ describe('Profile', () => {
         callback(0);
         return 0;
       },
+      writable: true
+    });
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:profile-photo-preview'),
+      writable: true
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
       writable: true
     });
   });
@@ -362,6 +377,58 @@ describe('Profile', () => {
     const familyLink = screen.getByRole('link', { name: 'Open Family workflows' });
     expect(familyLink.getAttribute('href')).toBe('/parent-tools');
     expect(familyLink.textContent).toContain('Player access, household, fees, calendars, sharing, registration, and awards.');
+  });
+
+  it('saves profile presentation fields without rewriting the auth-managed email', async () => {
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    const fullNameInput = await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(fullNameInput, { target: { value: 'Pat Parent Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => {
+      expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
+        fullName: 'Pat Parent Updated',
+        phone: '555-0100',
+        photoUrl: null
+      });
+    });
+    expect(await screen.findByText('Profile saved.')).toBeTruthy();
+  });
+
+  it('reuses an uploaded profile photo when the document save is retried', async () => {
+    profileServiceMocks.saveProfileDocument
+      .mockRejectedValueOnce(new Error('permission-denied'))
+      .mockResolvedValueOnce(undefined);
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: {
+        files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })]
+      }
+    });
+    await waitFor(() => {
+      expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Upload reached Firebase, but this account does not have permission to save the image.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('Profile saved.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(2);
   });
 
   it('disables account merge while parent team eligibility is loading', async () => {

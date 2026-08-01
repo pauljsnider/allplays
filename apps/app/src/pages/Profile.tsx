@@ -791,12 +791,16 @@ export function Profile({ auth }: { auth: AuthState }) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
         const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
         nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile, user.uid);
+        // Keep the completed upload available if the profile document save fails.
+        // A retry should attach this object instead of uploading a duplicate.
+        photoUrlRef.current = nextPhotoUrl;
+        photoFileRef.current = null;
+        setPhotoFile(null);
       }
 
       await saveProfileDocument(user.uid, {
         fullName: trimmedFullName,
         phone: trimmedPhone,
-        email: user.email,
         photoUrl: nextPhotoUrl || null
       });
 
