@@ -1882,8 +1882,9 @@ test('social game recap switches between completed games and linked players', as
     await dialog.locator('button').filter({ hasText: 'vs. Falcons' }).click();
 
     const gameSelect = dialog.getByLabel('Game');
-    await expect(gameSelect.getByRole('option', { name: /vs\. Tigers/ })).toBeAttached();
-    await gameSelect.selectOption({ label: /vs\. Tigers/ });
+    const tigersOption = gameSelect.getByRole('option', { name: /vs\. Tigers/ });
+    await expect(tigersOption).toBeAttached();
+    await gameSelect.selectOption(await tigersOption.evaluate((option) => option.value));
 
     await dialog.getByRole('button', { name: 'Tag a player' }).click();
     const playerSelect = dialog.getByLabel('Player');
