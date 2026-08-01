@@ -77,8 +77,7 @@ function decodeCursor(value, searchText) {
 
 function isAfterCursor(team, cursor) {
   if (!cursor) return true;
-  const name = normalizePublicTeamSearch(team?.name);
-  return name > cursor.n || (name === cursor.n && String(team?.id || '') > cursor.i);
+  return comparePublicTeams(team, { name: cursor.n, id: cursor.i }) > 0;
 }
 
 function paginatePublicTeams(teams = [], options = {}) {

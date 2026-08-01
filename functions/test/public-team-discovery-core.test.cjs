@@ -33,3 +33,41 @@ test('public team discovery returns stable opaque cursor pages', () => {
   assert.deepEqual(second.items.map((team) => team.id), ['team-3']);
   assert.equal(second.nextCursor, null);
 });
+
+function collectPublicTeamPages(teams, pageSize = 1) {
+  const ids = [];
+  let cursor = null;
+  do {
+    const page = paginatePublicTeams(teams, { pageSize, cursor });
+    ids.push(...page.items.map((team) => team.id));
+    cursor = page.nextCursor;
+  } while (cursor);
+  return ids;
+}
+
+test('public team discovery advances numeric names with the sorting comparator', () => {
+  const teams = [
+    { id: 'team-10', name: 'Team 10' },
+    { id: 'team-2', name: 'Team 2' }
+  ];
+
+  assert.deepEqual(collectPublicTeamPages(teams), ['team-2', 'team-10']);
+});
+
+test('public team discovery advances case-equivalent names by id', () => {
+  const teams = [
+    { id: 'team-b', name: 'falcons' },
+    { id: 'team-a', name: 'Falcons' }
+  ];
+
+  assert.deepEqual(collectPublicTeamPages(teams), ['team-a', 'team-b']);
+});
+
+test('public team discovery advances accent-equivalent names by id', () => {
+  const teams = [
+    { id: 'team-b', name: 'Aguilas' },
+    { id: 'team-a', name: 'Águilas' }
+  ];
+
+  assert.deepEqual(collectPublicTeamPages(teams), ['team-a', 'team-b']);
+});
