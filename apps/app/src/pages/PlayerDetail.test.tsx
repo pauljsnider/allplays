@@ -390,22 +390,33 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('COPE1234')).toBeTruthy();
   });
 
-  it('reports callable throttling without showing an invite or email claim', async () => {
-    playerServiceMocks.sendParentCoParentInvite.mockRejectedValue({
-      code: 'functions/resource-exhausted',
-      details: { retryAfterSeconds: 3600 }
-    });
+  it('clears a successful invite when the next request is throttled', async () => {
+    playerServiceMocks.sendParentCoParentInvite
+      .mockResolvedValueOnce({
+        id: 'invite-1', code: 'COPE1234', teamName: 'Current Team', playerName: 'Sam Player',
+        email: 'first@example.com', created: true, reused: false
+      })
+      .mockRejectedValueOnce({
+        code: 'functions/resource-exhausted',
+        details: { retryAfterSeconds: 3600 }
+      });
 
     renderPlayerDetail();
 
     await screen.findByText('Sam Player');
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
-    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'coparent@example.com' } });
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'first@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    expect(await screen.findByText('Invite sent to first@example.com.')).toBeTruthy();
+    expect(screen.getByText('COPE1234')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'second@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     expect(await screen.findByText('Too many co-parent invites. Please wait and try again. No email was sent.')).toBeTruthy();
-    expect(screen.queryByText('Email queued for coparent@example.com.')).toBeNull();
+    expect(screen.queryByText('Email queued for first@example.com.')).toBeNull();
     expect(screen.queryByText('COPE1234')).toBeNull();
   });
 

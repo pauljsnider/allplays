@@ -2799,6 +2799,7 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
       });
       setEmail('');
     } catch (error: any) {
+      setCreatedInvite(null);
       const errorCode = String(error?.code || '').replace(/^functions\//, '');
       setStatus({
         tone: 'error',

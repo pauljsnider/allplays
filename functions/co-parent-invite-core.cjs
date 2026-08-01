@@ -123,15 +123,10 @@ function createCoParentInviteHandler({
       }
 
       const playerKey = `${teamId}::${playerId}`;
-      const userData = userSnap.data() || {};
-      const parentPlayerKeys = Array.isArray(userData.parentPlayerKeys)
-        ? userData.parentPlayerKeys
+      const parentPlayerKeys = Array.isArray(userSnap.data()?.parentPlayerKeys)
+        ? userSnap.data().parentPlayerKeys
         : [];
-      const linkedByParentOf = Array.isArray(userData.parentOf) && userData.parentOf.some((link) => (
-        String(link?.teamId || '').trim() === teamId
-        && String(link?.playerId || '').trim() === playerId
-      ));
-      if (!parentPlayerKeys.includes(playerKey) && !linkedByParentOf) {
+      if (!parentPlayerKeys.includes(playerKey)) {
         throw new HttpsError('permission-denied', 'You are not linked to this team and player.');
       }
 

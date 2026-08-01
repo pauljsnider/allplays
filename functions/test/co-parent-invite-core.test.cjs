@@ -181,7 +181,7 @@ test('rejects a caller without the exact team and player linkage without writes'
   assert.deepEqual(harness.writes, []);
 });
 
-test('accepts an exact legacy parentOf link without a parentPlayerKeys backfill', async () => {
+test('rejects a legacy parentOf link without an exact parentPlayerKeys linkage', async () => {
   const harness = createHarness({
     initialDocs: {
       'users/parent-1': {
@@ -190,13 +190,15 @@ test('accepts an exact legacy parentOf link without a parentPlayerKeys backfill'
     }
   });
 
-  const result = await harness.handler(
-    { teamId: 'team-1', playerId: 'player-1', email: 'coparent@example.com' },
-    harness.context
+  await assert.rejects(
+    harness.handler(
+      { teamId: 'team-1', playerId: 'player-1', email: 'coparent@example.com' },
+      harness.context
+    ),
+    (error) => error.code === 'permission-denied'
   );
 
-  assert.equal(result.created, true);
-  assert.equal(harness.writes.filter(([path]) => path.startsWith('accessCodes/')).length, 1);
+  assert.deepEqual(harness.writes, []);
 });
 
 test('creates one active invite from authoritative team and player data', async () => {
