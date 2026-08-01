@@ -144,7 +144,7 @@ test('parent account reaches every critical family workflow with linked fixtures
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/access', { heading: 'Family workflows' });
         await expect(page.getByText('Access requests', { exact: true })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/household', { heading: 'Family workflows' });
-        await expect(page.getByText('Create invite', { exact: true })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Create invite' })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/share', { heading: 'Family workflows' });
         await expect(page.getByText('Family share', { exact: true })).toBeVisible();
         await openAuthenticatedAppRoute(page, config.appBaseUrl, '/parent-tools/certificates', { heading: 'Family workflows' });
