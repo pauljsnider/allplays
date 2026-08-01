@@ -3893,13 +3893,13 @@ function normalizeTournamentStandingsGroups(options = {}) {
 async function getPublicGamesProjection(teamId, options = {}) {
     const callable = httpsCallable(functions, 'getPublicTeamGamesProjection');
     const range = getPublicProjectionRange(options);
-    const response = await callable({
+    const pages = await getAllPublicProjectionPages(callable, {
         teamId,
         from: range.from,
         to: range.to,
         limit: 500
-    });
-    const games = (Array.isArray(response?.data?.games) ? response.data.games : [])
+    }, 'games');
+    const games = pages
         .map((game) => mapPublicGameProjection(game, teamId))
         .filter((game) => game.id && game.date);
     const tournamentGroups = normalizeTournamentStandingsGroups(options);
@@ -3911,13 +3911,13 @@ async function getPublicGamesProjection(teamId, options = {}) {
 export async function getPublicTeamCalendarEvents(teamId, options = {}) {
     const callable = httpsCallable(functions, 'getPublicTeamCalendarProjection');
     const range = getPublicProjectionRange(options);
-    const response = await callable({
+    const pages = await getAllPublicProjectionPages(callable, {
         teamId,
         from: range.from,
         to: range.to,
         limit: 500
-    });
-    return (Array.isArray(response?.data?.events) ? response.data.events : [])
+    }, 'events');
+    return pages
         .map((event) => {
             const startsAt = event?.startsAt ? new Date(event.startsAt) : null;
             const endsAt = event?.endsAt ? new Date(event.endsAt) : null;
@@ -3939,6 +3939,24 @@ export async function getPublicTeamCalendarEvents(teamId, options = {}) {
             };
         })
         .filter(Boolean);
+}
+
+async function getAllPublicProjectionPages(callable, request, itemKey) {
+    const items = [];
+    const seenCursors = new Set();
+    let cursor = null;
+    do {
+        const response = await callable(cursor ? { ...request, cursor } : request);
+        const data = response?.data || {};
+        if (Array.isArray(data[itemKey])) items.push(...data[itemKey]);
+        if (data?.range?.truncated !== true) break;
+        cursor = typeof data.nextCursor === 'string' ? data.nextCursor : '';
+        if (!cursor || seenCursors.has(cursor)) {
+            throw new Error(`Public ${itemKey} projection pagination did not provide a usable cursor.`);
+        }
+        seenCursors.add(cursor);
+    } while (cursor);
+    return items;
 }
 
 async function getPublicGameProjection(teamId, gameId) {

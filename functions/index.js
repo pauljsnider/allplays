@@ -108,7 +108,10 @@ const {
   canProjectPublicGame,
   getPublicOpponentStatKeys,
   isStrictPublicTeam,
+  isPublicProjectionItemAfterCursor,
   normalizeTeamId,
+  paginatePublicProjectionItems,
+  parsePublicProjectionCursor,
   parsePublicGamesQuery,
   serializePublicCalendarEvent,
   serializePublicGame,
@@ -6489,11 +6492,13 @@ async function getPublicTeamPlayers(teamId) {
   return players;
 }
 
-async function getPublicTeamGames(teamId, range) {
+async function getPublicTeamGames(teamId, range, cursor = null) {
   const games = [];
   const batchSize = Math.min(range.limit + 1, 500);
   let lastDoc = null;
   let scannedDocuments = 0;
+  const cursorDate = cursor ? new Date(cursor.startsAt) : null;
+  const queryFromDate = cursorDate && cursorDate > range.fromDate ? cursorDate : range.fromDate;
 
   while (games.length <= range.limit && scannedDocuments < PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS) {
     const currentBatchSize = Math.min(
@@ -6501,7 +6506,7 @@ async function getPublicTeamGames(teamId, range) {
       PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS - scannedDocuments
     );
     let query = firestore.collection(`teams/${teamId}/games`)
-      .where('date', '>=', range.fromDate)
+      .where('date', '>=', queryFromDate)
       .where('date', '<=', range.toDate)
       .orderBy('date');
     if (lastDoc) query = query.startAfter(lastDoc);
@@ -6511,7 +6516,8 @@ async function getPublicTeamGames(teamId, range) {
 
     gamesSnap.forEach((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
-      if (serializePublicGame(game)) games.push(game);
+      const projection = serializePublicGame(game);
+      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) games.push(game);
     });
     scannedDocuments += gamesSnap.size;
     lastDoc = gamesSnap.docs[gamesSnap.docs.length - 1];
@@ -6527,7 +6533,7 @@ async function getPublicTeamGames(teamId, range) {
     sharedGamesRef.where('homeTeamId', '==', teamId),
     sharedGamesRef.where('awayTeamId', '==', teamId)
   ].map((query) => query
-    .where('date', '>=', range.fromDate)
+    .where('date', '>=', queryFromDate)
     .where('date', '<=', range.toDate)
     .orderBy('date')
     .limit(PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS + 1)
@@ -6545,7 +6551,8 @@ async function getPublicTeamGames(teamId, range) {
         _sharedGamePath: docSnap.ref.path,
         isSharedGame: true
       }, teamId);
-      if (projected && serializePublicGame(projected)) {
+      const projection = projected && serializePublicGame(projected);
+      if (projection && isPublicProjectionItemAfterCursor(projection, cursor)) {
         sharedGamesByPath.set(docSnap.ref.path, projected);
       }
     });
@@ -15386,9 +15393,11 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
     limit: data?.limit
   });
   if (range.error) throwOpportunityError('invalid-argument', range.error);
+  const cursor = parsePublicProjectionCursor(data?.cursor);
+  if (cursor?.error) throwOpportunityError('invalid-argument', cursor.error);
   const team = await getStrictPublicTeam(teamId);
   if (!team) throwOpportunityError('not-found', 'Public team not found.');
-  const games = await getPublicTeamGames(teamId, range);
+  const games = await getPublicTeamGames(teamId, range, cursor);
   const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, games);
   return buildPublicGamesResponse({
     teamId,
@@ -15397,6 +15406,7 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
     from: range.from,
     to: range.to,
     limit: range.limit,
+    cursor,
     opponentStatKeysByGameId
   });
 });
@@ -15413,6 +15423,8 @@ exports.getPublicTeamCalendarProjection = functions
       limit: data?.limit
     });
     if (range.error) throwOpportunityError('invalid-argument', range.error);
+    const cursor = parsePublicProjectionCursor(data?.cursor);
+    if (cursor?.error) throwOpportunityError('invalid-argument', cursor.error);
     const team = await getStrictPublicTeam(teamId);
     if (!team) throwOpportunityError('not-found', 'Public team not found.');
 
@@ -15461,14 +15473,16 @@ exports.getPublicTeamCalendarProjection = functions
       })
       .sort((left, right) => left.startsAt.localeCompare(right.startsAt) || left.id.localeCompare(right.id));
 
+    const page = paginatePublicProjectionItems(events, range.limit, cursor);
     return {
-      events: events.slice(0, range.limit),
+      events: page.items,
       warnings,
       range: {
         from: range.from,
         to: range.to,
-        truncated: events.length > range.limit
-      }
+        truncated: page.truncated
+      },
+      nextCursor: page.nextCursor
     };
   });
 

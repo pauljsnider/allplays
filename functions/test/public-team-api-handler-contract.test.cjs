@@ -5,6 +5,7 @@ const { join } = require('node:path');
 const {
   getPublicOpponentStatKeys,
   normalizeTeamId,
+  isPublicProjectionItemAfterCursor,
   serializePublicGame
 } = require('../public-team-api-core.cjs');
 
@@ -25,12 +26,14 @@ function loadPublicTeamDataAccess(firestore) {
     'firestore',
     'getPublicOpponentStatKeys',
     'normalizeTeamId',
+    'isPublicProjectionItemAfterCursor',
     'serializePublicGame',
     implementation
   )(
     firestore,
     getPublicOpponentStatKeys,
     normalizeTeamId,
+    isPublicProjectionItemAfterCursor,
     serializePublicGame
   );
 }
@@ -145,12 +148,13 @@ test('public team handlers use bounded games reads and field-whitelisting serial
 
   assert.match(apiSource, /buildPublicRosterResponse/);
   assert.match(apiSource, /buildPublicGamesResponse/);
-  assert.match(apiSource, /\.where\('date', '>=', range\.fromDate\)/);
+  assert.match(apiSource, /\.where\('date', '>=', queryFromDate\)/);
   assert.match(apiSource, /\.where\('date', '<=', range\.toDate\)/);
   assert.match(apiSource, /PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS/);
   assert.match(apiSource, /\.limit\(currentBatchSize\)/);
   assert.match(apiSource, /\.startAfter\(lastDoc\)/);
-  assert.match(apiSource, /if \(serializePublicGame\(game\)\) games\.push\(game\)/);
+  assert.match(apiSource, /isPublicProjectionItemAfterCursor\(projection, cursor\)/);
+  assert.match(apiSource, /where\('date', '>=', queryFromDate\)/);
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
 });
 

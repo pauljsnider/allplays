@@ -7,6 +7,7 @@ const {
   getPublicOpponentStatKeys,
   isStrictPublicTeam,
   normalizeTeamId,
+  parsePublicProjectionCursor,
   parsePublicGamesQuery,
   publicHttpUrl,
   sanitizePublicLocation,
@@ -416,6 +417,22 @@ test('games response reports truncation after public filtering and chronological
   });
   assert.equal(response.range.truncated, true);
   assert.deepEqual(response.games.map((game) => game.id), ['one']);
+});
+
+test('games response provides a cursor that returns all 501 chronological projections without duplication', () => {
+  const games = Array.from({ length: 501 }, (_, index) => ({
+    id: `game-${String(index).padStart(3, '0')}`,
+    date: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString()
+  }));
+  const firstPage = buildPublicGamesResponse({ teamId: 'team-1', games, limit: 500 });
+  const cursor = parsePublicProjectionCursor(firstPage.nextCursor);
+  const secondPage = buildPublicGamesResponse({ teamId: 'team-1', games, limit: 500, cursor });
+  assert.equal(firstPage.range.truncated, true);
+  assert.equal(typeof firstPage.nextCursor, 'string');
+  assert.equal(secondPage.range.truncated, false);
+  assert.equal(secondPage.nextCursor, null);
+  assert.deepEqual([...firstPage.games, ...secondPage.games].map((game) => game.id), games.map((game) => game.id));
+  assert.match(parsePublicProjectionCursor('not-a-cursor').error, /valid public projection cursor/);
 });
 
 test('query parsing validates dates, range, and limit', () => {

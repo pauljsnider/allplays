@@ -284,6 +284,39 @@ describe('game access query resilience', () => {
     expect(result[0]).not.toHaveProperty('sourceUrl');
   });
 
+  it('follows projection cursors so schedules and calendars retain entries beyond 500', async () => {
+    const games = Array.from({ length: 500 }, (_, index) => ({
+      id: `game-${index}`,
+      startsAt: `2026-08-${String((index % 28) + 1).padStart(2, '0')}T18:00:00.000Z`,
+      opponent: 'Falcons'
+    }));
+    const events = Array.from({ length: 500 }, (_, index) => ({
+      id: `event-${index}`,
+      type: 'practice',
+      startsAt: `2026-08-${String((index % 28) + 1).padStart(2, '0')}T18:00:00.000Z`,
+      title: 'Practice'
+    }));
+    firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('denied'), { code: 'permission-denied' }));
+    firebaseMocks.getPublicTeamGamesProjection
+      .mockResolvedValueOnce({ data: { games, range: { truncated: true }, nextCursor: 'games-page-2' } })
+      .mockResolvedValueOnce({ data: { games: [{ id: 'game-500', startsAt: '2026-09-01T18:00:00.000Z', opponent: 'Rockets' }], range: { truncated: false } } });
+    firebaseMocks.getPublicTeamCalendarProjection
+      .mockResolvedValueOnce({ data: { events, range: { truncated: true }, nextCursor: 'calendar-page-2' } })
+      .mockResolvedValueOnce({ data: { events: [{ id: 'event-500', type: 'practice', startsAt: '2026-09-01T18:00:00.000Z', title: 'Practice' }], range: { truncated: false } } });
+
+    const [projectedGames, projectedEvents] = await Promise.all([
+      getGames('team-1'),
+      getPublicTeamCalendarEvents('team-1')
+    ]);
+
+    expect(projectedGames).toHaveLength(501);
+    expect(projectedGames.at(-1)).toEqual(expect.objectContaining({ id: 'game-500', opponent: 'Rockets' }));
+    expect(projectedEvents).toHaveLength(501);
+    expect(projectedEvents.at(-1)).toEqual(expect.objectContaining({ id: 'event-500', summary: 'Practice' }));
+    expect(firebaseMocks.getPublicTeamGamesProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'games-page-2' }));
+    expect(firebaseMocks.getPublicTeamCalendarProjection.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: 'calendar-page-2' }));
+  });
+
   it('falls back to a sanitized public game detail when canonical get is denied', async () => {
     firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), {
       code: 'permission-denied'

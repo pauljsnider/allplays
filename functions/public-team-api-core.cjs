@@ -516,7 +516,8 @@ function buildPublicGamesResponse({
   to,
   limit = PUBLIC_TEAM_API_DEFAULT_GAMES,
   now = new Date(),
-  opponentStatKeysByGameId = new Map()
+  opponentStatKeysByGameId = new Map(),
+  cursor = null
 }) {
   const publicGames = games
     .map((game) => serializePublicGame(game, {
@@ -525,7 +526,8 @@ function buildPublicGamesResponse({
         : undefined
     }))
     .filter(Boolean)
-    .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+    .sort(comparePublicProjectionItems);
+  const page = paginatePublicProjectionItems(publicGames, limit, cursor);
   return {
     version: PUBLIC_TEAM_API_VERSION,
     generatedAt: toDate(now).toISOString(),
@@ -533,9 +535,54 @@ function buildPublicGamesResponse({
     range: {
       from,
       to,
-      truncated: publicGames.length > limit
+      truncated: page.truncated
     },
-    games: publicGames.slice(0, limit)
+    games: page.items,
+    nextCursor: page.nextCursor
+  };
+}
+
+function comparePublicProjectionItems(left, right) {
+  return String(left?.startsAt || '').localeCompare(String(right?.startsAt || '')) ||
+    String(left?.id || '').localeCompare(String(right?.id || ''));
+}
+
+function encodePublicProjectionCursor(item) {
+  const startsAt = String(item?.startsAt || '');
+  const id = String(item?.id || '');
+  if (!startsAt || !id) return null;
+  return Buffer.from(JSON.stringify({ startsAt, id })).toString('base64url');
+}
+
+function parsePublicProjectionCursor(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || value.length > 1024) return { error: 'cursor must be a valid public projection cursor.' };
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    const startsAt = String(parsed?.startsAt || '');
+    const id = String(parsed?.id || '');
+    if (!Number.isFinite(new Date(startsAt).getTime()) || !id || id.length > 1024) {
+      return { error: 'cursor must be a valid public projection cursor.' };
+    }
+    return { startsAt, id };
+  } catch {
+    return { error: 'cursor must be a valid public projection cursor.' };
+  }
+}
+
+function isPublicProjectionItemAfterCursor(item, cursor) {
+  if (!cursor) return true;
+  return comparePublicProjectionItems(item, cursor) > 0;
+}
+
+function paginatePublicProjectionItems(items = [], limit = PUBLIC_TEAM_API_DEFAULT_GAMES, cursor = null) {
+  const remaining = items.filter((item) => isPublicProjectionItemAfterCursor(item, cursor));
+  const pageItems = remaining.slice(0, limit);
+  const truncated = remaining.length > pageItems.length;
+  return {
+    items: pageItems,
+    truncated,
+    nextCursor: truncated ? encodePublicProjectionCursor(pageItems[pageItems.length - 1]) : null
   };
 }
 
@@ -547,14 +594,18 @@ module.exports = {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
   canProjectPublicGame,
+  comparePublicProjectionItems,
   compareRosterPlayers,
   getPublicOpponentStatKeys,
   isActivePublicPlayer,
   isExplicitlyShareableGame,
   isPublicGame,
   isStrictPublicTeam,
+  isPublicProjectionItemAfterCursor,
   normalizeGameStatus,
   normalizeTeamId,
+  paginatePublicProjectionItems,
+  parsePublicProjectionCursor,
   parsePublicGamesQuery,
   publicHttpUrl,
   sanitizePublicLocation,
