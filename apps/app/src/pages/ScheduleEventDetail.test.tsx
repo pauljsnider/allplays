@@ -544,6 +544,7 @@ describe('ScheduleEventDetail loading states', () => {
     cleanup();
     vi.clearAllMocks();
     scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockImplementation((result) => Promise.resolve(result));
   });
 
   it('shows the shared event skeleton while event details are loading', () => {
@@ -640,6 +641,40 @@ describe('ScheduleEventDetail loading states', () => {
       expect(screen.getByRole('button', { name: /Going/ })).toBeTruthy();
     });
     expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an RSVP update completed while optional hydration is pending', async () => {
+    const detail = {
+      events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+      children: []
+    };
+    let resolveOptionalHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue({
+      going: 1,
+      maybe: 2,
+      notGoing: 1,
+      notResponded: 0,
+      total: 4
+    });
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockImplementation((result) => new Promise((resolve) => {
+      resolveOptionalHydration = () => {
+        result.events[0].rideshareSummary = { offerCount: 1, seatsLeft: 2, requests: 0, pending: 0, confirmed: 0, isFull: false };
+        resolve(result);
+      };
+    }));
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await screen.findByText('Availability needed');
+    fireEvent.click(screen.getByRole('button', { name: 'Maybe' }));
+    await screen.findByText('Avery Smith marked maybe.');
+    expect(screen.getByText('Availability saved')).toBeTruthy();
+
+    await act(async () => resolveOptionalHydration());
+
+    expect(screen.getByText('Availability saved')).toBeTruthy();
+    expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
   });
 
   it('shows a consistent fetch error and retries the primary event load', async () => {

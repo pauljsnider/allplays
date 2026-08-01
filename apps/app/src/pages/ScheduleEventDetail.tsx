@@ -417,10 +417,34 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             if (!selectedChildId && result.events[0]?.childId) {
               setSelectedChildId(result.events[0].childId);
             }
+            const optionalBaselines = new Map(result.events.map((event) => [event.eventKey, {
+              rideshareSummary: event.rideshareSummary,
+              assignments: event.assignments,
+              openAssignmentCount: event.openAssignmentCount,
+              assignmentClaimsHydrated: event.assignmentClaimsHydrated
+            }]));
             void hydrateParentScheduleEventOptionalDetails(result).then((hydrated) => {
-              setEvents((current) => current.some((event) => (
-                event.teamId === decodedTeamId && event.id === decodedEventId
-              )) ? [...hydrated.events] : current);
+              const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
+              setEvents((current) => current.map((event) => {
+                const optionalBaseline = optionalBaselines.get(event.eventKey);
+                const hydratedEvent = hydratedByKey.get(event.eventKey);
+                if (!optionalBaseline || !hydratedEvent) return event;
+                return {
+                  ...event,
+                  ...(event.rideshareSummary === optionalBaseline.rideshareSummary
+                    ? { rideshareSummary: hydratedEvent.rideshareSummary }
+                    : {}),
+                  ...(event.assignments === optionalBaseline.assignments
+                    && event.openAssignmentCount === optionalBaseline.openAssignmentCount
+                    && event.assignmentClaimsHydrated === optionalBaseline.assignmentClaimsHydrated
+                    ? {
+                      assignments: hydratedEvent.assignments,
+                      openAssignmentCount: hydratedEvent.openAssignmentCount,
+                      assignmentClaimsHydrated: hydratedEvent.assignmentClaimsHydrated
+                    }
+                    : {})
+                };
+              }));
             }).catch(() => undefined);
           },
           onError: () => {

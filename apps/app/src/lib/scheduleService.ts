@@ -4192,7 +4192,7 @@ async function loadCachedEventHydrationDetails(teamId: string, gameId: string, i
     ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
   ]);
   const [rsvpsResult, offersResult, claimsResult] = results;
-  if (includeOptionalDetails && results.every((result) => result.status === 'rejected')) {
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
     throw (rsvpsResult as PromiseRejectedResult).reason;
   }
   return {
@@ -4220,7 +4220,7 @@ async function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[],
     ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
   ]);
   const [rsvpsResult, offersResult, claimsResult] = results;
-  if (includeOptionalDetails && results.every((result) => result.status === 'rejected')) {
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
     throw (rsvpsResult as PromiseRejectedResult).reason;
   }
   return {

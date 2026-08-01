@@ -1609,6 +1609,48 @@ describe('parent schedule detail hydration', () => {
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a parent detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getMyRsvps).mockRejectedValue(new Error('parent RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('parent RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
+  it('rejects a staff detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getRsvps).mockRejectedValue(new Error('staff RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('staff RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
   it('keeps optional reads off the detail critical path and shares their in-flight requests', async () => {
     const cached = new Map<string, Promise<unknown>>();
     vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
