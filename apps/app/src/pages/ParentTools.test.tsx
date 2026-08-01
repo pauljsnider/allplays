@@ -390,7 +390,8 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access?teamId=team-1']);
 
         await screen.findByText('Request player access');
-        await waitFor(() => expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-1'));
+        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
 
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
@@ -410,15 +411,11 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access?teamId=missing-team']);
 
         await screen.findByText('Request player access');
-        // Wait for the manual-request panel to actually render (only true once
-        // teams have loaded and the deep-link reconciliation effect has run) before
-        // asserting on its contents — asserting synchronously right after only the
-        // load call was observed races the state update under full-suite load and
-        // was intermittently failing in CI while passing in isolation.
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('missing-team'));
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(teamSelect.value).toBe('');
-        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
-        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(await screen.findByRole('option', { name: 'No public teams found' })).toBeTruthy();
+        expect(parentToolsAccessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
         expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
