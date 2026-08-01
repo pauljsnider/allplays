@@ -70,11 +70,13 @@ describe('pull request CI consolidation', () => {
     it('keeps credentialed preview work off the required PR path', () => {
         const integration = workflow('pr-integration.yml');
         const preview = workflow('pr-preview.yml');
+        const agentGuidance = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
 
         expect(integration).not.toContain('uses: ./.github/workflows/deploy-preview.yml');
         expect(preview).toContain('workflow_dispatch:');
         expect(preview).toContain('run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
         expect(preview).toContain('uses: ./.github/workflows/deploy-preview.yml');
+        expect(agentGuidance).toContain('Normal PR pushes\n  and labels must not deploy Firebase preview channels.');
     });
 
     it('reuses version-bound Playwright browsers in the regression workflow', () => {
