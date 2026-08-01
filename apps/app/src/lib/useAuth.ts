@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AuthState, AuthUser } from './types';
+import type { AuthState, AuthUser, ProfileHydrationStatus } from './types';
 import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
 import { createLogger } from './logger';
@@ -40,6 +40,7 @@ export async function clearPerUserCaches(
 export function useAuth(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
+  const [profileHydration, setProfileHydration] = useState<ProfileHydrationStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +59,7 @@ export function useAuth(): AuthState {
     if (!currentUser) {
       setUser(null);
       setProfile(null);
+      setProfileHydration(null);
       clearAuthBootstrapHint();
       setLoading(false);
       return null;
@@ -67,12 +69,14 @@ export function useAuth(): AuthState {
       const hydrated = await hydrateFirebaseUser(currentUser);
       setUser(hydrated.user);
       setProfile(hydrated.profile);
+      setProfileHydration(hydrated.profileHydration);
       writeAuthBootstrapHint(hydrated.user);
       return hydrated.user;
     } catch (hydrateError: any) {
       setError(hydrateError?.message || 'Unable to load account profile.');
       setUser(null);
       setProfile(null);
+      setProfileHydration(null);
       clearAuthBootstrapHint();
       return null;
     } finally {
@@ -88,6 +92,7 @@ export function useAuth(): AuthState {
       if (!firebaseUser) {
         setUser(null);
         setProfile(null);
+        setProfileHydration(null);
         clearAuthBootstrapHint();
         setLoading(false);
         return;
@@ -97,11 +102,13 @@ export function useAuth(): AuthState {
         const hydrated = await hydrateFirebaseUser(firebaseUser);
         setUser(hydrated.user);
         setProfile(hydrated.profile);
+        setProfileHydration(hydrated.profileHydration);
         writeAuthBootstrapHint(hydrated.user);
       } catch (hydrateError: any) {
         setError(hydrateError?.message || 'Unable to load account profile.');
         setUser(null);
         setProfile(null);
+        setProfileHydration(null);
         clearAuthBootstrapHint();
       } finally {
         setLoading(false);
@@ -117,6 +124,7 @@ export function useAuth(): AuthState {
     const cacheCleanup = clearPerUserCaches();
     setUser(null);
     setProfile(null);
+    setProfileHydration(null);
     clearAuthBootstrapHint();
     setLoading(false);
     try {
@@ -139,6 +147,7 @@ export function useAuth(): AuthState {
     } finally {
       setUser(null);
       setProfile(null);
+      setProfileHydration(null);
       clearAuthBootstrapHint();
       setLoading(false);
     }
@@ -149,6 +158,7 @@ export function useAuth(): AuthState {
     return {
       user,
       profile,
+      profileHydration,
       loading,
       error,
       roles,
@@ -159,5 +169,5 @@ export function useAuth(): AuthState {
       refresh,
       signOut: signOutAndClear
     };
-  }, [error, loading, profile, refresh, signOutAndClear, user]);
+  }, [error, loading, profile, profileHydration, refresh, signOutAndClear, user]);
 }
