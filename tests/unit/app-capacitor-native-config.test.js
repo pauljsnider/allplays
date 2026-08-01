@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 function readProjectFile(path) {
     return readFileSync(path, 'utf8');
@@ -72,6 +73,31 @@ describe('Capacitor native config', () => {
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
+    });
+
+    it('keeps app dependency maintenance updates aligned across the manifest and lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const expectedDependencies = {
+            'lucide-react': { group: 'dependencies', version: '1.27.0' },
+            'react-router-dom': { group: 'dependencies', version: '7.18.2' },
+            'web-vitals': { group: 'dependencies', version: '6.0.1' },
+            globals: { group: 'devDependencies', version: '17.8.0' },
+            postcss: { group: 'devDependencies', version: '8.5.24' }
+        };
+
+        Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
+            const specifier = `^${expected.version}`;
+            const pnpmDependency = appPnpmLock.importers['.'][expected.group][dependency];
+
+            expect(appPackage[expected.group][dependency]).toBe(specifier);
+            expect(appPackageLock.packages[''][expected.group][dependency]).toBe(specifier);
+            expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
+            expect(pnpmDependency.specifier).toBe(specifier);
+            expect(pnpmDependency.version).toMatch(new RegExp(`^${expected.version.replaceAll('.', '\\.')}(?:$|\\()`));
+            expect(appPnpmLock.packages[`${dependency}@${expected.version}`]).toBeDefined();
+        });
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
