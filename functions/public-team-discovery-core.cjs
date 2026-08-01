@@ -1,6 +1,6 @@
 const PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE = 100;
 const PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE = 24;
-const PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS = 1000;
+const PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS = 200;
 
 function normalizePublicTeamSearch(value) {
   return String(value || '')
@@ -59,6 +59,62 @@ function encodeCursor(searchText, team) {
   }), 'utf8').toString('base64url');
 }
 
+function encodeDatastoreCursor(searchText, documentId) {
+  if (!documentId) return null;
+  return Buffer.from(JSON.stringify({
+    v: 2,
+    s: normalizePublicTeamSearch(searchText),
+    i: String(documentId)
+  }), 'utf8').toString('base64url');
+}
+
+function decodeDatastoreCursor(value, searchText) {
+  if (!value || typeof value !== 'string' || value.length > 1000) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (decoded?.v !== 2 ||
+        decoded?.s !== normalizePublicTeamSearch(searchText) ||
+        typeof decoded?.i !== 'string' ||
+        !decoded.i) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function buildDatastorePublicTeamPage(records = [], options = {}) {
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const boundedRecords = (Array.isArray(records) ? records : [])
+    .slice(0, PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS);
+  const items = [];
+  let lastScannedId = '';
+  let lastScannedIndex = -1;
+
+  for (const [index, record] of boundedRecords.entries()) {
+    lastScannedIndex = index;
+    lastScannedId = String(record?.id || '');
+    if (record?.item?.id && matchesPublicTeamSearch(record.item, searchText)) {
+      items.push(record.item);
+      if (items.length === pageSize) break;
+    }
+  }
+
+  const scannedAllLoadedRecords = lastScannedIndex === boundedRecords.length - 1;
+  const hasMore = items.length === pageSize
+    ? lastScannedIndex < records.length - 1
+    : options.hasMore === true || !scannedAllLoadedRecords;
+
+  return {
+    items,
+    nextCursor: hasMore && lastScannedId
+      ? encodeDatastoreCursor(searchText, lastScannedId)
+      : null
+  };
+}
+
 function decodeCursor(value, searchText) {
   if (!value || typeof value !== 'string' || value.length > 1000) return null;
   try {
@@ -102,8 +158,11 @@ module.exports = {
   PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE,
   PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
   comparePublicTeams,
+  buildDatastorePublicTeamPage,
   decodeCursor,
+  decodeDatastoreCursor,
   encodeCursor,
+  encodeDatastoreCursor,
   matchesPublicTeamSearch,
   normalizePageSize,
   normalizePublicTeamSearch,

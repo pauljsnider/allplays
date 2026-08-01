@@ -73,6 +73,10 @@ const {
 } = require('./registration-payment-webhook-core.cjs');
 const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const {
+  PUBLIC_RSVP_RATE_LIMITS,
+  buildPublicRsvpRateLimitBoundaries
+} = require('./public-rsvp-rate-limit-core.cjs');
+const {
   MAX_ATTESTED_EVENTS_PER_REQUEST,
   MAX_TELEMETRY_BODY_BYTES,
   TELEMETRY_RATE_LIMIT_WINDOW_MS,
@@ -112,8 +116,10 @@ const {
 } = require('./public-team-api-core.cjs');
 const {
   PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
+  buildDatastorePublicTeamPage,
+  decodeDatastoreCursor,
   normalizePublicTeamSearch,
-  paginatePublicTeams
+  normalizePageSize
 } = require('./public-team-discovery-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
@@ -447,27 +453,38 @@ const checkFamilyShareCalendarTargetRateLimit = createInMemoryRateLimiter({
   maxRequests: 20,
   maxKeys: 10_000
 });
-const checkPublicRsvpReadRateLimit = createInMemoryRateLimiter({
+const checkPublicRsvpTokenReadRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
-  maxRequests: 60,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.token,
   maxKeys: 10_000
 });
-const checkPublicRsvpWriteRateLimit = createInMemoryRateLimiter({
+const checkPublicRsvpTokenWriteRateLimit = createInMemoryRateLimiter({
   windowMs: 10 * 60_000,
-  maxRequests: 20,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.token,
+  maxKeys: 10_000
+});
+const checkPublicRsvpNetworkReadRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.network,
+  maxKeys: 10_000
+});
+const checkPublicRsvpNetworkWriteRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.network,
   maxKeys: 10_000
 });
 const publicRsvpDurableRateLimiters = new Map();
-function getPublicRsvpDurableRateLimiter(operation) {
-  if (!publicRsvpDurableRateLimiters.has(operation)) {
-    publicRsvpDurableRateLimiters.set(operation, createFirestoreFixedWindowRateLimiter({
+function getPublicRsvpDurableRateLimiter(operation, scope) {
+  const key = `${operation}:${scope}`;
+  if (!publicRsvpDurableRateLimiters.has(key)) {
+    publicRsvpDurableRateLimiters.set(key, createFirestoreFixedWindowRateLimiter({
       firestore,
       collectionName: 'publicRsvpRateLimits',
       windowMs: 10 * 60_000,
-      maxRequests: operation === 'write' ? 20 : 60
+      maxRequests: PUBLIC_RSVP_RATE_LIMITS[operation][scope]
     }));
   }
-  return publicRsvpDurableRateLimiters.get(operation);
+  return publicRsvpDurableRateLimiters.get(key);
 }
 const checkTelemetryIngressRateLimit = createInMemoryRateLimiter({
   windowMs: TELEMETRY_RATE_LIMIT_WINDOW_MS,
@@ -13727,7 +13744,7 @@ function writePublicRsvpCors(req, res) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
-  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
 }
 
@@ -13740,19 +13757,25 @@ function getPublicRsvpBodyByteLength(req) {
   return Buffer.byteLength(JSON.stringify(req.body || {}), 'utf8');
 }
 
-async function assertPublicRsvpRequestAllowed(req, res, operation) {
-  const checker = operation === 'write' ? checkPublicRsvpWriteRateLimit : checkPublicRsvpReadRateLimit;
-  const inMemory = checker(req);
-  if (!inMemory.allowed) {
-    res.set('Retry-After', String(inMemory.retryAfterSeconds));
+async function assertPublicRsvpRequestAllowed(req, res, operation, token) {
+  const boundaries = buildPublicRsvpRateLimitBoundaries({ operation, token, ip: getRequestIp(req) });
+  const tokenBoundary = boundaries.find((boundary) => boundary.scope === 'token');
+  const networkBoundary = boundaries.find((boundary) => boundary.scope === 'network');
+  const tokenChecker = operation === 'write' ? checkPublicRsvpTokenWriteRateLimit : checkPublicRsvpTokenReadRateLimit;
+  const networkChecker = operation === 'write' ? checkPublicRsvpNetworkWriteRateLimit : checkPublicRsvpNetworkReadRateLimit;
+  const tokenInMemory = tokenChecker({ ip: tokenBoundary.boundary });
+  const networkInMemory = networkChecker(req);
+  if (!tokenInMemory.allowed || !networkInMemory.allowed) {
+    res.set('Retry-After', String(Math.max(tokenInMemory.retryAfterSeconds, networkInMemory.retryAfterSeconds)));
     publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
     return false;
   }
-  const durable = await getPublicRsvpDurableRateLimiter(operation)(
-    `${operation}:network:${getRequestIp(req)}`
-  );
-  if (!durable.allowed) {
-    res.set('Retry-After', String(durable.retryAfterSeconds));
+  const [tokenDurable, networkDurable] = await Promise.all([
+    getPublicRsvpDurableRateLimiter(operation, 'token')(tokenBoundary.boundary),
+    getPublicRsvpDurableRateLimiter(operation, 'network')(networkBoundary.boundary)
+  ]);
+  if (!tokenDurable.allowed || !networkDurable.allowed) {
+    res.set('Retry-After', String(Math.max(tokenDurable.retryAfterSeconds, networkDurable.retryAfterSeconds)));
     publicRsvpJsonError(res, 429, 'Too many RSVP requests. Please wait and try again.');
     return false;
   }
@@ -14252,9 +14275,9 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       const tokenHash = publicRsvpHashToken(rawToken);
       const context = buildPublicRsvpContext({ team, event: eventRecord.data, player });
       const links = {
-        going: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=going`,
-        maybe: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=maybe`,
-        not_going: `${baseUrl}/public-rsvp.html#token=${encodeURIComponent(rawToken)}&response=not_going`
+        going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=going`,
+        maybe: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=maybe`,
+        not_going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=not_going`
       };
       batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
         teamId,
@@ -14383,22 +14406,22 @@ exports.getPublicRsvp = functions.https.onRequest(async (req, res) => {
     res.status(204).send('');
     return;
   }
-  if (req.method !== 'POST') {
+  if (req.method !== 'GET' && req.method !== 'POST') {
     publicRsvpJsonError(res, 405, 'Method not allowed');
     return;
   }
-  if (getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
+  if (req.method === 'POST' && getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES) {
     publicRsvpJsonError(res, 413, 'RSVP request is too large.');
     return;
   }
 
   try {
-    if (!await assertPublicRsvpRequestAllowed(req, res, 'read')) return;
-    const token = normalizePublicRsvpText(req.body?.token);
+    const token = normalizePublicRsvpText(req.body?.token || req.query?.token);
     if (!token) {
       publicRsvpJsonError(res, 400, 'Missing RSVP link token.');
       return;
     }
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'read', token)) return;
     const { tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     res.status(200).json({ ok: true, context: buildPublicRsvpContext(records) });
@@ -14423,13 +14446,13 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
   }
 
   try {
-    if (!await assertPublicRsvpRequestAllowed(req, res, 'write')) return;
     const token = normalizePublicRsvpText(req.body?.token);
     const response = normalizePublicRsvpResponse(req.body?.response);
     if (!token || !response) {
       publicRsvpJsonError(res, 400, 'Choose Going, Maybe, or Can\'t Go.');
       return;
     }
+    if (!await assertPublicRsvpRequestAllowed(req, res, 'write', token)) return;
     const { tokenHash, tokenRef, tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     const docId = `public_${tokenHash.slice(0, 24)}`;
@@ -15304,20 +15327,22 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
 exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
   const searchText = normalizePublicTeamSearch(data?.searchText);
-  const teamsSnap = await firestore.collection('teams')
+  const pageSize = normalizePageSize(data?.pageSize);
+  const cursor = decodeDatastoreCursor(data?.cursor, searchText);
+  let query = firestore.collection('teams')
     .where('isPublic', '==', true)
-    .limit(PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1)
-    .get();
-  if (teamsSnap.size > PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS) {
-    throwOpportunityError('resource-exhausted', 'Public team discovery is temporarily unavailable.');
-  }
-  const teams = teamsSnap.docs
-    .map((teamSnap) => serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {}))
-    .filter(Boolean);
-  const page = paginatePublicTeams(teams, {
+    .orderBy(admin.firestore.FieldPath.documentId());
+  if (cursor) query = query.startAfter(cursor.i);
+  const queryLimit = searchText ? PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1 : pageSize + 1;
+  const teamsSnap = await query.limit(queryLimit).get();
+  const loadedRecords = teamsSnap.docs.map((teamSnap) => ({
+    id: teamSnap.id,
+    item: serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})
+  }));
+  const page = buildDatastorePublicTeamPage(loadedRecords, {
     searchText,
-    pageSize: data?.pageSize,
-    cursor: data?.cursor
+    pageSize,
+    hasMore: teamsSnap.size === queryLimit
   });
   return {
     items: page.items,

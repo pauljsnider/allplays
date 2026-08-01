@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildDatastorePublicTeamPage,
   decodeCursor,
+  decodeDatastoreCursor,
   matchesPublicTeamSearch,
   paginatePublicTeams
 } = require('../public-team-discovery-core.cjs');
@@ -70,4 +72,27 @@ test('public team discovery advances accent-equivalent names by id', () => {
   ];
 
   assert.deepEqual(collectPublicTeamPages(teams), ['team-a', 'team-b']);
+});
+
+test('public team discovery remains available beyond the per-request scan boundary', () => {
+  const records = Array.from({ length: 201 }, (_, index) => ({
+    id: `team-${String(index).padStart(4, '0')}`,
+    item: { id: `team-${String(index).padStart(4, '0')}`, name: `Team ${index}` }
+  }));
+  const first = buildDatastorePublicTeamPage(records, {
+    searchText: 'not-present',
+    pageSize: 24,
+    hasMore: true
+  });
+
+  assert.deepEqual(first.items, []);
+  assert.equal(decodeDatastoreCursor(first.nextCursor, 'not-present').i, 'team-0199');
+
+  const second = buildDatastorePublicTeamPage(records.slice(200), {
+    searchText: '',
+    pageSize: 24,
+    hasMore: false
+  });
+  assert.deepEqual(second.items.map((team) => team.id), ['team-0200']);
+  assert.equal(second.nextCursor, null);
 });

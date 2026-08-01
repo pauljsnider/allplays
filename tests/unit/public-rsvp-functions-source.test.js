@@ -68,25 +68,32 @@ describe('public RSVP function safeguards', () => {
             .toBeLessThan(submitSource.indexOf('res.status(200).json'));
     });
 
-    it('keeps bearer tokens out of generated request URLs and rate-limits bounded POST bodies', () => {
+    it('keeps mixed-version RSVP clients working while rate-limiting bounded POST bodies', () => {
         const getSource = getSourceSection(
             'exports.getPublicRsvp = functions.https.onRequest',
             'exports.submitPublicRsvp'
         );
-        expect(source).toContain('/public-rsvp.html#token=');
-        expect(source).not.toContain('/public-rsvp.html?token=');
-        expect(getSource).toContain("req.method !== 'POST'");
-        expect(getSource).toContain('req.body?.token');
-        expect(getSource).not.toContain('req.query?.token');
-        expect(getSource).toContain('getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES');
-        expect(getSource).toContain("assertPublicRsvpRequestAllowed(req, res, 'read')");
-        expect(source).toContain("res.set('Access-Control-Allow-Methods', 'POST, OPTIONS')");
+        expect(source).toContain('/public-rsvp.html?token=');
+        expect(getSource).toContain("req.method !== 'GET' && req.method !== 'POST'");
+        expect(getSource).toContain('req.body?.token || req.query?.token');
+        expect(getSource).toContain("req.method === 'POST' && getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES");
+        expect(getSource).toContain("assertPublicRsvpRequestAllowed(req, res, 'read', token)");
+        expect(source).toContain("res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')");
         expect(indexes.fieldOverrides).toContainEqual({
             collectionGroup: 'publicRsvpRateLimits',
             fieldPath: 'expiresAt',
             ttl: true,
             indexes: []
         });
+    });
+
+    it('isolates primary RSVP limits by token beneath a higher shared-network ceiling', () => {
+        expect(source).toContain("buildPublicRsvpRateLimitBoundaries({ operation, token, ip: getRequestIp(req) })");
+        expect(source).toContain("getPublicRsvpDurableRateLimiter(operation, 'token')(tokenBoundary.boundary)");
+        expect(source).toContain("getPublicRsvpDurableRateLimiter(operation, 'network')(networkBoundary.boundary)");
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.network');
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.network');
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS[operation][scope]');
     });
 
     it('awaits the durable worker lifecycle and verifies per-player job ordering', () => {

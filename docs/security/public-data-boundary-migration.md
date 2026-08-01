@@ -22,7 +22,7 @@ The review and implementation baseline is
 | Manager and parent schedule | Canonical team/game reads | Unchanged | Emulator coverage proves owner/admin and linked-parent reads |
 | Scorekeeper, videographer, streamer, media helper | Canonical scoped reads/writes | Unchanged | Team/game helper grants are explicit and emulator-tested |
 | Assigned official | Broad team game read | Queries constrained by authorized UID/email | Both UID and normalized-email assignment forms are covered |
-| Public RSVP open/submit | Bearer in query string; repeat submissions queued repeat work | Fragment captured before external requests, POST body, rate limiting, atomic replay detection | Legacy query links are consumed then immediately removed; same-response retry is a no-op; transaction scope is revalidated and durable rate-limit rows have TTL |
+| Public RSVP open/submit | Bearer in query string; repeat submissions queued repeat work | Query token captured and removed before external requests, POST body for new clients, token-first rate limiting, atomic replay detection | During the mixed-version window, email links remain query-based and `getPublicRsvp` accepts legacy GET plus new POST; same-response retry is a no-op; transaction scope is revalidated and durable rate-limit rows have TTL |
 | Family share | Bearer in query string | Fragment for newly created legacy links; query links consumed and removed | Existing query links remain readable during transition |
 | Native authentication | WebView-persisted Firebase REST tokens | Native Firebase Authentication owns durable credentials; WebView stores metadata only | An already-loaded legacy session is held only in memory for the current run and is scrubbed from durable WebView stores |
 | Native profile photo upload | Persisted anonymous token for the separate image Firebase project | One anonymous image-project token minted in memory per upload and deleted after the request | Preserves the existing cross-project Storage authorization without durable WebView credentials or retained anonymous upload accounts |
@@ -36,9 +36,12 @@ the projections are live.
 1. Deploy `firestore.indexes.json` and wait for the `sharedGames.liveStatus`
    collection-group index to report `READY`.
 2. Deploy Functions containing team/game projections and the hardened RSVP
-   handlers.
-3. Deploy web/app clients and verify public browse, team detail, schedule, live
-   game, RSVP, family share, manager, parent, helper, and official workflows.
+   handlers. Keep legacy `GET getPublicRsvp?token=...` enabled and continue
+   generating query-token email links during this compatibility window.
+3. Deploy web/app clients and verify both the previously deployed query/GET
+   RSVP page and the new query-or-fragment/POST page, plus public browse, team
+   detail, schedule, live game, RSVP, family share, manager, parent, helper, and
+   official workflows.
 4. Deploy Firestore rules.
 5. Observe permission-denied rate, projection error rate, RSVP 429 rate,
    Functions latency/errors, and support reports through at least one normal
@@ -46,15 +49,20 @@ the projections are live.
 6. Move the apex host to Firebase Hosting only as a separate operational change.
    Do not enforce App Check until supported client coverage has been measured.
 
+After the new page has been established through the observation window and
+cached legacy HTML is no longer supported, switch newly generated email links
+to fragments first. Remove the GET compatibility handler only in a later
+release after query-link traffic has drained.
+
 ## Rollback
 
 - A rules regression is recovered by restoring the previous rules only; do not
   roll back projections first.
 - A projection regression is recovered by keeping the new Functions and
   restoring the previous rules while the client/serializer is repaired.
-- RSVP fragments remain compatible with the hardened handlers. Legacy query
-  links remain accepted by the page transition shim, so no token rewrite is
-  required.
+- RSVP query links remain compatible with both deployed page versions and the
+  hardened handlers. The new page removes the query before loading third-party
+  resources, so no token rewrite is required during rollback.
 - Native users signed in after this release use Keychain/Keystore-backed Firebase
   state. Users whose only credential was a WebView REST session may need to sign
   in once after a cold app restart; secrets are deliberately not re-persisted.

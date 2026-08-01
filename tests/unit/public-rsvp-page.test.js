@@ -39,4 +39,12 @@ describe('public RSVP page', () => {
         expect(source.indexOf('window.history.replaceState'))
             .toBeLessThan(source.indexOf('https://cdn.tailwindcss.com'));
     });
+
+    it('accepts the temporary query links generated for the previously deployed client', () => {
+        const source = readPublicRsvpPage();
+
+        expect(source).toContain("const legacyParams = new URLSearchParams(window.location.search)");
+        expect(source).toContain("fragmentParams.get('token') || legacyParams.get('token')");
+        expect(source).toContain("fragmentParams.get('response') || legacyParams.get('response')");
+    });
 });
