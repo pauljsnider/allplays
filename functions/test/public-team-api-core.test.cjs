@@ -4,6 +4,7 @@ const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
   canProjectPublicGame,
+  getPublicOpponentStatKeys,
   isStrictPublicTeam,
   normalizeTeamId,
   parsePublicGamesQuery,
@@ -11,6 +12,7 @@ const {
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
+  serializePublicOpponentStats,
   serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
 
@@ -266,6 +268,10 @@ test('games omit private/deleted/non-game events and remove imported assignment 
             number: '9',
             photoUrl: 'https://images.example/opponent.png',
             points: 3,
+            birthDate: 20080101,
+            age: 17,
+            weight: 145,
+            studentId: 987654321,
             notes: 'Private player note',
             parent_email: 'private@example.com'
           }
@@ -322,8 +328,39 @@ test('games omit private/deleted/non-game events and remove imported assignment 
   assert.equal(json.includes('Private bracket note'), false);
   assert.equal(json.includes('Private player note'), false);
   assert.equal(json.includes('private@example.com'), false);
+  assert.equal(json.includes('20080101'), false);
+  assert.equal(json.includes('987654321'), false);
+  assert.equal(json.includes('"age"'), false);
+  assert.equal(json.includes('"weight"'), false);
   assert.equal(json.includes('Parent Name'), false);
   assert.equal(json.includes('rsvpSummary'), false);
+});
+
+test('opponent stats allow explicitly public custom definitions and reject private definitions', () => {
+  const keys = getPublicOpponentStatKeys({
+    columns: ['PTS', 'CUSTOM_WINS', 'PRIVATE_RATING'],
+    statDefinitions: [
+      { id: 'custom_wins', scope: 'player', visibility: 'public' },
+      { id: 'private_rating', scope: 'player', visibility: 'private' },
+      { id: 'team_budget', scope: 'team', visibility: 'public' },
+      { id: 'efficiency', scope: 'player', visibility: 'public', formula: 'PTS/FGA' }
+    ]
+  });
+  const stats = serializePublicOpponentStats({
+    opponent1: {
+      name: 'Opponent One',
+      pts: 12,
+      custom_wins: 4,
+      private_rating: 99,
+      team_budget: 5000,
+      efficiency: 1.5,
+      studentId: 123456
+    }
+  }, keys);
+
+  assert.deepEqual(stats, {
+    opponent1: { name: 'Opponent One', pts: 12, custom_wins: 4 }
+  });
 });
 
 test('game results require completed status and both scores', () => {

@@ -113,14 +113,54 @@ function serializePublicGameTournament(value) {
   return Object.keys(tournament).length ? tournament : null;
 }
 
-function isPublicOpponentStatKey(value) {
-  const key = compactText(value, 64);
-  return /^[A-Za-z0-9_-]{1,64}$/.test(key) &&
-    !/(?:notes?|email|phone|contact|address|medical|parent|guardian|assignments?|uid|user_?id)/i.test(key);
+const KNOWN_PUBLIC_OPPONENT_STAT_KEYS = new Set([
+  'ab', 'aces', 'assists', 'ast', 'bb', 'blk', 'blks', 'blocks', 'digs', 'fg3a', 'fg3m',
+  'fga', 'fgm', 'fls', 'fouls', 'fp', 'fta', 'ftm', 'goal', 'goals', 'h', 'kills',
+  'points', 'pts', 'r', 'reb', 'rebounds', 'rbi', 'sack', 'saves', 'shots',
+  'shots_on_target', 'steals', 'stl', 'tack', 'td', 'to', 'turnovers', 'yds'
+]);
+
+function normalizePublicOpponentStatKey(value) {
+  return compactText(value, 64)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '');
 }
 
-function serializePublicOpponentStats(value) {
+function getPublicOpponentStatKeys(config = null) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return [...KNOWN_PUBLIC_OPPONENT_STAT_KEYS];
+  }
+  const definitions = Array.isArray(config.statDefinitions) ? config.statDefinitions : [];
+  const definitionsById = new Map();
+  definitions.forEach((definition) => {
+    const id = normalizePublicOpponentStatKey(
+      definition?.id || definition?.acronym || definition?.label
+    );
+    if (id) definitionsById.set(id, definition || {});
+  });
+  const keys = new Set();
+  (Array.isArray(config.columns) ? config.columns : []).forEach((column) => {
+    const key = normalizePublicOpponentStatKey(column);
+    const definition = definitionsById.get(key);
+    if (key && definition?.visibility !== 'private' && definition?.scope !== 'team' && !definition?.formula) {
+      keys.add(key);
+    }
+  });
+  definitionsById.forEach((definition, key) => {
+    if (definition?.visibility !== 'private' && definition?.scope !== 'team' && !definition?.formula) {
+      keys.add(key);
+    }
+  });
+  return [...keys];
+}
+
+function serializePublicOpponentStats(value, allowedStatKeys = null) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const allowlist = new Set(
+    (Array.isArray(allowedStatKeys) ? allowedStatKeys : getPublicOpponentStatKeys())
+      .map(normalizePublicOpponentStatKey)
+      .filter(Boolean)
+  );
   const opponentStats = {};
   Object.entries(value).slice(0, 100).forEach(([rawId, rawStats]) => {
     const id = compactText(rawId, 128);
@@ -137,7 +177,8 @@ function serializePublicOpponentStats(value) {
     if (number) stats.number = number;
     if (photoUrl) stats.photoUrl = photoUrl;
     Object.entries(rawStats).slice(0, 100).forEach(([key, rawValue]) => {
-      if (['name', 'number', 'photoUrl'].includes(key) || !isPublicOpponentStatKey(key)) return;
+      if (['name', 'number', 'photoUrl'].includes(key) ||
+          !allowlist.has(normalizePublicOpponentStatKey(key))) return;
       const numberValue = publicFiniteNumber(rawValue, -1_000_000_000_000, 1_000_000_000_000);
       if (numberValue !== null) stats[key] = numberValue;
     });
@@ -340,7 +381,7 @@ function sanitizePublicLocation(value) {
     .slice(0, 500);
 }
 
-function serializePublicGame(game = {}) {
+function serializePublicGame(game = {}, options = {}) {
   if (!isPublicGame(game)) return null;
   const startsAt = toDate(game?.date || game?.startsAt || game?.startDate || game?.start);
   if (!startsAt) return null;
@@ -358,7 +399,7 @@ function serializePublicGame(game = {}) {
 
   const endsAt = toDate(game?.endDate || game?.endsAt || game?.end || game?.dtend);
   const tournament = serializePublicGameTournament(game?.tournament);
-  const opponentStats = serializePublicOpponentStats(game?.opponentStats);
+  const opponentStats = serializePublicOpponentStats(game?.opponentStats, options.opponentStatKeys);
   const teamName = nullableText(game?.teamName, 160);
   const homeTeamName = nullableText(game?.homeTeamName, 160);
   const sport = nullableText(game?.sport, 80);
@@ -474,10 +515,15 @@ function buildPublicGamesResponse({
   from,
   to,
   limit = PUBLIC_TEAM_API_DEFAULT_GAMES,
-  now = new Date()
+  now = new Date(),
+  opponentStatKeysByGameId = new Map()
 }) {
   const publicGames = games
-    .map(serializePublicGame)
+    .map((game) => serializePublicGame(game, {
+      opponentStatKeys: opponentStatKeysByGameId instanceof Map
+        ? opponentStatKeysByGameId.get(String(game?.id || game?.gameId || ''))
+        : undefined
+    }))
     .filter(Boolean)
     .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
   return {
@@ -502,6 +548,7 @@ module.exports = {
   buildPublicRosterResponse,
   canProjectPublicGame,
   compareRosterPlayers,
+  getPublicOpponentStatKeys,
   isActivePublicPlayer,
   isExplicitlyShareableGame,
   isPublicGame,
@@ -513,6 +560,7 @@ module.exports = {
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
+  serializePublicOpponentStats,
   serializePublicPlayer,
   serializePublicTeam,
   serializePublicTeamDiscovery,

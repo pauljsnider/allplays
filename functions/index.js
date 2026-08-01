@@ -106,6 +106,7 @@ const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
   canProjectPublicGame,
+  getPublicOpponentStatKeys,
   isStrictPublicTeam,
   normalizeTeamId,
   parsePublicGamesQuery,
@@ -115,11 +116,9 @@ const {
   serializePublicTeamProfile
 } = require('./public-team-api-core.cjs');
 const {
-  PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
-  buildDatastorePublicTeamPage,
-  decodeDatastoreCursor,
   normalizePublicTeamSearch,
-  normalizePageSize
+  normalizePageSize,
+  scanDatastorePublicTeamPage
 } = require('./public-team-discovery-core.cjs');
 const {
   PUBLIC_HOMEPAGE_MAX_CANDIDATES_PER_QUERY,
@@ -6554,6 +6553,25 @@ async function getPublicTeamGames(teamId, range) {
   return [...games, ...sharedGamesByPath.values()];
 }
 
+async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
+  const configIds = [...new Set(
+    games.map((game) => normalizeTeamId(game?.statTrackerConfigId)).filter(Boolean)
+  )];
+  const configsById = new Map(await Promise.all(configIds.map(async (configId) => {
+    const configSnap = await firestore.doc(`teams/${teamId}/statTrackerConfigs/${configId}`).get();
+    return [configId, configSnap.exists ? configSnap.data() || {} : null];
+  })));
+  const keysByGameId = new Map();
+  games.forEach((game) => {
+    const gameId = String(game?.id || game?.gameId || '');
+    const configId = normalizeTeamId(game?.statTrackerConfigId);
+    if (gameId && configId && configsById.has(configId)) {
+      keysByGameId.set(gameId, getPublicOpponentStatKeys(configsById.get(configId)));
+    }
+  });
+  return keysByGameId;
+}
+
 function decodePublicSharedGamePath(gameId) {
   if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
   try {
@@ -6585,7 +6603,11 @@ async function getPublicGameProjection(teamId, gameId, team) {
     ...(sharedPath ? { _sharedGamePath: gameSnap.ref.path, isSharedGame: true } : {})
   };
   const game = sharedPath ? projectSharedGameForPublicTeam(rawGame, teamId) : rawGame;
-  return game && canProjectPublicGame(team, game) ? serializePublicGame(game) : null;
+  if (!game || !canProjectPublicGame(team, game)) return null;
+  const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, [game]);
+  return serializePublicGame(game, {
+    opponentStatKeys: opponentStatKeysByGameId.get(String(game.id || game.gameId || ''))
+  });
 }
 
 function sendPublicTeamApiSuccess(req, res, body) {
@@ -6788,13 +6810,15 @@ exports.publicTeamGamesV1 = functions
       }
 
       const games = await getPublicTeamGames(request.teamId, range);
+      const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(request.teamId, games);
       const body = buildPublicGamesResponse({
         teamId: request.teamId,
         team,
         games,
         from: range.from,
         to: range.to,
-        limit: range.limit
+        limit: range.limit,
+        opponentStatKeysByGameId
       });
       sendPublicTeamApiSuccess(req, res, body);
     } catch (error) {
@@ -15328,21 +15352,23 @@ exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
   const searchText = normalizePublicTeamSearch(data?.searchText);
   const pageSize = normalizePageSize(data?.pageSize);
-  const cursor = decodeDatastoreCursor(data?.cursor, searchText);
-  let query = firestore.collection('teams')
-    .where('isPublic', '==', true)
-    .orderBy(admin.firestore.FieldPath.documentId());
-  if (cursor) query = query.startAfter(cursor.i);
-  const queryLimit = searchText ? PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1 : pageSize + 1;
-  const teamsSnap = await query.limit(queryLimit).get();
-  const loadedRecords = teamsSnap.docs.map((teamSnap) => ({
-    id: teamSnap.id,
-    item: serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})
-  }));
-  const page = buildDatastorePublicTeamPage(loadedRecords, {
+  const page = await scanDatastorePublicTeamPage(async ({ afterId, limit: queryLimit }) => {
+    let query = firestore.collection('teams')
+      .where('isPublic', '==', true)
+      .orderBy(admin.firestore.FieldPath.documentId());
+    if (afterId) query = query.startAfter(afterId);
+    const teamsSnap = await query.limit(queryLimit).get();
+    return {
+      records: teamsSnap.docs.map((teamSnap) => ({
+        id: teamSnap.id,
+        item: serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})
+      })),
+      hasMore: teamsSnap.size === queryLimit
+    };
+  }, {
     searchText,
     pageSize,
-    hasMore: teamsSnap.size === queryLimit
+    cursor: typeof data?.cursor === 'string' ? data.cursor : null
   });
   return {
     items: page.items,
@@ -15363,13 +15389,15 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
   const team = await getStrictPublicTeam(teamId);
   if (!team) throwOpportunityError('not-found', 'Public team not found.');
   const games = await getPublicTeamGames(teamId, range);
+  const opponentStatKeysByGameId = await getPublicOpponentStatKeysByGameId(teamId, games);
   return buildPublicGamesResponse({
     teamId,
     team,
     games,
     from: range.from,
     to: range.to,
-    limit: range.limit
+    limit: range.limit,
+    opponentStatKeysByGameId
   });
 });
 

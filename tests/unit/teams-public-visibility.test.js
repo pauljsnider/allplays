@@ -31,8 +31,9 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
         expect(source).toContain("httpsCallable(functions, 'listPublicTeams')");
         expect(functionsSource).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
-        expect(functionsSource).toContain('if (cursor) query = query.startAfter(cursor.i);');
-        expect(functionsSource).toContain('const queryLimit = searchText ? PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1 : pageSize + 1;');
+        expect(functionsSource).toContain('scanDatastorePublicTeamPage(async ({ afterId, limit: queryLimit }) => {');
+        expect(functionsSource).toContain('if (afterId) query = query.startAfter(afterId);');
+        expect(functionsSource).toContain('hasMore: teamsSnap.size === queryLimit');
         expect(functionsSource).toContain('serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})');
         expect(functionsSource).not.toContain("throwOpportunityError('resource-exhausted', 'Public team discovery is temporarily unavailable.')");
         expect(coreSource).toContain('const PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS = 200;');

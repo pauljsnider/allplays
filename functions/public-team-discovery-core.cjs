@@ -115,6 +115,48 @@ function buildDatastorePublicTeamPage(records = [], options = {}) {
   };
 }
 
+async function scanDatastorePublicTeamPage(loadRecords, options = {}) {
+  if (typeof loadRecords !== 'function') {
+    throw new TypeError('loadRecords must be a function.');
+  }
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const initialCursor = decodeDatastoreCursor(options.cursor, searchText);
+  const items = [];
+  let afterId = initialCursor?.i || '';
+
+  while (items.length < pageSize) {
+    const loaded = await loadRecords({
+      afterId,
+      limit: searchText
+        ? PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1
+        : (pageSize - items.length) + 1
+    });
+    const records = Array.isArray(loaded?.records) ? loaded.records : [];
+    const page = buildDatastorePublicTeamPage(records, {
+      searchText,
+      pageSize: pageSize - items.length,
+      hasMore: loaded?.hasMore === true
+    });
+    items.push(...page.items);
+
+    if (!page.nextCursor) {
+      return { items, nextCursor: null };
+    }
+    if (items.length === pageSize) {
+      return { items, nextCursor: page.nextCursor };
+    }
+
+    const nextCursor = decodeDatastoreCursor(page.nextCursor, searchText);
+    if (!nextCursor?.i || nextCursor.i === afterId) {
+      throw new Error('Public team discovery scan did not advance.');
+    }
+    afterId = nextCursor.i;
+  }
+
+  return { items, nextCursor: null };
+}
+
 function decodeCursor(value, searchText) {
   if (!value || typeof value !== 'string' || value.length > 1000) return null;
   try {
@@ -167,5 +209,6 @@ module.exports = {
   normalizePageSize,
   normalizePublicTeamSearch,
   paginatePublicTeams,
-  publicTeamSearchText
+  publicTeamSearchText,
+  scanDatastorePublicTeamPage
 };

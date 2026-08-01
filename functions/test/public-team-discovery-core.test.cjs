@@ -6,7 +6,8 @@ const {
   decodeCursor,
   decodeDatastoreCursor,
   matchesPublicTeamSearch,
-  paginatePublicTeams
+  paginatePublicTeams,
+  scanDatastorePublicTeamPage
 } = require('../public-team-discovery-core.cjs');
 
 test('public team discovery matches public allowlisted location fields', () => {
@@ -95,4 +96,32 @@ test('public team discovery remains available beyond the per-request scan bounda
   });
   assert.deepEqual(second.items.map((team) => team.id), ['team-0200']);
   assert.equal(second.nextCursor, null);
+});
+
+test('server discovery fills a search page across empty datastore scan batches', async () => {
+  const records = Array.from({ length: 402 }, (_, index) => ({
+    id: `team-${String(index).padStart(4, '0')}`,
+    item: {
+      id: `team-${String(index).padStart(4, '0')}`,
+      name: index >= 400 ? `Needle ${index}` : `Team ${index}`
+    }
+  }));
+  const calls = [];
+  const page = await scanDatastorePublicTeamPage(async ({ afterId, limit }) => {
+    calls.push({ afterId, limit });
+    const start = afterId ? records.findIndex((record) => record.id === afterId) + 1 : 0;
+    const batch = records.slice(start, start + limit);
+    return { records: batch, hasMore: batch.length === limit };
+  }, {
+    searchText: 'needle',
+    pageSize: 2
+  });
+
+  assert.deepEqual(page.items.map((team) => team.id), ['team-0400', 'team-0401']);
+  assert.equal(page.nextCursor, null);
+  assert.deepEqual(calls, [
+    { afterId: '', limit: 201 },
+    { afterId: 'team-0199', limit: 201 },
+    { afterId: 'team-0399', limit: 201 }
+  ]);
 });
