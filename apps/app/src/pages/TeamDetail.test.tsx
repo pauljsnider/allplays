@@ -69,9 +69,23 @@ const insightsTabLoaderMocks = vi.hoisted(() => ({
   loadInsightsTab: vi.fn(() => import('./team-detail/InsightsTab').then((module) => ({ default: module.InsightsTab })))
 }));
 
+const moreTabRenderMocks = vi.hoisted(() => ({
+  render: vi.fn()
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
+vi.mock('./team-detail/MoreTab', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./team-detail/MoreTab')>();
+  return {
+    ...actual,
+    MoreTab: (props: Parameters<typeof actual.MoreTab>[0]) => {
+      moreTabRenderMocks.render(props);
+      return actual.MoreTab(props);
+    }
+  };
+});
 vi.mock('./team-detail/rosterTabLoader', () => rosterTabLoaderMocks);
 vi.mock('../lib/publicActions', () => ({
   copyPublicText: vi.fn(),
@@ -390,6 +404,28 @@ describe('TeamDetail', () => {
 
     expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
     expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
+  });
+
+  it('renders the extracted MoreTab module only when More is selected', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(moreTabRenderMocks.render).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: 'More' }));
+
+    await waitFor(() => expect(moreTabRenderMocks.render).toHaveBeenCalledWith(expect.objectContaining({
+      model: expect.objectContaining({ team: expect.objectContaining({ id: 'team-1' }) }),
+      auth,
+      staffPermissionsLoading: false,
+      staffPermissionsError: ''
+    })));
   });
 
   it('shows a retryable team detail error state and reloads on retry', async () => {
@@ -932,7 +968,7 @@ describe('TeamDetail', () => {
     expect(tabNav.querySelectorAll('button')).toHaveLength(5);
     const tabControls = within(tabNav);
     expect(tabControls.getByRole('button', { name: /roster/i }).getAttribute('aria-pressed')).toBe('true');
-    expect(screen.getAllByText('Add player').length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Add player')).length).toBeGreaterThan(0);
     expect(router.state.location.search).toBe('?tab=roster');
     vi.mocked(window.scrollTo).mockClear();
 
