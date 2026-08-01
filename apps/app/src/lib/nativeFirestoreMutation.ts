@@ -66,15 +66,15 @@ export function createNativeFirestoreDocumentId() {
   return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
-export async function commitNativeFirestoreWrites(writes: NativeFirestoreWrite[]) {
+export async function commitNativeFirestoreWrites(
+  writes: NativeFirestoreWrite[],
+  timeoutMs = nativeFirestoreWriteTimeoutMs
+) {
   if (!Array.isArray(writes) || writes.length === 0) return;
   if (writes.length > 200) throw new Error('Native Firestore commit is too large.');
 
   const projectId = getProjectId();
   const requestUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents:commit`;
-  const idToken = await getNativeAuthIdToken(true);
-  if (!idToken) throw new Error('Native auth token is unavailable.');
-
   const body = {
     writes: writes.map((write) => {
       const pathSegments = normalizePathSegments(write.pathSegments);
@@ -93,31 +93,45 @@ export async function commitNativeFirestoreWrites(writes: NativeFirestoreWrite[]
     })
   };
 
-  const headers = await getPrimaryAppCheckHeaders({
-    Authorization: `Bearer ${idToken}`,
-    'Content-Type': 'application/json'
-  }, requestUrl);
   const abortController = new AbortController();
-  const timeoutId = window.setTimeout(() => abortController.abort(), nativeFirestoreWriteTimeoutMs);
+  let timeoutId: number | undefined;
+  let requestDispatched = false;
   let responseReceived = false;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      abortController.abort();
+      reject(requestDispatched
+        ? new NativeFirestoreCommitUncertainError()
+        : new Error('The save timed out before it was sent. Check your connection and try again.'));
+    }, timeoutMs);
+  });
   try {
-    const response = await fetch(requestUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: abortController.signal
-    });
-    responseReceived = true;
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.error?.message || `Firestore write failed (${response.status}).`);
-    }
-  } catch (error: any) {
-    if (!responseReceived) {
+    await Promise.race([timeout, (async () => {
+      const idToken = await getNativeAuthIdToken(true);
+      if (!idToken) throw new Error('Native auth token is unavailable.');
+      const headers = await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': 'application/json'
+      }, requestUrl);
+      requestDispatched = true;
+      const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: abortController.signal
+      });
+      responseReceived = true;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || `Firestore write failed (${response.status}).`);
+      }
+    })()]);
+  } catch (error) {
+    if (requestDispatched && !responseReceived && !(error instanceof NativeFirestoreCommitUncertainError)) {
       throw new NativeFirestoreCommitUncertainError();
     }
     throw error;
   } finally {
-    window.clearTimeout(timeoutId);
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
   }
 }

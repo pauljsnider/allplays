@@ -18,6 +18,31 @@ export function sanitizeNativeStorageSegment(value: unknown, fallback: string) {
     .replace(/[^\w.-]+/g, '_') || fallback;
 }
 
+async function runNativeStorageOperation<T>({
+  timeoutMs,
+  timeoutMessage,
+  operation
+}: {
+  timeoutMs: number;
+  timeoutMessage: string;
+  operation: (signal: AbortSignal) => Promise<T>;
+}) {
+  const abortController = new AbortController();
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      abortController.abort();
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation(abortController.signal), timeout]);
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+  }
+}
+
 export async function uploadNativePrimaryStorageFile({
   file,
   buildPath,
@@ -38,56 +63,52 @@ export async function uploadNativePrimaryStorageFile({
   if (!userId) {
     throw new Error(`Sign in before uploading ${label.toLowerCase()}.`);
   }
-  const idToken = await getNativeAuthIdToken(true);
-  if (!idToken) {
-    throw new Error('Native auth token is unavailable.');
-  }
+  return runNativeStorageOperation({
+    timeoutMs,
+    timeoutMessage: `${label} upload timed out. Check your connection and try again.`,
+    operation: async (signal) => {
+      const idToken = await getNativeAuthIdToken(true);
+      if (!idToken) {
+        throw new Error('Native auth token is unavailable.');
+      }
 
-  const safeFileName = sanitizeNativeStorageSegment(file.name, 'media');
-  const path = buildPath(sanitizeNativeStorageSegment(userId, 'unknown-user'), safeFileName);
-  if (!path || path.startsWith('/') || path.includes('..')) {
-    throw new Error(`${label} upload path is invalid.`);
-  }
+      const safeFileName = sanitizeNativeStorageSegment(file.name, 'media');
+      const path = buildPath(sanitizeNativeStorageSegment(userId, 'unknown-user'), safeFileName);
+      if (!path || path.startsWith('/') || path.includes('..')) {
+        throw new Error(`${label} upload path is invalid.`);
+      }
 
-  const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
-  const abortController = new AbortController();
-  let uploadTimeoutId: number | undefined;
-  const uploadTimeout = new Promise<Response>((_, reject) => {
-    uploadTimeoutId = window.setTimeout(() => {
-      abortController.abort();
-      reject(new Error(`${label} upload timed out. Check your connection and try again.`));
-    }, timeoutMs);
+      const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
+      const headers = await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': file.type || 'application/octet-stream'
+      }, requestUrl);
+      const response = await fetch(requestUrl, {
+        method: 'POST',
+        headers,
+        body: file,
+        signal
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error?.message || `${label} upload failed (${response.status}).`);
+      }
+
+      const storedPath = String(payload.name || path);
+      const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+      const url = token
+        ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+        : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media`;
+
+      return {
+        url,
+        path: storedPath,
+        userId,
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: Number.isFinite(file.size) ? file.size : null
+      };
+    }
   });
-  const uploadRequest = fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': file.type || 'application/octet-stream'
-    }, requestUrl),
-    body: file,
-    signal: abortController.signal
-  });
-  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
-    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `${label} upload failed (${response.status}).`);
-  }
-
-  const storedPath = String(payload.name || path);
-  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-  const url = token
-    ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
-    : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media`;
-
-  return {
-    url,
-    path: storedPath,
-    userId,
-    mimeType: file.type || 'application/octet-stream',
-    sizeBytes: Number.isFinite(file.size) ? file.size : null
-  };
 }
 
 export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
@@ -138,32 +159,29 @@ export async function uploadNativeTeamPhotoFile(file: File, teamId: string) {
   });
 }
 
-export async function deleteNativePrimaryStorageFile(path: string) {
+export async function deleteNativePrimaryStorageFile(path: string, timeoutMs = defaultCleanupTimeoutMs) {
   const bucket = firebaseAuth.app?.options?.storageBucket;
   const normalizedPath = String(path || '').trim();
   if (!bucket || !normalizedPath || normalizedPath.startsWith('/') || normalizedPath.includes('..')) {
     throw new Error('Storage cleanup path is invalid.');
   }
-  const idToken = await getNativeAuthIdToken(true);
-  if (!idToken) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(normalizedPath)}`;
-  const headers = await getPrimaryAppCheckHeaders({ Authorization: `Bearer ${idToken}` }, requestUrl);
-  const abortController = new AbortController();
-  const timeoutId = window.setTimeout(() => abortController.abort(), defaultCleanupTimeoutMs);
-  try {
-    const response = await fetch(requestUrl, {
-      method: 'DELETE',
-      headers,
-      signal: abortController.signal
-    });
-    if (!response.ok && response.status !== 404) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload?.error?.message || `Storage cleanup failed (${response.status}).`);
+  await runNativeStorageOperation({
+    timeoutMs,
+    timeoutMessage: 'Storage cleanup timed out.',
+    operation: async (signal) => {
+      const idToken = await getNativeAuthIdToken(true);
+      if (!idToken) throw new Error('Native auth token is unavailable.');
+      const headers = await getPrimaryAppCheckHeaders({ Authorization: `Bearer ${idToken}` }, requestUrl);
+      const response = await fetch(requestUrl, {
+        method: 'DELETE',
+        headers,
+        signal
+      });
+      if (!response.ok && response.status !== 404) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error?.message || `Storage cleanup failed (${response.status}).`);
+      }
     }
-  } catch (error: any) {
-    if (error?.name === 'AbortError') throw new Error('Storage cleanup timed out.');
-    throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
+  });
 }

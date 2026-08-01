@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn(),
@@ -21,12 +21,22 @@ vi.mock('./adapters/legacyFirebaseAppCheck', () => appCheckMocks);
 import {
   deleteNativePrimaryStorageFile,
   uploadNativePlayerPhoto,
+  uploadNativePrimaryStorageFile,
   uploadNativeTeamPhotoFile,
   uploadNativeUserProfilePhoto
 } from './nativeStorageUpload';
 
+const neverResolves = <T>() => new Promise<T>(() => {});
+
+async function expectTimeout(promise: Promise<unknown>, message: string) {
+  const assertion = expect(promise).rejects.toThrow(message);
+  await vi.advanceTimersByTimeAsync(10);
+  await assertion;
+}
+
 describe('native primary Storage profile uploads', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     authMocks.getNativeAuthUserId.mockReturnValue('user-1');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-id-token');
@@ -39,6 +49,10 @@ describe('native primary Storage profile uploads', () => {
         downloadTokens: 'download-token'
       })
     })));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('uploads the signed-in user photo to primary Storage with native auth and App Check', async () => {
@@ -112,5 +126,48 @@ describe('native primary Storage profile uploads', () => {
         'X-Firebase-AppCheck': 'app-check-token'
       })
     }));
+  });
+
+  it.each([
+    ['native auth', () => authMocks.getNativeAuthIdToken.mockReturnValueOnce(neverResolves())],
+    ['App Check', () => appCheckMocks.getPrimaryAppCheckHeaders.mockReturnValueOnce(neverResolves())],
+    ['response parsing', () => vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => neverResolves()
+    } as Response)]
+  ])('times out an upload stalled during %s', async (_stage, stall) => {
+    vi.useFakeTimers();
+    stall();
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+
+    const upload = uploadNativePrimaryStorageFile({
+      file,
+      label: 'Photo',
+      timeoutMs: 10,
+      buildPath: (userId, fileName) => `profile-photos/users/${userId}/${fileName}`
+    });
+
+    await expectTimeout(upload, 'Photo upload timed out');
+  });
+
+  it.each([
+    ['native auth', () => authMocks.getNativeAuthIdToken.mockReturnValueOnce(neverResolves())],
+    ['App Check', () => appCheckMocks.getPrimaryAppCheckHeaders.mockReturnValueOnce(neverResolves())],
+    ['response parsing', () => vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => neverResolves()
+    } as Response)]
+  ])('times out cleanup stalled during %s', async (_stage, stall) => {
+    vi.useFakeTimers();
+    stall();
+
+    const cleanup = deleteNativePrimaryStorageFile(
+      'profile-photos/users/user-1/photo.jpg',
+      10
+    );
+
+    await expectTimeout(cleanup, 'Storage cleanup timed out');
   });
 });

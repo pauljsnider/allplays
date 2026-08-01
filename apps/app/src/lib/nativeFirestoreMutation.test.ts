@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn()
@@ -23,8 +23,11 @@ import {
   NativeFirestoreCommitUncertainError
 } from './nativeFirestoreMutation';
 
+const neverResolves = <T>() => new Promise<T>(() => {});
+
 describe('native Firestore mutations', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-id-token');
     vi.stubGlobal('fetch', vi.fn(async () => ({
@@ -32,6 +35,10 @@ describe('native Firestore mutations', () => {
       status: 200,
       json: async () => ({ writeResults: [] })
     })));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('commits merge and create-only documents atomically with native auth and App Check', async () => {
@@ -127,5 +134,41 @@ describe('native Firestore mutations', () => {
 
     expect(error).not.toBeInstanceOf(NativeFirestoreCommitUncertainError);
     expect(error).toMatchObject({ message: 'permission denied' });
+  });
+
+  it.each([
+    ['native auth', () => authMocks.getNativeAuthIdToken.mockReturnValueOnce(neverResolves())],
+    ['App Check', () => appCheckMocks.getPrimaryAppCheckHeaders.mockReturnValueOnce(neverResolves())]
+  ])('times out a commit stalled during %s before dispatch', async (_stage, stall) => {
+    vi.useFakeTimers();
+    stall();
+    const commit = commitNativeFirestoreWrites([{
+      pathSegments: ['teams', 'team-1'],
+      data: { photoUrl: 'https://primary.example/team.jpg' }
+    }], 10);
+    const assertion = expect(commit).rejects.toThrow('timed out before it was sent');
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    await assertion;
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('times out stalled response parsing as an uncertain dispatched commit', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => neverResolves()
+    } as Response);
+    const commit = commitNativeFirestoreWrites([{
+      pathSegments: ['teams', 'team-1'],
+      data: { photoUrl: 'https://primary.example/team.jpg' }
+    }], 10);
+    const assertion = expect(commit).rejects.toBeInstanceOf(NativeFirestoreCommitUncertainError);
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    await assertion;
   });
 });
