@@ -27,7 +27,7 @@ describe('mobile-build CI workflow', () => {
         expect(workflow).toContain('android-debug/');
         expect(changesSection).toContain('android/');
         expect(changesSection).toContain('ios/');
-        expect(changesSection).toContain('capacitor\\.config\\.(json|ts)');
+        expect(changesSection).toContain('capacitor\\.config\\.(js|json|ts)');
         expect(changesSection).toContain('apps/app/package\\.json');
         expect(changesSection).toContain('apps/app/package-lock\\.json');
         expect(changesSection).not.toContain('mobile-build\\.yml|apps/app/|android/');
@@ -38,6 +38,7 @@ describe('mobile-build CI workflow', () => {
             '.github/workflows/mobile-build.yml',
             'android/app/build.gradle',
             'ios/App/App.xcodeproj/project.pbxproj',
+            'capacitor.config.js',
             'capacitor.config.ts',
             'package-lock.json',
             'apps/app/package.json'

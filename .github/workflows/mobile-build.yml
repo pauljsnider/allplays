@@ -59,7 +59,7 @@ jobs:
           # by pr-fast/preview-smoke. Rebuilding both native shells for an
           # ordinary apps/app/src change adds minutes without exercising a new
           # native boundary. Reserve these jobs for shell/config/plugin inputs.
-          if echo "$CHANGED" | grep -Eq '^(\.github/workflows/mobile-build\.yml|android/|ios/|capacitor\.config\.(json|ts)|package\.json|package-lock\.json|apps/app/package\.json|apps/app/package-lock\.json)'; then
+          if echo "$CHANGED" | grep -Eq '^(\.github/workflows/mobile-build\.yml|android/|ios/|capacitor\.config\.(js|json|ts)|package\.json|package-lock\.json|apps/app/package\.json|apps/app/package-lock\.json)'; then
             echo "mobile=true" >> "$GITHUB_OUTPUT"
           else
             echo "mobile=false" >> "$GITHUB_OUTPUT"
