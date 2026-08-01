@@ -220,26 +220,37 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
     });
 
-    it('stages the team calendar export with a fresh db module key', () => {
+    it('stages every public-boundary db consumer with the fresh module key', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
-        const rootDir = makeTempDir();
         const destinationDir = path.join(makeTempDir(), 'site');
 
-        writeFile(path.join(rootDir, 'index.html'), '<!doctype html><html><head></head><body>Home</body></html>');
-        writeFile(path.join(rootDir, 'widget-scoreboard.html'), '<!doctype html><html><head></head><body>Score</body></html>');
-        writeFile(path.join(rootDir, 'team.html'), fs.readFileSync(path.join(repoRoot, 'team.html'), 'utf8'));
-        writeFile(path.join(rootDir, 'js', 'db.js'), fs.readFileSync(path.join(repoRoot, 'js', 'db.js'), 'utf8'));
-        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify(makePagesSecurityFirebaseConfig()));
-        writeFile(path.join(rootDir, 'apps', 'app', 'dist', 'index.html'), '<!doctype html><html><head></head><body><div id="root"></div></body></html>');
+        stagePagesBundle(destinationDir, { rootDir: repoRoot });
 
-        stagePagesBundle(destinationDir, { rootDir });
+        const stagedSources = [];
+        function collectSources(directory) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                const entryPath = path.join(directory, entry.name);
+                if (entry.isDirectory()) {
+                    collectSources(entryPath);
+                } else if (entry.name.endsWith('.html') || entry.name.endsWith('.js')) {
+                    stagedSources.push(fs.readFileSync(entryPath, 'utf8'));
+                }
+            }
+        }
+        collectSources(destinationDir);
 
-        const stagedTeam = fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8');
-        const stagedDb = fs.readFileSync(path.join(destinationDir, 'js', 'db.js'), 'utf8');
-        expect(stagedTeam).toMatch(
-            /import \{[^}]*getPublicTeamCalendarEvents[^}]*\} from '\.\/js\/db\.js\?v=132';/
+        const dbModuleKeys = stagedSources
+            .flatMap((source) => [...source.matchAll(/(?:\.\/|\.\.\/)?db\.js\?v=(\d+)/g)])
+            .map((match) => match[1]);
+
+        expect(dbModuleKeys).toHaveLength(38);
+        expect(new Set(dbModuleKeys)).toEqual(new Set(['135']));
+        expect(fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8')).toContain(
+            'getPublicTeamCalendarEvents, getConfigs'
         );
-        expect(stagedDb).toMatch(/export async function getPublicTeamCalendarEvents\b/);
+        expect(fs.readFileSync(path.join(destinationDir, 'js', 'db.js'), 'utf8')).toMatch(
+            /export async function getPublicTeamCalendarEvents\b/
+        );
     });
 
     it('keeps local test harnesses out of production links and smoke routing', () => {

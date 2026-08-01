@@ -87,7 +87,7 @@ const {
   getTeam,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=131');
+} = await import('../../js/db.js?v=135');
 
 describe('team access query resilience', () => {
   beforeEach(() => {

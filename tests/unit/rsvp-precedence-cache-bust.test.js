@@ -6,21 +6,21 @@ function readRepoFile(path) {
 }
 
 describe('RSVP precedence cache delivery', () => {
-    it('uses one fresh db module key and versions the indirect staff breakdown graph', () => {
+    it('uses the public-boundary db module key and versions the indirect staff breakdown graph', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=131',
-            'calendar.html': 'db.js?v=131',
-            'edit-schedule.html': 'db.js?v=131',
-            'game-day.html': 'db.js?v=131',
-            'login.html': 'db.js?v=131',
-            'parent-dashboard.html': 'db.js?v=134',
-            'team.html': 'db.js?v=132',
-            'team-chat.html': 'db.js?v=131',
-            'js/auth.js': 'db.js?v=131',
-            'profile.html': 'db.js?v=131',
-            'js/team-media.js': 'db.js?v=131'
+            'accept-invite.html': 'db.js?v=135',
+            'calendar.html': 'db.js?v=135',
+            'edit-schedule.html': 'db.js?v=135',
+            'game-day.html': 'db.js?v=135',
+            'login.html': 'db.js?v=135',
+            'parent-dashboard.html': 'db.js?v=135',
+            'team.html': 'db.js?v=135',
+            'team-chat.html': 'db.js?v=135',
+            'js/auth.js': 'db.js?v=135',
+            'profile.html': 'db.js?v=135',
+            'js/team-media.js': 'db.js?v=135'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
