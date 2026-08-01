@@ -107,6 +107,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
+  const useAuthProfile = auth.profileHydration === 'success' && auth.profile != null;
   const searchSection = (() => {
     const section = searchParams.get('section');
     return (section === 'account' || section === 'alerts' || section === 'invites' || section === 'security') ? section as ProfileSectionId : 'account';
@@ -135,7 +136,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeEmail, setAccountMergeEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(auth.profileHydration !== 'success');
+  const [loading, setLoading] = useState(!useAuthProfile);
   const [busy, setBusy] = useState('');
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
@@ -329,7 +330,6 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       photoSelectionIdRef.current += 1;
-      const useAuthProfile = auth.profileHydration === 'success' && auth.profile != null;
       setLoading(!useAuthProfile);
       setProfileStatus(null);
       setNotificationStatus(null);
@@ -415,7 +415,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.profile, auth.profileHydration, user]);
+  }, [auth.profile, useAuthProfile, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();
