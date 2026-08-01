@@ -54,7 +54,7 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
         expect(handlerSource).toContain('const nextUserData = {');
         expect(handlerSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
-        expect(handlerSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
+        expect(handlerSource).toContain('trustedEmail: signedInEmail || null');
         expect(handlerSource).toContain("status: 'accepted'");
     });
 });
