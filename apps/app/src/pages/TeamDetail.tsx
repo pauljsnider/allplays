@@ -31,6 +31,7 @@ import {
   Zap
 } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -65,7 +66,6 @@ const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
   seasons: []
 };
 const initialStandingsRowLimit = 5;
-const LazyRosterTab = lazy(loadRosterTab);
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'overview', label: 'Overview', icon: Trophy },
@@ -119,6 +119,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppServiceError | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [rosterTabRetryVersion, setRosterTabRetryVersion] = useState(0);
+  const LazyRosterTab = useMemo(() => lazy(loadRosterTab), [rosterTabRetryVersion]);
   const activeTab = getTeamTabFromSearch(location.search);
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
@@ -596,9 +598,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
       {activeTab === 'roster' ? (
-        <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading roster" aria-live="polite">Loading roster…</div>}>
-          <LazyRosterTab key={model.team.id} model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} />
-        </Suspense>
+        <ErrorBoundary name="team-detail-roster" onRetry={() => setRosterTabRetryVersion((current) => current + 1)}>
+          <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading roster" aria-live="polite">Loading roster…</div>}>
+            <LazyRosterTab key={model.team.id} model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? (

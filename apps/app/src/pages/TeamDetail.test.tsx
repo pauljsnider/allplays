@@ -440,6 +440,28 @@ describe('TeamDetail', () => {
     expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a rejected roster import local and retries it with a fresh lazy component', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    rosterTabLoaderMocks.loadRosterTab.mockRejectedValueOnce(new Error('Roster chunk unavailable.'));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
+    expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(2);
+  });
+
   it('uses the lightweight bootstrap on roster and loads the authoritative schedule when schedule opens', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
