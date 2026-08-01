@@ -384,7 +384,6 @@ describe('Profile invites', () => {
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
       fullName: 'Pat Parent Updated',
       phone: '555-0111',
-      email: 'parent@example.com',
       photoUrl: null
     }));
     await screen.findByText('Profile saved.');
