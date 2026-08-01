@@ -459,6 +459,7 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
+    expect(screen.queryByRole('alert', { name: 'Screen error' })).toBeNull();
     expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(2);
   });
 

@@ -120,7 +120,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [error, setError] = useState<AppServiceError | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
   const [rosterTabRetryVersion, setRosterTabRetryVersion] = useState(0);
-  const LazyRosterTab = useMemo(() => lazy(loadRosterTab), [rosterTabRetryVersion]);
+  const LazyRosterTab = useMemo(() => {
+    void rosterTabRetryVersion;
+    return lazy(loadRosterTab);
+  }, [rosterTabRetryVersion]);
   const activeTab = getTeamTabFromSearch(location.search);
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
