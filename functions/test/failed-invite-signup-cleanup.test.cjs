@@ -82,6 +82,7 @@ function comparable(value) {
 
 function makeFirestore(seed = {}) {
   const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
+  const transactionWrites = [];
   const fieldValue = {
     delete: () => ({ __op: 'delete' }),
     serverTimestamp: () => new FakeTimestamp(Date.now()),
@@ -172,6 +173,7 @@ function makeFirestore(seed = {}) {
 
   return {
     _state: state,
+    _transactionWrites: transactionWrites,
     FieldValue: fieldValue,
     Timestamp: FakeTimestamp,
     FieldPath: { documentId: () => '__name__' },
@@ -180,9 +182,18 @@ function makeFirestore(seed = {}) {
     async runTransaction(handler) {
       const transaction = {
         get: (ref) => ref.get(),
-        set: (ref, value, options) => ref.set(value, options),
-        update: (ref, value) => ref.update(value),
-        delete: (ref) => ref.delete()
+        set: (ref, value, options) => {
+          transactionWrites.push({ operation: 'set', path: ref.path });
+          return ref.set(value, options);
+        },
+        update: (ref, value) => {
+          transactionWrites.push({ operation: 'update', path: ref.path });
+          return ref.update(value);
+        },
+        delete: (ref) => {
+          transactionWrites.push({ operation: 'delete', path: ref.path });
+          return ref.delete();
+        }
       };
       return handler(transaction);
     },
@@ -335,6 +346,46 @@ function cleanupSeed({ uid = 'new-parent', includeOtherParentLink = false, codeI
   };
 }
 
+function redemptionSeed(type, { uid = 'invited-parent', email = 'invited@example.com' } = {}) {
+  const code = type === 'parent_invite' ? 'PARENT01' : type === 'household_invite' ? 'HOME1234' : 'COPO1234';
+  return {
+    'accessCodes/invite-1': {
+      code,
+      type,
+      used: false,
+      status: 'pending',
+      email,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      relation: type === 'coparent_invite' ? 'Co-parent' : 'Parent',
+      organizerUserId: 'organizer-1',
+      familyMembershipId: 'membership-1'
+    },
+    [`users/${uid}`]: {
+      email,
+      roles: [],
+      parentOf: [],
+      parentTeamIds: [],
+      parentPlayerKeys: []
+    },
+    'teams/team-1': { name: 'Bears' },
+    'teams/team-1/players/player-1': { name: 'Avery', number: '7' },
+    'users/organizer-1/familyMemberships/membership-1': {
+      status: 'pending',
+      organizerUserId: 'organizer-1',
+      email,
+      teamId: 'team-1',
+      playerId: 'player-1'
+    }
+  };
+}
+
+const familyInviteCases = [
+  ['parent', 'parent_invite', 'redeemParentInvite', 'PARENT01'],
+  ['household', 'household_invite', 'redeemHouseholdInvite', 'HOME1234'],
+  ['co-parent', 'coparent_invite', 'redeemCoParentInvite', 'COPO1234']
+];
+
 test.beforeEach(() => {
   delete require.cache[repoIndexPath];
   Module._load = patchedModuleLoad;
@@ -457,3 +508,68 @@ test('cleanupInviteSignupOnAuthDelete uses the auth-delete record without fetchi
   assert.equal(firestore.snapshot(`users/${uid}`), undefined);
   assert.equal(firestore.snapshot(`publicUserProfiles/${uid}`), undefined);
 });
+
+for (const [label, type, callableName, code] of familyInviteCases) {
+  test(`${label} redemption rejects spoofed request email when Auth has no email with zero writes`, async () => {
+    const uid = 'invited-parent';
+    const seed = redemptionSeed(type, { uid });
+    const before = clone(seed);
+    const { firestore, mod } = loadFunctions(seed, { authUsers: { [uid]: { uid } } });
+
+    await assert.rejects(
+      mod[callableName](
+        { userId: uid, code, authEmail: 'invited@example.com' },
+        { auth: { uid, token: {} } }
+      ),
+      (error) => error?.code === 'permission-denied'
+    );
+
+    assert.deepEqual(firestore._transactionWrites, []);
+    Object.entries(before).forEach(([path, value]) => {
+      assert.deepEqual(firestore.snapshot(path), value);
+    });
+  });
+
+  test(`${label} redemption rejects mismatched authoritative email with zero writes`, async () => {
+    const uid = 'invited-parent';
+    const seed = redemptionSeed(type, { uid });
+    const { firestore, mod } = loadFunctions(seed);
+
+    await assert.rejects(
+      mod[callableName](
+        { userId: uid, code, authEmail: 'invited@example.com' },
+        authContext(uid, 'other@example.com')
+      ),
+      (error) => error?.code === 'permission-denied'
+    );
+
+    assert.deepEqual(firestore._transactionWrites, []);
+    assert.equal(firestore.snapshot('accessCodes/invite-1').status, 'pending');
+    assert.deepEqual(firestore.snapshot(`users/${uid}`).parentTeamIds, []);
+    assert.equal(firestore.snapshot('teams/team-1/players/player-1/private/profile'), undefined);
+  });
+
+  test(`${label} redemption accepts a matching authoritative email`, async () => {
+    const uid = 'invited-parent';
+    const { firestore, mod } = loadFunctions(redemptionSeed(type, { uid }));
+
+    const result = await mod[callableName](
+      { userId: uid, code, authEmail: 'spoofed@example.com' },
+      authContext(uid, 'INVITED@EXAMPLE.COM')
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(firestore.snapshot('accessCodes/invite-1').status, 'accepted');
+    assert.deepEqual(firestore.snapshot(`users/${uid}`).parentTeamIds, ['team-1']);
+    assert.equal(
+      firestore.snapshot('teams/team-1/players/player-1/private/profile').parents[0].userId,
+      uid
+    );
+    if (type === 'household_invite') {
+      assert.equal(
+        firestore.snapshot('users/organizer-1/familyMemberships/membership-1').status,
+        'active'
+      );
+    }
+  });
+}

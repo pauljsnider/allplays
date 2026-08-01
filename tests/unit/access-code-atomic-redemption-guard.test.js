@@ -30,6 +30,7 @@ describe('access code atomic redemption guard', () => {
 
         const afterFunction = source.slice(fnIndex, fnIndex + 1400);
         expect(afterFunction).toContain("httpsCallable(functions, 'redeemParentInvite')");
+        expect(afterFunction).not.toContain('authEmail:');
         expect(afterFunction).toContain('await syncPublicUserProfile(userId);');
         expect(afterFunction).not.toContain('parentOf: arrayUnion');
         expect(afterFunction).not.toContain('parentTeamIds: arrayUnion');
@@ -64,7 +65,11 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain("codeData.type !== 'parent_invite'");
         expect(afterFunction).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
         expect(afterFunction).toContain('isParentInviteExpired(codeData.expiresAt)');
+        expect(afterFunction).toContain('resolveAuthenticatedFamilyInviteEmail({');
         expect(afterFunction).toContain('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)');
+        expect(afterFunction).not.toContain('data?.authEmail');
+        expect(afterFunction.indexOf('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)'))
+            .toBeLessThan(afterFunction.indexOf('transaction.set(userRef'));
         expect(afterFunction).toContain('parentOf: nextUserData.parentOf');
         expect(afterFunction).toContain('parentTeamIds: nextUserData.parentTeamIds');
         expect(afterFunction).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
