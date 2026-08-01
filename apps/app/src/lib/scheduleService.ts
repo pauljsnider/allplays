@@ -3582,6 +3582,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       );
     } catch (error) {
       logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
+      throw error;
     }
   }
   const isStaff = isTeamStaff(teamWithId, user);

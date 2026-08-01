@@ -781,6 +781,24 @@ describe('updateParentPlayerEditableProfile native photo upload', () => {
     expect(legacyPlayerDbMocks.updatePlayerPrivateProfile).not.toHaveBeenCalled();
     expect(legacyPlayerDbMocks.updatePlayerProfile).not.toHaveBeenCalled();
   });
+
+  it('keeps a native player photo when the parent profile commit outcome is uncertain', async () => {
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateParentPlayerEditableProfile({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
 });
 
 describe('savePlayerCustomRosterFieldValues', () => {

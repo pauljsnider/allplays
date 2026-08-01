@@ -99,6 +99,7 @@ export async function commitNativeFirestoreWrites(writes: NativeFirestoreWrite[]
   }, requestUrl);
   const abortController = new AbortController();
   const timeoutId = window.setTimeout(() => abortController.abort(), nativeFirestoreWriteTimeoutMs);
+  let responseReceived = false;
   try {
     const response = await fetch(requestUrl, {
       method: 'POST',
@@ -106,12 +107,13 @@ export async function commitNativeFirestoreWrites(writes: NativeFirestoreWrite[]
       body: JSON.stringify(body),
       signal: abortController.signal
     });
+    responseReceived = true;
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload?.error?.message || `Firestore write failed (${response.status}).`);
     }
   } catch (error: any) {
-    if (error?.name === 'AbortError') {
+    if (!responseReceived) {
       throw new NativeFirestoreCommitUncertainError();
     }
     throw error;

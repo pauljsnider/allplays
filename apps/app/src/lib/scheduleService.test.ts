@@ -3802,6 +3802,30 @@ describe('partial parent schedule team failures (#3021)', () => {
     ]);
   });
 
+  it('marks the parent schedule partial when a projected calendar read fails', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      hasCalendarSources: teamId === 'team-1'
+    }) as any);
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => teamId === 'team-2'
+      ? [{
+          id: 'game-2',
+          type: 'game',
+          date: new Date('2026-08-09T18:00:00.000Z'),
+          opponent: 'Tigers'
+        }]
+      : [] as any);
+    vi.mocked(getPublicTeamCalendarEvents).mockRejectedValueOnce(new Error('projection unavailable'));
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result).toMatchObject({
+      isPartial: true,
+      events: [expect.objectContaining({ teamId: 'team-2', id: 'game-2' })]
+    });
+  });
+
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
     vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
       if (teamId === 'team-2') throw new Error('permission-denied');

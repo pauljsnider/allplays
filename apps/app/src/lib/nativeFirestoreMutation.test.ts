@@ -100,4 +100,32 @@ describe('native Firestore mutations', () => {
     expect(error).toMatchObject({ commitStateUnknown: true });
     expect(error.message).toContain('may have completed');
   });
+
+  it('marks a transport rejection as uncertain after dispatch', async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const error = await commitNativeFirestoreWrites([{
+      pathSegments: ['teams', 'team-1'],
+      data: { photoUrl: 'https://primary.example/team.jpg' }
+    }]).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(NativeFirestoreCommitUncertainError);
+    expect(error).toMatchObject({ commitStateUnknown: true });
+  });
+
+  it('keeps an HTTP rejection definite after Firestore responds', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { message: 'permission denied' } })
+    } as Response);
+
+    const error = await commitNativeFirestoreWrites([{
+      pathSegments: ['teams', 'team-1'],
+      data: { photoUrl: 'https://primary.example/team.jpg' }
+    }]).catch((caught) => caught);
+
+    expect(error).not.toBeInstanceOf(NativeFirestoreCommitUncertainError);
+    expect(error).toMatchObject({ message: 'permission denied' });
+  });
 });

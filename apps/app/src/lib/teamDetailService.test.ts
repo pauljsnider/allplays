@@ -395,6 +395,24 @@ describe('updateTeamSettingsForApp', () => {
     expect(dbMocks.uploadTeamPhoto).not.toHaveBeenCalled();
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
+
+  it('keeps a native team photo when the settings commit outcome is uncertain', async () => {
+    nativeRuntimeState.isNative = true;
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
 });
 
 describe('addRosterPlayerForApp native writes', () => {
@@ -434,6 +452,19 @@ describe('addRosterPlayerForApp native writes', () => {
       })
     ]);
     expect(dbMocks.addPlayer).not.toHaveBeenCalled();
+  });
+
+  it('keeps a native roster photo when the create commit outcome is uncertain', async () => {
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
   });
 });
 
