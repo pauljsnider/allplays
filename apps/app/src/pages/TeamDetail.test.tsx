@@ -65,8 +65,13 @@ const rosterTabLoaderMocks = vi.hoisted(() => ({
   loadRosterTab: vi.fn(() => import('./team-detail/RosterTab').then((module) => ({ default: module.RosterTab })))
 }));
 
+const insightsTabLoaderMocks = vi.hoisted(() => ({
+  loadInsightsTab: vi.fn(() => import('./team-detail/InsightsTab').then((module) => ({ default: module.InsightsTab })))
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
+vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
 vi.mock('./team-detail/rosterTabLoader', () => rosterTabLoaderMocks);
 vi.mock('../lib/publicActions', () => ({
   copyPublicText: vi.fn(),
@@ -438,6 +443,40 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
     expect(await screen.findByText('Player photos, numbers, linked-player shortcuts, and profile drill-in.')).toBeTruthy();
     expect(rosterTabLoaderMocks.loadRosterTab).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts the insights import only when selected and reuses it after resolution', async () => {
+    const insightsModule = createDeferred<{ default: typeof import('./team-detail/InsightsTab').InsightsTab }>();
+    insightsTabLoaderMocks.loadInsightsTab.mockReturnValueOnce(insightsModule.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user));
+    expect(insightsTabLoaderMocks.loadInsightsTab).not.toHaveBeenCalled();
+    expect(screen.queryByText('Team performance')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    expect(insightsTabLoaderMocks.loadInsightsTab).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /insights/i }));
+    expect(screen.getByRole('status', { name: 'Loading insights' })).toBeTruthy();
+    expect(insightsTabLoaderMocks.loadInsightsTab).toHaveBeenCalledTimes(1);
+
+    const { InsightsTab } = await import('./team-detail/InsightsTab');
+    await act(async () => insightsModule.resolve({ default: InsightsTab }));
+    expect(await screen.findByText('Team performance')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+    fireEvent.click(screen.getByRole('button', { name: /insights/i }));
+    expect(await screen.findByText('Team performance')).toBeTruthy();
+    expect(insightsTabLoaderMocks.loadInsightsTab).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a rejected roster import local and retries it with a fresh lazy component', async () => {
