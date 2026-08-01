@@ -3751,7 +3751,9 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       if (!date) return;
       const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
       if (hasConflict) return;
-      const isPractice = isPracticeEvent(calendarEvent.summary);
+      const isPractice = calendarEvent.isPublicProjection === true
+        ? calendarEvent.type === 'practice'
+        : isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
       const cleanSummary = calendarEvent.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
       const id = getCalendarEventTrackingId(calendarEvent) || `ics-${date.getTime()}`;

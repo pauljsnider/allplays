@@ -3930,6 +3930,7 @@ export async function getPublicTeamCalendarEvents(teamId, options = {}) {
             return {
                 id: String(event?.id || ''),
                 uid: String(event?.id || ''),
+                type,
                 dtstart: startsAt,
                 dtend: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
                 summary,

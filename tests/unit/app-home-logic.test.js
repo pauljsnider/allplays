@@ -171,6 +171,20 @@ describe('React app Home model helpers', () => {
         ], 20, now).map((item) => item.id)).toEqual(['recent', 'upcoming']);
     });
 
+    it('reserves capped feed space for upcoming games when recent history fills the limit', () => {
+        const now = new Date('2026-08-01T12:00:00Z');
+        const pastGames = Array.from({ length: 20 }, (_, index) => event({
+            id: `past-${index}`,
+            date: new Date(now.getTime() - (index + 1) * 60000)
+        }));
+        const upcomingGame = event({ id: 'upcoming', date: new Date('2026-08-02T18:00:00Z') });
+
+        const result = getHomeFeedGames([...pastGames, upcomingGame], 20, now);
+
+        expect(result).toHaveLength(20);
+        expect(result.map((item) => item.id)).toContain('upcoming');
+    });
+
     it('keeps Home drill-in links encoded for team-scoped player and event routes', () => {
         expect(getPlayerDetailPath('team/with slash', 'player 1')).toBe('/players/team%2Fwith%20slash/player%201');
         expect(getTeamHomePath('team/with slash')).toBe('/teams/team%2Fwith%20slash');

@@ -215,6 +215,7 @@ function buildSwitchableComposerHome() {
     childName: 'Pat Player',
     isDbGame: true,
     isCancelled: false,
+    status: id === 'game-3' ? 'scheduled' : 'completed',
     myRsvp: 'going',
     assignments: []
   });
@@ -1162,6 +1163,27 @@ describe('Home', () => {
     expect(await within(dialog).findByText('Choose a completed game for this recap.')).toBeTruthy();
     expect(socialServiceMocks.uploadSocialPostMedia).not.toHaveBeenCalled();
     expect(socialServiceMocks.createSocialPost).not.toHaveBeenCalled();
+  });
+
+  it('does not offer an in-progress game as a recap after its kickoff time', async () => {
+    const switchableHome = buildSwitchableComposerHome();
+    const liveGame = {
+      ...switchableHome.feedGames[0],
+      id: 'game-live',
+      eventKey: 'team-1::game-live::player-1',
+      status: 'scheduled',
+      liveStatus: 'live'
+    };
+    const liveOnlyHome = { ...switchableHome, feedGames: [liveGame] };
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: liveOnlyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(liveOnlyHome);
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=game_recap');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Bears' }));
+
+    expect(within(dialog).getByLabelText('Game')).toHaveValue('');
+    expect(within(dialog).getByRole('option', { name: 'No games on this team' })).toBeTruthy();
   });
 
   it('removes uploaded feed media when post creation fails', async () => {

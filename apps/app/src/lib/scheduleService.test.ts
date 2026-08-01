@@ -3771,7 +3771,8 @@ describe('partial parent schedule team failures (#3021)', () => {
           uid: 'teamsnap-event-1',
           dtstart: new Date('2026-08-08T18:00:00.000Z'),
           dtend: new Date('2026-08-08T20:00:00.000Z'),
-          summary: 'Team One vs. Rockets',
+          type: 'practice',
+          summary: 'Workout',
           location: 'Field 4',
           status: 'SCHEDULED',
           isPublicProjection: true
@@ -3789,9 +3790,10 @@ describe('partial parent schedule team failures (#3021)', () => {
     expect(result.events).toEqual([
       expect.objectContaining({
         teamId: 'team-1',
-        type: 'game',
+        type: 'practice',
         date: new Date('2026-08-08T18:00:00.000Z'),
         location: 'Field 4',
+        title: 'Workout',
         sourceType: 'calendar',
         sourceLabel: 'Imported calendar',
         isImported: true,

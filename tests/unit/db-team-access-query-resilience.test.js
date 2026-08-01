@@ -255,7 +255,7 @@ describe('game access query resilience', () => {
           type: 'practice',
           startsAt: '2026-08-01T18:00:00.000Z',
           endsAt: '2026-08-01T20:00:00.000Z',
-          title: 'Practice',
+          title: 'Workout',
           location: 'Public Field',
           status: 'scheduled'
         }]
@@ -276,7 +276,8 @@ describe('game access query resilience', () => {
     expect(result).toEqual([expect.objectContaining({
       id: 'opaque-event',
       uid: 'opaque-event',
-      summary: 'Practice',
+      type: 'practice',
+      summary: 'Workout',
       location: 'Public Field',
       status: 'SCHEDULED',
       isPublicProjection: true

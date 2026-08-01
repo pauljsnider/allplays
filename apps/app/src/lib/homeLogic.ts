@@ -131,7 +131,12 @@ function sortHomeFeedGames(games: ParentScheduleEvent[], limit: number, now: Dat
   const upcoming = games
     .filter((event) => event.date.getTime() >= now.getTime())
     .sort((left, right) => left.date.getTime() - right.date.getTime());
-  return [...past, ...upcoming].slice(0, limit);
+  const upcomingLimit = Math.min(upcoming.length, Math.ceil(limit / 2));
+  const pastLimit = Math.min(past.length, limit - upcomingLimit);
+  return [
+    ...past.slice(0, pastLimit),
+    ...upcoming.slice(0, limit - pastLimit)
+  ];
 }
 
 type HomePlayerAggregate = {

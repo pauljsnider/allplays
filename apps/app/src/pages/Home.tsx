@@ -2301,7 +2301,11 @@ function getComposerGamesForType(events: ParentScheduleEvent[], teamId: string, 
   const now = Date.now();
   return events.filter((event) => {
     if (event.teamId !== teamId) return false;
-    if (type === 'game_recap') return event.date.getTime() < now;
+    if (type === 'game_recap') {
+      const status = String(event.status || '').toLowerCase();
+      const liveStatus = String(event.liveStatus || '').toLowerCase();
+      return status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
+    }
     if (type === 'upcoming_game') return event.date.getTime() >= now;
     return true;
   });
