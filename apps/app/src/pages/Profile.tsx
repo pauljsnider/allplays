@@ -415,7 +415,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.profile, user]);
+  }, [auth.profile, auth.profileHydration, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();

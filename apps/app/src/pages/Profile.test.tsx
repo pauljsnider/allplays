@@ -278,6 +278,38 @@ describe('Profile', () => {
     expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the hydrated profile when only the hydration status changes', async () => {
+    const profileRequest = createDeferredPromise<never>();
+    profileServiceMocks.loadProfileDocument.mockImplementation(() => profileRequest.promise);
+    const hydratedProfile = {
+      fullName: 'Hydrated After Retry',
+      phone: '',
+      photoUrl: ''
+    };
+    const fallbackAuth: AuthState = {
+      ...auth,
+      profile: hydratedProfile,
+      profileHydration: 'fallback'
+    };
+    const view = renderProfile('/profile/settings', false, false, fallbackAuth);
+
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/profile/settings']}>
+        <Routes>
+          <Route
+            path="/profile/settings"
+            element={<ProfileTestRoute profileAuth={{ ...fallbackAuth, profileHydration: 'success' }} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('Hydrated After Retry')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps push service value APIs behind the Alerts dynamic import boundary', () => {
     const source = readFileSync('src/pages/Profile.tsx', 'utf8');
     const pushStaticImports = source
