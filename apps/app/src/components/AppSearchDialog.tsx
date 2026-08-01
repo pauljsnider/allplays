@@ -336,13 +336,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   const retrySearch = (section: 'teams' | 'players') => {
     if (query.trim().length < 2) return;
+    if (teamsRetrying || playersRetrying) return;
     if (section === 'teams') {
-      if (!teamsError || teamsRetrying) return;
-      setTeamsRetrying(true);
+      if (!teamsError) return;
     } else {
-      if (!playersError || playersRetrying) return;
-      setPlayersRetrying(true);
+      if (!playersError) return;
     }
+    setTeamsRetrying(true);
+    setPlayersRetrying(true);
     setSearchAttempt((attempt) => attempt + 1);
   };
 
@@ -479,7 +480,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               status={teamsStatus}
               statusTone={teamsError && !teamsRetrying ? 'error' : 'neutral'}
               onRetry={teamsError ? () => retrySearch('teams') : undefined}
-              retrying={teamsRetrying}
+              retrying={teamsRetrying || playersRetrying}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
@@ -516,7 +517,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               status={playersStatus}
               statusTone={playersError && !playersRetrying ? 'error' : 'neutral'}
               onRetry={playersError ? () => retrySearch('players') : undefined}
-              retrying={playersRetrying}
+              retrying={teamsRetrying || playersRetrying}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />

@@ -275,12 +275,14 @@ describe('AppSearchDialog', () => {
     expect(screen.getByText('Team search unavailable.')).toBeTruthy();
     expect(screen.getByText('Player search unavailable.')).toBeTruthy();
     const teamRetry = screen.getByRole('button', { name: 'Retry teams search' });
-    expect(screen.getByRole('button', { name: 'Retry players search' })).toBeTruthy();
+    const playerRetry = screen.getByRole('button', { name: 'Retry players search' });
 
     fireEvent.click(teamRetry);
-    fireEvent.click(teamRetry);
     expect(teamRetry).toBeDisabled();
+    expect(playerRetry).toBeDisabled();
+    fireEvent.click(playerRetry);
     expect(screen.getByText('Searching teams...')).toBeTruthy();
+    expect(screen.getByText('Searching players...')).toBeTruthy();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
