@@ -104,7 +104,7 @@ async function waitForTeamsRoute(page, readyLocator) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockHomePlayerModules(page) {
+async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false } = {}) {
     await page.route('https://img.example.test/**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -113,16 +113,29 @@ async function mockHomePlayerModules(page) {
         });
     });
 
-    await page.addInitScript(() => {
+    await page.addInitScript(({ switchableSocialTargets: enableSwitching, failSocialPost: failPost }) => {
+        window.__ALLPLAYS_CONFIG__ = {
+            ...(window.__ALLPLAYS_CONFIG__ || {}),
+            firebase: {
+                apiKey: 'preview-smoke-key',
+                authDomain: 'allplays-preview-smoke.firebaseapp.com',
+                projectId: 'allplays-preview-smoke',
+                messagingSenderId: '123456789',
+                appId: '1:123456789:web:previewsmoke'
+            }
+        };
         window.__playerLoads = [];
         window.__socialPosts = [];
         window.__socialUploads = [];
+        window.__socialDiscards = [];
+        window.__switchableSocialTargets = enableSwitching;
+        window.__failSocialPost = failPost;
         window.__parentToolPanelLoads = [];
         window.__parentToolRenders = [];
         window.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
             window.__parentToolRenders.push(toolId);
         };
-    });
+    }, { switchableSocialTargets, failSocialPost });
 
     await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -357,8 +370,8 @@ async function mockHomePlayerModules(page) {
                         location: overrides.location || 'Main Gym',
                         opponent: overrides.opponent || 'Falcons',
                         title: overrides.title || null,
-                        childId: 'player-1',
-                        childName: 'Pat Star',
+                        childId: overrides.childId || 'player-1',
+                        childName: overrides.childName || 'Pat Star',
                         isDbGame: true,
                         isCancelled: false,
                         myRsvp: overrides.myRsvp || 'not_responded',
@@ -401,6 +414,21 @@ async function mockHomePlayerModules(page) {
 
                 export async function loadParentHome() {
                     const nextEvent = event();
+                    const completedGame = event({
+                        eventKey: 'team-1::game-final::player-1',
+                        id: 'game-final',
+                        date: new Date('2000-06-01T18:00:00Z'),
+                        status: 'completed'
+                    });
+                    const secondCompletedGame = event({
+                        eventKey: 'team-1::game-final-2::player-2',
+                        id: 'game-final-2',
+                        date: new Date('2000-06-02T18:00:00Z'),
+                        opponent: 'Tigers',
+                        childId: 'player-2',
+                        childName: 'Sam Swift',
+                        status: 'completed'
+                    });
                     const practice = event({
                         eventKey: 'team-1::practice-1::player-1',
                         id: 'practice-1',
@@ -421,19 +449,35 @@ async function mockHomePlayerModules(page) {
                             packetsReady: 1,
                             openAssignments: 0,
                             unreadCount: 2
-                        }],
+                        }, ...(window.__switchableSocialTargets ? [{
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerId: 'player-2',
+                            playerName: 'Sam Swift',
+                            nextEvent,
+                            rsvpNeeded: 0,
+                            packetsReady: 0,
+                            openAssignments: 0,
+                            unreadCount: 0
+                        }] : [])],
                         teams: [{
                             teamId: 'team-1',
                             teamName: 'Bears',
                             role: 'Parent',
                             sport: 'Basketball',
                             photoUrl: 'https://img.example.test/bears.png',
-                            players: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' }],
+                            players: [
+                                { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
+                                ...(window.__switchableSocialTargets
+                                    ? [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam Swift' }]
+                                    : [])
+                            ],
                             nextEvent,
                             eventCount: 2,
                             unreadCount: 2,
                             openActions: 2
                         }],
+                        feedGames: [completedGame, ...(window.__switchableSocialTargets ? [secondCompletedGame] : []), nextEvent],
                         upcomingEvents: [nextEvent, practice],
                         actionItems: [{
                             id: 'rsvp:game-next',
@@ -458,7 +502,7 @@ async function mockHomePlayerModules(page) {
                             dueDate: new Date('2100-06-10T12:00:00Z')
                         }],
                         metrics: {
-                            players: 1,
+                            players: window.__switchableSocialTargets ? 2 : 1,
                             teams: 1,
                             rsvpNeeded: 1,
                             unreadMessages: 2,
@@ -901,6 +945,7 @@ async function mockHomePlayerModules(page) {
                     };
                 }
                 export async function createSocialPost(user, input) {
+                    if (window.__failSocialPost) throw new Error('Post write failed.');
                     window.__socialPosts.push({ user, input });
                     return {
                         id: 'post-new',
@@ -936,7 +981,16 @@ async function mockHomePlayerModules(page) {
                 export async function blockFriend() {}
                 export async function uploadSocialPostMedia(teamId, file) {
                     window.__socialUploads.push({ teamId, name: file?.name || null, type: file?.type || null });
-                    return { type: 'image', url: 'https://img.example.test/social.png', name: file?.name || 'social.png', thumbnailUrl: null };
+                    return {
+                        type: 'image',
+                        url: 'https://img.example.test/social.png',
+                        name: file?.name || 'social.png',
+                        thumbnailUrl: null,
+                        storagePath: 'chat-attachments/team-1/team/user-1/social.png'
+                    };
+                }
+                export async function discardSocialPostMediaUpload(media) {
+                    window.__socialDiscards.push(media);
                 }
             `
         });
@@ -1819,6 +1873,40 @@ test('social quick share defers changing the selected post type', async ({ page,
     await expect(dialog.getByText('Add a photo or video for this share.')).toBeVisible();
 });
 
+test('social game recap switches between completed games and linked players', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { switchableSocialTargets: true });
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=game_recap'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await expect(dialog.getByRole('heading', { name: 'What happened?' })).toBeVisible();
+    await dialog.locator('button').filter({ hasText: 'vs. Falcons' }).click();
+
+    const gameSelect = dialog.getByLabel('Game');
+    await expect(gameSelect.locator('option')).toHaveCount(2);
+    const secondGameValue = await gameSelect.locator('option').nth(1).getAttribute('value');
+    await gameSelect.selectOption(secondGameValue);
+
+    await dialog.getByRole('button', { name: 'Tag a player' }).click();
+    const playerSelect = dialog.getByLabel('Player');
+    await expect(playerSelect.locator('option')).toHaveCount(3);
+    await playerSelect.selectOption('team-1::player-2');
+
+    await dialog.getByPlaceholder('How did the game go?').fill('Sam closed out a strong team win.');
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(page.getByText('Posted to your ALL PLAYS feed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts[0]?.input)).toEqual(expect.objectContaining({
+        type: 'game_recap',
+        title: 'Bears vs. Tigers recap',
+        caption: 'Sam closed out a strong team win.',
+        teamId: 'team-1',
+        playerIds: ['player-2'],
+        playerNames: ['Sam Swift'],
+        sourceType: 'game',
+        sourceId: 'game-final-2'
+    }));
+});
+
 test('social photo quick share requires media and posts uploaded media payload', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });
@@ -1855,6 +1943,26 @@ test('social photo quick share requires media and posts uploaded media payload',
         teamId: 'team-1',
         playerIds: [],
         media: [{ type: 'image', url: 'https://img.example.test/social.png', name: 'team-photo.png', thumbnailUrl: null }]
+    }));
+});
+
+test('social photo quick share discards uploaded media when the post write fails', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { failSocialPost: true });
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await dialog.locator('input[type="file"]').setInputFiles({
+        name: 'failed-team-photo.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('image-bytes')
+    });
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(dialog.getByText('Post write failed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts.length)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__socialDiscards[0])).toEqual(expect.objectContaining({
+        url: 'https://img.example.test/social.png',
+        storagePath: 'chat-attachments/team-1/team/user-1/social.png'
     }));
 });
 
