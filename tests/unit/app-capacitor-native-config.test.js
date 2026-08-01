@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 function readProjectFile(path) {
     return readFileSync(path, 'utf8');
@@ -72,6 +73,41 @@ describe('Capacitor native config', () => {
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
+    });
+
+    it('keeps app dependency maintenance updates aligned across the manifest and lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const expectedDependencies = {
+            'lucide-react': { group: 'dependencies', specifier: '^1.27.0', version: '1.27.0' },
+            'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.0.1', version: '6.0.1' },
+            globals: { group: 'devDependencies', specifier: '^17.8.0', version: '17.8.0' },
+            postcss: { group: 'devDependencies', specifier: '^8.5.24', version: '8.5.24' }
+        };
+
+        Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
+            const pnpmDependency = appPnpmLock.importers['.'][expected.group][dependency];
+
+            expect(appPackage[expected.group][dependency]).toBe(expected.specifier);
+            expect(appPackageLock.packages[''][expected.group][dependency]).toBe(expected.specifier);
+            expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
+            expect(pnpmDependency.specifier).toBe(expected.specifier);
+            expect(pnpmDependency.version).toMatch(new RegExp(`^${expected.version.replaceAll('.', '\\.')}(?:$|\\()`));
+            expect(appPnpmLock.packages[`${dependency}@${expected.version}`]).toBeDefined();
+        });
+    });
+
+    it('does not refresh the unrelated pnpm jsdom dependency graph', () => {
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const jsdomDependency = appPnpmLock.importers['.'].devDependencies.jsdom;
+
+        expect(jsdomDependency).toEqual({ specifier: '^29.1.1', version: '29.1.1' });
+        expect(appPnpmLock.packages['jsdom@29.1.1']).toBeDefined();
+        expect(appPnpmLock.packages['jsdom@30.0.1']).toBeUndefined();
+        expect(appPnpmLock.packages['undici@7.28.0'].engines.node).toBe('>=20.18.1');
+        expect(appPnpmLock.packages['undici@8.9.0']).toBeUndefined();
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
