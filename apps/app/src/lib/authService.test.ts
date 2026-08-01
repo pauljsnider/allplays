@@ -360,6 +360,19 @@ describe('hydrateFirebaseUser', () => {
     expect(legacyAuthMocks.getUserProfile).toHaveBeenCalledWith('coach-1');
     expect(hydrated.user.roles).toContain('coach');
     expect(hydrated.user.roles).not.toEqual(['parent']);
+    expect(hydrated.profileHydration).toBe('success');
+  });
+
+  it('marks auth identity data as fallback when the profile document cannot be loaded', async () => {
+    legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
+
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com'
+    });
+
+    expect(hydrated.profile).toEqual(expect.objectContaining({ email: 'coach@example.com' }));
+    expect(hydrated.profileHydration).toBe('fallback');
   });
 
   it('queries owned teams and merges them when the stored coachOf list is already non-empty', async () => {

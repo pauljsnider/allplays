@@ -65,3 +65,27 @@ describe('useAuth signOut', () => {
     expect(lastReset).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('useAuth profile hydration', () => {
+  it.each(['success', 'fallback'] as const)('exposes %s profile hydration metadata', async (profileHydration) => {
+    authServiceMocks.observeFirebaseUser.mockImplementation((callback: (user: unknown) => void) => {
+      callback({ uid: 'user-1' });
+      return () => undefined;
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        roles: ['parent']
+      },
+      profile: { fullName: 'Pat Parent' },
+      profileHydration
+    });
+
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.profileHydration).toBe(profileHydration);
+  });
+});
