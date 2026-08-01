@@ -100,6 +100,19 @@ describe('Capacitor native config', () => {
         });
     });
 
+    it('keeps React Router on a compatible update range across app lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
+        const reactRouterSpecifier = '^7.18.2';
+
+        expect(appPackage.dependencies['react-router-dom']).toBe(reactRouterSpecifier);
+        expect(appPackageLock.packages[''].dependencies['react-router-dom']).toBe(reactRouterSpecifier);
+        expect(appPackageLock.packages['node_modules/react-router-dom'].version).toBe('7.18.2');
+        expect(appPnpmLock.importers['.'].dependencies['react-router-dom'].specifier).toBe(reactRouterSpecifier);
+        expect(appPnpmLock.packages['react-router-dom@7.18.2']).toBeDefined();
+    });
+
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
