@@ -203,7 +203,7 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).not.toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@4.1.9)'`);
     });
 
-    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and lockfiles', () => {
+    it('keeps shared dependency maintenance versions aligned across manifests and lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
         const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
@@ -211,7 +211,8 @@ describe('Capacitor native config', () => {
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
-            firebase: { specifier: '12.16.0', version: '12.16.0' }
+            firebase: { specifier: '12.16.0', version: '12.16.0' },
+            'web-vitals': { specifier: '^6.0.1', version: '6.0.1' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
