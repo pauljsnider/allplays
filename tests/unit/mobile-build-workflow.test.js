@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 const workflow = readFileSync(new URL('../../.github/workflows/mobile-build.yml', import.meta.url), 'utf8');
 const integrationWorkflow = readFileSync(
@@ -17,16 +18,40 @@ describe('mobile-build CI workflow', () => {
         expect(triggerSection).not.toContain('push:');
     });
 
-    it('gates the expensive android/ios build jobs on a path-detection job instead of removing path awareness entirely', () => {
+    it('reserves expensive android/ios builds for native shell, config, and dependency changes', () => {
+        const changesSection = workflow.slice(workflow.indexOf('  changes:'), workflow.indexOf('  android-debug:'));
+        const nativePathRegex = changesSection.match(/grep -Eq '([^']+)'/)?.[1];
+
         expect(workflow).toContain('changes:');
         expect(workflow).toContain("outputs.mobile");
         expect(workflow).toContain('android-debug/');
-        // The mobile-relevant path list moved from the trigger filter into the
-        // changes-detection job body.
-        expect(workflow).toContain('apps/app/');
-        expect(workflow).toContain('android/');
-        expect(workflow).toContain('ios/');
-        expect(workflow).toContain('capacitor\\.config\\.json');
+        expect(changesSection).toContain('android/');
+        expect(changesSection).toContain('ios/');
+        expect(changesSection).toContain('capacitor\\.config\\.(json|ts)');
+        expect(changesSection).toContain('apps/app/package\\.json');
+        expect(changesSection).toContain('apps/app/package-lock\\.json');
+        expect(changesSection).not.toContain('mobile-build\\.yml|apps/app/|android/');
+        expect(changesSection).toContain('ordinary apps/app/src change');
+        expect(nativePathRegex).toBeTruthy();
+
+        for (const path of [
+            '.github/workflows/mobile-build.yml',
+            'android/app/build.gradle',
+            'ios/App/App.xcodeproj/project.pbxproj',
+            'capacitor.config.ts',
+            'package-lock.json',
+            'apps/app/package.json'
+        ]) {
+            expect(spawnSync('grep', ['-Eq', nativePathRegex], { input: `${path}\n` }).status, path).toBe(0);
+        }
+        for (const path of [
+            'apps/app/src/pages/TeamDetail.tsx',
+            'apps/app/src/lib/teamService.ts',
+            'apps/app/src/pages/TeamDetail.test.tsx',
+            'tests/unit/app-team-detail-integration.test.jsx'
+        ]) {
+            expect(spawnSync('grep', ['-Eq', nativePathRegex], { input: `${path}\n` }).status, path).toBe(1);
+        }
     });
 
     it('is called by the consolidated code-head workflow without label-churn runs', () => {
