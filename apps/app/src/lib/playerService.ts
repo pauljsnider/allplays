@@ -71,6 +71,7 @@ import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleE
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import { clearAppDataCache, loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
 import type { AuthUser } from './types';
 
@@ -878,7 +879,9 @@ export async function updateParentPlayerEditableProfile({
   let photoUrl: string | undefined;
   if (photoFile) {
     validateImageFile(photoFile);
-    photoUrl = await uploadPlayerPhoto(photoFile);
+    photoUrl = isNativeRuntime()
+      ? await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhoto(photoFile, teamId, playerId))
+      : await uploadPlayerPhoto(photoFile);
   }
 
   const privatePayload: Record<string, any> = {
@@ -949,7 +952,9 @@ export async function saveStaffPlayerRosterDetails({
 
   if (photoFile) {
     validateImageFile(photoFile);
-    payload.photoUrl = await uploadPlayerPhoto(photoFile);
+    payload.photoUrl = isNativeRuntime()
+      ? await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhoto(photoFile, teamId, playerId))
+      : await uploadPlayerPhoto(photoFile);
   } else if (removePhoto && currentPhotoUrl) {
     payload.photoUrl = null;
   }

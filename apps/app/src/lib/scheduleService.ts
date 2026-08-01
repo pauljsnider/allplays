@@ -8,6 +8,7 @@ import {
   getPracticeSession,
   getPracticeSessionByEvent,
   getPracticeSessions,
+  getPublicTeamCalendarEvents,
   getPlayers,
   getMyRsvps,
   getRsvps,
@@ -323,6 +324,7 @@ function invalidateParentScheduleCaches(
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
 const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
+const defaultCalendarLookAheadMs = 730 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 type GameDayLineupPublishModule = typeof import('./gameDayLineupPublish');
 
@@ -3052,6 +3054,23 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
   return true;
 }
 
+function getPublicCalendarProjectionRange(range: ScheduleDateRange): Required<ScheduleDateRange> {
+  const now = Date.now();
+  if (range.startDate && range.endDate) {
+    return { startDate: range.startDate, endDate: range.endDate };
+  }
+  if (range.endDate) {
+    return {
+      startDate: new Date(range.endDate.getTime() - defaultScheduleHistoryWindowMs),
+      endDate: range.endDate
+    };
+  }
+  return {
+    startDate: range.startDate || new Date(now - defaultScheduleHistoryWindowMs),
+    endDate: new Date(now + defaultCalendarLookAheadMs)
+  };
+}
+
 async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promise<ScheduleEventFirestoreRecord[]> {
   return readWithNativeFallback(
     `games ${teamId}`,
@@ -3554,6 +3573,17 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
   const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
+  let projectedCalendarEvents: any[] = [];
+  if (calendarUrls.length === 0 && team.hasCalendarSources === true) {
+    try {
+      projectedCalendarEvents = await getPublicTeamCalendarEvents(
+        teamId,
+        getPublicCalendarProjectionRange(gamesRange)
+      );
+    } catch (error) {
+      logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
+    }
+  }
   const isStaff = isTeamStaff(teamWithId, user);
   const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
   teamChildren.forEach((child) => {
@@ -3703,15 +3733,17 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     }
   }
 
-  if (calendarUrls.length > 0) {
-    const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
+  if (calendarUrls.length > 0 || projectedCalendarEvents.length > 0) {
+    const calendarResults = calendarUrls.length > 0
+      ? await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
       try {
         return await fetchAndParseCalendar(calendarUrl);
       } catch (error) {
         logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
         return [];
       }
-    }));
+      }))
+      : [projectedCalendarEvents];
 
     calendarResults.flat().forEach((calendarEvent: any) => {
       if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;

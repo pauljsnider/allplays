@@ -4,6 +4,7 @@ import {
     buildHomeActionItems,
     buildParentHomeModel,
     getEventDetailPath,
+    getHomeFeedGames,
     getPlayerDetailPath,
     getTeamHomePath
 } from '../../apps/app/src/lib/homeLogic.ts';
@@ -137,6 +138,7 @@ describe('React app Home model helpers', () => {
         });
         expect(model.fees.map((fee) => fee.id)).toEqual(['fee-1']);
         expect(model.upcomingEvents.map((item) => item.id)).toEqual(['game-1', 'practice-1', 'game-2']);
+        expect(model.feedGames.map((item) => item.id)).toEqual(['old-game', 'game-1', 'game-2']);
         expect(model.players.find((player) => player.playerId === 'player-1')).toMatchObject({
             rsvpNeeded: 1,
             packetsReady: 1,
@@ -152,6 +154,21 @@ describe('React app Home model helpers', () => {
             title: 'Pat needs availability',
             to: '/schedule/team-1/game-1?childId=player-1&section=availability'
         });
+    });
+
+    it('offers one recent/upcoming feed game per team event and excludes practices and cancellations', () => {
+        const now = new Date('2026-08-01T12:00:00Z');
+        const recentGame = event({ id: 'recent', date: new Date('2026-07-31T18:00:00Z') });
+        const duplicateChildRow = event({ id: 'recent', childId: 'player-2', date: new Date('2026-07-31T18:00:00Z') });
+        const upcomingGame = event({ id: 'upcoming', date: new Date('2026-08-03T18:00:00Z') });
+
+        expect(getHomeFeedGames([
+            upcomingGame,
+            duplicateChildRow,
+            event({ id: 'practice', type: 'practice', date: new Date('2026-08-02T18:00:00Z') }),
+            event({ id: 'cancelled', isCancelled: true, date: new Date('2026-07-30T18:00:00Z') }),
+            recentGame
+        ], 20, now).map((item) => item.id)).toEqual(['recent', 'upcoming']);
     });
 
     it('keeps Home drill-in links encoded for team-scoped player and event routes', () => {

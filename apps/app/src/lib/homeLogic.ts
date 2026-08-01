@@ -81,6 +81,7 @@ export type ParentHomeModel = {
   players: ParentHomePlayer[];
   teams: ParentHomeTeam[];
   upcomingEvents: ParentScheduleEvent[];
+  feedGames?: ParentScheduleEvent[];
   actionItems: ParentHomeAction[];
   fees: ParentHomeFee[];
   metrics: {
@@ -118,6 +119,21 @@ export function getUpcomingHomeEvents(events: ParentScheduleEvent[], limit = 5, 
     .slice(0, limit);
 }
 
+export function getHomeFeedGames(events: ParentScheduleEvent[], limit = 20, now = new Date()) {
+  const games = dedupeEvents(events.filter((event) => event.type === 'game' && !event.isCancelled));
+  return sortHomeFeedGames(games, limit, now);
+}
+
+function sortHomeFeedGames(games: ParentScheduleEvent[], limit: number, now: Date) {
+  const past = games
+    .filter((event) => event.date.getTime() < now.getTime())
+    .sort((left, right) => right.date.getTime() - left.date.getTime());
+  const upcoming = games
+    .filter((event) => event.date.getTime() >= now.getTime())
+    .sort((left, right) => left.date.getTime() - right.date.getTime());
+  return [...past, ...upcoming].slice(0, limit);
+}
+
 type HomePlayerAggregate = {
   nextEvent: ParentScheduleEvent | null;
   rsvpNeeded: number;
@@ -134,6 +150,7 @@ type HomeTeamAggregate = {
 type HomeEventIndex = {
   upcomingEventRows: ParentScheduleEvent[];
   upcomingEvents: ParentScheduleEvent[];
+  feedGames: ParentScheduleEvent[];
   playerAggregates: Map<string, HomePlayerAggregate>;
   teamAggregates: Map<string, HomeTeamAggregate>;
 };
@@ -163,6 +180,7 @@ export function buildParentHomeModel({
     players,
     teams,
     upcomingEvents,
+    feedGames: eventIndex.feedGames,
     actionItems,
     fees: openFees,
     metrics: {
@@ -390,12 +408,16 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
     upcomingByKey: Map<string, ParentScheduleEvent>;
     openActions: number;
   }>();
+  const feedGamesByKey = new Map<string, ParentScheduleEvent>();
   const upcomingByKey = new Map<string, ParentScheduleEvent>();
   const upcomingEventRows: ParentScheduleEvent[] = [];
 
   events.forEach((event) => {
     const teamBucket = getOrCreateTeamBucket(teamBuckets, event.teamId);
     const eventKey = getHomeEventDedupeKey(event);
+    if (event.type === 'game' && !event.isCancelled && !feedGamesByKey.has(eventKey)) {
+      feedGamesByKey.set(eventKey, event);
+    }
     if (!teamBucket.allByKey.has(eventKey)) {
       teamBucket.allByKey.set(eventKey, event);
     }
@@ -462,6 +484,7 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
   return {
     upcomingEventRows,
     upcomingEvents: sortEventsByDate([...upcomingByKey.values()]),
+    feedGames: sortHomeFeedGames([...feedGamesByKey.values()], 20, now),
     playerAggregates,
     teamAggregates
   };

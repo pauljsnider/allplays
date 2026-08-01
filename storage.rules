@@ -60,6 +60,16 @@ service firebase.storage {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
     }
 
+    function isParentForPlayer(teamId, playerId) {
+      let userPath = /databases/(default)/documents/users/$(request.auth.uid);
+      let playerPath = /databases/(default)/documents/teams/$(teamId)/players/$(playerId);
+      return isSignedIn() &&
+        firestore.exists(userPath) &&
+        ((teamId + '::' + playerId) in firestore.get(userPath).data.get('parentPlayerKeys', []) ||
+         (firestore.exists(playerPath) &&
+          request.auth.uid in firestore.get(playerPath).data.get('parentIds', [])));
+    }
+
     function chatConversationPath(teamId, conversationId) {
       return /databases/(default)/documents/teams/$(teamId)/chatConversations/$(conversationId);
     }
@@ -150,6 +160,12 @@ service firebase.storage {
     function isAllowedAthleteProfileMediaUploadType(contentType) {
       return contentType.matches('image/.*') ||
         contentType.matches('video/.*');
+    }
+
+    function isAllowedProfilePhotoUpload(contentType, size) {
+      return size > 0 &&
+        size <= 10 * 1024 * 1024 &&
+        contentType.matches('image/.*');
     }
 
     function isAllowedChatAttachmentUpload(contentType, size) {
@@ -298,6 +314,29 @@ service firebase.storage {
       allow delete: if isVerifiedForSensitiveWrite() &&
         request.auth.uid == userId &&
         athleteProfileMatchesPathOwner(userId, profileId);
+      allow update: if false;
+    }
+
+    match /profile-photos/users/{userId}/{fileName} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId)) &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() &&
+        (isTeamOwnerOrAdmin(teamId) ||
+         (request.auth.uid == userId && isParentForPlayer(teamId, playerId)));
       allow update: if false;
     }
   }

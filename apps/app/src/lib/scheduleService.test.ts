@@ -41,6 +41,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getPracticeSession: vi.fn(),
   getPracticeSessionByEvent: vi.fn(),
   getPracticeSessions: vi.fn(),
+  getPublicTeamCalendarEvents: vi.fn(),
   getPlayers: vi.fn(),
   getMyRsvps: vi.fn(),
   getRsvpBreakdownByPlayer: vi.fn(),
@@ -218,7 +219,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -3755,6 +3756,48 @@ describe('partial parent schedule team failures (#3021)', () => {
       opponent: 'Tigers'
     });
     expect(result.isPartial).toBe(true);
+  });
+
+  it('loads projected TeamSnap events when the public team boundary hides calendar URLs', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      hasCalendarSources: teamId === 'team-1'
+    }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPublicTeamCalendarEvents).mockImplementation(async (teamId: string) => teamId === 'team-1'
+      ? [{
+          id: 'teamsnap-event-1',
+          uid: 'teamsnap-event-1',
+          dtstart: new Date('2026-08-08T18:00:00.000Z'),
+          dtend: new Date('2026-08-08T20:00:00.000Z'),
+          summary: 'Team One vs. Rockets',
+          location: 'Field 4',
+          status: 'SCHEDULED',
+          isPublicProjection: true
+        }]
+      : [] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getPublicTeamCalendarEvents).toHaveBeenCalledTimes(1);
+    expect(getPublicTeamCalendarEvents).toHaveBeenCalledWith('team-1', {
+      startDate: expect.any(Date),
+      endDate: expect.any(Date)
+    });
+    expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        teamId: 'team-1',
+        type: 'game',
+        date: new Date('2026-08-08T18:00:00.000Z'),
+        location: 'Field 4',
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        isImported: true,
+        calendarUrls: []
+      })
+    ]);
   });
 
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
