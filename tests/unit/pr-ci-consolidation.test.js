@@ -137,7 +137,7 @@ describe('pull request CI consolidation', () => {
         expect(trusted).toContain('actions/workflows/pr-integration.yml/runs');
         expect(trusted).toContain('-f status=success');
         expect(trusted).toContain('-f head_sha="$expected_head_sha"');
-        expect(trusted).toContain('No successful exact-head pr-integration run exists for this preview request.');
+        expect(trusted).toContain('No exact-head pr-integration run has successful mobile-build and preview-smoke jobs.');
         expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-preview'");
         expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-preview.yml'");
     });
