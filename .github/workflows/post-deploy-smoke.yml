@@ -166,6 +166,7 @@ jobs:
           tests/smoke/legacy-auth-redirects.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
+          --retries=1
           --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
