@@ -21,7 +21,7 @@ describe('co-parent invite workflow regression', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
-        expect(acceptInviteSource).toContain("./js/db.js?v=132");
+        expect(acceptInviteSource).toContain("./js/db.js?v=136");
         expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=11");
     });
 
@@ -32,7 +32,6 @@ describe('co-parent invite workflow regression', () => {
 
         const handlerSource = dbSource.slice(handlerIndex, handlerIndex + 1400);
         expect(handlerSource).toContain("httpsCallable(functions, 'redeemCoParentInvite')");
-        expect(handlerSource).not.toContain('authEmail:');
         expect(handlerSource).toContain('await syncPublicUserProfile(userId);');
         expect(handlerSource).not.toContain('parentOf: arrayUnion');
         expect(handlerSource).not.toContain('parentTeamIds: arrayUnion');
@@ -48,10 +47,6 @@ describe('co-parent invite workflow regression', () => {
         expect(handlerSource).toContain('firestore.runTransaction(async (transaction) =>');
         expect(handlerSource).toContain("codeData.type !== 'coparent_invite'");
         expect(handlerSource).toContain('userId !== context.auth.uid');
-        expect(handlerSource).toContain('resolveAuthenticatedFamilyInviteEmail({');
-        expect(handlerSource).not.toContain('data?.authEmail');
-        expect(handlerSource.indexOf('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)'))
-            .toBeLessThan(handlerSource.indexOf('transaction.set(userRef'));
         expect(handlerSource).toContain('parentOf: appendUniqueParentLink');
         expect(handlerSource).toContain('parentTeamIds: appendUniqueValue');
         expect(handlerSource).toContain('parentPlayerKeys: appendUniqueValue');

@@ -75,18 +75,6 @@ function createCoParentInviteHandler({
     rateLimitWindowMs,
     CO_PARENT_INVITE_RATE_LIMIT_WINDOW_MS
   );
-  const prepareSenderReservation = createFirestoreFixedWindowRateLimitReservation({
-    firestore,
-    collectionName: rateLimitCollectionName,
-    windowMs: configuredWindowMs,
-    maxRequests: parsePositiveInteger(senderMaxInvites, CO_PARENT_INVITE_SENDER_MAX_INVITES)
-  });
-  const prepareRecipientReservation = createFirestoreFixedWindowRateLimitReservation({
-    firestore,
-    collectionName: rateLimitCollectionName,
-    windowMs: configuredWindowMs,
-    maxRequests: parsePositiveInteger(recipientMaxInvites, CO_PARENT_INVITE_RECIPIENT_MAX_INVITES)
-  });
 
   return async function createCoParentInvite(data = {}, context = {}) {
     const callerUid = String(context.auth?.uid || '').trim();
@@ -100,6 +88,23 @@ function createCoParentInviteHandler({
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new HttpsError('invalid-argument', 'Enter a valid recipient email address.');
     }
+
+    // Construct durable limiters only for this callable's execution. Other
+    // exports can then load with deliberately minimal Firestore test doubles,
+    // while an actual invite attempt still fails closed without transaction
+    // support before any document access or mutation.
+    const prepareSenderReservation = createFirestoreFixedWindowRateLimitReservation({
+      firestore,
+      collectionName: rateLimitCollectionName,
+      windowMs: configuredWindowMs,
+      maxRequests: parsePositiveInteger(senderMaxInvites, CO_PARENT_INVITE_SENDER_MAX_INVITES)
+    });
+    const prepareRecipientReservation = createFirestoreFixedWindowRateLimitReservation({
+      firestore,
+      collectionName: rateLimitCollectionName,
+      windowMs: configuredWindowMs,
+      maxRequests: parsePositiveInteger(recipientMaxInvites, CO_PARENT_INVITE_RECIPIENT_MAX_INVITES)
+    });
 
     const userRef = firestore.doc(`users/${callerUid}`);
     const teamRef = firestore.doc(`teams/${teamId}`);

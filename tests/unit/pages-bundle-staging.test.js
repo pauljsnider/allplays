@@ -220,6 +220,44 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
     });
 
+    it('stages every public-boundary db consumer with the fresh module key', () => {
+        const repoRoot = path.resolve(import.meta.dirname, '../..');
+        const destinationDir = path.join(makeTempDir(), 'site');
+        const appDistDir = path.join(makeTempDir(), 'app-dist');
+        writeFile(
+            path.join(appDistDir, 'index.html'),
+            '<!doctype html><html><head></head><body><div id="root"></div></body></html>'
+        );
+
+        stagePagesBundle(destinationDir, { rootDir: repoRoot, appDistDir });
+
+        const stagedSources = [];
+        function collectSources(directory) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                const entryPath = path.join(directory, entry.name);
+                if (entry.isDirectory()) {
+                    collectSources(entryPath);
+                } else if (entry.name.endsWith('.html') || entry.name.endsWith('.js')) {
+                    stagedSources.push(fs.readFileSync(entryPath, 'utf8'));
+                }
+            }
+        }
+        collectSources(destinationDir);
+
+        const dbModuleKeys = stagedSources
+            .flatMap((source) => [...source.matchAll(/(?:\.\/|\.\.\/)?db\.js\?v=(\d+)/g)])
+            .map((match) => match[1]);
+
+        expect(dbModuleKeys).toHaveLength(38);
+        expect(new Set(dbModuleKeys)).toEqual(new Set(['136']));
+        expect(fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8')).toContain(
+            'getPublicTeamCalendarEvents, getConfigs'
+        );
+        expect(fs.readFileSync(path.join(destinationDir, 'js', 'db.js'), 'utf8')).toMatch(
+            /export async function getPublicTeamCalendarEvents\b/
+        );
+    });
+
     it('keeps local test harnesses out of production links and smoke routing', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const productHtml = fs.readdirSync(repoRoot)

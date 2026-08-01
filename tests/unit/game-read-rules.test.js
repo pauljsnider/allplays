@@ -45,7 +45,7 @@ describe('game Firestore read rules', () => {
         expect(aggregatedStatsRules).not.toContain('allow read: if true;');
     });
 
-    it('keeps private-team private games unreadable to outsiders while allowing public or shareable games', () => {
+    it('keeps canonical game and collection-group reads behind authorized roles', () => {
         expect(rules).toContain("data.get('type', 'game') == 'game'");
         expect(rules).toContain("data.get('visibility', '') != 'private'");
         expect(rules).toContain("data.get('isPrivate', false) != true");
@@ -59,12 +59,14 @@ describe('game Firestore read rules', () => {
         expect(collectionGroupGamesHelper).toContain('let parentTeam = get(parentTeamPath).data;');
         expect(collectionGroupGamesHelper).toContain('return parentTeam != null &&');
         expect(collectionGroupGamesHelper).toContain('canReadManagedTeamDocument(parentTeam)');
-        expect(collectionGroupGamesHelper).toContain('canReadPublicGameDocument(parentTeam, data)');
+        expect(collectionGroupGamesHelper).not.toContain('canReadPublicGameDocument(parentTeam, data)');
         expect(collectionGroupGamesHelper).not.toContain('canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
         expect(collectionGroupGamesHelper).not.toContain('canReadPublicGameDocument(get(/databases/$(database)/documents/$(teamPath)).data, data)');
         expect(collectionGroupGamesHelper.match(/get\(parentTeamPath\)/g) || []).toHaveLength(1);
         expect(collectionGroupGamesHelper).not.toContain('exists(parentTeamPath)');
         expect(rules).not.toContain('canReadTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
+        expect(rules).toContain('canReadGameDocument(teamId, gameId, get(gamePath).data) ||');
+        expect(rules).toContain('canReadPublicGameDocument(get(teamPath).data, get(gamePath).data)');
     });
 
     it('preserves signed-in access for team staff, parents, scoped helpers, and officials', () => {
@@ -76,10 +78,11 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain("request.auth.uid in data.get('officiatingAuthorizedUserIds', [])");
     });
 
-    it('allows sharedGames collection-group reads through referenced team visibility only', () => {
+    it('keeps shared-game documents private while preserving sanitized live subcollection access', () => {
         expect(rules).toContain('function canReadSharedGameForExistingTeam(data, teamId)');
         expect(rules).toContain('function canReadSharedGameForTeamId(data, teamId)');
         expect(rules).toContain('function canReadCollectionGroupSharedGameDocument(data)');
+        expect(rules).toContain('function canReadPublicSharedGameDocument(data)');
         expect(rules).toContain('function canReadSharedGameSubcollectionDocument(sharedGamePath)');
         expect(collectionGroupSharedGamesRules).toContain('allow read: if canReadCollectionGroupSharedGameDocument(resource.data);');
         expect(collectionGroupSharedGamesRules).not.toContain('allow read: if true;');

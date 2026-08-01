@@ -1,0 +1,214 @@
+const PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE = 100;
+const PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE = 24;
+const PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS = 200;
+
+function normalizePublicTeamSearch(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 120);
+}
+
+function normalizePageSize(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE;
+  return Math.min(Math.max(Math.floor(parsed), 1), PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE);
+}
+
+function publicTeamSearchText(team = {}) {
+  return [
+    team.name,
+    team.sport,
+    team.city,
+    team.state,
+    team.zip,
+    team.city && team.state ? `${team.city}, ${team.state}` : ''
+  ]
+    .map(normalizePublicTeamSearch)
+    .filter(Boolean)
+    .join(' ');
+}
+
+function matchesPublicTeamSearch(team = {}, searchText = '') {
+  const normalizedSearch = normalizePublicTeamSearch(searchText);
+  if (!normalizedSearch) return true;
+  const haystack = publicTeamSearchText(team);
+  return normalizedSearch
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .every((token) => haystack.includes(token));
+}
+
+function comparePublicTeams(left = {}, right = {}) {
+  const nameResult = String(left.name || '').localeCompare(
+    String(right.name || ''),
+    undefined,
+    { sensitivity: 'base', numeric: true }
+  );
+  return nameResult || String(left.id || '').localeCompare(String(right.id || ''));
+}
+
+function encodeCursor(searchText, team) {
+  if (!team?.id) return null;
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    s: normalizePublicTeamSearch(searchText),
+    n: normalizePublicTeamSearch(team.name),
+    i: String(team.id)
+  }), 'utf8').toString('base64url');
+}
+
+function encodeDatastoreCursor(searchText, documentId) {
+  if (!documentId) return null;
+  return Buffer.from(JSON.stringify({
+    v: 2,
+    s: normalizePublicTeamSearch(searchText),
+    i: String(documentId)
+  }), 'utf8').toString('base64url');
+}
+
+function decodeDatastoreCursor(value, searchText) {
+  if (!value || typeof value !== 'string' || value.length > 1000) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (decoded?.v !== 2 ||
+        decoded?.s !== normalizePublicTeamSearch(searchText) ||
+        typeof decoded?.i !== 'string' ||
+        !decoded.i) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function buildDatastorePublicTeamPage(records = [], options = {}) {
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const boundedRecords = (Array.isArray(records) ? records : [])
+    .slice(0, PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS);
+  const items = [];
+  let lastScannedId = '';
+  let lastScannedIndex = -1;
+
+  for (const [index, record] of boundedRecords.entries()) {
+    lastScannedIndex = index;
+    lastScannedId = String(record?.id || '');
+    if (record?.item?.id && matchesPublicTeamSearch(record.item, searchText)) {
+      items.push(record.item);
+      if (items.length === pageSize) break;
+    }
+  }
+
+  const scannedAllLoadedRecords = lastScannedIndex === boundedRecords.length - 1;
+  const hasMore = items.length === pageSize
+    ? lastScannedIndex < records.length - 1
+    : options.hasMore === true || !scannedAllLoadedRecords;
+
+  return {
+    items,
+    nextCursor: hasMore && lastScannedId
+      ? encodeDatastoreCursor(searchText, lastScannedId)
+      : null
+  };
+}
+
+async function scanDatastorePublicTeamPage(loadRecords, options = {}) {
+  if (typeof loadRecords !== 'function') {
+    throw new TypeError('loadRecords must be a function.');
+  }
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const initialCursor = decodeDatastoreCursor(options.cursor, searchText);
+  const items = [];
+  let afterId = initialCursor?.i || '';
+
+  while (items.length < pageSize) {
+    const loaded = await loadRecords({
+      afterId,
+      limit: searchText
+        ? PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS + 1
+        : (pageSize - items.length) + 1
+    });
+    const records = Array.isArray(loaded?.records) ? loaded.records : [];
+    const page = buildDatastorePublicTeamPage(records, {
+      searchText,
+      pageSize: pageSize - items.length,
+      hasMore: loaded?.hasMore === true
+    });
+    items.push(...page.items);
+
+    if (!page.nextCursor) {
+      return { items, nextCursor: null };
+    }
+    if (items.length === pageSize) {
+      return { items, nextCursor: page.nextCursor };
+    }
+
+    const nextCursor = decodeDatastoreCursor(page.nextCursor, searchText);
+    if (!nextCursor?.i || nextCursor.i === afterId) {
+      throw new Error('Public team discovery scan did not advance.');
+    }
+    afterId = nextCursor.i;
+  }
+
+  return { items, nextCursor: null };
+}
+
+function decodeCursor(value, searchText) {
+  if (!value || typeof value !== 'string' || value.length > 1000) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (decoded?.v !== 1 ||
+        decoded?.s !== normalizePublicTeamSearch(searchText) ||
+        typeof decoded?.n !== 'string' ||
+        typeof decoded?.i !== 'string') {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function isAfterCursor(team, cursor) {
+  if (!cursor) return true;
+  return comparePublicTeams(team, { name: cursor.n, id: cursor.i }) > 0;
+}
+
+function paginatePublicTeams(teams = [], options = {}) {
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const cursor = decodeCursor(options.cursor, searchText);
+  const candidates = (Array.isArray(teams) ? teams : [])
+    .filter((team) => team?.id && matchesPublicTeamSearch(team, searchText))
+    .sort(comparePublicTeams)
+    .filter((team) => isAfterCursor(team, cursor));
+  const items = candidates.slice(0, pageSize);
+  return {
+    items,
+    nextCursor: candidates.length > pageSize
+      ? encodeCursor(searchText, items[items.length - 1])
+      : null
+  };
+}
+
+module.exports = {
+  PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE,
+  PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE,
+  PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
+  comparePublicTeams,
+  buildDatastorePublicTeamPage,
+  decodeCursor,
+  decodeDatastoreCursor,
+  encodeCursor,
+  encodeDatastoreCursor,
+  matchesPublicTeamSearch,
+  normalizePageSize,
+  normalizePublicTeamSearch,
+  paginatePublicTeams,
+  publicTeamSearchText,
+  scanDatastorePublicTeamPage
+};

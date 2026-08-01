@@ -86,14 +86,14 @@ describe('scoreboard widget embed', () => {
         const source = readPage('widget-scoreboard.html');
 
         expect(source).toContain('ALL PLAYS live scoreboard');
-        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=132';");
+        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=136';");
         expect(source).toContain('const REFRESH_MS = 60000;');
         expect(source).toContain('function selectWidgetGames(games)');
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
         expect(source).not.toContain('|| !isCompleted(game) || isLive(game)');
         expect(source).toContain('function renderGame(game)');
         expect(source).toContain('function isSharedScheduleMirror(game)');
-        expect(source).toContain("return !!String(game?.sharedScheduleSourceTeamId || '').trim();");
+        expect(source).toContain("return game?.isSharedGame === true || !!String(game?.sharedScheduleSourceTeamId || '').trim();");
         expect(source).toContain('const useStoredScoreOrder = isSharedScheduleMirror(game) || game.isHome !== false;');
         expect(source).toContain('const teamScore = useStoredScoreOrder ? homeScore : awayScore;');
         expect(source).toContain('const opponentScore = useStoredScoreOrder ? awayScore : homeScore;');

@@ -54,10 +54,12 @@ describe('firestore rules — live game read visibility helpers', () => {
         expect(rulesSource).toContain('function canReadGameSubcollectionDocument(teamId, gameId)');
         expect(rulesSource).toContain('isTeamOwnerOrAdmin(teamId) ||');
         expect(rulesSource).toContain('isParentForTeam(teamId) ||');
-        expect(rulesSource).toContain('canScorekeepGame(teamId, gameId) ||');
-        expect(rulesSource).toContain('canVideographGame(teamId, gameId) ||');
+        expect(rulesSource).toContain('canReadScopedGameHelper(teamId, gameId)');
+        expect(rulesSource).toContain("scorekeeping.get('mode', '') == 'selected'");
+        expect(rulesSource).toContain("videography.get('mode', '') == 'selected'");
+        expect(rulesSource).toContain("streaming.get('mode', '') == 'selected'");
         expect(rulesSource).toContain('isAuthorizedOfficialForGame(data) ||');
-        expect(rulesSource).toContain('canReadPublicGameDocument(get(teamPath).data, data)');
+        expect(rulesSource).toContain('canReadPublicGameDocument(get(teamPath).data, get(gamePath).data)');
         expect(rulesSource).toContain("data.get('shareable', false) == true");
         expect(rulesSource).toContain("data.get('publicCalendar', false) == true");
     });

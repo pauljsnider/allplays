@@ -61,6 +61,19 @@
         ]
       },
       {
+        "source": "/@(family|public-rsvp|accept-invite|login|reset-password|verify-pending).html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-store"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "no-referrer"
+          }
+        ]
+      },
+      {
         "source": "/.well-known/allplays-runtime-config.json",
         "headers": [
           {

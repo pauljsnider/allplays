@@ -2,7 +2,12 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const test = require('node:test');
 const { join } = require('node:path');
-const { serializePublicGame } = require('../public-team-api-core.cjs');
+const {
+  getPublicOpponentStatKeys,
+  normalizeTeamId,
+  isPublicProjectionItemAfterCursor,
+  serializePublicGame
+} = require('../public-team-api-core.cjs');
 
 const source = readFileSync(join(__dirname, '..', 'index.js'), 'utf8');
 
@@ -14,11 +19,21 @@ function loadPublicTeamDataAccess(firestore) {
   const implementation = [
     source.slice(constantsStart, constantsEnd),
     source.slice(playersStart, functionsEnd),
-    'return { getPublicTeamPlayers, getPublicTeamGames };'
+    'return { getPublicTeamPlayers, getPublicTeamGames, getPublicOpponentStatKeysByGameId };'
   ].join('\n');
 
-  return new Function('firestore', 'serializePublicGame', implementation)(
+  return new Function(
+    'firestore',
+    'getPublicOpponentStatKeys',
+    'normalizeTeamId',
+    'isPublicProjectionItemAfterCursor',
+    'serializePublicGame',
+    implementation
+  )(
     firestore,
+    getPublicOpponentStatKeys,
+    normalizeTeamId,
+    isPublicProjectionItemAfterCursor,
     serializePublicGame
   );
 }
@@ -38,7 +53,7 @@ function makeDoc(id, data) {
   return { id, data: () => data };
 }
 
-function makeFirestore({ players = [], games = [], metrics = {} } = {}) {
+function makeFirestore({ players = [], games = [], configs = {}, metrics = {} } = {}) {
   metrics.gameLimits = [];
   metrics.gameStartAfterIds = [];
   metrics.gameDocumentsRead = 0;
@@ -69,6 +84,38 @@ function makeFirestore({ players = [], games = [], metrics = {} } = {}) {
   }
 
   return {
+    doc(path) {
+      const configId = path.split('/').at(-1);
+      const config = configs[configId];
+      return {
+        async get() {
+          return {
+            exists: Boolean(config),
+            data: () => config
+          };
+        }
+      };
+    },
+    collectionGroup(path) {
+      if (path !== 'sharedGames') {
+        throw new Error(`Unexpected collection group: ${path}`);
+      }
+      const query = {
+        where() {
+          return query;
+        },
+        orderBy() {
+          return query;
+        },
+        limit() {
+          return query;
+        },
+        async get() {
+          return makeQuerySnapshot([]);
+        }
+      };
+      return query;
+    },
     collection(path) {
       if (path.endsWith('/players')) {
         return {
@@ -101,12 +148,13 @@ test('public team handlers use bounded games reads and field-whitelisting serial
 
   assert.match(apiSource, /buildPublicRosterResponse/);
   assert.match(apiSource, /buildPublicGamesResponse/);
-  assert.match(apiSource, /\.where\('date', '>=', range\.fromDate\)/);
+  assert.match(apiSource, /\.where\('date', '>=', queryFromDate\)/);
   assert.match(apiSource, /\.where\('date', '<=', range\.toDate\)/);
   assert.match(apiSource, /PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS/);
   assert.match(apiSource, /\.limit\(currentBatchSize\)/);
   assert.match(apiSource, /\.startAfter\(lastDoc\)/);
-  assert.match(apiSource, /if \(serializePublicGame\(game\)\) games\.push\(game\)/);
+  assert.match(apiSource, /isPublicProjectionItemAfterCursor\(projection, cursor\)/);
+  assert.match(apiSource, /where\('date', '>=', queryFromDate\)/);
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
 });
 
@@ -200,4 +248,26 @@ test('public games scan returns below 5,000 documents and fails safely at the ca
   );
   assert.equal(capMetrics.gameDocumentsRead, 5000);
   assert.deepEqual(capMetrics.gameLimits, Array(10).fill(500));
+});
+
+test('public game projections load opponent stat keys from authoritative tracker configs', async () => {
+  const dataAccess = loadPublicTeamDataAccess(makeFirestore({
+    configs: {
+      'config-1': {
+        columns: ['PTS', 'CUSTOM_WINS', 'PRIVATE_RATING'],
+        statDefinitions: [
+          { id: 'custom_wins', scope: 'player', visibility: 'public' },
+          { id: 'private_rating', scope: 'player', visibility: 'private' }
+        ]
+      }
+    }
+  }));
+
+  const keysByGame = await dataAccess.getPublicOpponentStatKeysByGameId('team-1', [
+    { id: 'game-1', statTrackerConfigId: 'config-1' },
+    { id: 'game-without-config' }
+  ]);
+
+  assert.deepEqual(new Set(keysByGame.get('game-1')), new Set(['pts', 'custom_wins']));
+  assert.equal(keysByGame.has('game-without-config'), false);
 });

@@ -23,7 +23,7 @@ describe('team management page access wiring', () => {
         expect(rules).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(rules).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(rules).toContain("(isOwner(userId) && resource.data.get('isAdmin', false) != true)");
-        expect(rules).toContain('canReadTeamDocument(resource.data)');
+        expect(rules).toContain('canReadTeamDocument(teamId, resource.data)');
     });
 
     it('prefers auth email before profile fallback when loading non-admin dashboard team access', () => {

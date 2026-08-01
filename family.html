@@ -2,16 +2,21 @@
 <html lang="en">
 
 <head>
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-3J13LHWFT3');
-  </script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <script>
+    (() => {
+      const legacyParams = new URLSearchParams(window.location.search);
+      const fragmentParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const token = fragmentParams.get('token') || legacyParams.get('token') || '';
+      window.__ALLPLAYS_FAMILY_SHARE_LINK__ = Object.freeze({ token });
+      if (token) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    })();
+  </script>
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <title>Family Page - ALL PLAYS</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -173,14 +178,16 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=132';
+    import { getFamilyShareToken, getFamilyShareView, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=136';
     import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
     import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=21';
 
     renderFooter(document.getElementById('footer-container'));
 
-    const params = new URLSearchParams(window.location.search);
-    const tokenId = params.get('token') || '';
+    const tokenId = window.__ALLPLAYS_FAMILY_SHARE_LINK__?.token ||
+      new URLSearchParams(window.location.hash.replace(/^#/, '')).get('token') ||
+      new URLSearchParams(window.location.search).get('token') ||
+      '';
 
     let allScheduleEvents = [];
     let scheduleViewFilter = 'upcoming-all';

@@ -4,7 +4,7 @@
   "webDir": "apps/app/dist",
   "plugins": {
     "FirebaseAuthentication": {
-      "skipNativeAuth": true,
+      "skipNativeAuth": false,
       "providers": [
         "apple.com",
         "google.com"

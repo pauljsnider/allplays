@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const indexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 
 function getSourceSection(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
@@ -25,6 +26,8 @@ describe('public RSVP function safeguards', () => {
     });
 
     it('aggregates public RSVP summaries by active player', () => {
+        expect(source).toContain('return Boolean(normalizePublicRsvpResponse(response));');
+        expect(source).not.toContain('PUBLIC_RSVP_RESPONSES.has');
         expect(source).toContain('const responsesByPlayerId = new Map();');
         expect(source.indexOf('const updateTime = coercePublicRsvpDate(docSnap?.updateTime);'))
             .toBeLessThan(source.indexOf("const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);"));
@@ -44,11 +47,16 @@ describe('public RSVP function safeguards', () => {
 
         expect(submitSource).toContain('await assertUsablePublicRsvpToken(tokenData)');
         expect(submitSource).toContain("firestore.collection('publicRsvpSummaryRefreshJobs').doc()");
-        expect(submitSource).toContain('batch.set(playerStateRef, {');
-        expect(submitSource).toContain('batch.set(summaryStateRef, {');
+        expect(submitSource).toContain('await firestore.runTransaction(async (transaction) => {');
+        expect(submitSource).toContain('transaction.set(playerStateRef, {');
+        expect(submitSource).toContain('transaction.set(summaryStateRef, {');
         expect(submitSource).toContain('latestQueuedJobId: jobRef.id');
-        expect(submitSource).toContain('batch.set(jobRef, {');
-        expect(submitSource).toContain('await batch.commit()');
+        expect(submitSource).toContain('transaction.set(jobRef, {');
+        expect(submitSource).toContain('latestTokenData.teamId !== tokenData.teamId');
+        expect(submitSource).toContain('latestTokenData.gameId !== tokenData.gameId');
+        expect(submitSource).toContain('latestTokenData.playerId !== tokenData.playerId');
+        expect(submitSource).toContain('isPublicRsvpReplay(latestTokenData.lastResponse, response)');
+        expect(submitSource).toContain('deduplicated = true');
         expect(submitSource).toContain('displayName: normalizePublicRsvpDisplayName(tokenData.parentName)');
         expect(submitSource).not.toContain('displayName: tokenData.parentName || tokenData.parentEmail');
         expect(submitSource).not.toContain('parentEmail: tokenData.parentEmail');
@@ -56,8 +64,36 @@ describe('public RSVP function safeguards', () => {
         expect(submitSource).not.toContain('await buildPublicRsvpSummary');
         expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/players`).get()");
         expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps`).get()");
-        expect(submitSource.indexOf('await batch.commit()'))
+        expect(submitSource.indexOf('await firestore.runTransaction'))
             .toBeLessThan(submitSource.indexOf('res.status(200).json'));
+    });
+
+    it('keeps mixed-version RSVP clients working while rate-limiting bounded POST bodies', () => {
+        const getSource = getSourceSection(
+            'exports.getPublicRsvp = functions.https.onRequest',
+            'exports.submitPublicRsvp'
+        );
+        expect(source).toContain('/public-rsvp.html?token=');
+        expect(getSource).toContain("req.method !== 'GET' && req.method !== 'POST'");
+        expect(getSource).toContain('req.body?.token || req.query?.token');
+        expect(getSource).toContain("req.method === 'POST' && getPublicRsvpBodyByteLength(req) > PUBLIC_RSVP_MAX_BODY_BYTES");
+        expect(getSource).toContain("assertPublicRsvpRequestAllowed(req, res, 'read', token)");
+        expect(source).toContain("res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')");
+        expect(indexes.fieldOverrides).toContainEqual({
+            collectionGroup: 'publicRsvpRateLimits',
+            fieldPath: 'expiresAt',
+            ttl: true,
+            indexes: []
+        });
+    });
+
+    it('isolates primary RSVP limits by token beneath a higher shared-network ceiling', () => {
+        expect(source).toContain("buildPublicRsvpRateLimitBoundaries({ operation, token, ip: getRequestIp(req) })");
+        expect(source).toContain("getPublicRsvpDurableRateLimiter(operation, 'token')(tokenBoundary.boundary)");
+        expect(source).toContain("getPublicRsvpDurableRateLimiter(operation, 'network')(networkBoundary.boundary)");
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS.read.network');
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS.write.network');
+        expect(source).toContain('maxRequests: PUBLIC_RSVP_RATE_LIMITS[operation][scope]');
     });
 
     it('awaits the durable worker lifecycle and verifies per-player job ordering', () => {

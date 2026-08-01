@@ -9,6 +9,7 @@ const firebaseMocks = vi.hoisted(() => ({
     startAfter: vi.fn((value) => ({ type: 'startAfter', value })),
     getDocs: vi.fn(),
     getCountFromServer: vi.fn(),
+    listPublicTeams: vi.fn(),
 }));
 
 vi.mock('../../js/firebase.js?v=23', () => ({
@@ -41,7 +42,10 @@ vi.mock('../../js/firebase.js?v=23', () => ({
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
     functions: {},
-    httpsCallable: vi.fn(),
+    httpsCallable: vi.fn((_functions, name) => {
+        if (name === 'listPublicTeams') return firebaseMocks.listPublicTeams;
+        throw new Error(`Unexpected callable: ${name}`);
+    }),
     ref: vi.fn(),
     uploadBytes: vi.fn(),
     getDownloadURL: vi.fn(),
@@ -75,50 +79,47 @@ describe('discoverPublicTeams search pagination', () => {
         vi.clearAllMocks();
     });
 
-    it('returns opaque cursors for searched results and uses them on the next page', async () => {
-        const firstAtlantaDoc = createTeamDoc('team-atl-1', {
+    it('uses the sanitized callable and passes its opaque cursor to the next page', async () => {
+        const firstAtlantaTeam = {
+            id: 'team-atl-1',
             name: 'Atlanta Fire',
-            isPublic: true,
-            publicSearchName: 'atlanta fire',
-            publicSearchCity: 'atlanta'
-        });
-        const secondAtlantaDoc = createTeamDoc('team-atl-2', {
+            isPublic: true
+        };
+        const secondAtlantaTeam = {
+            id: 'team-atl-2',
             name: 'Atlanta United 2',
-            isPublic: true,
-            publicSearchName: 'atlanta united 2',
-            publicSearchCity: 'atlanta'
-        });
-        const kansasDoc = createTeamDoc('team-kc-1', {
+            isPublic: true
+        };
+        const kansasTeam = {
+            id: 'team-kc-1',
             name: 'Kansas City Current',
-            isPublic: true,
-            publicSearchCity: 'atlanta'
-        });
-        const zebrasDoc = createTeamDoc('team-zebras-1', {
+            isPublic: true
+        };
+        const zebrasTeam = {
+            id: 'team-zebras-1',
             name: 'Zebras FC',
-            isPublic: true,
-            publicSearchName: 'zebras fc'
-        });
+            isPublic: true
+        };
+        firebaseMocks.listPublicTeams
+            .mockResolvedValueOnce({
+                data: {
+                    items: [firstAtlantaTeam, secondAtlantaTeam],
+                    nextCursor: 'opaque-page-2'
+                }
+            })
+            .mockResolvedValueOnce({
+                data: {
+                    items: [kansasTeam, zebrasTeam],
+                    nextCursor: null
+                }
+            });
 
-        firebaseMocks.getDocs
-            .mockResolvedValueOnce({ docs: [firstAtlantaDoc, secondAtlantaDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [firstAtlantaDoc, kansasDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [zebrasDoc] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [] })
-            .mockResolvedValueOnce({ docs: [] });
-
-        const { discoverPublicTeams } = await import('../../js/db.js?v=132');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=136');
 
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
         expect(firstPage.teams.map((team) => team.id)).toEqual(['team-atl-1', 'team-atl-2']);
-        expect(firstPage.nextCursor).toMatchObject({
-            kind: 'public-team-search',
-            searchText: 'atlanta',
-            bufferedTeams: [expect.objectContaining({ id: 'team-kc-1' })]
-        });
+        expect(firstPage.nextCursor).toBe('opaque-page-2');
 
         const secondPage = await discoverPublicTeams({
             searchText: 'atlanta',
@@ -128,31 +129,25 @@ describe('discoverPublicTeams search pagination', () => {
 
         expect(secondPage.teams.map((team) => team.id)).toEqual(['team-kc-1', 'team-zebras-1']);
         expect(secondPage.nextCursor).toBeNull();
-        expect(firebaseMocks.startAfter).toHaveBeenCalledTimes(2);
-        expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(1, secondAtlantaDoc);
-        expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(2, kansasDoc);
+        expect(firebaseMocks.listPublicTeams).toHaveBeenNthCalledWith(1, {
+            searchText: 'atlanta',
+            pageSize: 2,
+            cursor: null
+        });
+        expect(firebaseMocks.listPublicTeams).toHaveBeenNthCalledWith(2, {
+            searchText: 'atlanta',
+            pageSize: 2,
+            cursor: 'opaque-page-2'
+        });
+        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
     });
 
-    it('serves the next page from buffered search teams before querying Firestore again', async () => {
-        const bufferedAtlantaTeam = {
-            id: 'team-atl-3',
-            name: 'Atlanta United 3',
-            isPublic: true,
-            publicSearchName: 'atlanta united 3'
-        };
-        const bufferedKansasTeam = {
-            id: 'team-kc-2',
-            name: 'Kansas City Wave',
-            isPublic: true,
-            publicSearchCity: 'atlanta'
-        };
-        const persistedCursorDoc = createTeamDoc('team-atl-2', {
-            name: 'Atlanta United 2',
-            isPublic: true,
-            publicSearchName: 'atlanta united 2'
+    it('does not send legacy Firestore document cursors to the callable', async () => {
+        firebaseMocks.listPublicTeams.mockResolvedValue({
+            data: { items: [], nextCursor: null }
         });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=132');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=136');
 
         const page = await discoverPublicTeams({
             searchText: 'atlanta',
@@ -160,20 +155,18 @@ describe('discoverPublicTeams search pagination', () => {
             cursor: {
                 kind: 'public-team-search',
                 searchText: 'atlanta',
-                strategyCursors: [persistedCursorDoc, null, null, null],
-                bufferedTeams: [bufferedAtlantaTeam, bufferedKansasTeam]
+                strategyCursors: [{ id: 'legacy-doc-cursor' }],
+                bufferedTeams: [{ id: 'legacy-buffered-team' }]
             }
         });
 
-        expect(page.teams.map((team) => team.id)).toEqual(['team-atl-3', 'team-kc-2']);
-        expect(page.nextCursor).toMatchObject({
-            kind: 'public-team-search',
+        expect(page).toEqual({ teams: [], nextCursor: null });
+        expect(firebaseMocks.listPublicTeams).toHaveBeenCalledWith({
             searchText: 'atlanta',
-            strategyCursors: [persistedCursorDoc, null, null, null],
-            bufferedTeams: []
+            pageSize: 2,
+            cursor: null
         });
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
-        expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
     });
 });
 
@@ -186,7 +179,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 10 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=132');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=136');
 
         await expect(getPublicTeamRosterCount('team-roster-1')).resolves.toEqual({
             count: 10,
@@ -202,7 +195,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 201 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=132');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=136');
 
         await expect(getPublicTeamRosterCount('team-large-roster')).resolves.toEqual({
             count: 200,
@@ -220,7 +213,7 @@ describe('bounded stat tracker config reads', () => {
         firebaseMocks.getDocs.mockResolvedValue({
             docs: [createTeamDoc('config-1', { name: 'Basketball Standard', baseType: 'Basketball' })]
         });
-        const { getConfigs } = await import('../../js/db.js?v=132');
+        const { getConfigs } = await import('../../js/db.js?v=136');
 
         await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
             expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })
@@ -270,5 +263,34 @@ describe('complete legacy collection helpers', () => {
         expect(firebaseMocks.limit).toHaveBeenNthCalledWith(1, 100);
         expect(firebaseMocks.limit).toHaveBeenNthCalledWith(2, 100);
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstPage.at(-1));
+    });
+
+    it('returns public teams beyond the former 1,000-team cutoff', async () => {
+        const pages = Array.from({ length: 11 }, (_, pageIndex) => {
+            const pageSize = pageIndex === 10 ? 1 : 100;
+            return {
+                data: {
+                    items: Array.from({ length: pageSize }, (_, itemIndex) => ({
+                        id: `public-team-${(pageIndex * 100) + itemIndex + 1}`,
+                        name: `Public Team ${(pageIndex * 100) + itemIndex + 1}`,
+                        isPublic: true
+                    })),
+                    nextCursor: pageIndex < 10 ? `public-page-${pageIndex + 2}` : null
+                }
+            };
+        });
+        pages.forEach((page) => firebaseMocks.listPublicTeams.mockResolvedValueOnce(page));
+
+        const { getTeams } = await import('../../js/db.js?v=136-public-team-complete');
+        const teams = await getTeams({ publicOnly: true });
+
+        expect(teams).toHaveLength(1001);
+        expect(teams.at(-1)?.id).toBe('public-team-1001');
+        expect(firebaseMocks.listPublicTeams).toHaveBeenCalledTimes(11);
+        expect(firebaseMocks.listPublicTeams).toHaveBeenNthCalledWith(11, {
+            searchText: '',
+            pageSize: 100,
+            cursor: 'public-page-11'
+        });
     });
 });

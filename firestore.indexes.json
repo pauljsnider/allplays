@@ -628,6 +628,14 @@
     },
     {
       "collectionGroup": "sharedGames",
+      "fieldPath": "liveStatus",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },
+        { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
       "fieldPath": "homeTeamId",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
@@ -851,6 +859,12 @@
     },
     {
       "collectionGroup": "publicRegistrationRateLimits",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "publicRsvpRateLimits",
       "fieldPath": "expiresAt",
       "ttl": true,
       "indexes": []

@@ -324,7 +324,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=132';
+        import { getTeam, getPlayers, getGames, getPublicTeamCalendarEvents, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getMyRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=136';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=21';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -332,7 +332,7 @@
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=4';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=3';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=140';
+        import { checkAuth } from './js/auth.js?v=141';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -2290,43 +2290,49 @@
 
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
 
-            if (team.calendarUrls && team.calendarUrls.length > 0) {
-                for (const calendarUrl of team.calendarUrls) {
-                    try {
-                        const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+            const publicCalendarEvents = team.hasCalendarSources && !team.calendarUrls?.length
+                ? await getPublicTeamCalendarEvents(currentTeamId)
+                : [];
+            const calendarSources = team.calendarUrls?.length
+                ? team.calendarUrls.map((calendarUrl) => ({ calendarUrl }))
+                : [{ calendarEvents: publicCalendarEvents }];
+            for (const calendarSource of calendarSources) {
+                const calendarUrl = calendarSource.calendarUrl || '';
+                try {
+                    const calendarEvents = calendarSource.calendarEvents ||
+                        await fetchAndParseCalendar(calendarUrl);
 
-                        calendarEvents.forEach(event => {
-                            if (isTrackedCalendarEvent(event, trackedUids)) return;
+                    calendarEvents.forEach(event => {
+                        if (isTrackedCalendarEvent(event, trackedUids)) return;
 
-                            // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
-                            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
-                                event.summary?.includes('[CANCELED]');
+                        // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                        const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                            event.summary?.includes('[CANCELED]');
 
-                            const hasConflict = scheduleEntries.some((entry) => {
-                                const eventDate = event.dtstart;
-                                return Math.abs(entry.date - eventDate) < 60000;
-                            });
-
-                            if (hasConflict) return;
-
-                            const isPractice = isPracticeEvent(event.summary);
-                            // Clean [CANCELED] prefix from summary before extracting opponent
-                            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
-                            const opponent = extractOpponent(cleanSummary, team.name);
-
-                            allEvents.push({
-                                type: 'calendar',
-                                date: event.dtstart,
-                                opponent: opponent,
-                                location: event.location || 'TBD',
-                                isPractice: isPractice,
-                                isCancelled: isCancelled,
-                                calendarEvent: event
-                            });
+                        const hasConflict = scheduleEntries.some((entry) => {
+                            const eventDate = event.dtstart;
+                            return Math.abs(entry.date - eventDate) < 60000;
                         });
-                    } catch (error) {
-                        console.warn('Calendar import unavailable:', calendarUrl, error);
-                    }
+
+                        if (hasConflict) return;
+
+                        const isPractice = isPracticeEvent(event.summary);
+                        // Clean [CANCELED] prefix from summary before extracting opponent
+                        const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                        const opponent = extractOpponent(cleanSummary, team.name);
+
+                        allEvents.push({
+                            type: 'calendar',
+                            date: event.dtstart,
+                            opponent: opponent,
+                            location: event.location || 'TBD',
+                            isPractice: isPractice,
+                            isCancelled: isCancelled,
+                            calendarEvent: event
+                        });
+                    });
+                } catch (error) {
+                    console.warn('Calendar import unavailable:', calendarUrl || 'public projection', error);
                 }
             }
 
