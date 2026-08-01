@@ -224,7 +224,7 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=136';",
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=137';",
             'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip } = deps.db;'
         )
         .replace(
@@ -616,6 +616,22 @@ describe('live game replay initialization', () => {
         expect(page.chatInput.disabled).toBe(true);
         expect(page.engagementSubscriptions.subscribeLiveChat).not.toHaveBeenCalled();
         expect(page.engagementSubscriptions.subscribeReactions).not.toHaveBeenCalled();
+        expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
+    });
+
+    it('does not open canonical presence tracking for a public projection viewer', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            game: {
+                date: new Date(),
+                status: 'live',
+                liveStatus: 'live',
+                isPublicProjection: true
+            }
+        });
+
+        expect(page.engagementSubscriptions.subscribeLiveChat).toHaveBeenCalledOnce();
+        expect(page.engagementSubscriptions.subscribeReactions).toHaveBeenCalledOnce();
         expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
     });
 
