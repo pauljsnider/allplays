@@ -26,6 +26,8 @@ describe('public RSVP function safeguards', () => {
     });
 
     it('aggregates public RSVP summaries by active player', () => {
+        expect(source).toContain('return Boolean(normalizePublicRsvpResponse(response));');
+        expect(source).not.toContain('PUBLIC_RSVP_RESPONSES.has');
         expect(source).toContain('const responsesByPlayerId = new Map();');
         expect(source.indexOf('const updateTime = coercePublicRsvpDate(docSnap?.updateTime);'))
             .toBeLessThan(source.indexOf("const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);"));

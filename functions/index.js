@@ -13836,7 +13836,7 @@ function getPublicRsvpPlayerIds(rsvp) {
 }
 
 function publicRsvpIsResponded(response) {
-  return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
+  return Boolean(normalizePublicRsvpResponse(response));
 }
 
 function buildRsvpReminderPushPayload(event) {
