@@ -151,6 +151,7 @@ describe('Profile seed from auth.profile', () => {
 
     it('seeds fullName from auth.profile without calling loadProfileDocument', async () => {
         const auth = buildAuth({
+            profileHydration: 'success',
             profile: {
                 fullName: 'Test User',
                 phone: '555-0199',
@@ -175,6 +176,7 @@ describe('Profile seed from auth.profile', () => {
 
     it('seeds phone from auth.profile without a network round-trip', async () => {
         const auth = buildAuth({
+            profileHydration: 'success',
             profile: {
                 fullName: 'Test User',
                 phone: '555-0199',
@@ -197,6 +199,7 @@ describe('Profile seed from auth.profile', () => {
 
     it('seeds photoPreview from auth.profile without calling loadProfileDocument', async () => {
         const auth = buildAuth({
+            profileHydration: 'success',
             profile: {
                 fullName: 'Test User',
                 phone: '',
@@ -228,7 +231,7 @@ describe('Profile seed from auth.profile', () => {
             email: 'test@example.com'
         });
 
-        const auth = buildAuth({ profile: null });
+        const auth = buildAuth({ profile: null, profileHydration: 'fallback' });
 
         render(
             <MemoryRouter>
@@ -245,6 +248,7 @@ describe('Profile seed from auth.profile', () => {
 
     it('emits profile initial load telemetry for auth-seeded success and handled load failure', async () => {
         const seededAuth = buildAuth({
+            profileHydration: 'success',
             profile: {
                 fullName: 'Seeded User',
                 phone: '555-0100',
@@ -275,7 +279,7 @@ describe('Profile seed from auth.profile', () => {
 
         render(
             <MemoryRouter>
-                <Profile auth={buildAuth({ profile: null })} />
+                <Profile auth={buildAuth({ profile: null, profileHydration: 'fallback' })} />
             </MemoryRouter>
         );
 

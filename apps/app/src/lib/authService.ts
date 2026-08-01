@@ -31,7 +31,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
 import { mergeOwnedTeamIds } from './teamAccess';
-import type { AuthUser, UserRole } from './types';
+import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
 
 export const firebaseAuth = auth;
 export const passwordResetConfirmationMessage = 'If an account exists for that email, a reset email has been queued.';
@@ -75,6 +75,7 @@ type UserCredential = {
 type HydratedUser = {
   user: AuthUser;
   profile: Record<string, unknown>;
+  profileHydration: ProfileHydrationStatus;
 };
 
 type NativeAuthSession = {
@@ -761,12 +762,14 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string, 
 
 export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
   let profile: Record<string, unknown> = {};
+  let profileHydration: ProfileHydrationStatus = 'success';
   const dbModule = await loadLegacyAuthDb();
   try {
     profile =
       (await withTimeout(Promise.resolve(dbModule.getUserProfile(user.uid)), 'Profile load timed out.', profileHydrationTimeoutMs)) || {};
   } catch (error) {
     logger.warn('Failed to load profile; continuing with auth identity.', { error });
+    profileHydration = 'fallback';
     profile = {
       email: user.email || ''
     };
@@ -810,7 +813,8 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 
   return {
     user: toAuthUser(user, profile),
-    profile
+    profile,
+    profileHydration
   };
 }
 

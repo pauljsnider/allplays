@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
@@ -57,6 +57,11 @@ const shellLayoutMocks = vi.hoisted(() => ({
   isNative: false
 }));
 
+const initialLoadTelemetryMocks = vi.hoisted(() => ({
+  start: vi.fn(),
+  end: vi.fn()
+}));
+
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/profileService', () => profileServiceMocks);
 vi.mock('../lib/pushService', () => pushServiceMocks);
@@ -69,8 +74,15 @@ vi.mock('../lib/publicActions', () => ({
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktop: false, isNative: shellLayoutMocks.isNative, isDesktopWeb: false })
 }));
+vi.mock('../lib/telemetry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../lib/telemetry')>(),
+  startAppInitialLoadTimer: initialLoadTelemetryMocks.start.mockImplementation(() => ({
+    end: initialLoadTelemetryMocks.end
+  }))
+}));
 vi.mock('lucide-react', () => {
   const Icon = () => null;
+  const LoaderIcon = (props: Record<string, unknown>) => <svg data-testid="loading-spinner" {...props} />;
   return {
     Bell: Icon,
     ChevronDown: Icon,
@@ -81,7 +93,7 @@ vi.mock('lucide-react', () => {
     ImagePlus: Icon,
     KeyRound: Icon,
     Link2: Icon,
-    Loader2: Icon,
+    Loader2: LoaderIcon,
     LogOut: Icon,
     Mail: Icon,
     RefreshCw: Icon,
@@ -140,22 +152,22 @@ function NativeBackRouteControls() {
   );
 }
 
-function ProfileTestRoute({ includeRouteControls = false, includeNativeBackControls = false }) {
+function ProfileTestRoute({ profileAuth = auth, includeRouteControls = false, includeNativeBackControls = false }: { profileAuth?: AuthState; includeRouteControls?: boolean; includeNativeBackControls?: boolean }) {
   return (
     <>
-      <Profile auth={auth} />
+      <Profile auth={profileAuth} />
       {includeRouteControls ? <TestRouteControls /> : null}
       {includeNativeBackControls ? <NativeBackRouteControls /> : null}
     </>
   );
 }
 
-function renderProfile(initialEntry = '/profile', includeRouteControls = false, includeNativeBackControls = false) {
+function renderProfile(initialEntry = '/profile', includeRouteControls = false, includeNativeBackControls = false, profileAuth: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/profile" element={<ProfileTestRoute includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
-        <Route path="/profile/settings" element={<ProfileTestRoute includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
+        <Route path="/profile" element={<ProfileTestRoute profileAuth={profileAuth} includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
+        <Route path="/profile/settings" element={<ProfileTestRoute profileAuth={profileAuth} includeRouteControls={includeRouteControls} includeNativeBackControls={includeNativeBackControls} />} />
         <Route path="/home" element={<div>Home route</div>} />
       </Routes>
     </MemoryRouter>
@@ -203,6 +215,99 @@ describe('Profile', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('uses a successfully hydrated profile without optional phone data', async () => {
+    const hydratedAuth: AuthState = {
+      ...auth,
+      profile: {
+        fullName: 'Hydrated Parent',
+        photoUrl: 'https://example.test/hydrated-parent.jpg'
+      },
+      profileHydration: 'success'
+    };
+
+    renderProfile('/profile/settings', false, false, hydratedAuth);
+
+    const accountHeader = screen.getByRole('heading', { name: 'Your Account' }).parentElement?.parentElement;
+    expect(accountHeader?.querySelector('.animate-spin')).toBeNull();
+    expect(await screen.findByDisplayValue('Hydrated Parent')).toBeTruthy();
+    expect(document.querySelector('img[src="https://example.test/hydrated-parent.jpg"]')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileDocument).not.toHaveBeenCalled();
+    expect(initialLoadTelemetryMocks.start).toHaveBeenCalledWith('profile', {
+      route: 'profile',
+      source: 'auth-profile'
+    });
+  });
+
+  it('loads the profile document once when authentication used fallback data', async () => {
+    const profileRequest = createDeferredPromise<{
+      fullName: string;
+      phone: string;
+      photoUrl: string;
+      signInMethod: string;
+      hasPassword: boolean;
+      updatedAt: { seconds: number };
+    }>();
+    profileServiceMocks.loadProfileDocument.mockImplementation(() => profileRequest.promise);
+    const fallbackAuth: AuthState = {
+      ...auth,
+      profile: { email: 'parent@example.com' },
+      profileHydration: 'fallback'
+    };
+
+    renderProfile('/profile/settings', false, false, fallbackAuth);
+
+    const accountHeader = screen.getByRole('heading', { name: 'Your Account' }).parentElement?.parentElement;
+    expect(accountHeader?.querySelector('.animate-spin')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      profileRequest.resolve({
+        fullName: 'Loaded Parent',
+        phone: '',
+        photoUrl: '',
+        signInMethod: 'emailLink',
+        hasPassword: false,
+        updatedAt: { seconds: 1717200000 }
+      });
+    });
+
+    expect(await screen.findByDisplayValue('Loaded Parent')).toBeTruthy();
+    await waitFor(() => expect(accountHeader?.querySelector('.animate-spin')).toBeNull());
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the hydrated profile when only the hydration status changes', async () => {
+    const profileRequest = createDeferredPromise<never>();
+    profileServiceMocks.loadProfileDocument.mockImplementation(() => profileRequest.promise);
+    const hydratedProfile = {
+      fullName: 'Hydrated After Retry',
+      phone: '',
+      photoUrl: ''
+    };
+    const fallbackAuth: AuthState = {
+      ...auth,
+      profile: hydratedProfile,
+      profileHydration: 'fallback'
+    };
+    const view = renderProfile('/profile/settings', false, false, fallbackAuth);
+
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/profile/settings']}>
+        <Routes>
+          <Route
+            path="/profile/settings"
+            element={<ProfileTestRoute profileAuth={{ ...fallbackAuth, profileHydration: 'success' }} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('Hydrated After Retry')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
   });
 
   it('keeps push service value APIs behind the Alerts dynamic import boundary', () => {

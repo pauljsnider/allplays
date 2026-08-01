@@ -107,6 +107,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
+  const useAuthProfile = auth.profileHydration === 'success' && auth.profile != null;
   const searchSection = (() => {
     const section = searchParams.get('section');
     return (section === 'account' || section === 'alerts' || section === 'invites' || section === 'security') ? section as ProfileSectionId : 'account';
@@ -135,7 +136,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeEmail, setAccountMergeEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!useAuthProfile);
   const [busy, setBusy] = useState('');
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
@@ -329,7 +330,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       photoSelectionIdRef.current += 1;
-      setLoading(true);
+      setLoading(!useAuthProfile);
       setProfileStatus(null);
       setNotificationStatus(null);
       setInviteStatus(null);
@@ -354,21 +355,17 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeEmail('');
 
       try {
-        // Seed form fields from the already-hydrated auth.profile when it is
-        // fully populated (has at least fullName and phone), avoiding a redundant
-        // Firestore round-trip. Fall back to loadProfileDocument otherwise.
+        // Seed form fields whenever authentication loaded the profile document.
+        // Optional field presence cannot distinguish a valid profile from fallback data.
         const seededProfile = auth.profile;
-        const isFullyHydrated = seededProfile != null &&
-          typeof seededProfile.fullName === 'string' &&
-          'phone' in seededProfile;
-        const profileLoadSource = isFullyHydrated ? 'auth-profile' : 'profile-document';
+        const profileLoadSource = useAuthProfile ? 'auth-profile' : 'profile-document';
         const initialLoadTimer = startAppInitialLoadTimer('profile', {
           route: 'profile',
           source: profileLoadSource
         });
         let initialLoadTelemetryRecorded = false;
         let loadedProfile: ProfileDocument;
-        if (isFullyHydrated) {
+        if (useAuthProfile) {
           loadedProfile = seededProfile as ProfileDocument;
         } else {
           loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
@@ -418,7 +415,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.profile, user]);
+  }, [auth.profile, useAuthProfile, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();
