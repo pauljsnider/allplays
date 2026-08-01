@@ -278,7 +278,7 @@ describe('public user profile sync', () => {
         expect(callableSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${userId}`);');
         expect(callableSource).toContain('const nextUserData = {');
         expect(callableSource).toContain('transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
-        expect(callableSource).toContain('trustedEmail: context.auth.token?.email || userData.email || null');
+        expect(callableSource).toContain('trustedEmail: signedInEmail || null');
     });
 
     it('uses the callable for trusted owner projection after writing presentation fields', async () => {
