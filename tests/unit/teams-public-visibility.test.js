@@ -75,7 +75,7 @@ describe('public teams visibility', () => {
 
         expect(rules).toContain('function canReadTeamDocument(teamId, data)');
         expect(rules).toContain('allow get: if canReadTeamDocument(teamId, resource.data);');
-        expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
+        expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery(100) ||');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
         expect(rules).not.toContain('canReadPublicTeamDocument(resource.data)');
         expect(rules).not.toContain('allow read: if true;  // Public teams for browsing');

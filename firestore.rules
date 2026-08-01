@@ -49,11 +49,11 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    function isBoundedGlobalAdminListQuery() {
+    function isBoundedGlobalAdminListQuery(maximumLimit) {
       return isGlobalAdmin() &&
              request.query.limit != null &&
              request.query.limit > 0 &&
-             request.query.limit <= 100;
+             request.query.limit <= maximumLimit;
     }
 
     function isTeamOwnerOrAdmin(teamId) {
@@ -2767,7 +2767,7 @@ service cloud.firestore {
     // remain the authority for broad private-team reads.
     match /users/{userId} {
       allow get: if isGlobalAdmin() || isOwner(userId);
-      allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);
+      allow list: if isBoundedGlobalAdminListQuery(100) || isOwner(userId);
       allow create: if isGlobalAdmin() ||
                     (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));
       allow update: if isGlobalAdmin() ||
@@ -2881,7 +2881,7 @@ service cloud.firestore {
     // admins may query it, and every list request remains explicitly bounded.
     match /adminUserSearch/{userId} {
       allow get: if isGlobalAdmin();
-      allow list: if isBoundedGlobalAdminListQuery();
+      allow list: if isBoundedGlobalAdminListQuery(100);
       allow write: if false;
     }
 
@@ -2992,7 +2992,7 @@ service cloud.firestore {
 
     // Collection group rule for the global-admin officials directory search.
     match /{path=**}/officials/{officialId} {
-      allow list: if isBoundedGlobalAdminListQuery();
+      allow list: if isBoundedGlobalAdminListQuery(100);
     }
 
     // Collection group rule for registrations - allows parent dashboard to query own applications.
@@ -3077,7 +3077,8 @@ service cloud.firestore {
     // First-party product telemetry. Clients send events through the Cloud Function,
     // and only global admins can inspect the resulting datasets.
     match /telemetryEvents/{eventId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(5000);
       allow write: if false;
     }
 
@@ -3086,27 +3087,32 @@ service cloud.firestore {
     }
 
     match /telemetryDaily/{dateId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(960);
       allow write: if false;
     }
 
     match /telemetryPagesDaily/{pageId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(16000);
       allow write: if false;
     }
 
     match /telemetryRoutesDaily/{routeId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(16000);
       allow write: if false;
     }
 
     match /telemetryEventsDaily/{eventId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(16000);
       allow write: if false;
     }
 
     match /telemetrySessions/{sessionId} {
-      allow read: if isGlobalAdmin();
+      allow get: if isGlobalAdmin();
+      allow list: if isBoundedGlobalAdminListQuery(500);
       allow write: if false;
     }
 
@@ -3159,7 +3165,7 @@ service cloud.firestore {
     // Anonymous discovery and detail reads use sanitized callable projections.
     match /teams/{teamId} {
       allow get: if canReadTeamDocument(teamId, resource.data);
-      allow list: if isBoundedGlobalAdminListQuery() ||
+      allow list: if isBoundedGlobalAdminListQuery(100) ||
                      canListManagedTeamDocument(resource.data);
       allow create: if isVerifiedForSensitiveWrite() && request.resource.data.ownerId == request.auth.uid;
       allow update: if isVerifiedForSensitiveWrite() &&
@@ -3427,7 +3433,7 @@ service cloud.firestore {
       // Officials directory for officiating assignments
       match /officials/{officialId} {
         allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
-        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery(100) || isTeamOwnerOrAdmin(teamId);
         allow write: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -3915,7 +3921,7 @@ service cloud.firestore {
       // Officials directory subcollection
       match /officials/{officialId} {
         allow get: if isGlobalAdmin() || isTeamOwnerOrAdmin(teamId);
-        allow list: if isBoundedGlobalAdminListQuery() || isTeamOwnerOrAdmin(teamId);
+        allow list: if isBoundedGlobalAdminListQuery(100) || isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
