@@ -230,6 +230,145 @@ describe('AppSearchDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('retries failed team and player searches without changing the query or closing the dialog', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const searchTeams: AppSearchTeam[] = [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }];
+    const recoveredPlayer: AppSearchPlayer = {
+      id: 'player:team-2:player-2',
+      kind: 'player',
+      title: '#10 Rocket Kid',
+      subtitle: 'Rockets',
+      route: '/players/team-2/player-2',
+      teamId: 'team-2',
+      playerId: 'player-2',
+    };
+    let releaseTeams!: (teams: AppSearchTeam[]) => void;
+    let releasePlayers!: (players: AppSearchPlayer[]) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(searchTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(searchTeams);
+    searchAppTeamsMock
+      .mockRejectedValueOnce(new Error('Team search unavailable.'))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseTeams = resolve;
+      }));
+    searchAppPlayersMock
+      .mockRejectedValueOnce(new Error('Player search unavailable.'))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releasePlayers = resolve;
+      }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: '  ro  ' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Team search unavailable.')).toBeTruthy();
+    expect(screen.getByText('Player search unavailable.')).toBeTruthy();
+    const teamRetry = screen.getByRole('button', { name: 'Retry teams search' });
+    expect(screen.getByRole('button', { name: 'Retry players search' })).toBeTruthy();
+
+    fireEvent.click(teamRetry);
+    fireEvent.click(teamRetry);
+    expect(teamRetry).toBeDisabled();
+    expect(screen.getByText('Searching teams...')).toBeTruthy();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+    expect(searchAppTeamsMock).toHaveBeenLastCalledWith('ro', searchTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenLastCalledWith('ro', expect.any(Map), null);
+
+    await act(async () => {
+      releaseTeams(searchTeams);
+      releasePlayers([recoveredPlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(input).toHaveValue('  ro  ');
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy();
+    expect(screen.queryByText('Team search unavailable.')).toBeNull();
+    expect(screen.queryByText('Player search unavailable.')).toBeNull();
+    const recoveredResult = screen.getByRole('button', { name: /#10 Rocket Kid/i });
+    fireEvent.click(recoveredResult);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/players/team-2/player-2');
+  });
+
+  it('ignores a retry response after the query changes', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const searchTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    let releaseRetry!: (players: AppSearchPlayer[]) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(searchTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(searchTeams);
+    searchAppPlayersMock
+      .mockRejectedValueOnce(new Error('Player search unavailable.'))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseRetry = resolve;
+      }))
+      .mockResolvedValueOnce([]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'al' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry players search' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      releaseRetry([{
+        id: 'player:team-1:stale',
+        kind: 'player',
+        title: 'Al Stale',
+        subtitle: 'Alexandria',
+        route: '/players/team-1/stale',
+        teamId: 'team-1',
+        playerId: 'stale',
+      }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(input).toHaveValue('alex');
+    expect(screen.queryByRole('button', { name: /Al Stale/i })).toBeNull();
+  });
+
   it('lets Enter on the clear button stay scoped to clearing instead of opening the highlighted result', async () => {
     const onClose = vi.fn();
 
