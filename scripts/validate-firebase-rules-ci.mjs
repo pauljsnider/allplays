@@ -666,7 +666,8 @@ export function validateFirebaseRulesCi() {
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
-    assertIncludes(prPreview, "github.event.label.name == 'preview-requested'", 'Explicit PR preview request gate');
+    assertIncludes(prPreview, 'workflow_dispatch:', 'Explicit PR preview dispatch gate');
+    assertIncludes(prPreview, 'head_sha: ${{ inputs.head_sha }}', 'Exact-head PR preview dispatch input');
     assertIncludes(prPreview, 'uses: ./.github/workflows/deploy-preview.yml', 'PR preview artifact gate');
     assertIncludes(prIntegration, 'name: preview-smoke', 'PR integration stable preview context');
     assertIncludes(prIntegration, 'name: mobile-build', 'PR integration stable mobile context');

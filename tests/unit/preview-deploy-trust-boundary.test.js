@@ -54,30 +54,33 @@ function validTriggerFixture() {
             workflow_run: {
                 id: runId,
                 name: 'pr-preview',
-                event: 'pull_request',
+                display_title: `PR preview #${prNumber} @ ${headSha}`,
+                event: 'workflow_dispatch',
                 status: 'completed',
                 conclusion: 'success',
-                head_sha: headSha,
+                head_sha: 'ed4cc306a66cdf31c5672b965ebffc452bcbad2d',
                 repository: { full_name: repository },
                 head_repository: { full_name: repository },
-                pull_requests: [{ number: prNumber }]
+                pull_requests: []
             }
         },
         run: {
             id: runId,
             name: 'pr-preview',
+            display_title: `PR preview #${prNumber} @ ${headSha}`,
             path: '.github/workflows/pr-preview.yml',
-            event: 'pull_request',
+            event: 'workflow_dispatch',
             status: 'completed',
             conclusion: 'success',
-            head_sha: headSha,
-            head_branch: 'security/payment-authority-followup',
+            head_sha: 'ed4cc306a66cdf31c5672b965ebffc452bcbad2d',
+            head_branch: 'master',
             repository: { full_name: repository },
             head_repository: { full_name: repository }
         },
         pullRequest: {
             number: prNumber,
             state: 'open',
+            draft: false,
             base: { repo: { full_name: repository } },
             head: {
                 repo: { full_name: repository },
@@ -193,12 +196,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).not.toContain('external-claim');
     });
 
-    it('builds the untrusted preview artifact only after an explicit label request', () => {
+    it('builds the untrusted preview artifact only after an exact-head manual dispatch', () => {
         expect(previewRequestWorkflow).toContain('name: pr-preview');
-        expect(previewRequestWorkflow).toContain('group: pr-preview-${{ github.event.pull_request.number }}');
+        expect(previewRequestWorkflow).toContain('workflow_dispatch:');
+        expect(previewRequestWorkflow).toContain('run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
+        expect(previewRequestWorkflow).toContain('group: pr-preview-${{ inputs.pr_number }}');
         expect(previewRequestWorkflow).toContain('cancel-in-progress: true');
-        expect(previewRequestWorkflow).toContain("github.event.label.name == 'preview-requested'");
-        expect(previewRequestWorkflow).toContain('github.event.pull_request.draft == false');
         expect(previewRequestWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
     });
 
@@ -208,13 +211,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('classify-trigger:');
         expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
         expect(trustedWorkflow).toContain('pull-requests: read');
-        expect(trustedWorkflow).toContain('Fork pull request — no trusted preview deploy is required.');
-        expect(trustedWorkflow).toContain('echo "preview_ready=false" >> "$GITHUB_OUTPUT"');
-        expect(trustedWorkflow).toContain('No preview bundle was requested by this label event.');
+        expect(trustedWorkflow).toContain('Preview dispatch is not bound to the current ready same-repository PR head.');
+        expect(trustedWorkflow).toContain('WORKFLOW_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
         expect(trustedWorkflow).toContain(
-            'group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}'
+            'group: trusted-preview-${{ github.event.workflow_run.display_title || github.event.workflow_run.id }}'
         );
         expect(trustedWorkflow).toContain('cancel-in-progress: true');
         expect(trustedWorkflow).toContain('name: firebase-preview-trusted');

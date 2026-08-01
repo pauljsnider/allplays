@@ -72,8 +72,8 @@ describe('pull request CI consolidation', () => {
         const preview = workflow('pr-preview.yml');
 
         expect(integration).not.toContain('uses: ./.github/workflows/deploy-preview.yml');
-        expect(preview).toContain("github.event.label.name == 'preview-requested'");
-        expect(preview).toContain('github.event.pull_request.draft == false');
+        expect(preview).toContain('workflow_dispatch:');
+        expect(preview).toContain('run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
         expect(preview).toContain('uses: ./.github/workflows/deploy-preview.yml');
     });
 

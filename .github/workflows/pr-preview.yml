@@ -1,20 +1,27 @@
 name: pr-preview
+run-name: PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}
 
 on:
-  pull_request:
-    types:
-      - labeled
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Ready same-repository pull request number
+        required: true
+        type: string
+      head_sha:
+        description: Exact current pull request head SHA
+        required: true
+        type: string
 
 permissions: {}
 
 concurrency:
-  group: pr-preview-${{ github.event.pull_request.number }}
+  group: pr-preview-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
   preview-artifact:
-    if: >-
-      github.event.label.name == 'preview-requested' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
     uses: ./.github/workflows/deploy-preview.yml
+    with:
+      pr_number: ${{ inputs.pr_number }}
+      head_sha: ${{ inputs.head_sha }}

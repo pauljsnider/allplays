@@ -5,6 +5,7 @@ export const PREVIEW_WORKFLOW_NAME = 'pr-preview';
 export const PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-preview.yml';
 export const PREVIEW_ARTIFACT_NAME = 'firebase-preview-hosting-bundle';
 export const MAX_PREVIEW_ARCHIVE_BYTES = 100 * 1024 * 1024;
+const PREVIEW_DISPLAY_TITLE_PATTERN = /^PR preview #([1-9][0-9]*) @ ([0-9a-f]{40})$/;
 
 function fail(message) {
     throw new Error(`Preview deploy trust check failed: ${message}`);
@@ -42,8 +43,8 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
     if (!eventRun || eventRun.name !== PREVIEW_WORKFLOW_NAME) {
         fail(`event must come from ${PREVIEW_WORKFLOW_NAME}.`);
     }
-    if (eventRun.event !== 'pull_request' || eventRun.status !== 'completed' || eventRun.conclusion !== 'success') {
-        fail('triggering workflow must be a completed successful pull_request run.');
+    if (eventRun.event !== 'workflow_dispatch' || eventRun.status !== 'completed' || eventRun.conclusion !== 'success') {
+        fail('triggering workflow must be a completed successful workflow_dispatch run.');
     }
 
     const runId = requirePositiveInteger(eventRun.id, 'event workflow run ID');
@@ -53,7 +54,7 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
     if (
         run.name !== PREVIEW_WORKFLOW_NAME
         || run.path !== PREVIEW_WORKFLOW_PATH
-        || run.event !== 'pull_request'
+        || run.event !== 'workflow_dispatch'
         || run.status !== 'completed'
         || run.conclusion !== 'success'
     ) {
@@ -68,26 +69,30 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
         fail('triggering workflow and head repository must both match this repository.');
     }
 
-    const eventHeadSha = requireSha(eventRun.head_sha, 'event head SHA');
-    const runHeadSha = requireSha(run.head_sha, 'API workflow run head SHA');
-    if (eventHeadSha !== runHeadSha) {
+    const eventRunSha = requireSha(eventRun.head_sha, 'event workflow SHA');
+    const apiRunSha = requireSha(run.head_sha, 'API workflow run SHA');
+    if (eventRunSha !== apiRunSha) {
         fail('event and API workflow run head SHAs do not match.');
     }
 
-    const eventPullRequests = eventRun.pull_requests;
-    if (!Array.isArray(eventPullRequests) || eventPullRequests.length !== 1) {
-        fail('triggering workflow must identify exactly one pull request.');
+    if (eventRun.display_title !== run.display_title) {
+        fail('event and API workflow display titles do not match.');
     }
-    const prNumber = requirePositiveInteger(eventPullRequests[0]?.number, 'event pull-request number');
+    const displayIdentity = PREVIEW_DISPLAY_TITLE_PATTERN.exec(eventRun.display_title || '');
+    if (!displayIdentity) {
+        fail('workflow display title must bind one pull request and exact head SHA.');
+    }
+    const prNumber = requirePositiveInteger(Number(displayIdentity[1]), 'display-title pull-request number');
+    const previewHeadSha = requireSha(displayIdentity[2], 'display-title pull-request head SHA');
     if (requirePositiveInteger(pullRequest?.number, 'API pull-request number') !== prNumber) {
         fail('event and API pull-request numbers do not match.');
     }
     if (
         pullRequest.state !== 'open'
+        || pullRequest.draft !== false
         || pullRequest.base?.repo?.full_name !== repository
         || pullRequest.head?.repo?.full_name !== repository
-        || pullRequest.head?.sha !== runHeadSha
-        || pullRequest.head?.ref !== run.head_branch
+        || pullRequest.head?.sha !== previewHeadSha
     ) {
         fail('pull request must remain open with a same-repository head matching the triggering run.');
     }
@@ -119,7 +124,7 @@ export function verifyPreviewDeployTrigger({ event, run, pullRequest, artifacts 
 
     return {
         artifactId,
-        headSha: runHeadSha,
+        headSha: previewHeadSha,
         prNumber,
         repository,
         runId

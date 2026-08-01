@@ -2,10 +2,11 @@
 
 ## Required invariants
 
-The optional `pr-preview` pull-request workflow calls the reusable
-`deploy-preview` artifact builder only when an operator applies the
-`preview-requested` label to a ready same-repository PR. The builder executes
-untrusted PR code. Neither workflow may receive a Firebase credential or a
+The optional `pr-preview` workflow calls the reusable `deploy-preview`
+artifact builder only after an operator dispatches it with a ready
+same-repository PR number and its exact current head SHA. The builder fetches
+that PR ref and fails if it no longer matches the requested SHA. It executes
+untrusted PR code, so neither workflow may receive a Firebase credential or a
 repository token with write permissions. The reusable builder may only build,
 stage public Hosting content, and upload the single
 `firebase-preview-hosting-bundle` artifact. Required regression and local
@@ -93,8 +94,9 @@ Before merging a change to either preview workflow:
 
 The first `workflow_run` preview cannot execute until `pr-preview` and its
 trusted verifier scripts are present on the default branch. The reusable
-artifact build remains testable before merge; apply `preview-requested` to a
-ready same-repository canary PR after merge to exercise the deployment path.
+artifact build remains testable before merge; dispatch `pr-preview` with a
+ready same-repository canary PR number and exact head SHA after merge to
+exercise the deployment path.
 
 ## Workload Identity cutover and JSON-key retirement
 
