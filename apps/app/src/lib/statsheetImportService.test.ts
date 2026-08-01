@@ -334,4 +334,36 @@ describe('applyTrackStatsheetImportForApp', () => {
       path: 'stat-sheets/team-games/team-1/user-1/new-statsheet.png'
     }])
   })
+
+  it('preflights an oversized initial import before creating a Firestore batch', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
+    const roster = Array.from({ length: 250 }, (_, index) => ({
+      id: `player-${index}`,
+      name: `Player ${index}`,
+      number: String(index + 1)
+    }))
+    const homeRows = roster.map((player) => ({
+      number: player.number,
+      name: player.name,
+      fouls: 0,
+      totalPoints: 0,
+      include: true,
+      mappedPlayerId: player.id
+    }))
+
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster,
+      columns: ['PTS'],
+      homeRows,
+      visitorRows: [],
+      homeScore: 0,
+      awayScore: 0,
+      file: null
+    })).rejects.toThrow('This statsheet import is too large to apply safely in one save.')
+
+    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+    expect(firebaseMocks.batch.commit).not.toHaveBeenCalled()
+  })
 })

@@ -391,9 +391,11 @@ export async function applyTrackStatsheetImportForApp({
       ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
     ]
 
-    const totalBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2 + 1 + cleanupDocs.length
-    if (replaceExisting && totalBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
-      throw new Error('This statsheet replacement is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
+    const primaryBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2
+      + 1
+      + (replaceExisting ? cleanupDocs.length : 0)
+    if (primaryBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
+      throw new Error('This statsheet import is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
     }
 
     const batch = writeBatch(db)
