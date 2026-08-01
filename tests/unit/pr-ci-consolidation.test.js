@@ -26,6 +26,20 @@ describe('pull request CI consolidation', () => {
         expect(integration).toContain('name: preview-smoke');
     });
 
+    it('does not spend runners on draft heads and starts validation at handoff', () => {
+        const fast = parseYaml(workflow('pr-fast.yml'));
+        const integration = parseYaml(workflow('pr-integration.yml'));
+
+        expect(fast.on.pull_request.types).toContain('ready_for_review');
+        expect(integration.on.pull_request.types).toContain('ready_for_review');
+        for (const jobName of ['cache-bust-guard', 'unit-tests', 'app-quality']) {
+            expect(fast.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+        }
+        for (const jobName of ['regression-integration', 'mobile-integration', 'preview-integration']) {
+            expect(integration.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+        }
+    });
+
     it('keeps legacy workflows callable or manual without duplicate PR triggers', () => {
         for (const name of [
             'ci.yml',
@@ -105,7 +119,7 @@ describe('pull request CI consolidation', () => {
             }
         });
 
-        expect(job.if).toBe('${{ always() }}');
+        expect(job.if).toBe('${{ always() && github.event.pull_request.draft == false }}');
         expect(result.status).toBe(1);
     });
 
