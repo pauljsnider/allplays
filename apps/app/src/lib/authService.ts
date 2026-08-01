@@ -956,7 +956,13 @@ export async function signUpWithEmail(email: string, password: string, activatio
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
       sendVerificationEmail: nativeSignup
-        ? () => FirebaseAuthentication.sendEmailVerification()
+        ? async () => {
+            const idToken = await getNativeAuthIdToken();
+            if (!idToken) {
+              throw new Error('Native Firebase auth did not return an ID token.');
+            }
+            await queueCurrentUserVerificationEmail(idToken);
+          }
         : queueCurrentUserVerificationEmail,
       signOut: nativeSignup
         ? async () => {

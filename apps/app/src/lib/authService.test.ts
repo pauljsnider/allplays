@@ -418,7 +418,8 @@ describe('signUpWithEmail', () => {
     );
   });
 
-  it('sends native signup verification through the native Firebase plugin', async () => {
+  it('sends native signup verification through the Resend-backed callable', async () => {
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-signup-id-token' });
     legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
       window.localStorage.setItem(
         'allplays-native-auth-session',
@@ -437,8 +438,8 @@ describe('signUpWithEmail', () => {
     await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K');
 
     expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
-    expect(nativeAuthenticationMocks.sendEmailVerification).toHaveBeenCalledTimes(1);
-    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).not.toHaveBeenCalled();
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).toHaveBeenCalledWith('native-signup-id-token');
+    expect(nativeAuthenticationMocks.sendEmailVerification).not.toHaveBeenCalled();
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {
