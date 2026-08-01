@@ -10,52 +10,52 @@ importers:
     dependencies:
       '@capacitor-firebase/app-check':
         specifier: 8.3.0
-        version: 8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)
+        version: 8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)
       '@capacitor-firebase/authentication':
         specifier: ^8.3.0
-        version: 8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)
+        version: 8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)
       '@capacitor-firebase/messaging':
         specifier: ^8.3.0
-        version: 8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)
+        version: 8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)
       '@capacitor-firebase/performance':
         specifier: ^8.3.0
-        version: 8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)
+        version: 8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)
       '@capacitor/app':
         specifier: ^8.1.1
-        version: 8.1.1(@capacitor/core@8.4.2)
+        version: 8.1.1(@capacitor/core@8.5.0)
       '@capacitor/app-launcher':
         specifier: ^8.0.1
-        version: 8.0.1(@capacitor/core@8.4.2)
+        version: 8.0.1(@capacitor/core@8.5.0)
       '@capacitor/browser':
         specifier: ^8.0.4
-        version: 8.0.4(@capacitor/core@8.4.2)
+        version: 8.0.4(@capacitor/core@8.5.0)
       '@capacitor/camera':
-        specifier: ^8.2.1
-        version: 8.2.1(@capacitor/core@8.4.2)
+        specifier: ^8.2.2
+        version: 8.2.2(@capacitor/core@8.5.0)
       '@capacitor/core':
-        specifier: ^8.4.2
-        version: 8.4.2
+        specifier: ^8.5.0
+        version: 8.5.0
       '@capacitor/filesystem':
         specifier: ^8.1.2
-        version: 8.1.2(@capacitor/core@8.4.2)
+        version: 8.1.2(@capacitor/core@8.5.0)
       '@capacitor/keyboard':
         specifier: ^8.0.5
-        version: 8.0.5(@capacitor/core@8.4.2)
+        version: 8.0.5(@capacitor/core@8.5.0)
       '@capacitor/share':
         specifier: ^8.0.1
-        version: 8.0.1(@capacitor/core@8.4.2)
+        version: 8.0.1(@capacitor/core@8.5.0)
       '@capacitor/splash-screen':
         specifier: ^8.0.2
-        version: 8.0.2(@capacitor/core@8.4.2)
+        version: 8.0.2(@capacitor/core@8.5.0)
       '@capacitor/status-bar':
         specifier: ^8.0.3
-        version: 8.0.3(@capacitor/core@8.4.2)
+        version: 8.0.3(@capacitor/core@8.5.0)
       '@capawesome/capacitor-badge':
         specifier: ^8.0.2
-        version: 8.0.2(@capacitor/core@8.4.2)
+        version: 8.0.2(@capacitor/core@8.5.0)
       '@capgo/capacitor-speech-recognition':
         specifier: ^8.1.10
-        version: 8.1.10(@capacitor/core@8.4.2)
+        version: 8.1.10(@capacitor/core@8.5.0)
       '@sentry/browser':
         specifier: ^10.68.0
         version: 10.68.0
@@ -311,13 +311,13 @@ packages:
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
-  '@capacitor/camera@8.2.1':
-    resolution: {integrity: sha512-yq4TbVcv9Z91JLr7C5407s3rrXr/Dmk+Pr9FAVRn65s3Jg4iYabjwG4fVKUYlQL5TiUdBbZA3LiNAbUxJNcUkw==}
+  '@capacitor/camera@8.2.2':
+    resolution: {integrity: sha512-WfaOsqrjPzvXGvrIBFqFtOZHBrc3hwGKssZje4ioJDNfTjIq2zrUNDXP+q6XmLyzifCYOu2YFC6k1+leb/BqSg==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
-  '@capacitor/core@8.4.2':
-    resolution: {integrity: sha512-fQPRb3JXRaU2pnufDUvqOjhsrYxDQeFRZyaj/sHydIUxD2NxOGHKMpmKUdI+U4OOmKuGZyvRpi7TSJU+7Bjbmg==}
+  '@capacitor/core@8.5.0':
+    resolution: {integrity: sha512-Ca4krtqH1hothjtBIwf2J2TW7IhYq1ujp8QeItTiJohNsqij8ja2DYYH3DU0l8RmxCWaBAFTGA2TgOgOMCSNsQ==}
 
   '@capacitor/filesystem@8.1.2':
     resolution: {integrity: sha512-doaaMfGoFR2hWU6aV6u83I+5ZsGyJVq+Gz4r9lMpJzUKMm1eMu0hLnFdV1aXZlU9FlK/RndFrVD8oRZfNOqWgQ==}
@@ -2961,80 +2961,80 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
-  '@capacitor-firebase/app-check@8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)':
+  '@capacitor-firebase/app-check@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
     optionalDependencies:
       firebase: 12.17.0
 
-  '@capacitor-firebase/authentication@8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)':
+  '@capacitor-firebase/authentication@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
     optionalDependencies:
       firebase: 12.17.0
 
-  '@capacitor-firebase/messaging@8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)':
+  '@capacitor-firebase/messaging@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
     optionalDependencies:
       firebase: 12.17.0
 
-  '@capacitor-firebase/performance@8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)':
+  '@capacitor-firebase/performance@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
     optionalDependencies:
       firebase: 12.17.0
 
-  '@capacitor/app-launcher@8.0.1(@capacitor/core@8.4.2)':
+  '@capacitor/app-launcher@8.0.1(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/app@8.1.1(@capacitor/core@8.4.2)':
+  '@capacitor/app@8.1.1(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/browser@8.0.4(@capacitor/core@8.4.2)':
+  '@capacitor/browser@8.0.4(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/camera@8.2.1(@capacitor/core@8.4.2)':
+  '@capacitor/camera@8.2.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/core@8.4.2':
+  '@capacitor/core@8.5.0':
     dependencies:
       tslib: 2.8.1
 
-  '@capacitor/filesystem@8.1.2(@capacitor/core@8.4.2)':
+  '@capacitor/filesystem@8.1.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
       '@capacitor/synapse': 1.0.4
 
-  '@capacitor/keyboard@8.0.5(@capacitor/core@8.4.2)':
+  '@capacitor/keyboard@8.0.5(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/share@8.0.1(@capacitor/core@8.4.2)':
+  '@capacitor/share@8.0.1(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/splash-screen@8.0.2(@capacitor/core@8.4.2)':
+  '@capacitor/splash-screen@8.0.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capacitor/status-bar@8.0.3(@capacitor/core@8.4.2)':
+  '@capacitor/status-bar@8.0.3(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
   '@capacitor/synapse@1.0.4': {}
 
-  '@capawesome/capacitor-badge@8.0.2(@capacitor/core@8.4.2)':
+  '@capawesome/capacitor-badge@8.0.2(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
-  '@capgo/capacitor-speech-recognition@8.1.10(@capacitor/core@8.4.2)':
+  '@capgo/capacitor-speech-recognition@8.1.10(@capacitor/core@8.5.0)':
     dependencies:
-      '@capacitor/core': 8.4.2
+      '@capacitor/core': 8.5.0
 
   '@csstools/color-helpers@6.0.2': {}
 

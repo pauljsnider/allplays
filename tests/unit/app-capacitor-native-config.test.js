@@ -12,6 +12,40 @@ function readPlistStringValue(plist, key) {
 }
 
 describe('Capacitor native config', () => {
+    it('keeps Capacitor runtime and camera versions aligned across JavaScript manifests and lockfiles', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLockSource = readProjectFile('apps/app/pnpm-lock.yaml');
+        const appPnpmLock = parseYaml(appPnpmLockSource);
+
+        const rootRuntimePackages = ['@capacitor/cli', '@capacitor/android', '@capacitor/core', '@capacitor/ios'];
+        rootRuntimePackages.forEach((dependency) => {
+            const dependencyGroup = dependency === '@capacitor/cli' ? 'devDependencies' : 'dependencies';
+            expect(rootPackage[dependencyGroup][dependency]).toBe('^8.5.0');
+            expect(rootPackageLock.packages[''][dependencyGroup][dependency]).toBe('^8.5.0');
+            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe('8.5.0');
+        });
+
+        expect(rootPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(rootPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(rootPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+
+        expect(appPackage.dependencies['@capacitor/core']).toBe('^8.5.0');
+        expect(appPackage.dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/core']).toBe('^8.5.0');
+        expect(appPackageLock.packages[''].dependencies['@capacitor/camera']).toBe('^8.2.2');
+        expect(appPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
+        expect(appPackageLock.packages['node_modules/@capacitor/camera'].version).toBe('8.2.2');
+
+        expect(appPnpmLock.importers['.'].dependencies['@capacitor/core'].specifier).toBe('^8.5.0');
+        expect(appPnpmLock.importers['.'].dependencies['@capacitor/camera'].specifier).toBe('^8.2.2');
+        expect(appPnpmLock.packages['@capacitor/core@8.5.0']).toBeDefined();
+        expect(appPnpmLock.packages['@capacitor/camera@8.2.2']).toBeDefined();
+        expect(appPnpmLockSource).not.toMatch(/@capacitor\/core(?:@|': )8\.4\.2/);
+    });
+
     it('declares splash screen and status bar plugins in app and native manifests', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
@@ -210,7 +244,7 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
-            '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
+            '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
             firebase: { specifier: '12.17.0', version: '12.17.0' },
             'web-vitals': { specifier: '^6.0.1', version: '6.0.1' }
         };
@@ -224,7 +258,7 @@ describe('Capacitor native config', () => {
             expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
         });
 
-        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.1':");
+        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.2':");
         expect(appPnpmLock).toContain('firebase@12.17.0:');
         expect(appPnpmLock).not.toContain('firebase@12.16.0:');
         [
@@ -233,7 +267,7 @@ describe('Capacitor native config', () => {
             '@capacitor-firebase/messaging',
             '@capacitor-firebase/performance'
         ].forEach((plugin) => {
-            expect(appPnpmLock).toContain(`${plugin}@8.3.0(@capacitor/core@8.4.2)(firebase@12.17.0)`);
+            expect(appPnpmLock).toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)`);
         });
     });
 
