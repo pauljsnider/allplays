@@ -28,7 +28,14 @@ describe('drills planning access control', () => {
     });
 
     it('passes the active team id into drill diagram uploads', () => {
-        expect(drillsHtml).toContain("uploadDrillDiagram(state.teamId, drillId, file)");
+        expect(drillsHtml).toContain("uploadDrillDiagram(state.teamId, drillId, file, { returnUpload: true })");
         expect(drillsHtml).not.toContain("uploadDrillDiagram(state.currentTeamId, drillId, file)");
+    });
+
+    it('reuses a newly created drill on retry and cleans up unreferenced diagram uploads', () => {
+        expect(drillsHtml).toContain("document.getElementById('form-drill-id').value = drillId;");
+        expect(drillsHtml).toContain('newlyUploadedDiagrams.push({ path: upload.path });');
+        expect(drillsHtml).toContain('if (!uploadedDiagramsPersisted)');
+        expect(drillsHtml).toContain('await deleteUploadedMediaObjects(newlyUploadedDiagrams).catch(() => undefined);');
     });
 });

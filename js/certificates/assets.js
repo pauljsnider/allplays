@@ -6,7 +6,8 @@ import {
     Timestamp,
     ref,
     uploadBytes,
-    getDownloadURL
+    getDownloadURL,
+    deleteObject
 } from '../firebase.js?v=22';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;
@@ -44,6 +45,15 @@ export function validateCertificateImageFile(file) {
     }
 }
 
+async function getCertificateAssetUrlOrDelete(storageRef) {
+    try {
+        return await getDownloadURL(storageRef);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
 export async function uploadCertificateAsset(teamId, file, kind = 'generic', uploaderId = null) {
     if (!teamId) throw new Error('Missing team for certificate asset upload.');
     const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
@@ -55,7 +65,7 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
     const storagePath = `team-photos/${Date.now()}_certificate_${safeTeamId}_${normalizedKind}_${safeName}`;
     const storageRef = ref(imageStorage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    const url = await getCertificateAssetUrlOrDelete(snapshot.ref);
 
     const assetDoc = {
         url,
@@ -93,7 +103,7 @@ export async function uploadSignatureImage(userId, file) {
     const storageRef = ref(imageStorage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
     return {
-        url: await getDownloadURL(snapshot.ref),
+        url: await getCertificateAssetUrlOrDelete(snapshot.ref),
         storagePath,
         originalFilename: file.name || safeName,
         contentType: file.type || null,

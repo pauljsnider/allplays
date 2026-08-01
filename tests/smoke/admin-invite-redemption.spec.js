@@ -50,6 +50,8 @@ export async function uploadTeamPhoto() {
     return null;
 }
 
+export async function deleteLegacyImageUpload() {}
+
 export async function addConfig() {
     return 'cfg-1';
 }

@@ -478,7 +478,30 @@ export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
     return mapSnapshot(await getDocs(q));
 }
 
-export async function uploadTeamPhoto(file) {
+function formatLegacyImageUploadResult(url, path, options = {}) {
+    return options?.returnUpload === true ? { url, path } : url;
+}
+
+async function getDownloadUrlOrDeleteUpload(storageRef) {
+    try {
+        return await getDownloadURL(storageRef);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+export async function deleteLegacyImageUpload(path) {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath) return;
+    if (!/^(team-photos|player-photos|user-photos)\//.test(normalizedPath)) {
+        throw new Error('Invalid legacy image upload path.');
+    }
+    await ensureImageAuth();
+    await deleteObject(ref(imageStorage, normalizedPath));
+}
+
+export async function uploadTeamPhoto(file, options = {}) {
     console.log('Starting photo upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -496,13 +519,13 @@ export async function uploadTeamPhoto(file) {
     const snapshot = await uploadBytes(storageRef, file);
     console.log('Upload complete, getting download URL...');
 
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Download URL obtained:', downloadURL);
 
-    return downloadURL;
+    return formatLegacyImageUploadResult(downloadURL, path, options);
 }
 
-export async function uploadPlayerPhoto(file) {
+export async function uploadPlayerPhoto(file, options = {}) {
     console.log('Starting player photo upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -515,13 +538,13 @@ export async function uploadPlayerPhoto(file) {
     const storageRef = ref(imageStorage, path);
 
     const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
-    return downloadURL;
+    return formatLegacyImageUploadResult(downloadURL, path, options);
 }
 
-export async function uploadUserPhoto(file, uid = '') {
+export async function uploadUserPhoto(file, uid = '', options = {}) {
     console.log('Starting user photo upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -535,10 +558,10 @@ export async function uploadUserPhoto(file, uid = '') {
     const storageRef = ref(imageStorage, path);
 
     const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
-    return downloadURL;
+    return formatLegacyImageUploadResult(downloadURL, path, options);
 }
 
 function getRequiredSignedInUserId() {
@@ -599,12 +622,15 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
     };
 }
 
-export async function deleteUploadedChatAttachments(attachments = []) {
+export async function deleteUploadedMediaObjects(attachments = []) {
     const deletions = attachments
         .filter((attachment) => attachment?.path)
         .map(async (attachment) => {
             const usesImageStorage = attachment.path.startsWith('team-photos/')
-                || attachment.path.startsWith('team-videos/');
+                || attachment.path.startsWith('team-videos/')
+                || attachment.path.startsWith('drill-diagrams/')
+                || attachment.path.startsWith('player-photos/')
+                || attachment.path.startsWith('user-photos/');
             const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
             await deleteObject(storageRef);
         });
@@ -614,6 +640,10 @@ export async function deleteUploadedChatAttachments(attachments = []) {
     if (failure) {
         throw failure.reason;
     }
+}
+
+export async function deleteUploadedChatAttachments(attachments = []) {
+    return deleteUploadedMediaObjects(attachments);
 }
 
 export async function uploadGameClip(teamId, gameId, file) {
@@ -627,7 +657,7 @@ export async function uploadGameClip(teamId, gameId, file) {
     try {
         const storageRef = ref(imageStorage, clipPath);
         const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
+        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
         return {
             url,
             path: clipPath,
@@ -643,7 +673,7 @@ export async function uploadGameClip(teamId, gameId, file) {
             const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
             const fallbackRef = ref(storage, fallbackPath);
             const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+            const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
             return {
                 url: fallbackUrl,
                 path: fallbackPath,
@@ -657,7 +687,7 @@ export async function uploadGameClip(teamId, gameId, file) {
     }
 }
 
-export async function uploadStatSheetPhoto(teamId, file) {
+export async function uploadStatSheetPhoto(teamId, file, options = {}) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -670,9 +700,11 @@ export async function uploadStatSheetPhoto(teamId, file) {
     try {
         const storageRef = ref(imageStorage, path);
         const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(snapshot.ref);
+        const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
         console.log('Stat sheet URL (image storage):', downloadURL);
-        return downloadURL;
+        return options?.returnUpload === true
+            ? { url: downloadURL, path, storage: 'image' }
+            : downloadURL;
     } catch (error) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
@@ -681,11 +713,14 @@ export async function uploadStatSheetPhoto(teamId, file) {
             if (!teamId || !userId) {
                 throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
             }
-            const fallbackRef = ref(storage, buildStatSheetFallbackPath(teamId, userId, file.name, Date.now()));
+            const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, Date.now());
+            const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
+            const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             console.log('Stat sheet URL (main storage):', downloadURL);
-            return downloadURL;
+            return options?.returnUpload === true
+                ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+                : downloadURL;
         }
         throw error;
     }
@@ -1540,26 +1575,31 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
-        type: 'photo',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type || 'image/jpeg',
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
+            type: 'photo',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type || 'image/jpeg',
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
@@ -1589,27 +1629,32 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
-        fileName: String(file.name || '').trim(),
-        type: 'file',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type,
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+            fileName: String(file.name || '').trim(),
+            type: 'file',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type,
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function deleteTeamMediaItem(teamId, item) {
@@ -6896,7 +6941,7 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
     const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
     const storageRef = ref(storage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     const mimeType = String(file.type || '').trim();
     const mediaType = kind === 'profile-photo'
         ? 'image'
@@ -8897,14 +8942,15 @@ export async function deleteDrill(drillId) {
 // Drill Diagrams
 // ============================================
 
-export async function uploadDrillDiagram(teamId, drillId, file) {
+export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
     await ensureImageAuth();
     const userId = auth.currentUser?.uid;
     const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
     try {
         const storageRef = ref(imageStorage, imagePath);
         const snapshot = await uploadBytes(storageRef, file);
-        return await getDownloadURL(snapshot.ref);
+        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+        return options?.returnUpload === true ? { url, path: imagePath } : url;
     } catch (error) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
@@ -8914,7 +8960,8 @@ export async function uploadDrillDiagram(teamId, drillId, file) {
             }
             const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
-            return await getDownloadURL(snapshot.ref);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            return options?.returnUpload === true ? { url, path: fallbackPath } : url;
         }
         throw error;
     }

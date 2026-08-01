@@ -860,7 +860,10 @@
                 if (photoChanged && fileInput.files[0]) {
                     status.textContent = 'Uploading photo...';
                     try {
-                        currentPhotoUrl = await uploadUserPhoto(fileInput.files[0], currentUser.uid);
+                        const uploadedPhoto = await uploadUserPhoto(fileInput.files[0], currentUser.uid, { returnUpload: true });
+                        currentPhotoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
+                        photoChanged = false;
+                        fileInput.value = '';
                     } catch (uploadError) {
                         console.error('Photo upload failed:', uploadError);
                         alert('Failed to upload photo. Please try again.\n\nError: ' + uploadError.message);
@@ -874,7 +877,6 @@
                 await updateUserProfile(currentUser.uid, {
                     fullName,
                     phone,
-                    email: currentUser.email,
                     photoUrl: currentPhotoUrl
                 });
 

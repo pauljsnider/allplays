@@ -1,6 +1,7 @@
 import {
   collectRosterParentContacts,
   deleteAthleteProfileMediaByPath,
+  deleteLegacyImageUpload,
   getAggregatedStatsForGames,
   getAggregatedStatsDocumentForPlayer,
   getAggregatedStatsForPlayer,
@@ -879,6 +880,7 @@ export async function updateParentPlayerEditableProfile({
   const nativeRuntime = isNativeRuntime();
   let photoUrl: string | undefined;
   let nativePhotoPath = '';
+  let webPhotoPath = '';
   if (photoFile) {
     validateImageFile(photoFile);
     if (nativeRuntime) {
@@ -886,7 +888,9 @@ export async function updateParentPlayerEditableProfile({
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      photoUrl = await uploadPlayerPhoto(photoFile);
+      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
+      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
   }
 
@@ -898,8 +902,8 @@ export async function updateParentPlayerEditableProfile({
     medicalInfo: String(medicalInfo || '').trim()
   };
 
-  if (nativeRuntime) {
-    try {
+  try {
+    if (nativeRuntime) {
       const writes: Array<{ pathSegments: string[]; data: Record<string, unknown> }> = [{
         pathSegments: ['teams', teamId, 'players', playerId, 'private', 'profile'],
         data: { ...privatePayload, updatedAt: new Date() }
@@ -911,17 +915,19 @@ export async function updateParentPlayerEditableProfile({
         });
       }
       await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
-    } catch (error) {
-      if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    } else {
+      await updatePlayerPrivateProfile(teamId, playerId, privatePayload);
+      if (typeof photoUrl !== 'undefined') {
+        await updatePlayerProfile(teamId, playerId, { photoUrl });
       }
-      throw error;
     }
-  } else {
-    await updatePlayerPrivateProfile(teamId, playerId, privatePayload);
-    if (typeof photoUrl !== 'undefined') {
-      await updatePlayerProfile(teamId, playerId, { photoUrl });
+  } catch (error) {
+    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
+      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    } else if (webPhotoPath) {
+      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
     }
+    throw error;
   }
 
   return {
@@ -971,6 +977,7 @@ export async function saveStaffPlayerRosterDetails({
   const nativeRuntime = isNativeRuntime();
   const payload: Record<string, any> = {};
   let nativePhotoPath = '';
+  let webPhotoPath = '';
 
   if (nextName !== currentName) {
     payload.name = nextName;
@@ -986,7 +993,9 @@ export async function saveStaffPlayerRosterDetails({
       payload.photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      payload.photoUrl = await uploadPlayerPhoto(photoFile);
+      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+      payload.photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
+      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
   } else if (removePhoto && currentPhotoUrl) {
     payload.photoUrl = null;
@@ -1008,6 +1017,8 @@ export async function saveStaffPlayerRosterDetails({
   } catch (error) {
     if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
       await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    } else if (webPhotoPath) {
+      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
     }
     throw error;
   }

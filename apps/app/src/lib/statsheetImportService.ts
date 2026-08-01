@@ -5,6 +5,7 @@ import {
   buildTrackStatsheetApplyPlan,
   collection,
   db,
+  deleteUploadedMediaObjects,
   doc,
   getAI,
   getApp,
@@ -361,67 +362,82 @@ export async function applyTrackStatsheetImportForApp({
   }
 
   let statSheetPhotoUrl = String(uploadedPhotoUrl || '')
+  let newlyUploadedPhoto: { url: string; path: string } | null = null
   if (file && !statSheetPhotoUrl) {
-    statSheetPhotoUrl = await uploadStatSheetPhoto(teamId, file)
-  }
-
-  const applyPlan = buildTrackStatsheetApplyPlan({
-    includedHome: validation.includedHome,
-    includedVisitor,
-    roster,
-    columns,
-    homeScore,
-    awayScore,
-    statSheetPhotoUrl: statSheetPhotoUrl || null
-  })
-
-  const plannedPlayerIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
-
-  const cleanupDocs = [
-    ...eventsSnap.docs,
-    ...statsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry))),
-    ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
-  ]
-
-  const totalBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2 + 1 + cleanupDocs.length
-  if (replaceExisting && totalBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
-    throw new Error('This statsheet replacement is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
-  }
-
-  const batch = writeBatch(db)
-  addAggregatedStatsWritesToBatch({
-    aggregatedStatsWrites: applyPlan.aggregatedStatsWrites,
-    batch,
-    db,
-    currentTeamId: teamId,
-    currentGameId: gameId,
-    createDocRef: doc
-  })
-  const gameRef = doc(db, `teams/${teamId}/games`, gameId)
-  batch.update(gameRef, applyPlan.gameUpdate)
-
-  if (replaceExisting) {
-    cleanupDocs.forEach((entry: any) => {
-      batch.delete(entry.ref)
-    })
-    await batch.commit()
-  } else {
-    await batch.commit()
-
-    for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
-      const cleanupBatch = writeBatch(db)
-      cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
-        cleanupBatch.delete(entry.ref)
-      })
-      await cleanupBatch.commit()
+    const uploaded = await uploadStatSheetPhoto(teamId, file, { returnUpload: true })
+    statSheetPhotoUrl = typeof uploaded === 'string' ? uploaded : String(uploaded?.url || '')
+    if (typeof uploaded !== 'string' && uploaded?.path) {
+      newlyUploadedPhoto = { url: statSheetPhotoUrl, path: String(uploaded.path) }
     }
   }
 
-  return {
-    requiresReplaceConfirmation: false,
-    hasExistingTrackedData,
-    uploadedPhotoUrl: statSheetPhotoUrl,
-    applyPlan
+  let photoReferencedByGame = false
+  try {
+    const applyPlan = buildTrackStatsheetApplyPlan({
+      includedHome: validation.includedHome,
+      includedVisitor,
+      roster,
+      columns,
+      homeScore,
+      awayScore,
+      statSheetPhotoUrl: statSheetPhotoUrl || null
+    })
+
+    const plannedPlayerIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
+
+    const cleanupDocs = [
+      ...eventsSnap.docs,
+      ...statsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry))),
+      ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
+    ]
+
+    const totalBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2 + 1 + cleanupDocs.length
+    if (replaceExisting && totalBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
+      throw new Error('This statsheet replacement is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
+    }
+
+    const batch = writeBatch(db)
+    addAggregatedStatsWritesToBatch({
+      aggregatedStatsWrites: applyPlan.aggregatedStatsWrites,
+      batch,
+      db,
+      currentTeamId: teamId,
+      currentGameId: gameId,
+      createDocRef: doc
+    })
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId)
+    batch.update(gameRef, applyPlan.gameUpdate)
+
+    if (replaceExisting) {
+      cleanupDocs.forEach((entry: any) => {
+        batch.delete(entry.ref)
+      })
+      await batch.commit()
+      photoReferencedByGame = true
+    } else {
+      await batch.commit()
+      photoReferencedByGame = true
+
+      for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
+        const cleanupBatch = writeBatch(db)
+        cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
+          cleanupBatch.delete(entry.ref)
+        })
+        await cleanupBatch.commit()
+      }
+    }
+
+    return {
+      requiresReplaceConfirmation: false,
+      hasExistingTrackedData,
+      uploadedPhotoUrl: statSheetPhotoUrl,
+      applyPlan
+    }
+  } catch (error) {
+    if (newlyUploadedPhoto && !photoReferencedByGame) {
+      await deleteUploadedMediaObjects([{ path: newlyUploadedPhoto.path }]).catch(() => undefined)
+    }
+    throw error
   }
 }
 

@@ -1,5 +1,4 @@
 import {
-  addPlayer,
   addTeamAdminEmail,
   applyRosterCsvImportOperations,
   buildPlayerLeaderboardSnapshot,
@@ -12,6 +11,7 @@ import {
   createConfig,
   db,
   deactivatePlayer,
+  deleteLegacyImageUpload,
   describeScheduleReminderWindow,
   doc,
   getAdSpaceSponsors,
@@ -52,7 +52,6 @@ import {
   sendInviteEmail,
   serverTimestamp,
   setDoc,
-  setPlayerPrivateRosterProfileFields,
   setTeamTrackingStatus,
   splitRosterProfileValuesByVisibility,
   summarizeTrackingStatus,
@@ -1383,6 +1382,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   const playerId = nativeMutation ? nativeMutation.createNativeFirestoreDocumentId() : '';
   let photoUrl: string | null = null;
   let nativePhotoPath = '';
+  let webPhotoPath = '';
   if (input?.photoFile) {
     validateLegacyRosterPhotoFile(input.photoFile);
     if (nativeRuntime) {
@@ -1390,7 +1390,9 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      photoUrl = await uploadPlayerPhoto(input.photoFile);
+      const uploaded = await uploadPlayerPhoto(input.photoFile, { returnUpload: true });
+      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
+      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
   }
 
@@ -1422,12 +1424,19 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
         }
       ]);
     } else {
-      savedPlayerId = await addPlayer(normalizedTeamId, player);
-      await setPlayerPrivateRosterProfileFields(normalizedTeamId, savedPlayerId, privateValues);
+      const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [{
+        type: 'add',
+        payload: player,
+        privateRosterFields: privateValues
+      }]);
+      savedPlayerId = cleanString(savedOperation?.playerId);
+      if (!savedPlayerId) throw new Error('The new roster player could not be saved.');
     }
   } catch (error) {
     if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
       await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    } else if (webPhotoPath) {
+      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
     }
     throw error;
   }
@@ -1663,6 +1672,7 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   const nativeRuntime = isNativeRuntime();
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
   let nativePhotoPath = '';
+  let webPhotoPath = '';
   if (input?.photoFile) {
     validateLegacyRosterPhotoFile(input.photoFile);
     if (nativeRuntime) {
@@ -1670,7 +1680,9 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      photoUrl = await uploadTeamPhoto(input.photoFile);
+      const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true });
+      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
+      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
   }
 
@@ -1699,6 +1711,8 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   } catch (error) {
     if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
       await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+    } else if (webPhotoPath) {
+      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
     }
     throw error;
   }

@@ -556,7 +556,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=137';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=137';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=21';
@@ -2433,6 +2433,8 @@
 
         document.getElementById('add-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
+            let newlyUploadedPlayerPhotoPath = '';
+            let playerPhotoPersisted = false;
             const name = document.getElementById('playerName').value;
             const number = document.getElementById('playerNumber').value;
             const photoInput = document.getElementById('playerPhoto');
@@ -2465,7 +2467,9 @@
                         return;
                     }
 
-                    photoUrl = await uploadPlayerPhoto(file);
+                    const uploadedPhoto = await uploadPlayerPhoto(file, { returnUpload: true });
+                    photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
                 }
 
                 const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
@@ -2492,13 +2496,20 @@
                         privateRosterFields: { ...protectedProfileValues, ...privateValues }
                     }]);
                 } else {
-                    const savedPlayerId = await addPlayer(currentTeamId, playerData);
-                    await setPlayerPrivateRosterProfileFields(currentTeamId, savedPlayerId, { ...protectedProfileValues, ...privateValues });
+                    await applyRosterCsvImportOperations(currentTeamId, [{
+                        type: 'add',
+                        payload: playerData,
+                        privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                    }]);
                 }
+                playerPhotoPersisted = true;
 
                 resetForm();
                 loadRoster();
             } catch (error) {
+                if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                }
                 console.error(error);
                 alert('Error saving player.');
             }

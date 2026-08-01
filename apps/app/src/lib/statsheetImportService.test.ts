@@ -19,6 +19,7 @@ const firebaseMocks = vi.hoisted(() => {
 })
 
 const dbMocks = vi.hoisted(() => ({
+  deleteUploadedMediaObjects: vi.fn(async () => undefined),
   uploadStatSheetPhoto: vi.fn(async () => 'https://img.test/statsheet.png'),
   getConfigs: vi.fn(),
   getGame: vi.fn(),
@@ -295,7 +296,7 @@ describe('applyTrackStatsheetImportForApp', () => {
       replaceExisting: true
     })
 
-    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file)
+    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file, { returnUpload: true })
     expect(firebaseMocks.writeBatch).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },
@@ -305,5 +306,32 @@ describe('applyTrackStatsheetImportForApp', () => {
     expect(firebaseMocks.batch.delete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p2' })
     expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ requiresReplaceConfirmation: false, uploadedPhotoUrl: 'https://img.test/statsheet.png' })
+  })
+
+  it('deletes a newly uploaded statsheet when the atomic game save fails', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
+    dbMocks.uploadStatSheetPhoto.mockResolvedValueOnce({
+      url: 'https://img.test/new-statsheet.png',
+      path: 'stat-sheets/team-games/team-1/user-1/new-statsheet.png',
+      storage: 'primary'
+    } as any)
+    firebaseMocks.batch.commit.mockRejectedValueOnce(new Error('game save denied'))
+    const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' })
+
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file
+    })).rejects.toThrow('game save denied')
+
+    expect(dbMocks.deleteUploadedMediaObjects).toHaveBeenCalledWith([{
+      path: 'stat-sheets/team-games/team-1/user-1/new-statsheet.png'
+    }])
   })
 })

@@ -200,6 +200,8 @@ async function installMocks(page, scenario) {
         export async function uploadPlayerPhoto() {
             return '';
         }
+
+        export async function deleteLegacyImageUpload() {}
     `;
 
     const firebaseModule = `

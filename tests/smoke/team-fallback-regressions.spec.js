@@ -207,6 +207,7 @@ export async function getGames() {
 export async function uploadPlayerPhoto() {
     return '';
 }
+export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields() {}
 export async function inviteParent() {
