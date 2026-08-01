@@ -53,6 +53,27 @@ describe('pull request CI consolidation', () => {
         expect(integration).not.toContain('secrets: inherit');
     });
 
+    it('reuses version-bound Playwright browsers in the regression workflow', () => {
+        const regression = workflow('regression-guards.yml');
+        const parsed = parseYaml(regression);
+
+        expect(parsed.jobs['roster-chat-media-replay-smoke'].steps).toBeTruthy();
+        expect(regression).toContain('name: Resolve Playwright version');
+        expect(regression).toContain(
+            'uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4'
+        );
+        expect(regression).toContain('path: ~/.cache/ms-playwright');
+        expect(regression).toContain(
+            'key: ${{ runner.os }}-playwright-${{ steps.pw-version.outputs.version }}'
+        );
+        expect(regression).toContain(
+            'if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then'
+        );
+        expect(regression).toContain('npx playwright install-deps chromium');
+        expect(regression).toContain('npx playwright install --with-deps chromium');
+        expect(regression).not.toContain('restore-keys:');
+    });
+
     it.each([
         ['mobile-build', { MOBILE_RESULT: 'cancelled' }],
         ['preview-smoke', {
