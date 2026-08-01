@@ -4185,16 +4185,17 @@ export async function getGame(teamId, gameId) {
     }
 }
 
-export function subscribeGame(teamId, gameId, callback, onError) {
+export function subscribeGame(teamId, gameId, callback, onError, options = {}) {
     const docRef = getGameDocRef(teamId, gameId);
     let stopped = false;
     let projectionTimer = null;
     let projectionPollingStarted = false;
     const pollProjection = async () => {
         try {
-            callback(await getPublicGameProjection(teamId, gameId));
+            const projectedGame = await getPublicGameProjection(teamId, gameId);
+            if (!stopped) callback(projectedGame);
         } catch (error) {
-            if (typeof onError === 'function') onError(error);
+            if (!stopped && typeof onError === 'function') onError(error);
         }
     };
     const startProjectionPolling = () => {
@@ -4203,6 +4204,15 @@ export function subscribeGame(teamId, gameId, callback, onError) {
         void pollProjection();
         projectionTimer = globalThis.setInterval(() => void pollProjection(), 15000);
     };
+    const stopSubscription = (unsubscribe = null) => {
+        stopped = true;
+        if (typeof unsubscribe === 'function') unsubscribe();
+        if (projectionTimer !== null) globalThis.clearInterval(projectionTimer);
+    };
+    if (options.publicProjection === true) {
+        startProjectionPolling();
+        return () => stopSubscription();
+    }
     const unsubscribe = onSnapshot(docRef, (snapshot) => {
         if (!snapshot.exists()) {
             callback(null);
@@ -4234,11 +4244,7 @@ export function subscribeGame(teamId, gameId, callback, onError) {
         }
         if (typeof onError === 'function') onError(error);
     });
-    return () => {
-        stopped = true;
-        unsubscribe();
-        if (projectionTimer !== null) globalThis.clearInterval(projectionTimer);
-    };
+    return () => stopSubscription(unsubscribe);
 }
 
 export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {

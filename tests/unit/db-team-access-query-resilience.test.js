@@ -84,6 +84,7 @@ const {
   getGame,
   getGames,
   getOfficiatingGames,
+  subscribeGame,
   getTeam,
   getTeams,
   getUserTeamsWithAccess
@@ -348,6 +349,73 @@ describe('game access query resilience', () => {
       teamId: 'team-1',
       gameId: 'game-2'
     });
+  });
+
+  it('polls the public projection without opening a forbidden canonical listener', async () => {
+    const callback = vi.fn();
+    const onError = vi.fn();
+    firebaseMocks.getPublicGameProjection.mockResolvedValue({
+      data: {
+        item: {
+          id: 'game-2',
+          startsAt: '2026-08-02T18:00:00.000Z',
+          opponent: 'Rockets',
+          status: 'live'
+        }
+      }
+    });
+
+    const unsubscribe = subscribeGame(
+      'team-1',
+      'game-2',
+      callback,
+      onError,
+      { publicProjection: true }
+    );
+    try {
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+        id: 'game-2',
+        teamId: 'team-1',
+        isPublicProjection: true
+      })));
+      expect(firebaseMocks.onSnapshot).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it('does not publish a late projection after the viewer unsubscribes', async () => {
+    let resolveProjection;
+    const projectionResponse = new Promise((resolve) => {
+      resolveProjection = resolve;
+    });
+    const callback = vi.fn();
+    firebaseMocks.getPublicGameProjection.mockReturnValue(projectionResponse);
+
+    const unsubscribe = subscribeGame(
+      'team-1',
+      'game-2',
+      callback,
+      vi.fn(),
+      { publicProjection: true }
+    );
+    unsubscribe();
+    resolveProjection({
+      data: {
+        item: {
+          id: 'game-2',
+          startsAt: '2026-08-02T18:00:00.000Z',
+          opponent: 'Rockets',
+          status: 'live'
+        }
+      }
+    });
+    await projectionResponse;
+    await Promise.resolve();
+
+    expect(callback).not.toHaveBeenCalled();
+    expect(firebaseMocks.onSnapshot).not.toHaveBeenCalled();
   });
 
   it('uses a bounded nine-year public fallback for legacy unbounded schedule reads', async () => {

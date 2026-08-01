@@ -19,4 +19,10 @@ describe('live game public roster fallback', () => {
         expect(source).toContain('return [];');
         expect(source).toContain('throw error;');
     });
+
+    it('keeps projection-backed viewers off the forbidden canonical listener', () => {
+        const source = readFile('js/live-game.js');
+
+        expect(source).toContain('{ publicProjection: game.isPublicProjection === true }');
+    });
 });

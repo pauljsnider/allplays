@@ -619,6 +619,22 @@ describe('live game replay initialization', () => {
         expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
     });
 
+    it('does not open canonical presence tracking for a public projection viewer', async () => {
+        const page = await bootReplayPage({
+            replay: false,
+            game: {
+                date: new Date(),
+                status: 'live',
+                liveStatus: 'live',
+                isPublicProjection: true
+            }
+        });
+
+        expect(page.engagementSubscriptions.subscribeLiveChat).toHaveBeenCalledOnce();
+        expect(page.engagementSubscriptions.subscribeReactions).toHaveBeenCalledOnce();
+        expect(page.engagementSubscriptions.trackViewerPresence).not.toHaveBeenCalled();
+    });
+
     it('stops an active viewer when a stale-live game is cancelled', async () => {
         const page = await bootReplayPage({ replayEvents: [] });
         const unsubscribers = [vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn()];
