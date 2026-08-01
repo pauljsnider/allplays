@@ -26,6 +26,20 @@ describe('pull request CI consolidation', () => {
         expect(integration).toContain('name: preview-smoke');
     });
 
+    it('does not spend runners on draft heads and starts validation at handoff', () => {
+        const fast = parseYaml(workflow('pr-fast.yml'));
+        const integration = parseYaml(workflow('pr-integration.yml'));
+
+        expect(fast.on.pull_request.types).toContain('ready_for_review');
+        expect(integration.on.pull_request.types).toContain('ready_for_review');
+        for (const jobName of ['cache-bust-guard', 'unit-tests', 'app-quality']) {
+            expect(fast.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+        }
+        for (const jobName of ['regression-integration', 'mobile-integration', 'preview-integration']) {
+            expect(integration.jobs[jobName].if).toBe('${{ github.event.pull_request.draft == false }}');
+        }
+    });
+
     it('keeps legacy workflows callable or manual without duplicate PR triggers', () => {
         for (const name of [
             'ci.yml',
@@ -53,6 +67,19 @@ describe('pull request CI consolidation', () => {
         expect(integration).not.toContain('secrets: inherit');
     });
 
+    it('keeps credentialed preview work off the required PR path', () => {
+        const integration = workflow('pr-integration.yml');
+        const preview = workflow('pr-preview.yml');
+        const parsedPreview = parseYaml(preview);
+        const agentGuidance = fs.readFileSync(path.join(repoRoot, 'AGENTS.md'), 'utf8');
+
+        expect(integration).not.toContain('uses: ./.github/workflows/deploy-preview.yml');
+        expect(preview).toContain('workflow_dispatch:');
+        expect(parsedPreview['run-name']).toBe('PR preview #${{ inputs.pr_number }} @ ${{ inputs.head_sha }}');
+        expect(preview).toContain('uses: ./.github/workflows/deploy-preview.yml');
+        expect(agentGuidance).toContain('passed `pr-integration`. Normal PR pushes and labels must not deploy Firebase');
+    });
+
     it('reuses version-bound Playwright browsers in the regression workflow', () => {
         const regression = workflow('regression-guards.yml');
         const parsed = parseYaml(regression);
@@ -77,21 +104,11 @@ describe('pull request CI consolidation', () => {
     it.each([
         ['mobile-build', { MOBILE_RESULT: 'cancelled' }],
         ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'success',
             PREVIEW_RESULT: 'success',
             REGRESSION_RESULT: 'cancelled'
         }],
         ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'success',
             PREVIEW_RESULT: 'cancelled',
-            REGRESSION_RESULT: 'success'
-        }],
-        ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'cancelled',
-            PREVIEW_RESULT: 'success',
             REGRESSION_RESULT: 'success'
         }]
     ])('runs %s after cancellation and rejects cancelled upstream results', (jobName, env) => {
@@ -105,7 +122,7 @@ describe('pull request CI consolidation', () => {
             }
         });
 
-        expect(job.if).toBe('${{ always() }}');
+        expect(job.if).toBe('${{ always() && github.event.pull_request.draft == false }}');
         expect(result.status).toBe(1);
     });
 
@@ -116,8 +133,12 @@ describe('pull request CI consolidation', () => {
             'utf8'
         );
 
-        expect(trusted).toContain('      - pr-integration');
-        expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-integration'");
-        expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-integration.yml'");
+        expect(trusted).toContain('      - pr-preview');
+        expect(trusted).toContain('actions/workflows/pr-integration.yml/runs');
+        expect(trusted).toContain('-f status=success');
+        expect(trusted).toContain('-f head_sha="$expected_head_sha"');
+        expect(trusted).toContain('No exact-head pr-integration run has successful mobile-build and preview-smoke jobs.');
+        expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-preview'");
+        expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-preview.yml'");
     });
 });

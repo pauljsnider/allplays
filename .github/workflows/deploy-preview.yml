@@ -2,6 +2,13 @@ name: deploy-preview
 
 on:
   workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
 
 # Pull-request-controlled code runs here, so this workflow has no repository
 # permissions and receives no privileged secrets. Its only deploy input is an
@@ -9,22 +16,33 @@ on:
 permissions: {}
 
 concurrency:
-  group: preview-${{ github.event.pull_request.number }}
+  group: preview-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
   build-preview-artifact:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout pull request merge
+      - name: Checkout exact pull request head
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.head_sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid pull request number or exact head SHA." >&2
+            exit 1
+          fi
           git init .
           git remote add origin https://github.com/${{ github.repository }}.git
-          git fetch --no-tags --prune --depth=1 origin +refs/pull/${{ github.event.pull_request.number }}/merge:refs/remotes/pull/${{ github.event.pull_request.number }}/merge
-          git checkout --force refs/remotes/pull/${{ github.event.pull_request.number }}/merge
+          git fetch --no-tags --prune --depth=1 origin "+refs/pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head"
+          actual_head_sha="$(git rev-parse "refs/remotes/pull/$PR_NUMBER/head")"
+          if [ "$actual_head_sha" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "Pull request head changed before preview construction." >&2
+            exit 1
+          fi
+          git checkout --detach --force "$actual_head_sha"
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5

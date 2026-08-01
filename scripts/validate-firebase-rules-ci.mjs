@@ -585,6 +585,7 @@ export function validateFirebaseRulesCi() {
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const prIntegration = readText('.github/workflows/pr-integration.yml');
+    const prPreview = readText('.github/workflows/pr-preview.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
 
     validateFirestoreRulesDeployBudget(compactFirestoreRules(firestoreRules));
@@ -665,7 +666,9 @@ export function validateFirebaseRulesCi() {
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
-    assertIncludes(prIntegration, 'uses: ./.github/workflows/deploy-preview.yml', 'PR integration preview artifact gate');
+    assertIncludes(prPreview, 'workflow_dispatch:', 'Explicit PR preview dispatch gate');
+    assertIncludes(prPreview, 'head_sha: ${{ inputs.head_sha }}', 'Exact-head PR preview dispatch input');
+    assertIncludes(prPreview, 'uses: ./.github/workflows/deploy-preview.yml', 'PR preview artifact gate');
     assertIncludes(prIntegration, 'name: preview-smoke', 'PR integration stable preview context');
     assertIncludes(prIntegration, 'name: mobile-build', 'PR integration stable mobile context');
     validatePreviewDeployCommand(deployPreviewTrusted);

@@ -3,21 +3,17 @@ name: deploy-preview-trusted
 on:
   workflow_run:
     workflows:
-      - pr-integration
+      - pr-preview
     types:
       - completed
 
 permissions: {}
 
-concurrency:
-  group: trusted-preview-pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
-  cancel-in-progress: true
-
 jobs:
   classify-trigger:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -25,6 +21,8 @@ jobs:
       actions: read
       pull-requests: read
     outputs:
+      head_sha: ${{ steps.classify.outputs.head_sha }}
+      pr_number: ${{ steps.classify.outputs.pr_number }}
       preview_ready: ${{ steps.classify.outputs.preview_ready }}
 
     steps:
@@ -32,22 +30,54 @@ jobs:
         id: classify
         env:
           GH_TOKEN: ${{ github.token }}
-          WORKFLOW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          WORKFLOW_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          if [[ ! "$WORKFLOW_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Invalid triggering pull-request identity." >&2
+          if [[ "$WORKFLOW_DISPLAY_TITLE" =~ ^PR\ preview\ \#([1-9][0-9]*)\ @\ ([0-9a-f]{40})$ ]]; then
+            workflow_pr_number="${BASH_REMATCH[1]}"
+            expected_head_sha="${BASH_REMATCH[2]}"
+          else
+            echo "Invalid preview dispatch identity." >&2
             exit 1
           fi
-          head_repository="$(
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$WORKFLOW_PR_NUMBER" \
-              --jq '.head.repo.full_name'
-          )"
-          if [ "$head_repository" != "$GITHUB_REPOSITORY" ]; then
-            echo "Fork pull request — no trusted preview deploy is required."
-            echo "preview_ready=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          pr_json="$RUNNER_TEMP/firebase-preview-classify-pr.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$workflow_pr_number" > "$pr_json"
+          if ! jq -e \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg sha "$expected_head_sha" \
+            '.state == "open" and .draft == false and .head.repo.full_name == $repo and .head.sha == $sha' \
+            "$pr_json" >/dev/null; then
+            echo "Preview dispatch is not bound to the current ready same-repository PR head." >&2
+            exit 1
+          fi
+
+          integration_runs_json="$RUNNER_TEMP/firebase-preview-integration-runs.json"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/pr-integration.yml/runs" \
+            -f event=pull_request \
+            -f status=success \
+            -f head_sha="$expected_head_sha" \
+            -F per_page=100 > "$integration_runs_json"
+          mapfile -t integration_run_ids < <(jq -r \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg sha "$expected_head_sha" \
+            '.workflow_runs[]? | select(.event == "pull_request" and .status == "completed" and .conclusion == "success" and .head_sha == $sha and .head_repository.full_name == $repo) | .id' \
+            "$integration_runs_json")
+          integration_jobs_succeeded=false
+          for integration_run_id in "${integration_run_ids[@]}"; do
+            integration_jobs_json="$RUNNER_TEMP/firebase-preview-integration-jobs-$integration_run_id.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$integration_run_id/jobs?filter=latest&per_page=100" > "$integration_jobs_json"
+            if jq -e '
+              ([.jobs[]? | select(.name == "mobile-build" and .status == "completed" and .conclusion == "success")] | length) == 1 and
+              ([.jobs[]? | select(.name == "preview-smoke" and .status == "completed" and .conclusion == "success")] | length) == 1
+            ' "$integration_jobs_json" >/dev/null; then
+              integration_jobs_succeeded=true
+              break
+            fi
+          done
+          if [ "$integration_jobs_succeeded" != "true" ]; then
+            echo "No exact-head pr-integration run has successful mobile-build and preview-smoke jobs." >&2
+            exit 1
           fi
 
           artifacts_json="$RUNNER_TEMP/firebase-preview-source-artifacts.json"
@@ -58,13 +88,15 @@ jobs:
             echo "Expected exactly one preview bundle, found $bundle_count." >&2
             exit 1
           fi
+          echo "head_sha=$expected_head_sha" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$workflow_pr_number" >> "$GITHUB_OUTPUT"
           echo "preview_ready=true" >> "$GITHUB_OUTPUT"
 
   prepare-preview:
     needs: classify-trigger
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       needs.classify-trigger.outputs.preview_ready == 'true'
     runs-on: ubuntu-latest
@@ -92,7 +124,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-          WORKFLOW_PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          WORKFLOW_PR_NUMBER: ${{ needs.classify-trigger.outputs.pr_number }}
         run: |
           set -euo pipefail
           if [[ ! "$WORKFLOW_RUN_ID" =~ ^[1-9][0-9]*$ ]] || [[ ! "$WORKFLOW_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
@@ -193,6 +225,9 @@ jobs:
 
   deploy-preview:
     needs: prepare-preview
+    concurrency:
+      group: trusted-preview-pr-${{ needs.prepare-preview.outputs.pr_number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment:
@@ -278,7 +313,7 @@ jobs:
             echo "Trusted preview verifier must not be a symbolic link." >&2
             exit 1
           }
-          expected_verifier_sha256='cf22c88b47b9e47026bbf3813998ce877e29891b66c668c7559085c6cb358927'
+          expected_verifier_sha256='795c938b2b7d16c5468d905a183810fd6cb9005f4f765e1c4fcd472a0a42fb81'
           printf '%s  %s\n' "$expected_verifier_sha256" "$verifier" | sha256sum --check --strict
 
           recheck_current_head() {
