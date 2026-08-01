@@ -33,8 +33,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     // teamId opened while already mounted) is applied, while team-list refreshes
     // for the same deep link don't clobber a later manual selection.
     const appliedDeepLinkRef = useRef('');
-    const initialDeepLinkDiscoveryAttemptRef = useRef('');
-    const initialDeepLinkDiscoveryCompleteRef = useRef('');
     const deepLinkLookupAttemptRef = useRef('');
     const deepLinkIntentRef = useRef(deepLinkedTeamId);
     const teamSearchRequestRef = useRef(0);
@@ -196,8 +194,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         invalidateTeamLoad();
         invalidatePlayerLoad();
         appliedDeepLinkRef.current = '';
-        initialDeepLinkDiscoveryAttemptRef.current = '';
-        initialDeepLinkDiscoveryCompleteRef.current = '';
         deepLinkLookupAttemptRef.current = '';
         setManualRequestOpen(false);
         setTeams([]);
@@ -223,46 +219,20 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         }
         if (deepLinkedTeamId) return;
         appliedDeepLinkRef.current = '';
-        initialDeepLinkDiscoveryAttemptRef.current = '';
-        initialDeepLinkDiscoveryCompleteRef.current = '';
         deepLinkLookupAttemptRef.current = '';
     }, [deepLinkedTeamId, invalidateTeamLoad]);
 
     useEffect(() => {
-        if (!deepLinkedTeamId || teams.length || loadingTeams) return;
-        if (initialDeepLinkDiscoveryAttemptRef.current === deepLinkedTeamId) return;
-        initialDeepLinkDiscoveryAttemptRef.current = deepLinkedTeamId;
-        void loadTeams({ searchText: '', cursor: null, append: false }).finally(() => {
-            if (initialDeepLinkDiscoveryAttemptRef.current !== deepLinkedTeamId) return;
-            initialDeepLinkDiscoveryCompleteRef.current = deepLinkedTeamId;
-            setDeepLinkReconcileVersion((current) => current + 1);
-        });
-    }, [deepLinkedTeamId, deepLinkReconcileVersion, loadTeams, loadingTeams, teams.length]);
-
-    useEffect(() => {
-        // Wait until teams have loaded so we can tell whether the deep-linked team
-        // is accessible before reconciling the selection.
         if (!deepLinkedTeamId || appliedDeepLinkRef.current === deepLinkedTeamId) return;
-        if (loadingTeams) return;
-        setManualRequestOpen(true);
-        if (teams.some((team) => team.id === deepLinkedTeamId)) {
-            // A new deep link is an explicit navigation intent: switch to it even
-            // if a previous team was already selected.
-            appliedDeepLinkRef.current = deepLinkedTeamId;
-            setSelectedTeamId(deepLinkedTeamId);
-        } else {
-            if (!teams.length && initialDeepLinkDiscoveryCompleteRef.current !== deepLinkedTeamId) return;
-            if (deepLinkLookupAttemptRef.current === deepLinkedTeamId) return;
-            deepLinkLookupAttemptRef.current = deepLinkedTeamId;
-            // A new deep link replaces the prior selection intent. Clear the old
-            // roster before looking up the target so a failed lookup cannot leave
-            // submission enabled for the previous team.
-            setSelectedTeamId('');
-            setSelectedPlayerId('');
-            setPlayers([]);
-            void loadDeepLinkedTeam(deepLinkedTeamId);
-        }
-    }, [deepLinkedTeamId, deepLinkReconcileVersion, teams, loadingTeams, loadDeepLinkedTeam]);
+        if (deepLinkLookupAttemptRef.current === deepLinkedTeamId) return;
+        deepLinkLookupAttemptRef.current = deepLinkedTeamId;
+        // A teamId route is an exact lookup intent. Clear any old roster first so
+        // an inaccessible or stale target cannot leave submission enabled.
+        setSelectedTeamId('');
+        setSelectedPlayerId('');
+        setPlayers([]);
+        void loadDeepLinkedTeam(deepLinkedTeamId);
+    }, [auth.user?.uid, deepLinkedTeamId, deepLinkReconcileVersion, loadDeepLinkedTeam]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const requestId = playerLoadRequestRef.current + 1;
@@ -295,8 +265,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         }
         if (deepLinkedTeamId) {
             appliedDeepLinkRef.current = '';
-            initialDeepLinkDiscoveryAttemptRef.current = '';
-            initialDeepLinkDiscoveryCompleteRef.current = '';
             deepLinkLookupAttemptRef.current = '';
             setDeepLinkReconcileVersion((current) => current + 1);
             return;
