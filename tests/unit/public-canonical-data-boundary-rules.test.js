@@ -150,6 +150,28 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         }
     });
 
+    it('preserves canonical game reads for confirmed videographers in all-confirmed mode', async () => {
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await updateDoc(doc(firestore, 'teams/public-team'), {
+                'teamPermissions.videography.mode': 'all_confirmed',
+                'teamPermissions.videography.memberIds': []
+            });
+            await setDoc(doc(firestore, 'users/confirmed-videographer'), {
+                isAdmin: false,
+                parentTeamIds: [],
+                parentPlayerKeys: []
+            });
+            await setDoc(doc(firestore, 'teams/public-team/games/game-1/rsvps/confirmed-videographer'), {
+                response: 'confirmed'
+            });
+        });
+
+        const confirmedVideographerDb = authedDb('confirmed-videographer');
+        await assertSucceeds(getDoc(doc(confirmedVideographerDb, 'teams/public-team/games/game-1')));
+        await assertFails(getDoc(doc(authedDb('unrelated-1'), 'teams/public-team/games/game-1')));
+    });
+
     it('keeps intended public live-event reads without exposing the containing game document', async () => {
         const anonymousDb = testEnv.unauthenticatedContext().firestore();
         await assertSucceeds(getDoc(doc(anonymousDb, 'teams/public-team/games/game-1/liveEvents/event-1')));

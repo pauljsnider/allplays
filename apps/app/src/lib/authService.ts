@@ -907,11 +907,24 @@ export async function signUpWithEmail(email: string, password: string, activatio
     await Promise.all([loadLegacyAuthDb(), loadLegacyAdminInvite(), loadLegacySignupFlow(), loadLegacyAuthEmail()]);
 
   const nativeSignup = isNativeRuntime();
+  const signupAuth = nativeSignup
+    ? {
+        get currentUser() {
+          const user = getNativeAuthFallbackUser();
+          return user
+            ? {
+                ...user,
+                reload: () => FirebaseAuthentication.reload()
+              }
+            : null;
+        }
+      }
+    : auth;
   return executeEmailPasswordSignup({
     email: normalizedEmail,
     password,
     activationCode: normalizeCode(activationCode),
-    auth,
+    auth: signupAuth,
     dependencies: {
       validateAccessCode: async (code: string) => {
         const nativeAuthToken = nativeSignup ? await getNativeAuthIdToken().catch(() => null) : null;
@@ -942,7 +955,9 @@ export async function signUpWithEmail(email: string, password: string, activatio
       markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
       getTeam: dbModule.getTeam,
       getUserProfile: dbModule.getUserProfile,
-      sendVerificationEmail: queueCurrentUserVerificationEmail,
+      sendVerificationEmail: nativeSignup
+        ? () => FirebaseAuthentication.sendEmailVerification()
+        : queueCurrentUserVerificationEmail,
       signOut: nativeSignup
         ? async () => {
             clearNativeAuthSession();

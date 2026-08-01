@@ -407,4 +407,23 @@ describe('game access query resilience', () => {
       'official@example.com'
     );
   });
+
+  it.each([
+    'officiatingAuthorizedUserIds',
+    'officiatingAuthorizedEmails'
+  ])('rejects the assignment load when the %s query fails', async (failedField) => {
+    const queryError = new Error(`${failedField} query failed`);
+    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
+      const constraint = getWhereConstraint(queryValue);
+      if (constraint.field === failedField) throw queryError;
+      return {
+        docs: [{
+          id: 'partial-game',
+          data: () => ({ opponent: 'Falcons', date: new Date('2026-08-03T18:00:00Z') })
+        }]
+      };
+    });
+
+    await expect(getOfficiatingGames('team-1')).rejects.toBe(queryError);
+  });
 });

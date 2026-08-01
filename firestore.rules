@@ -584,6 +584,8 @@ service cloud.firestore {
                 request.auth.uid in streaming.get('memberIds', [])) ||
                (scorekeeping.get('mode', '') == 'all_confirmed' &&
                 hasConfirmedGameRsvp(teamId, gameId)) ||
+               (videography.get('mode', '') == 'all_confirmed' &&
+                hasConfirmedGameRsvp(teamId, gameId)) ||
                (streaming.get('mode', '') == 'all_confirmed' &&
                 hasConfirmedGameRsvp(teamId, gameId)) ||
                (legacyMode in ['confirmed_members', 'all_confirmed'] &&

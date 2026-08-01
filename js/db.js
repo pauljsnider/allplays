@@ -4052,17 +4052,13 @@ export async function getOfficiatingGames(teamId, user = auth.currentUser) {
     if (email) {
         queries.push(query(gamesRef, where('officiatingAuthorizedEmails', 'array-contains', email)));
     }
-    const snapshots = await Promise.allSettled(queries.map((officialQuery) => getDocs(officialQuery)));
+    const snapshots = await Promise.all(queries.map((officialQuery) => getDocs(officialQuery)));
     const gamesById = new Map();
-    snapshots.forEach((result) => {
-        if (result.status !== 'fulfilled') return;
-        result.value.docs.forEach((gameDoc) => {
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((gameDoc) => {
             gamesById.set(gameDoc.id, { id: gameDoc.id, ...gameDoc.data() });
         });
     });
-    if (!snapshots.some((result) => result.status === 'fulfilled')) {
-        throw snapshots[0]?.reason || new Error('Unable to load officiating assignments.');
-    }
     return Array.from(gamesById.values())
         .sort((left, right) => (toComparableGameDate(left?.date)?.getTime() || 0) - (toComparableGameDate(right?.date)?.getTime() || 0));
 }

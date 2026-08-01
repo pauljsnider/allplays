@@ -62,6 +62,7 @@ const nativeAuthenticationMocks = vi.hoisted(() => ({
   createUserWithEmailAndPassword: vi.fn(),
   getCurrentUser: vi.fn(),
   getIdToken: vi.fn(),
+  reload: vi.fn(),
   revokeAccessToken: vi.fn(),
   sendEmailVerification: vi.fn(),
   signInWithApple: vi.fn(),
@@ -396,6 +397,9 @@ describe('signUpWithEmail', () => {
       user: { uid: 'new-user', email: 'player@example.com' }
     });
     nativeAuthenticationMocks.sendEmailVerification.mockResolvedValue(undefined);
+    nativeAuthenticationMocks.reload.mockResolvedValue(undefined);
+    legacyAuthEmailMocks.queueCurrentUserVerificationEmail.mockClear();
+    window.localStorage.clear();
   });
 
   it('normalizes signup input and delegates to the shared access-code redemption flow', async () => {
@@ -412,6 +416,29 @@ describe('signUpWithEmail', () => {
         })
       })
     );
+  });
+
+  it('sends native signup verification through the native Firebase plugin', async () => {
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockImplementation(async (options: any) => {
+      window.localStorage.setItem(
+        'allplays-native-auth-session',
+        JSON.stringify({
+          uid: 'new-user',
+          email: 'player@example.com',
+          emailVerified: false,
+          provider: 'native-plugin'
+        })
+      );
+      await options.auth.currentUser.reload();
+      await options.dependencies.sendVerificationEmail();
+      return { user: options.auth.currentUser };
+    });
+
+    await signUpWithEmail('player@example.com', 'secret1', '85NSBZ7K');
+
+    expect(nativeAuthenticationMocks.reload).toHaveBeenCalledTimes(1);
+    expect(nativeAuthenticationMocks.sendEmailVerification).toHaveBeenCalledTimes(1);
+    expect(legacyAuthEmailMocks.queueCurrentUserVerificationEmail).not.toHaveBeenCalled();
   });
 
   it('stops invalid signup emails before loading Firebase signup work', async () => {
