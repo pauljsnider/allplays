@@ -26,4 +26,14 @@ describe('production role-smoke gate', () => {
         );
         expect(postDeployWorkflow).not.toContain('not-configured ($CORE_MISSING)');
     });
+
+    it('retries the canonical production baseline once for transient deploy propagation failures', () => {
+        const baselineStart = postDeployWorkflow.indexOf('Run production smoke baseline');
+        const coreStart = postDeployWorkflow.indexOf('Run fixture-backed core production smoke');
+        const baselineBlock = postDeployWorkflow.slice(baselineStart, coreStart);
+
+        expect(baselineStart).toBeGreaterThan(-1);
+        expect(coreStart).toBeGreaterThan(baselineStart);
+        expect(baselineBlock).toContain('--retries=1');
+    });
 });
