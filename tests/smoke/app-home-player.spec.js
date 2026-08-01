@@ -1882,14 +1882,13 @@ test('social game recap switches between completed games and linked players', as
     await dialog.locator('button').filter({ hasText: 'vs. Falcons' }).click();
 
     const gameSelect = dialog.getByLabel('Game');
-    await expect(gameSelect.locator('option')).toHaveCount(2);
-    const secondGameValue = await gameSelect.locator('option').nth(1).getAttribute('value');
-    await gameSelect.selectOption(secondGameValue);
+    await expect(gameSelect.getByRole('option', { name: /vs\. Tigers/ })).toBeAttached();
+    await gameSelect.selectOption({ label: /vs\. Tigers/ });
 
     await dialog.getByRole('button', { name: 'Tag a player' }).click();
     const playerSelect = dialog.getByLabel('Player');
-    await expect(playerSelect.locator('option')).toHaveCount(3);
-    await playerSelect.selectOption('team-1::player-2');
+    await expect(playerSelect.getByRole('option', { name: 'Sam Swift · Bears' })).toBeAttached();
+    await playerSelect.selectOption({ label: 'Sam Swift · Bears' });
 
     await dialog.getByPlaceholder('How did the game go?').fill('Sam closed out a strong team win.');
     await dialog.getByRole('button', { name: 'Post', exact: true }).click();
