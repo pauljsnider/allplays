@@ -374,6 +374,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                         childName: overrides.childName || 'Pat Star',
                         isDbGame: true,
                         isCancelled: false,
+                        status: overrides.status || 'scheduled',
                         myRsvp: overrides.myRsvp || 'not_responded',
                         assignments: [],
                         practiceHomePacketSummary: overrides.practiceHomePacketSummary || null
