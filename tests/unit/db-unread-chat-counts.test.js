@@ -54,7 +54,7 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
     );
 }
 
-function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChatConversations, console, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team' }) {
+function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChatConversations, console, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team', UNREAD_CHAT_COUNT_CONCURRENCY = 6 }) {
     const functionSource = getFunctionSource('getUnreadChatCounts')
         .replace('export async function getUnreadChatCounts', 'return async function getUnreadChatCounts');
 
@@ -67,6 +67,7 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         'console',
         'DEFAULT_TEAM_CONVERSATION_ID',
         'isDefaultTeamConversation',
+        'UNREAD_CHAT_COUNT_CONCURRENCY',
         functionSource
     )(
         db,
@@ -76,8 +77,19 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         getChatConversations,
         console,
         DEFAULT_TEAM_CONVERSATION_ID,
-        isDefaultTeamConversation
+        isDefaultTeamConversation,
+        UNREAD_CHAT_COUNT_CONCURRENCY
     );
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
 }
 
 function buildChatStateUpdater(functionName, dependencies) {
@@ -433,11 +445,12 @@ describe('chat unread count helpers', () => {
         expect(warn).not.toHaveBeenCalled();
     });
 
-    it('aggregates unread counts across sibling conversations when ids are already loaded', async () => {
+    it('aggregates sibling conversations while isolating one failed conversation', async () => {
         const getUnreadChatCount = vi.fn()
             .mockResolvedValueOnce(1)
             .mockResolvedValueOnce(2)
-            .mockResolvedValueOnce(0);
+            .mockRejectedValueOnce(new Error('conversation index pending'))
+            .mockResolvedValueOnce(4);
         const getChatConversations = vi.fn();
         const getDoc = vi.fn().mockResolvedValue({
             data: () => ({ teamChatState: {} })
@@ -453,10 +466,11 @@ describe('chat unread count helpers', () => {
             console: { warn }
         });
 
-        await expect(getUnreadChatCounts('user-5', ['team-a'], {
+        await expect(getUnreadChatCounts('user-5', ['team-a', 'team-b'], {
             defaultConversationOnly: true,
             latestMessageAtByTeam: {
-                'team-a': { seconds: 250 }
+                'team-a': { seconds: 250 },
+                'team-b': { seconds: 260 }
             },
             latestMessageAtByConversationByTeam: {
                 'team-a': {
@@ -465,10 +479,12 @@ describe('chat unread count helpers', () => {
                 }
             },
             conversationIdsByTeam: {
-                'team-a': ['team', 'staff-conversation', 'direct-conversation']
+                'team-a': ['team', 'staff-conversation', 'direct-conversation'],
+                'team-b': ['team']
             }
         })).resolves.toEqual({
-            'team-a': 3
+            'team-a': 3,
+            'team-b': 4
         });
 
         expect(getChatConversations).not.toHaveBeenCalled();
@@ -484,7 +500,92 @@ describe('chat unread count helpers', () => {
             conversationId: 'direct-conversation',
             latestMessageAt: { seconds: 230 }
         }));
-        expect(warn).not.toHaveBeenCalled();
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(4, 'user-5', 'team-b', expect.objectContaining({
+            conversationId: 'team',
+            latestMessageAt: { seconds: 260 }
+        }));
+        expect(warn).toHaveBeenCalledWith(
+            'Failed to get unread count for team team-a conversation direct-conversation:',
+            expect.any(Error)
+        );
+    });
+
+    it('limits unread count work to six concurrent conversations and drains the queue', async () => {
+        const pending = Array.from({ length: 8 }, () => deferred());
+        let active = 0;
+        let peak = 0;
+        const getUnreadChatCount = vi.fn().mockImplementation((...args) => {
+            const callIndex = getUnreadChatCount.mock.calls.length - 1;
+            active += 1;
+            peak = Math.max(peak, active);
+            return pending[callIndex].promise.finally(() => {
+                active -= 1;
+            });
+        });
+        const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc: vi.fn().mockResolvedValue({ data: () => ({ teamChatState: {} }) }),
+            doc: vi.fn(() => ({ path: 'users/user-6' })),
+            getUnreadChatCount,
+            getChatConversations: vi.fn(),
+            console: { warn: vi.fn() }
+        });
+
+        const countsPromise = getUnreadChatCounts('user-6', ['team-a', 'team-b'], {
+            conversationIdsByTeam: {
+                'team-a': ['team', 'a-1', 'a-2', 'a-3'],
+                'team-b': ['team', 'b-1', 'b-2', 'b-3']
+            }
+        });
+        await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(6));
+        expect(peak).toBe(6);
+
+        pending[0].resolve(1);
+        await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(7));
+        pending[1].resolve(2);
+        await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(8));
+        pending.slice(2).forEach((entry) => entry.resolve(1));
+
+        await expect(countsPromise).resolves.toEqual({ 'team-a': 5, 'team-b': 4 });
+        expect(peak).toBe(6);
+    });
+
+    it('stops dequeuing at the deadline and returns zero for unfinished teams', async () => {
+        vi.useFakeTimers();
+        try {
+            const pending = Array.from({ length: 12 }, () => deferred());
+            const getUnreadChatCount = vi.fn().mockImplementation(() => pending[getUnreadChatCount.mock.calls.length - 1].promise);
+            const getUnreadChatCounts = buildGetUnreadChatCounts({
+                db: {},
+                getDoc: vi.fn().mockResolvedValue({ data: () => ({ teamChatState: {} }) }),
+                doc: vi.fn(() => ({ path: 'users/user-7' })),
+                getUnreadChatCount,
+                getChatConversations: vi.fn(),
+                console: { warn: vi.fn() }
+            });
+            const deadlineAt = Date.now() + 100;
+            const countsPromise = getUnreadChatCounts('user-7', ['team-a', 'team-b'], {
+                deadlineAt,
+                conversationIdsByTeam: {
+                    'team-a': ['team', 'a-1', 'a-2', 'a-3'],
+                    'team-b': ['team', 'b-1', 'b-2', 'b-3', 'b-4', 'b-5', 'b-6', 'b-7']
+                }
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(getUnreadChatCount).toHaveBeenCalledTimes(6);
+
+            pending.slice(0, 4).forEach((entry) => entry.resolve(1));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(getUnreadChatCount).toHaveBeenCalledTimes(10);
+
+            await vi.advanceTimersByTimeAsync(100);
+            await expect(countsPromise).resolves.toEqual({ 'team-a': 4, 'team-b': 0 });
+            pending.slice(4, 10).forEach((entry) => entry.resolve(1));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(getUnreadChatCount).toHaveBeenCalledTimes(10);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('returns zero counts when the shared user profile read fails', async () => {
