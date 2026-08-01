@@ -174,6 +174,7 @@ export function evaluateFirestoreRecoveryPosture({
         ))
         : [];
     const validReadyBackups = [];
+    const expiringReadyBackups = [];
 
     for (const backup of currentLineageBackups) {
         if (backup?.state !== 'READY') continue;
@@ -210,7 +211,7 @@ export function evaluateFirestoreRecoveryPosture({
             usableNow != null
             && expiresAt <= usableNow + MINIMUM_BACKUP_REMAINING_HOURS * 60 * 60 * 1000
         ) {
-            failures.push(`Ready backup ${backupLabel(backup)} expires before the next six-hour health-check window.`);
+            expiringReadyBackups.push(backup);
             validMetadata = false;
         }
 
@@ -232,6 +233,9 @@ export function evaluateFirestoreRecoveryPosture({
             failures.push(`The newest ready backup is older than ${boundedMaxBackupAgeHours} hours.`);
         }
     } else if (dailySchedule && scheduleCreatedAt != null && usableNow != null) {
+        for (const backup of expiringReadyBackups) {
+            failures.push(`Ready backup ${backupLabel(backup)} expires before the next six-hour health-check window.`);
+        }
         const scheduleAgeMs = usableNow - scheduleCreatedAt;
         const graceMs = DEFAULT_MAX_BACKUP_AGE_HOURS * 60 * 60 * 1000;
         if (scheduleAgeMs < -MAX_FUTURE_CLOCK_SKEW_MS) {
