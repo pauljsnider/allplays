@@ -16,8 +16,8 @@ const pullRequestWorkflow = fs.readFileSync(
     path.join(repoRoot, '.github', 'workflows', 'deploy-preview.yml'),
     'utf8'
 );
-const integrationWorkflow = fs.readFileSync(
-    path.join(repoRoot, '.github', 'workflows', 'pr-integration.yml'),
+const previewRequestWorkflow = fs.readFileSync(
+    path.join(repoRoot, '.github', 'workflows', 'pr-preview.yml'),
     'utf8'
 );
 const trustedWorkflow = fs.readFileSync(
@@ -53,7 +53,7 @@ function validTriggerFixture() {
             repository: { full_name: repository },
             workflow_run: {
                 id: runId,
-                name: 'pr-integration',
+                name: 'pr-preview',
                 event: 'pull_request',
                 status: 'completed',
                 conclusion: 'success',
@@ -65,8 +65,8 @@ function validTriggerFixture() {
         },
         run: {
             id: runId,
-            name: 'pr-integration',
-            path: '.github/workflows/pr-integration.yml',
+            name: 'pr-preview',
+            path: '.github/workflows/pr-preview.yml',
             event: 'pull_request',
             status: 'completed',
             conclusion: 'success',
@@ -193,24 +193,24 @@ describe('preview deployment workflow trust boundary', () => {
         expect(pullRequestWorkflow).not.toContain('external-claim');
     });
 
-    it('serializes the untrusted preview artifact inside the consolidated PR run', () => {
-        expect(integrationWorkflow).toContain('name: pr-integration');
-        expect(integrationWorkflow).toContain('group: pr-integration-${{ github.event.pull_request.number }}');
-        expect(integrationWorkflow).toContain('cancel-in-progress: true');
-        expect(integrationWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
-        expect(integrationWorkflow).toContain('name: preview-smoke');
-        expect(integrationWorkflow).not.toContain('      - unlabeled');
-        expect(integrationWorkflow).not.toContain('      - labeled');
+    it('builds the untrusted preview artifact only after an explicit label request', () => {
+        expect(previewRequestWorkflow).toContain('name: pr-preview');
+        expect(previewRequestWorkflow).toContain('group: pr-preview-${{ github.event.pull_request.number }}');
+        expect(previewRequestWorkflow).toContain('cancel-in-progress: true');
+        expect(previewRequestWorkflow).toContain("github.event.label.name == 'preview-requested'");
+        expect(previewRequestWorkflow).toContain('github.event.pull_request.draft == false');
+        expect(previewRequestWorkflow).toContain('uses: ./.github/workflows/deploy-preview.yml');
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
         expect(trustedWorkflow).toContain('workflow_run:');
-        expect(trustedWorkflow).toContain('      - pr-integration');
+        expect(trustedWorkflow).toContain('      - pr-preview');
         expect(trustedWorkflow).toContain('classify-trigger:');
         expect(trustedWorkflow).toContain('preview_ready: ${{ steps.classify.outputs.preview_ready }}');
         expect(trustedWorkflow).toContain('pull-requests: read');
         expect(trustedWorkflow).toContain('Fork pull request — no trusted preview deploy is required.');
         expect(trustedWorkflow).toContain('echo "preview_ready=false" >> "$GITHUB_OUTPUT"');
+        expect(trustedWorkflow).toContain('No preview bundle was requested by this label event.');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
         expect(trustedWorkflow).toContain(

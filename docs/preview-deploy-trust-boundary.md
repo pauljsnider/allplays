@@ -2,13 +2,15 @@
 
 ## Required invariants
 
-The `pr-integration` pull-request workflow calls the reusable
-`deploy-preview` artifact builder, which executes untrusted PR code. Neither may
-receive a Firebase credential or a repository token with write permissions.
-The reusable builder may only build, stage public Hosting content, and upload
-the single `firebase-preview-hosting-bundle` artifact. The same consolidated
-run must also pass the reusable regression and preview-smoke workflows before
-its stable `preview-smoke` aggregate succeeds.
+The optional `pr-preview` pull-request workflow calls the reusable
+`deploy-preview` artifact builder only when an operator applies the
+`preview-requested` label to a ready same-repository PR. The builder executes
+untrusted PR code. Neither workflow may receive a Firebase credential or a
+repository token with write permissions. The reusable builder may only build,
+stage public Hosting content, and upload the single
+`firebase-preview-hosting-bundle` artifact. Required regression and local
+preview-smoke validation remain in `pr-integration`; a Firebase channel deploy
+is not a merge prerequisite and must not run on every pushed PR head.
 
 The `deploy-preview-trusted` workflow is the only preview deployer. GitHub runs
 its `workflow_run` definition from the default branch. It checks out only the
@@ -89,10 +91,10 @@ Before merging a change to either preview workflow:
 5. Review the exact PR head SHA after all requested automated reviews and CI
    complete. Any new commit invalidates prior review evidence.
 
-The first `workflow_run` preview cannot execute until `pr-integration` and its
+The first `workflow_run` preview cannot execute until `pr-preview` and its
 trusted verifier scripts are present on the default branch. The reusable
-artifact build remains testable before merge; the first post-merge PR run is
-the deployment canary.
+artifact build remains testable before merge; apply `preview-requested` to a
+ready same-repository canary PR after merge to exercise the deployment path.
 
 ## Workload Identity cutover and JSON-key retirement
 

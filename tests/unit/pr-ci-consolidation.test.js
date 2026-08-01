@@ -53,6 +53,16 @@ describe('pull request CI consolidation', () => {
         expect(integration).not.toContain('secrets: inherit');
     });
 
+    it('keeps credentialed preview work off the required PR path', () => {
+        const integration = workflow('pr-integration.yml');
+        const preview = workflow('pr-preview.yml');
+
+        expect(integration).not.toContain('uses: ./.github/workflows/deploy-preview.yml');
+        expect(preview).toContain("github.event.label.name == 'preview-requested'");
+        expect(preview).toContain('github.event.pull_request.draft == false');
+        expect(preview).toContain('uses: ./.github/workflows/deploy-preview.yml');
+    });
+
     it('reuses version-bound Playwright browsers in the regression workflow', () => {
         const regression = workflow('regression-guards.yml');
         const parsed = parseYaml(regression);
@@ -77,21 +87,11 @@ describe('pull request CI consolidation', () => {
     it.each([
         ['mobile-build', { MOBILE_RESULT: 'cancelled' }],
         ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'success',
             PREVIEW_RESULT: 'success',
             REGRESSION_RESULT: 'cancelled'
         }],
         ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'success',
             PREVIEW_RESULT: 'cancelled',
-            REGRESSION_RESULT: 'success'
-        }],
-        ['preview-smoke', {
-            HEAD_REPOSITORY: 'allplays/allplays',
-            PREVIEW_ARTIFACT_RESULT: 'cancelled',
-            PREVIEW_RESULT: 'success',
             REGRESSION_RESULT: 'success'
         }]
     ])('runs %s after cancellation and rejects cancelled upstream results', (jobName, env) => {
@@ -116,8 +116,8 @@ describe('pull request CI consolidation', () => {
             'utf8'
         );
 
-        expect(trusted).toContain('      - pr-integration');
-        expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-integration'");
-        expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-integration.yml'");
+        expect(trusted).toContain('      - pr-preview');
+        expect(verifier).toContain("PREVIEW_WORKFLOW_NAME = 'pr-preview'");
+        expect(verifier).toContain("PREVIEW_WORKFLOW_PATH = '.github/workflows/pr-preview.yml'");
     });
 });
