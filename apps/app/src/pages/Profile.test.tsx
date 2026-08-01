@@ -354,6 +354,55 @@ describe('Profile', () => {
     });
   });
 
+  it('preserves independent unsaved alert drafts across team switches and failed saves', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation(async (_userId: string, teamId: string) => (
+      teamId === 'team-1'
+        ? { liveChat: true, liveScore: false, schedule: true }
+        : { liveChat: true, liveScore: false, schedule: false }
+    ));
+    profileServiceMocks.saveNotificationPreferences
+      .mockImplementationOnce(async (_userId: string, _teamId: string, preferences: unknown) => preferences)
+      .mockRejectedValueOnce(new Error('save failed'));
+
+    renderProfile();
+    fireEvent.click(await screen.findByRole('button', { name: /^Alerts$/ }));
+
+    const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByLabelText('Live Chat'));
+    expect(await screen.findByText('Unsaved changes')).toBeTruthy();
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByLabelText('Live Score'));
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.change(teamSelect, { target: { value: 'team-1' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
+      liveChat: false,
+      liveScore: false,
+      schedule: true
+    }));
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true));
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    expect(await screen.findByText('save failed')).toBeTruthy();
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('keeps mobile profile section buttons in a two-column grid so Alerts stays reachable', async () => {
     renderProfile();
 

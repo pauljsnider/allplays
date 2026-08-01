@@ -125,6 +125,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
   const [notificationPreferencesByTeamId, setNotificationPreferencesByTeamId] = useState<Record<string, NotificationPreferences>>({});
+  const [notificationPreferenceDraftsByTeamId, setNotificationPreferenceDraftsByTeamId] = useState<Record<string, NotificationPreferences>>({});
   const [notificationPreferencesErrorTeamId, setNotificationPreferencesErrorTeamId] = useState<string | null>(null);
   const [notificationPreferencesReloadNonce, setNotificationPreferencesReloadNonce] = useState(0);
   const [accessCodes, setAccessCodes] = useState<AccessCodeRecord[]>([]);
@@ -171,6 +172,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoUrlRef = useRef('');
   const photoChangedRef = useRef(false);
   const selectedTeamIdRef = useRef('');
+  const notificationPreferenceDraftsByTeamIdRef = useRef<Record<string, NotificationPreferences>>({});
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -193,6 +195,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && notificationTeams.length === 0;
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && Boolean(selectedNotificationTeam);
   const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);
+  const selectedTeamPreferencesDirty = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferenceDraftsByTeamId, selectedTeamId);
   const selectedTeamPreferencesError = selectedTeamId ? notificationPreferenceErrorsByTeamId[selectedTeamId] || '' : '';
   const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated && !selectedTeamPreferencesError;
   const pushEnabled = pushPermissionStatus?.state === 'enabled';
@@ -534,7 +537,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
       const cachedPreferences = notificationPreferencesByTeamId[selectedTeamId];
       if (cachedPreferences) {
-        setNotificationPreferences(cachedPreferences);
+        setNotificationPreferences(notificationPreferenceDraftsByTeamId[selectedTeamId] || cachedPreferences);
         setLoadedNotificationTeamId(selectedTeamId);
         return;
       }
@@ -570,7 +573,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, loadNotificationPreferencesOnce, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
+  }, [activeProfileSection, loadNotificationPreferencesOnce, notificationPreferenceDraftsByTeamId, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -896,18 +899,30 @@ export function Profile({ auth }: { auth: AuthState }) {
       return;
     }
 
+    const teamId = selectedTeamId;
+    const submittedDraft = notificationPreferenceDraftsByTeamId[teamId] || notificationPreferences;
+
     setBusy('notifications');
     setNotificationStatus(null);
 
     try {
-      const saved = await saveNotificationPreferences(user.uid, selectedTeamId, notificationPreferences);
-      setNotificationPreferences(saved);
-      setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: saved }));
+      const saved = await saveNotificationPreferences(user.uid, teamId, submittedDraft);
+      const latestDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];
+      const submittedDraftIsCurrent = !latestDraft || latestDraft === submittedDraft;
+      if (selectedTeamIdRef.current === teamId && submittedDraftIsCurrent) {
+        setNotificationPreferences(saved);
+      }
+      setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));
+      if (latestDraft === submittedDraft) {
+        const { [teamId]: _ignoredDraft, ...remainingDrafts } = notificationPreferenceDraftsByTeamIdRef.current;
+        notificationPreferenceDraftsByTeamIdRef.current = remainingDrafts;
+        setNotificationPreferenceDraftsByTeamId(remainingDrafts);
+      }
       setNotificationPreferenceErrorsByTeamId((current) => {
-        const { [selectedTeamId]: _ignored, ...rest } = current;
+        const { [teamId]: _ignored, ...rest } = current;
         return rest;
       });
-      setLoadedNotificationTeamId(selectedTeamId);
+      setLoadedNotificationTeamId(teamId);
       setNotificationStatus({ message: 'Notification preferences saved.', tone: 'success' });
     } catch (error: any) {
       setNotificationStatus({ message: error?.message || 'Failed to save notification preferences.', tone: 'error' });
@@ -921,6 +936,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationTeamsError('');
     setNotificationPreferenceErrorsByTeamId({});
     setNotificationPreferencesByTeamId({});
+    notificationPreferenceDraftsByTeamIdRef.current = {};
+    setNotificationPreferenceDraftsByTeamId({});
     setNotificationPreferences(emptyPreferences);
     setLoadedNotificationTeamId('');
     setSelectedTeamId('');
@@ -1049,7 +1066,8 @@ export function Profile({ auth }: { auth: AuthState }) {
         return;
       }
 
-      const currentPreferences = notificationPreferencesByTeamId[teamId]
+      const sourceDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];
+      const currentPreferences = sourceDraft || notificationPreferencesByTeamId[teamId]
         || (loadedNotificationTeamId === teamId
           ? notificationPreferences
           : await loadNotificationPreferencesOnce(user.uid, teamId));
@@ -1061,8 +1079,17 @@ export function Profile({ auth }: { auth: AuthState }) {
       await pushService.enablePushNotificationsForUser(user.uid);
       await refreshPushPermissionStatus({ silent: true });
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
-      setNotificationPreferences(saved);
+      const latestDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];
+      const sourceDraftIsCurrent = latestDraft === sourceDraft;
+      if (selectedTeamIdRef.current === teamId && sourceDraftIsCurrent) {
+        setNotificationPreferences(saved);
+      }
       setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));
+      if (sourceDraft && sourceDraftIsCurrent) {
+        const { [teamId]: _ignoredDraft, ...remainingDrafts } = notificationPreferenceDraftsByTeamIdRef.current;
+        notificationPreferenceDraftsByTeamIdRef.current = remainingDrafts;
+        setNotificationPreferenceDraftsByTeamId(remainingDrafts);
+      }
       setNotificationPreferenceErrorsByTeamId((current) => {
         const { [teamId]: _ignored, ...rest } = current;
         return rest;
@@ -1612,10 +1639,20 @@ export function Profile({ auth }: { auth: AuthState }) {
                             key={category.id}
                             label={category.label}
                             checked={notificationPreferences[category.id]}
-                            onChange={(checked) => setNotificationPreferences((current) => ({
-                              ...current,
-                              [category.id]: checked
-                            }))}
+                            onChange={(checked) => {
+                              if (!selectedTeamId) return;
+                              const nextDraft = {
+                                ...notificationPreferences,
+                                [category.id]: checked
+                              };
+                              setNotificationPreferences(nextDraft);
+                              setNotificationPreferenceDraftsByTeamId((current) => {
+                                const nextDrafts = { ...current, [selectedTeamId]: nextDraft };
+                                notificationPreferenceDraftsByTeamIdRef.current = nextDrafts;
+                                return nextDrafts;
+                              });
+                              setNotificationStatus(null);
+                            }}
                           />
                         ))}
                       </div>
@@ -1628,6 +1665,9 @@ export function Profile({ auth }: { auth: AuthState }) {
                   {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
                   Save preferences
                 </button>
+                {selectedTeamPreferencesDirty ? (
+                  <span className="text-sm font-bold text-amber-700" role="status" aria-live="polite">Unsaved changes</span>
+                ) : null}
               </div>
             </details>
           </>

@@ -333,7 +333,8 @@ describe('React app auth/profile capability parity', () => {
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);");
         expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
-        expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId]');
+        expect(turnOnGameDayAlerts).toContain('const sourceDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = sourceDraft || notificationPreferencesByTeamId[teamId]');
         expect(turnOnGameDayAlerts).toContain('loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
         expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferencesOnce(user.uid, teamId));');
