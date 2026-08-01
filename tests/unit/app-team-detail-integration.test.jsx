@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
+import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -355,7 +356,7 @@ describe('React app TeamDetail page', () => {
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-1&filter=availability');
 
         await clickButton(container, 'Roster');
-        expect(container.textContent).toContain('Pat Star');
+        await waitFor(() => expect(container.textContent).toContain('Pat Star'));
         expect(container.textContent).toContain('Yours');
         expect(container.querySelector('img[src="https://img.example.test/player.png"]')).toBeTruthy();
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toContain('/players/team-1/player-1');
