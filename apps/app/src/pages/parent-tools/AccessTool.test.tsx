@@ -72,15 +72,16 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
 
     afterEach(() => cleanup());
 
-    it('opens the manual request form while deep-linked teams are still loading', async () => {
-        let resolveTeams: (teams: Array<{ id: string; name: string }>) => void = () => {};
-        accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((resolve) => {
-            resolveTeams = resolve;
+    it('opens the manual request form while the exact deep-linked team is loading', async () => {
+        let resolveTeam: (team: { id: string; name: string }) => void = () => {};
+        accessServiceMocks.loadParentAccessTeam.mockReturnValue(new Promise((resolve) => {
+            resolveTeam = resolve;
         }));
 
         const view = renderTool('team-a');
 
-        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-a'));
+        expect(accessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         await waitFor(() => {
             const select = view.container.querySelector('#parent-access-team') as HTMLSelectElement | null;
             expect(select).not.toBeNull();
@@ -89,41 +90,38 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         });
 
         await act(async () => {
-            resolveTeams({ teams: [{ id: 'team-a', name: 'Team A' }], nextCursor: null } as any);
+            resolveTeam({ id: 'team-a', name: 'Team A' });
         });
     });
 
-    it('does not repeat initial discovery when a deep link returns an empty team page', async () => {
-        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({ teams: [], nextCursor: null });
+    it('uses one exact lookup and no discovery when a deep link is unknown', async () => {
         accessServiceMocks.loadParentAccessTeam.mockResolvedValue(null);
 
-        renderTool('team-z');
+        const view = renderTool('team-z');
 
-        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
         await act(async () => {
             await Promise.resolve();
             await Promise.resolve();
         });
 
-        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledTimes(1);
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
     });
 
-    it('does not repeat initial discovery when a deep-link browse rejects', async () => {
-        accessServiceMocks.discoverParentAccessTeams.mockRejectedValue(new Error('Discovery unavailable'));
-        accessServiceMocks.loadParentAccessTeam.mockResolvedValue(null);
+    it('does not fall back to discovery when an exact deep-link lookup rejects', async () => {
+        accessServiceMocks.loadParentAccessTeam.mockRejectedValue(new Error('Lookup unavailable'));
 
         renderTool('team-z');
 
-        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
         await act(async () => {
             await Promise.resolve();
             await Promise.resolve();
         });
 
-        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledTimes(1);
     });
 
@@ -139,26 +137,17 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b'));
     });
 
-    it('does not invalidate discovery started for a newly added deep-link intent', async () => {
-        let resolveDiscovery: (value: unknown) => void = () => {};
-        accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((resolve) => {
-            resolveDiscovery = resolve;
-        }));
-
+    it('looks up a newly added deep-link intent without discovery', async () => {
         const view = renderTool('');
         await act(async () => {
             navigate('/parent-tools/access?teamId=team-b');
         });
-        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
-
-        await act(async () => {
-            resolveDiscovery({ teams: [{ id: 'team-b', name: 'Team B' }], nextCursor: null });
-        });
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-b'));
 
         await waitFor(() => {
             expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-b');
         });
-        expect(accessServiceMocks.loadParentAccessTeam).not.toHaveBeenCalledWith('team-b');
+        expect(accessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b');
     });
 
@@ -186,6 +175,7 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
             { id: 'player-a', name: 'Player A', number: '7' }
         ]);
         accessServiceMocks.loadParentAccessTeam.mockImplementation((teamId: string) => {
+            if (teamId === 'team-a') return Promise.resolve({ id: 'team-a', name: 'Team A' });
             if (teamId !== 'team-z') return Promise.resolve(null);
             return new Promise((_resolve, reject) => {
                 rejectTargetLookup = reject;
@@ -220,18 +210,14 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         expect(accessServiceMocks.submitParentAccessRequest).not.toHaveBeenCalled();
     });
 
-    it('resolves a deep-linked team that is beyond the first discovery page', async () => {
-        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({
-            teams: [{ id: 'team-a', name: 'Team A' }],
-            nextCursor: 'cursor-2'
-        });
+    it('loads the roster immediately after an exact deep-linked team lookup', async () => {
         accessServiceMocks.loadParentAccessTeam.mockResolvedValue({ id: 'team-z', name: 'Team Z' });
 
         renderTool('team-z');
 
-        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
         await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-z'));
+        expect(accessServiceMocks.discoverParentAccessTeams).not.toHaveBeenCalled();
     });
 
     it('reapplies the same deep link after the param is cleared', async () => {
@@ -244,6 +230,8 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         await waitFor(() => expect(window.location.search).toBe(''));
 
         accessServiceMocks.loadParentAccessPlayers.mockClear();
+        fireEvent.click(view.getByRole('button', { name: 'Browse' }));
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
         const teamSelect = view.container.querySelector('#parent-access-team') as HTMLSelectElement;
         fireEvent.change(teamSelect, { target: { value: 'team-b' } });
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b'));
