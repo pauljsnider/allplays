@@ -364,7 +364,7 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Insights');
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user);
-        expect(container.textContent).toContain('Bring ball');
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
         expect(container.textContent).toContain('Points');
         expect(container.textContent).toContain('88');
 

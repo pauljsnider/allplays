@@ -226,6 +226,8 @@
                 "apps/app/src/pages/PlayerDetail.tsx",
                 "apps/app/src/pages/PublicTeamsBrowse.tsx",
                 "apps/app/src/pages/TeamDetail.tsx",
+                "apps/app/src/pages/team-detail/InsightsTab.tsx",
+                "apps/app/src/pages/team-detail/insightsTabLoader.ts",
                 "apps/app/src/pages/team-detail/RosterTab.tsx",
                 "apps/app/src/pages/team-detail/rosterTabLoader.ts",
                 "apps/app/src/pages/TeamSettings.tsx",
