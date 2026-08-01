@@ -2783,16 +2783,29 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
         email
       });
       const code = String(result?.code || '').trim().toUpperCase();
+      const recipientEmail = String(result?.email || normalizedEmail).trim().toLowerCase();
+      const reused = result?.reused === true;
       setCreatedInvite({
         code,
         inviteUrl: buildAppAcceptInviteUrl(code, 'coparent'),
-        email: normalizedEmail,
-        emailSent: false
+        email: recipientEmail,
+        emailSent: !reused && result?.created === true
       });
-      setStatus({ tone: 'success', message: `Invite created for ${normalizedEmail}.` });
+      setStatus({
+        tone: 'success',
+        message: reused
+          ? `Existing invite reused for ${recipientEmail}. No new email was sent.`
+          : `Invite sent to ${recipientEmail}.`
+      });
       setEmail('');
     } catch (error: any) {
-      setStatus({ tone: 'error', message: error?.message || 'Unable to send co-parent invite.' });
+      const errorCode = String(error?.code || '').replace(/^functions\//, '');
+      setStatus({
+        tone: 'error',
+        message: errorCode === 'resource-exhausted'
+          ? 'Too many co-parent invites. Please wait and try again. No email was sent.'
+          : error?.message || 'Unable to send co-parent invite.'
+      });
     } finally {
       setSending(false);
     }

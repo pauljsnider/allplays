@@ -12,7 +12,6 @@ import {
     getRosterFieldDefinitions as legacyGetRosterFieldDefinitions,
     getTeam as legacyGetTeam,
     deleteAthleteProfileMediaByPath as legacyDeleteAthleteProfileMediaByPath,
-    inviteCoParentToAthlete as legacyInviteCoParentToAthlete,
     listAthleteProfilesForParent as legacyListAthleteProfilesForParent,
     listCertificatesForPlayer as legacyListCertificatesForPlayer,
     releaseAthleteProfileMediaReservation as legacyReleaseAthleteProfileMediaReservation,
@@ -26,6 +25,10 @@ import {
     uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
     uploadPlayerPhoto as legacyUploadPlayerPhoto
 } from '@legacy/db.js';
+import {
+    functions as legacyFunctions,
+    httpsCallable as legacyHttpsCallable
+} from '@legacy/firebase.js';
 import { collectRosterParentContacts as legacyCollectRosterParentContacts } from '@legacy/roster-profile-fields.js';
 
 export type LegacyTeamRecord = {
@@ -70,6 +73,15 @@ export type LegacyAthleteProfileRecord = {
     id?: string;
     seasons?: Array<{ teamId?: string; playerId?: string; [key: string]: any }>;
     [key: string]: any;
+};
+export type LegacyCoParentInviteResult = {
+    id: string;
+    code: string;
+    teamName: string | null;
+    playerName: string | null;
+    email: string;
+    created: boolean;
+    reused: boolean;
 };
 
 export const collectRosterParentContacts = legacyCollectRosterParentContacts as (...args: any[]) => any;
@@ -154,8 +166,23 @@ export async function uploadPlayerPhoto(file: File): Promise<string> {
     return await Promise.resolve(legacyUploadPlayerPhoto(file));
 }
 
-export async function inviteCoParentToAthlete(userId: string, teamId: string, playerId: string, email: string, playerName: string) {
-    return await Promise.resolve(legacyInviteCoParentToAthlete(userId, teamId, playerId, email, playerName));
+export async function inviteCoParentToAthlete(teamId: string, playerId: string, email: string): Promise<LegacyCoParentInviteResult> {
+    const callable = legacyHttpsCallable(legacyFunctions, 'createCoParentInvite');
+    const response = await callable({
+        teamId,
+        playerId,
+        email: String(email || '').trim().toLowerCase()
+    });
+    const result = response?.data || {};
+    return {
+        id: String(result.id || '').trim(),
+        code: String(result.code || '').trim().toUpperCase(),
+        teamName: result.teamName || null,
+        playerName: result.playerName || null,
+        email: String(result.email || email || '').trim().toLowerCase(),
+        created: result.created === true,
+        reused: result.reused === true
+    };
 }
 
 export async function saveAthleteProfile(userId: string, draft: Record<string, unknown>, options: { profileId: string; isNewProfile?: boolean }) {

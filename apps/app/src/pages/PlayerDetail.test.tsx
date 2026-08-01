@@ -344,6 +344,71 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy();
   });
 
+  it('reports a newly created co-parent invitation as sent and queued', async () => {
+    playerServiceMocks.sendParentCoParentInvite.mockResolvedValue({
+      id: 'invite-1', code: 'COPE1234', teamName: 'Current Team', playerName: 'Sam Player',
+      email: 'coparent@example.com', created: true, reused: false
+    });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: ' CoParent@Example.COM ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    await waitFor(() => expect(playerServiceMocks.sendParentCoParentInvite).toHaveBeenCalledWith({
+      user: auth.user,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      playerName: 'Sam Player',
+      email: 'CoParent@Example.COM'
+    }));
+    expect(await screen.findByText('Invite sent to coparent@example.com.')).toBeTruthy();
+    expect(screen.getByText('Email queued for coparent@example.com.')).toBeTruthy();
+    expect(screen.getByText('COPE1234')).toBeTruthy();
+  });
+
+  it('reports a reused co-parent invitation without claiming another email', async () => {
+    playerServiceMocks.sendParentCoParentInvite.mockResolvedValue({
+      id: 'invite-1', code: 'COPE1234', teamName: 'Current Team', playerName: 'Sam Player',
+      email: 'coparent@example.com', created: false, reused: true
+    });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'coparent@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    expect(await screen.findByText('Existing invite reused for coparent@example.com. No new email was sent.')).toBeTruthy();
+    expect(screen.getByText('Copy and share this invite with coparent@example.com.')).toBeTruthy();
+    expect(screen.queryByText('Email queued for coparent@example.com.')).toBeNull();
+    expect(screen.getByText('COPE1234')).toBeTruthy();
+  });
+
+  it('reports callable throttling without showing an invite or email claim', async () => {
+    playerServiceMocks.sendParentCoParentInvite.mockRejectedValue({
+      code: 'functions/resource-exhausted',
+      details: { retryAfterSeconds: 3600 }
+    });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Family' }));
+    fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'coparent@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    expect(await screen.findByText('Too many co-parent invites. Please wait and try again. No email was sent.')).toBeTruthy();
+    expect(screen.queryByText('Email queued for coparent@example.com.')).toBeNull();
+    expect(screen.queryByText('COPE1234')).toBeNull();
+  });
+
   it('hides empty schedule and report tabs for non-linked team parent viewers', async () => {
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       access: {
