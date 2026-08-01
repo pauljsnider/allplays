@@ -48,7 +48,10 @@ describe('app form mobile input hints', () => {
   });
 
   test('team and player detail numeric and email fields expose keyboard hints', () => {
-    const teamDetail = readSource('apps/app/src/pages/TeamDetail.tsx');
+    const teamDetail = [
+      readSource('apps/app/src/pages/TeamDetail.tsx'),
+      readSource('apps/app/src/pages/team-detail/RosterTab.tsx')
+    ].join('\n');
     const playerDetail = readSource('apps/app/src/pages/PlayerDetail.tsx');
 
     expect(teamDetail).toContain('inputMode="numeric"');
