@@ -779,6 +779,14 @@ test('profile exposes account, notification, invite, verification, password, upl
     expect(profileCalls.profileLoads).toBeGreaterThan(0);
     expect(profileCalls).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
+        saves: [{
+            userId: 'user-1',
+            profile: {
+                fullName: 'Pat Parent Updated',
+                phone: '555-0100',
+                photoUrl: mockAvatarUrl
+            }
+        }],
         push: 1,
         notificationLoads: [
             { userId: 'user-1', teamId: 'team-1' }
