@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+    assertFails,
+    assertSucceeds,
+    initializeTestEnvironment
+} from '@firebase/rules-unit-testing';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const accessCodeMatch = rules.match(/match \/accessCodes\/\{codeId\} \{[\s\S]*?\n\s*\}/);
@@ -78,13 +84,10 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain('allow delete: if false;');
     });
 
-    it('allows only an already-linked parent to create a schema-valid co-parent invite', () => {
-        expect(rules).toContain('function isCoParentInvitePayloadValid(data)');
-        expect(rules).toContain("data.type == 'coparent_invite'");
-        expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
-        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'coparent_invite'");
-        expect(accessCodeRules).toContain('isCoParentInvitePayloadValid(request.resource.data)');
-        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+    it('requires co-parent invite creation to use the protected callable', () => {
+        expect(rules).not.toContain('function isCoParentInvitePayloadValid(data)');
+        expect(accessCodeRules).not.toContain("request.resource.data.get('type', null) == 'coparent_invite'");
+        expect(accessCodeRules).not.toContain('isCoParentInvitePayloadValid(request.resource.data)');
     });
 
     it('locks parent_invite targeting to redemption and revoke-only updates', () => {
@@ -189,5 +192,109 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain('data.used == false');
         expect(rules).toContain('data.usedBy == null');
         expect(rules).toContain('data.usedAt == null');
+    });
+});
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine coverage', () => {
+    let testEnv;
+
+    beforeAll(async () => {
+        testEnv = await initializeTestEnvironment({
+            projectId: `allplays-access-code-rules-${Date.now()}`,
+            firestore: { rules }
+        });
+    }, 30000);
+
+    beforeEach(async () => {
+        await testEnv.clearFirestore();
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(doc(firestore, 'teams/team-a'), {
+                ownerId: 'owner-a',
+                adminEmails: []
+            });
+            await setDoc(doc(firestore, 'users/linked-parent'), {
+                parentPlayerKeys: ['team-a::player-a']
+            });
+        });
+    });
+
+    afterAll(async () => {
+        await testEnv?.cleanup();
+    });
+
+    function coParentInvitePayload(generatedBy) {
+        return {
+            code: 'COPE1234',
+            type: 'coparent_invite',
+            teamId: 'team-a',
+            playerId: 'player-a',
+            playerName: 'Avery Athlete',
+            teamName: 'Tigers',
+            email: 'coparent@example.com',
+            generatedBy,
+            createdAt: Timestamp.now(),
+            expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            used: false,
+            usedBy: null,
+            usedAt: null
+        };
+    }
+
+    it('denies direct co-parent invite creation by a linked parent', async () => {
+        const linkedParentDb = testEnv.authenticatedContext('linked-parent', {
+            email: 'linked-parent@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(setDoc(
+            doc(linkedParentDb, 'accessCodes/COPE1234'),
+            coParentInvitePayload('linked-parent')
+        ));
+    });
+
+    it('denies direct co-parent invite creation by another authenticated client', async () => {
+        const unrelatedDb = testEnv.authenticatedContext('unrelated-user', {
+            email: 'unrelated@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(setDoc(
+            doc(unrelatedDb, 'accessCodes/COPE1234'),
+            coParentInvitePayload('unrelated-user')
+        ));
+    });
+
+    it('preserves permitted standard and parent invite creation', async () => {
+        const userDb = testEnv.authenticatedContext('standard-user', {
+            email: 'standard@example.com',
+            email_verified: true
+        }).firestore();
+        const ownerDb = testEnv.authenticatedContext('owner-a', {
+            email: 'owner@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertSucceeds(setDoc(doc(userDb, 'accessCodes/STANDARD1'), {
+            code: 'STANDARD1',
+            type: 'standard',
+            generatedBy: 'standard-user',
+            createdAt: Timestamp.now(),
+            used: false,
+            usedBy: null,
+            usedAt: null
+        }));
+        await assertSucceeds(setDoc(doc(ownerDb, 'accessCodes/PARENT12'), {
+            code: 'PARENT12',
+            type: 'parent_invite',
+            teamId: 'team-a',
+            playerId: 'player-a',
+            generatedBy: 'owner-a',
+            createdAt: Timestamp.now(),
+            expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            used: false,
+            usedBy: null,
+            usedAt: null
+        }));
     });
 });

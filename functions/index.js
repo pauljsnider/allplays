@@ -358,6 +358,7 @@ const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
 const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
+const NOTIFICATION_INBOX_WRITE_CONCURRENCY = 10;
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -9763,22 +9764,30 @@ async function writeNotificationInboxRecords({
 
   const createdAt = admin.firestore.FieldValue.serverTimestamp();
   const readAt = null;
-  const results = await Promise.allSettled(uniqueTargets.map(async (target) => {
-    const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
-    await inboxRef.add(buildNotificationInboxPayload({
-      category,
-      title,
-      body,
-      appRoute,
-      teamId,
-      gameId,
-      eventId,
-      conversationId,
-      createdAt,
-      readAt
-    }));
-    return cleanupNotificationInbox(inboxRef);
-  }));
+  const results = await runWithConcurrencyLimit(
+    uniqueTargets,
+    NOTIFICATION_INBOX_WRITE_CONCURRENCY,
+    async (target) => {
+      try {
+        const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
+        await inboxRef.add(buildNotificationInboxPayload({
+          category,
+          title,
+          body,
+          appRoute,
+          teamId,
+          gameId,
+          eventId,
+          conversationId,
+          createdAt,
+          readAt
+        }));
+        return { status: 'fulfilled', value: await cleanupNotificationInbox(inboxRef) };
+      } catch (reason) {
+        return { status: 'rejected', reason };
+      }
+    }
+  );
 
   let writeCount = 0;
   let cleanupCount = 0;
@@ -10617,6 +10626,7 @@ exports._internal = {
   resolveEligibleFeeReminderRecipient,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
+  NOTIFICATION_INBOX_WRITE_CONCURRENCY,
   createBoundedFirestoreBatchWriter,
   runWithConcurrencyLimit,
   syncNotificationRecipientForTeamUser,

@@ -187,7 +187,7 @@ beforeEach(() => {
         privacy: 'public',
         seasons: [{ teamId: 'team-1', playerId: 'player-1' }]
     }]);
-    dbMocks.inviteCoParentToAthlete.mockResolvedValue({ id: 'invite-1', code: 'ABC12345', teamName: 'Bears', playerName: 'Pat Star', existingUser: false });
+    dbMocks.inviteCoParentToAthlete.mockResolvedValue({ id: 'invite-1', code: 'ABC12345', teamName: 'Bears', playerName: 'Pat Star', email: 'coparent@example.com', created: true, reused: false });
     dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1', athlete: { name: 'Pat Star' }, privacy: 'public' });
     dbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: false }));
     dbMocks.releaseAthleteProfileMediaReservation.mockResolvedValue(true);
@@ -572,7 +572,7 @@ describe('React app parent player detail service', () => {
         });
 
         expect(invite.code).toBe('ABC12345');
-        expect(dbMocks.inviteCoParentToAthlete).toHaveBeenCalledWith('user-1', 'team-1', 'player-1', 'coparent@example.com', 'Pat Star');
+        expect(dbMocks.inviteCoParentToAthlete).toHaveBeenCalledWith('team-1', 'player-1', 'coparent@example.com');
 
         const savedProfile = await saveParentAthleteProfileDraft({
             user: user(),

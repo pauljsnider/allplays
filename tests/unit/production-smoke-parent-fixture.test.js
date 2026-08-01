@@ -8,6 +8,7 @@ import {
 } from '../../scripts/maintain-production-smoke-parent-fixture.mjs';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
+const authenticatedCoreSource = readFileSync('tests/smoke/app-authenticated-core.spec.js', 'utf8');
 
 function mapValue(fields) {
     return { mapValue: { fields } };
@@ -246,5 +247,14 @@ describe('production parent smoke fixture maintenance', () => {
         expect(workflowSource).toContain('environment:\n      name: production-smoke');
         expect(workflowSource).toContain('ref: ${{ github.sha }}');
         expect(workflowSource).not.toContain('pull_request:');
+    });
+
+    it('uses an unambiguous semantic locator for the household invite heading', () => {
+        expect(authenticatedCoreSource).toContain(
+            "page.getByRole('heading', { name: 'Create invite' })"
+        );
+        expect(authenticatedCoreSource).not.toContain(
+            "page.getByText('Create invite', { exact: true })"
+        );
     });
 });

@@ -47,7 +47,8 @@ describe('sendCategoryNotification load coverage', () => {
             }),
             notificationInboxDocs: {
                 'user-0': buildExistingInboxItems(50)
-            }
+            },
+            deferNotificationInboxOperations: true
         });
 
         try {
@@ -73,6 +74,38 @@ describe('sendCategoryNotification load coverage', () => {
             assert.equal(env.messagingCalls.length, 1);
             assert.equal(env.messagingCalls[0].tokens.length, 500);
             assert.equal(env.inboxWrites.length, 500);
+            assert.equal(env.peakNotificationInboxPipelines, internals.NOTIFICATION_INBOX_WRITE_CONCURRENCY);
+            assert.equal(env.activeNotificationInboxPipelines, 0);
+        } finally {
+            cleanup();
+        }
+    });
+
+    it('continues bounded inbox writes after one recipient pipeline fails', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            ...buildLargeFixture({
+                recipients: 500,
+                devicesPerRecipient: 1
+            }),
+            rejectedNotificationInboxUids: ['user-7'],
+            deferNotificationInboxOperations: true
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule updated',
+                body: 'The bus leaves at 5:30.'
+            });
+
+            assert.equal(result.inboxWriteCount, 499);
+            assert.equal(result.inboxCleanupCount, 0);
+            assert.equal(result.inboxFailureCount, 1);
+            assert.equal(env.inboxWrites.length, 499);
+            assert.ok(env.inboxWrites.some((write) => write.uid === 'user-499'));
+            assert.ok(env.peakNotificationInboxPipelines <= internals.NOTIFICATION_INBOX_WRITE_CONCURRENCY);
+            assert.equal(env.activeNotificationInboxPipelines, 0);
         } finally {
             cleanup();
         }

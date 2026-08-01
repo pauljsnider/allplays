@@ -970,8 +970,7 @@ export async function sendParentCoParentInvite({
   user,
   teamId,
   playerId,
-  email,
-  playerName
+  email
 }: {
   user: AuthUser | null;
   teamId: string;
@@ -980,7 +979,7 @@ export async function sendParentCoParentInvite({
   playerName: string;
 }) {
   assertLinkedParent(user, teamId, playerId);
-  return inviteCoParentToAthlete(user!.uid, teamId, playerId, email, playerName);
+  return inviteCoParentToAthlete(teamId, playerId, email);
 }
 
 export async function saveParentPlayerIncentiveRule({
