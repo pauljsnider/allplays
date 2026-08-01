@@ -5574,10 +5574,6 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
 }
 
 
-function normalizeInviteEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
 export async function redeemParentInvite(userId, code, authEmail = null) {
     console.log('[redeemParentInvite] start', { userId, code });
     if (!userId) {
@@ -5587,8 +5583,7 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
     const redeemParentInviteCallable = httpsCallable(functions, 'redeemParentInvite');
     const result = await redeemParentInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 
@@ -5614,8 +5609,7 @@ export async function redeemCoParentInvite(userId, code, authEmail = null) {
     const redeemCoParentInviteCallable = httpsCallable(functions, 'redeemCoParentInvite');
     const result = await redeemCoParentInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 
@@ -5633,10 +5627,6 @@ export async function redeemCoParentInvite(userId, code, authEmail = null) {
 }
 
 
-function normalizeHouseholdInviteEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
 export async function redeemHouseholdInvite(userId, code) {
     console.log('[redeemHouseholdInvite] start', { userId, code });
     if (!userId) {
@@ -5646,8 +5636,7 @@ export async function redeemHouseholdInvite(userId, code) {
     const redeemHouseholdInviteCallable = httpsCallable(functions, 'redeemHouseholdInvite');
     const result = await redeemHouseholdInviteCallable({
         userId,
-        code: String(code || '').trim().toUpperCase(),
-        authEmail: normalizeHouseholdInviteEmail(auth.currentUser?.email || '')
+        code: String(code || '').trim().toUpperCase()
     });
     const payload = result?.data || result || {};
 

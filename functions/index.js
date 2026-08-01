@@ -329,6 +329,7 @@ const {
   appendUniqueValue,
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
+const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 
 if (admin.apps.length === 0) {
@@ -3749,6 +3750,11 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
@@ -3775,7 +3781,6 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     }
 
     const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
     if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
     }
@@ -3823,7 +3828,7 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {
@@ -3871,6 +3876,11 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Household invite could not be found.');
@@ -3897,7 +3907,6 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     }
 
     const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
     if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
     }
@@ -3960,7 +3969,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {
@@ -4165,6 +4174,11 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
 
+  const signedInEmail = await resolveAuthenticatedFamilyInviteEmail({
+    auth: context.auth,
+    getUser: (uid) => admin.auth().getUser(uid)
+  });
+
   const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
   if (codeQuerySnap.empty) {
     throw new functions.https.HttpsError('not-found', 'Co-parent invite could not be found.');
@@ -4191,7 +4205,6 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     }
 
     const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
     if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
     }
@@ -4248,7 +4261,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
     }, { merge: true });
 
     transaction.set(publicProfileRef, buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
-      trustedEmail: context.auth.token?.email || userData.email || null
+      trustedEmail: signedInEmail || null
     }), { merge: true });
 
     transaction.set(privateProfileRef, {

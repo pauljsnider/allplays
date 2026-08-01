@@ -243,7 +243,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=135';");
+        expect(html).toContain("from './js/db.js?v=136';");
     });
 
     it('shows a registration-specific error without replacing successful applications', () => {
