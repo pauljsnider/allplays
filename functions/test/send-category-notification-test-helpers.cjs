@@ -109,6 +109,8 @@ function buildNotificationTestEnv({
     invalidTokenResponses = [],
     sendEachErrors = [],
     notificationInboxDocs = {},
+    rejectedNotificationInboxUids = [],
+    deferNotificationInboxOperations = false,
     nowMillis = Date.parse('2026-06-28T12:00:00.000Z')
 } = {}) {
     const dedupWrites = [];
@@ -120,6 +122,9 @@ function buildNotificationTestEnv({
     const messagingCalls = [];
     const feeRecipientDocGetPaths = [];
     const docStore = new Map();
+    const rejectedInboxUids = new Set(rejectedNotificationInboxUids);
+    let activeNotificationInboxPipelines = 0;
+    let peakNotificationInboxPipelines = 0;
     const counts = {
         teamDocGets: 0,
         parentQueries: 0,
@@ -667,24 +672,30 @@ function buildNotificationTestEnv({
                 limit(limitCount) {
                     return {
                         async get() {
-                            counts.inboxCleanupQueries += 1;
-                            counts.inboxCleanupLimitQueries += 1;
-                            inboxCleanupLimits.push(limitCount);
-                            let docs = sortDocs(getInboxDocs(), direction);
-                            if (cursorDoc) {
-                                const cursorIndex = docs.findIndex((docSnap) => docSnap.ref.path === cursorDoc.ref.path);
-                                if (cursorIndex >= 0) {
-                                    docs = docs.slice(cursorIndex + 1);
-                                } else {
-                                    const cursorMillis = comparableMillis(cursorDoc.data()?.createdAt);
-                                    docs = docs.filter((docSnap) => {
-                                        const docMillis = comparableMillis(docSnap.data()?.createdAt);
-                                        if (!Number.isFinite(docMillis) || !Number.isFinite(cursorMillis)) return false;
-                                        return direction === 'asc' ? docMillis > cursorMillis : docMillis < cursorMillis;
-                                    });
+                            try {
+                                counts.inboxCleanupQueries += 1;
+                                counts.inboxCleanupLimitQueries += 1;
+                                inboxCleanupLimits.push(limitCount);
+                                let docs = sortDocs(getInboxDocs(), direction);
+                                if (cursorDoc) {
+                                    const cursorIndex = docs.findIndex((docSnap) => docSnap.ref.path === cursorDoc.ref.path);
+                                    if (cursorIndex >= 0) {
+                                        docs = docs.slice(cursorIndex + 1);
+                                    } else {
+                                        const cursorMillis = comparableMillis(cursorDoc.data()?.createdAt);
+                                        docs = docs.filter((docSnap) => {
+                                            const docMillis = comparableMillis(docSnap.data()?.createdAt);
+                                            if (!Number.isFinite(docMillis) || !Number.isFinite(cursorMillis)) return false;
+                                            return direction === 'asc' ? docMillis > cursorMillis : docMillis < cursorMillis;
+                                        });
+                                    }
+                                }
+                                return makeQuerySnapshot(docs.slice(0, limitCount));
+                            } finally {
+                                if (!cursorDoc) {
+                                    activeNotificationInboxPipelines -= 1;
                                 }
                             }
-                            return makeQuerySnapshot(docs.slice(0, limitCount));
                         }
                     };
                 },
@@ -701,6 +712,18 @@ function buildNotificationTestEnv({
             return {
                 async add(value) {
                     counts.inboxAdds += 1;
+                    activeNotificationInboxPipelines += 1;
+                    peakNotificationInboxPipelines = Math.max(
+                        peakNotificationInboxPipelines,
+                        activeNotificationInboxPipelines
+                    );
+                    if (deferNotificationInboxOperations) {
+                        await Promise.resolve();
+                    }
+                    if (rejectedInboxUids.has(uid)) {
+                        activeNotificationInboxPipelines -= 1;
+                        throw new Error(`Rejected inbox write for ${uid}`);
+                    }
                     const id = `inbox-${inboxWrites.length + 1}`;
                     const storedValue = {
                         ...clone(value),
@@ -871,6 +894,12 @@ function buildNotificationTestEnv({
         updatedDocs,
         messagingCalls,
         feeRecipientDocGetPaths,
+        get activeNotificationInboxPipelines() {
+            return activeNotificationInboxPipelines;
+        },
+        get peakNotificationInboxPipelines() {
+            return peakNotificationInboxPipelines;
+        },
         getNotificationInboxDocCount(uid) {
             const prefix = `users/${uid}/notificationInbox/`;
             return Array.from(docStore.keys())
