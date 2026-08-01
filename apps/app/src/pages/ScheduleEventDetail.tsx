@@ -347,6 +347,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [initialLoadPending, setInitialLoadPending] = useState(true);
   const hasLoadedEventRef = useRef(false);
+  const loadGenerationRef = useRef(0);
   const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
 
   const decodedTeamId = decodeURIComponent(teamId);
@@ -395,6 +396,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   const loadEvent = useCallback(async () => {
+    const loadGeneration = ++loadGenerationRef.current;
     if (!auth.user) {
       setInitialLoadPending(false);
       return;
@@ -424,6 +426,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               assignmentClaimsHydrated: event.assignmentClaimsHydrated
             }]));
             void hydrateParentScheduleEventOptionalDetails(result).then((hydrated) => {
+              if (loadGenerationRef.current !== loadGeneration) return;
               const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
               setEvents((current) => current.map((event) => {
                 const optionalBaseline = optionalBaselines.get(event.eventKey);

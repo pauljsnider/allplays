@@ -677,6 +677,90 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
   });
 
+  it('ignores stale rideshare hydration after a same-event refresh starts a new generation', async () => {
+    const baselineRideshareSummary = { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
+    const detail = {
+      events: [buildEvent({ rideshareSummary: baselineRideshareSummary })],
+      children: []
+    };
+    let resolveStaleHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
+      .mockImplementationOnce((result) => new Promise((resolve) => {
+        resolveStaleHydration = () => resolve({
+          ...result,
+          events: result.events.map((event: any) => ({
+            ...event,
+            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+          }))
+        });
+      }))
+      .mockRejectedValueOnce(new Error('Refreshed rideshare hydration failed.'));
+
+    const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+    await screen.findByText('Availability needed');
+
+    rendered.rerender(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1&section=availability']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={{ ...auth, user: { ...auth.user!, uid: 'coach-2' } as any }} />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveStaleHydration());
+
+    expect(screen.queryByText('Check rideshare')).toBeNull();
+  });
+
+  it('ignores stale assignment hydration after a same-event refresh starts a new generation', async () => {
+    const baselineAssignments: any[] = [];
+    const detail = {
+      events: [buildEvent({
+        assignments: baselineAssignments,
+        openAssignmentCount: 0,
+        assignmentClaimsHydrated: false
+      })],
+      children: []
+    };
+    let resolveStaleHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
+      .mockImplementationOnce((result) => new Promise((resolve) => {
+        resolveStaleHydration = () => resolve({
+          ...result,
+          events: result.events.map((event: any) => ({
+            ...event,
+            assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }],
+            openAssignmentCount: 1,
+            assignmentClaimsHydrated: true
+          }))
+        });
+      }))
+      .mockRejectedValueOnce(new Error('Refreshed assignment hydration failed.'));
+
+    const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+    await screen.findByText('Availability needed');
+
+    rendered.rerender(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1&section=availability']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={{ ...auth, user: { ...auth.user!, uid: 'coach-2' } as any }} />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveStaleHydration());
+
+    expect(screen.queryByText('Review assignments')).toBeNull();
+  });
+
   it('shows a consistent fetch error and retries the primary event load', async () => {
     scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
     scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
