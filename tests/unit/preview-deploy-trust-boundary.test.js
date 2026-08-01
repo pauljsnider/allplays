@@ -211,6 +211,9 @@ describe('preview deployment workflow trust boundary', () => {
     });
 
     it('runs the credentialed deploy only from trusted default-branch code', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const classifyScript = parsedTrustedWorkflow.jobs['classify-trigger'].steps[0].run;
+
         expect(trustedWorkflow).toContain('workflow_run:');
         expect(trustedWorkflow).toContain('      - pr-preview');
         expect(trustedWorkflow).toContain('classify-trigger:');
@@ -221,14 +224,14 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('-f event=pull_request');
         expect(trustedWorkflow).toContain('-f status=success');
         expect(trustedWorkflow).toContain('-f head_sha="$expected_head_sha"');
-        expect(trustedWorkflow).toContain('No successful exact-head pr-integration run exists for this preview request.');
+        expect(classifyScript).toContain('actions/runs/$integration_run_id/jobs?filter=latest&per_page=100');
+        expect(classifyScript).toContain('.name == "mobile-build"');
+        expect(classifyScript).toContain('.name == "preview-smoke"');
+        expect(classifyScript).toContain('.conclusion == "success"');
+        expect(classifyScript).toContain('No exact-head pr-integration run has successful mobile-build and preview-smoke jobs.');
         expect(trustedWorkflow).toContain('WORKFLOW_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}');
         expect(trustedWorkflow).toContain('Expected exactly one preview bundle');
         expect(trustedWorkflow).toContain("needs.classify-trigger.outputs.preview_ready == 'true'");
-        expect(trustedWorkflow).toContain(
-            'group: trusted-preview-${{ github.event.workflow_run.display_title || github.event.workflow_run.id }}'
-        );
-        expect(trustedWorkflow).toContain('cancel-in-progress: true');
         expect(trustedWorkflow).toContain('name: firebase-preview-trusted');
         expect(trustedWorkflow).toContain('ref: ${{ github.event.repository.default_branch }}');
         expect(trustedWorkflow).toContain('persist-credentials: false');
@@ -248,6 +251,54 @@ describe('preview deployment workflow trust boundary', () => {
         expect(trustedWorkflow).toContain('refusing to report a partially functional preview');
         expect(trustedWorkflow).toContain('find "$bundle/site" -type l');
         expect(trustedWorkflow).not.toContain('find "$bundle" -type l');
+    });
+
+    it('rejects a successful integration workflow whose stable jobs were only skipped', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const classifyScript = parsedTrustedWorkflow.jobs['classify-trigger'].steps[0].run;
+        const skippedDraftJobs = {
+            jobs: [
+                { name: 'mobile-build', status: 'completed', conclusion: 'skipped' },
+                { name: 'preview-smoke', status: 'completed', conclusion: 'skipped' }
+            ]
+        };
+        const successfulReadyJobs = {
+            jobs: [
+                { name: 'mobile-build', status: 'completed', conclusion: 'success' },
+                { name: 'preview-smoke', status: 'completed', conclusion: 'success' }
+            ]
+        };
+        const stableJobsSucceeded = ({ jobs }) => ['mobile-build', 'preview-smoke'].every(
+            (name) => jobs.filter((job) => (
+                job.name === name && job.status === 'completed' && job.conclusion === 'success'
+            )).length === 1
+        );
+
+        expect(classifyScript).toContain('integration_jobs_succeeded=false');
+        expect(classifyScript).toContain('if [ "$integration_jobs_succeeded" != "true" ]');
+        expect(stableJobsSucceeded(skippedDraftJobs)).toBe(false);
+        expect(stableJobsSucceeded(successfulReadyJobs)).toBe(true);
+    });
+
+    it('serializes trusted deployments by PR across different requested heads', () => {
+        const parsedTrustedWorkflow = parseYaml(trustedWorkflow);
+        const deployConcurrency = parsedTrustedWorkflow.jobs['deploy-preview'].concurrency;
+        const firstRequest = validTriggerFixture();
+        const secondRequest = validTriggerFixture();
+        secondRequest.event.workflow_run.display_title =
+            'PR preview #4032 @ 1111111111111111111111111111111111111111';
+        const prNumberFromTitle = (title) => /^PR preview #(\d+) @ [0-9a-f]{40}$/.exec(title)?.[1];
+        const resolveGroup = (request) => deployConcurrency.group.replace(
+            '${{ needs.prepare-preview.outputs.pr_number }}',
+            prNumberFromTitle(request.event.workflow_run.display_title)
+        );
+
+        expect(deployConcurrency).toEqual({
+            group: 'trusted-preview-pr-${{ needs.prepare-preview.outputs.pr_number }}',
+            'cancel-in-progress': true
+        });
+        expect(resolveGroup(firstRequest)).toBe('trusted-preview-pr-4032');
+        expect(resolveGroup(secondRequest)).toBe(resolveGroup(firstRequest));
     });
 
     it('rechecks the exact pull-request head immediately before deploy and comment writes', () => {

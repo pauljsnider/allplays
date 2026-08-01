@@ -9,10 +9,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: trusted-preview-${{ github.event.workflow_run.display_title || github.event.workflow_run.id }}
-  cancel-in-progress: true
-
 jobs:
   classify-trigger:
     if: >-
@@ -62,12 +58,25 @@ jobs:
             -f status=success \
             -f head_sha="$expected_head_sha" \
             -F per_page=100 > "$integration_runs_json"
-          if ! jq -e \
+          mapfile -t integration_run_ids < <(jq -r \
             --arg repo "$GITHUB_REPOSITORY" \
             --arg sha "$expected_head_sha" \
-            'any(.workflow_runs[]?; .event == "pull_request" and .status == "completed" and .conclusion == "success" and .head_sha == $sha and .head_repository.full_name == $repo)' \
-            "$integration_runs_json" >/dev/null; then
-            echo "No successful exact-head pr-integration run exists for this preview request." >&2
+            '.workflow_runs[]? | select(.event == "pull_request" and .status == "completed" and .conclusion == "success" and .head_sha == $sha and .head_repository.full_name == $repo) | .id' \
+            "$integration_runs_json")
+          integration_jobs_succeeded=false
+          for integration_run_id in "${integration_run_ids[@]}"; do
+            integration_jobs_json="$RUNNER_TEMP/firebase-preview-integration-jobs-$integration_run_id.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$integration_run_id/jobs?filter=latest&per_page=100" > "$integration_jobs_json"
+            if jq -e '
+              ([.jobs[]? | select(.name == "mobile-build" and .status == "completed" and .conclusion == "success")] | length) == 1 and
+              ([.jobs[]? | select(.name == "preview-smoke" and .status == "completed" and .conclusion == "success")] | length) == 1
+            ' "$integration_jobs_json" >/dev/null; then
+              integration_jobs_succeeded=true
+              break
+            fi
+          done
+          if [ "$integration_jobs_succeeded" != "true" ]; then
+            echo "No exact-head pr-integration run has successful mobile-build and preview-smoke jobs." >&2
             exit 1
           fi
 
@@ -216,6 +225,9 @@ jobs:
 
   deploy-preview:
     needs: prepare-preview
+    concurrency:
+      group: trusted-preview-pr-${{ needs.prepare-preview.outputs.pr_number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 8
     environment:
