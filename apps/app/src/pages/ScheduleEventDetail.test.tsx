@@ -31,6 +31,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
+  hydrateParentScheduleEventOptionalDetails: vi.fn<(...args: any[]) => Promise<any>>((result) => Promise.resolve(result)),
   resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
@@ -623,6 +624,22 @@ describe('ScheduleEventDetail loading states', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/Refreshed Smith/).length).toBeGreaterThan(0);
     });
+  });
+
+  it('renders Availability while optional event hydration remains pending', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+      children: []
+    });
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockReturnValue(new Promise(() => {}));
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'vs. Wolves' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Going/ })).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
   });
 
   it('shows a consistent fetch error and retries the primary event load', async () => {

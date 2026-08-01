@@ -17,6 +17,7 @@ import {
   loadStaffPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
+  hydrateParentScheduleEventOptionalDetails,
   resolveCachedParentScheduleEvents,
   markParentPracticePacketComplete,
   loadHomeScoringPlayers,
@@ -416,6 +417,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             if (!selectedChildId && result.events[0]?.childId) {
               setSelectedChildId(result.events[0].childId);
             }
+            void hydrateParentScheduleEventOptionalDetails(result).then((hydrated) => {
+              setEvents((current) => current.some((event) => (
+                event.teamId === decodedTeamId && event.id === decodedEventId
+              )) ? [...hydrated.events] : current);
+            }).catch(() => undefined);
           },
           onError: () => {
             if (!hasExistingEvent) {
