@@ -224,8 +224,8 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=138';",
-            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip } = deps.db;'
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip,\n  deleteUploadedMediaObjects\n} from './db.js?v=140';",
+            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip, deleteUploadedMediaObjects } = deps.db;'
         )
         .replace(
             "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=22';",
@@ -379,7 +379,8 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
             getConfigs: async () => [],
             subscribeGame: () => () => {},
             updateGame: async () => {},
-            uploadGameClip: async () => ({ url: '' })
+            uploadGameClip: async () => ({ url: '' }),
+            deleteUploadedMediaObjects: async () => undefined
         },
         utils: {
             getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: String(replay) }),

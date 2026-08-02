@@ -609,14 +609,14 @@
         import {
             getTeam, getGames, getPlayers, getUserProfile, getUserTeamsWithAccess,
             getGameEvents, getAggregatedStatsForGames,
-            getDrills, getPublishedDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram,
+            getDrills, getPublishedDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram, deleteUploadedMediaObjects,
             getDrillFavorites, addDrillFavorite, removeDrillFavorite,
             createPracticeSession, updatePracticeSession,
             getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
             savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
-        } from './js/db.js?v=138';
+        } from './js/db.js?v=140';
         import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=22';
-        import { requireAuth } from './js/auth.js?v=143';
+        import { requireAuth } from './js/auth.js?v=145';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=12';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
         import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';
@@ -3058,6 +3058,8 @@ ${text}
                     cones: parseInt(document.getElementById('form-drill-cones').value) || 0
                 }
             };
+            const newlyUploadedDiagrams = [];
+            let uploadedDiagramsPersisted = false;
             try {
                 if (data.publishedToCommunity && !state.user?.isAdmin) {
                     showToast('Published drills are shared from your team. Save to publish.', 'success');
@@ -3069,6 +3071,7 @@ ${text}
                     await updateDrill(drillId, data);
                 } else {
                     drillId = await createDrill(state.teamId, data);
+                    document.getElementById('form-drill-id').value = drillId;
                 }
 
                 // Upload new diagram files if selected
@@ -3082,11 +3085,16 @@ ${text}
                         showToast('Uploading diagrams...', 'success');
                         const uploaded = [];
                         for (const file of toUpload) {
-                            const url = await uploadDrillDiagram(state.teamId, drillId, file);
+                            const upload = await uploadDrillDiagram(state.teamId, drillId, file, { returnUpload: true });
+                            const url = typeof upload === 'string' ? upload : upload.url;
+                            if (typeof upload !== 'string' && upload.path) {
+                                newlyUploadedDiagrams.push({ path: upload.path, storage: upload.storage });
+                            }
                             uploaded.push(url);
                         }
                         const allUrls = [...existingUrls, ...uploaded];
                         await updateDrill(drillId, { diagramUrls: allUrls });
+                        uploadedDiagramsPersisted = true;
                     }
                 } else if (existingUrls !== undefined) {
                     // Persist existing diagram URLs (may have had removals)
@@ -3101,6 +3109,9 @@ ${text}
                 closeDrillDetail();
                 setLibTab('mydrills');
             } catch (err) {
+                if (!uploadedDiagramsPersisted) {
+                    await deleteUploadedMediaObjects(newlyUploadedDiagrams).catch(() => undefined);
+                }
                 showToast('Failed to save drill: ' + err.message, 'error');
             } finally {
                 state.isSavingDrill = false;

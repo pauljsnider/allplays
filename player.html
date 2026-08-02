@@ -236,13 +236,13 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=138';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=140';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=22';
-        import { checkAuth } from './js/auth.js?v=143';
+        import { checkAuth } from './js/auth.js?v=145';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -1279,14 +1279,12 @@
             const btn = document.getElementById('save-player-btn');
             btn.disabled = true;
             btn.textContent = 'Saving...';
+            let newlyUploadedPlayerPhotoPath = '';
+            let playerPhotoPersisted = false;
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
                 let photoUrl;
-                if (photoFile) {
-                    photoUrl = await uploadPlayerPhoto(photoFile);
-                }
-
                 const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
                 const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
                 const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
@@ -1296,6 +1294,12 @@
                     btn.disabled = false;
                     btn.textContent = 'Save Changes';
                     return;
+                }
+
+                if (photoFile) {
+                    const uploadedPhoto = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+                    photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
                 }
 
                 const data = buildPlayerProfileUpdatePayload({
@@ -1317,6 +1321,10 @@
                 }
 
                 await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                playerPhotoPersisted = Boolean(photoUrl);
+                if (playerPhotoPersisted) {
+                    document.getElementById('edit-photo-input').value = '';
+                }
                 if (Object.keys(privateData).length > 0) {
                     await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);
                 }
@@ -1324,6 +1332,9 @@
                 alert('Profile updated!');
                 location.reload();
             } catch (err) {
+                if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                }
                 console.error(err);
                 alert('Error updating profile: ' + err.message);
                 btn.disabled = false;

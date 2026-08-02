@@ -207,6 +207,7 @@ export async function getGames() {
 export async function uploadPlayerPhoto() {
     return '';
 }
+export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields() {}
 export async function inviteParent() {
@@ -721,6 +722,7 @@ export async function updateGame(_teamId, _gameId, updates) {
 export async function uploadGameClip() {
     return { url: '' };
 }
+export async function deleteUploadedMediaObjects() {}
 `;
 
 const LIVE_GAME_STREAM_UTILS_STUB = `

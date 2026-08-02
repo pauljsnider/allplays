@@ -34,6 +34,7 @@ describe('team email attachments', () => {
         expect(source).toContain('await assertTeamEmailManagerAccess(teamId, user)');
         expect(source).toContain('await assertTeamEmailManagerAccess(teamId)');
         expect(source).toContain("console.error('Error uploading team email attachment:', error);");
+        expect(source).toContain('await deleteObject(uploadedRef).catch(() => undefined);');
         expect(source).toContain("console.error('Error deleting team email attachment:', error);");
         expect(source).toContain('isTeamEmailAttachmentPathForTeam(teamId, path)');
     });

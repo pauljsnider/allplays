@@ -358,8 +358,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto(?:,\s*deleteLegacyImageUpload)?,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
@@ -467,6 +467,7 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
             },
+            async deleteLegacyImageUpload() {},
             async addConfig() {
                 return 'config-1';
             },
