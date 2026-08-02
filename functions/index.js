@@ -57,7 +57,8 @@ const {
   getTeamFeeRecipientTargetUserIds,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
-  canReuseTeamFeeCheckoutSession,
+  getTeamFeeCheckoutReuseFailure,
+  getNewTeamFeeCheckoutSessionFailure,
   getTeamFeeCheckoutGuardFailure,
   shouldApplyTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
@@ -4858,11 +4859,37 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const amountCents = getTeamFeeBalanceCents(recipient);
-  if (canReuseTeamFeeCheckoutSession(recipient, amountCents)) {
-    return { checkoutUrl: recipient.checkoutUrl, sessionId: recipient.stripeCheckoutSessionId };
+  const stripe = createStripeClient();
+  const persistedSessionId = String(recipient.stripeCheckoutSessionId || '').trim();
+  if (persistedSessionId) {
+    let existingSession;
+    try {
+      existingSession = await stripe.checkout.sessions.retrieve(persistedSessionId);
+    } catch (error) {
+      const sessionIsMissing = error?.code === 'resource_missing' || error?.statusCode === 404;
+      if (!sessionIsMissing) {
+        throw new functions.https.HttpsError('unavailable', 'Stripe could not validate the existing team fee checkout. Try again later.');
+      }
+    }
+
+    if (existingSession) {
+      const reuseFailure = getTeamFeeCheckoutReuseFailure({
+        recipient,
+        session: existingSession,
+        input,
+        amountCents
+      });
+      if (!reuseFailure) {
+        return { checkoutUrl: existingSession.url, sessionId: existingSession.id };
+      }
+
+      const sessionIsDefinitivelyStale = existingSession.status === 'expired';
+      if (!sessionIsDefinitivelyStale) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout could not be safely reused.');
+      }
+    }
   }
 
-  const stripe = createStripeClient();
   const { appUrl } = getStripeConfig();
   const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
   const checkoutAttemptToken = (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')).replace(/-/g, '');
@@ -4892,6 +4919,16 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       checkoutAmountCents: amountCents
     })
   });
+
+  const newSessionFailure = getNewTeamFeeCheckoutSessionFailure({
+    session,
+    input,
+    checkoutAttemptToken,
+    amountCents
+  });
+  if (newSessionFailure) {
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team fee checkout session.');
+  }
 
   const changedAt = admin.firestore.FieldValue.serverTimestamp();
   const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);

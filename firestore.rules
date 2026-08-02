@@ -1092,6 +1092,46 @@ service cloud.firestore {
              ]);
     }
 
+    function hasNoServerOwnedTeamFeeCheckoutFields(data) {
+      return !data.keys().hasAny([
+               'checkoutUrl',
+               'checkoutURL',
+               'paymentLink',
+               'paymentLinkUrl',
+               'paymentUrl',
+               'checkoutStatus',
+               'checkoutAttemptToken',
+               'checkoutAmountCents',
+               'checkoutCreatedAt',
+               'paymentProvider',
+               'stripePaymentStatus',
+               'stripePaymentAmountCents',
+               'stripeCheckoutSessionId',
+               'checkoutSessionId',
+               'lastPaidStripeCheckoutSessionId'
+             ]);
+    }
+
+    function hasNoChangedServerOwnedTeamFeeCheckoutFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+               'checkoutUrl',
+               'checkoutURL',
+               'paymentLink',
+               'paymentLinkUrl',
+               'paymentUrl',
+               'checkoutStatus',
+               'checkoutAttemptToken',
+               'checkoutAmountCents',
+               'checkoutCreatedAt',
+               'paymentProvider',
+               'stripePaymentStatus',
+               'stripePaymentAmountCents',
+               'stripeCheckoutSessionId',
+               'checkoutSessionId',
+               'lastPaidStripeCheckoutSessionId'
+             ]);
+    }
+
     function hasNoIntroducedPrivateTeamFeeBillingFields() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
@@ -3978,12 +4018,14 @@ service cloud.firestore {
           allow create: if isTeamOwnerOrAdmin(teamId) &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
+                           hasNoServerOwnedTeamFeeCheckoutFields(request.resource.data) &&
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
           allow update: if canWriteTeamFeeFinancialState(teamId) &&
                            resource.data.teamId == teamId &&
                            resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
+                           hasNoChangedServerOwnedTeamFeeCheckoutFields() &&
                            hasNoIntroducedPrivateTeamFeeBillingFields() &&
                            hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId);
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
