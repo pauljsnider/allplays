@@ -854,7 +854,10 @@ describe('updateParentPlayerEditableProfile native photo upload', () => {
       }),
       expect.objectContaining({
         pathSegments: ['teams', 'team-1', 'players', 'player-1'],
-        data: expect.objectContaining({ photoUrl: 'https://primary.example/parent-kid.jpg' })
+        data: expect.objectContaining({
+          photoUrl: 'https://primary.example/parent-kid.jpg',
+          photoPath: 'profile-photos/teams/team-1/players/player-1/parent-1/kid.jpg'
+        })
       })
     ]);
     expect(legacyPlayerDbMocks.updatePlayerPrivateProfile).not.toHaveBeenCalled();

@@ -292,6 +292,23 @@ describe('player profile private doc writes', () => {
         expect(deps.setDoc).not.toHaveBeenCalled();
     });
 
+    it('persists the player photo cleanup path with the public URL', async () => {
+        const { deps, updatePlayerProfile } = buildDbProfileUpdateHelpers();
+        const photoPath = 'profile-photos/teams/team-1/players/player-1/parent-1/photo.jpg';
+
+        await updatePlayerProfile('team-1', 'player-1', {
+            photoUrl: 'https://img.example/player.jpg',
+            photoPath
+        });
+
+        expect(deps.updateDoc).toHaveBeenCalledWith('teams/team-1/players/player-1', {
+            photoUrl: 'https://img.example/player.jpg',
+            photoPath,
+            updatedAt: 'ts-now'
+        });
+        expect(deps.setDoc).not.toHaveBeenCalled();
+    });
+
     it('writes emergency contact and medical info through the private profile helper', async () => {
         const { deps, updatePlayerPrivateProfile } = buildDbProfileUpdateHelpers();
 

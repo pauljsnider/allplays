@@ -3323,9 +3323,18 @@ service cloud.firestore {
 	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
 	        // Limited write access for parents (only their linked player):
-	        // - Public player doc: photo only
+	        // - Public player doc: photo URL and an uploader-owned cleanup path only
 	        allow update: if isParentForPlayer(teamId, playerId) &&
-	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'photoPath', 'updatedAt']) &&
+	                         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['photoPath']) ||
+	                          (request.resource.data.get('photoPath', null) == null &&
+	                           request.resource.data.get('photoUrl', null) == null) ||
+	                          (request.resource.data.get('photoPath', null) is string &&
+	                           request.resource.data.get('photoUrl', null) is string &&
+	                           request.resource.data.photoPath.size() <= 512 &&
+	                           request.resource.data.photoPath.matches(
+	                             '^profile-photos/teams/' + teamId + '/players/' + playerId + '/' + request.auth.uid + '/[^/]+$'
+	                           )));
         // Private player profile (sensitive fields)
         match /private/profile {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId);

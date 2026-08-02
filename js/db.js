@@ -745,7 +745,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
     }
 }
 
-import { resolveZip } from './utils.js?v=23'; // Import resolveZip
+import { resolveZip } from './utils.js?v=24'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -6749,10 +6749,13 @@ export async function updatePlayerProfile(teamId, playerId, data) {
     assertNoSensitivePlayerFields(data || {});
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    // Public player doc: allow photo URL/path and non-sensitive roster profile fields.
     const publicUpdate = {};
     if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
         publicUpdate.photoUrl = data.photoUrl || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
+        publicUpdate.photoPath = data.photoPath || null;
     }
     if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
         publicUpdate.profile = data.profile || {};

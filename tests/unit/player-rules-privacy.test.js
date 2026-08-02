@@ -53,6 +53,11 @@ describe('player Firestore privacy rules', () => {
         expect(rules).not.toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
         expect(rules).not.toContain('request.resource.data.parents.hasAll(resource.data.parents)');
     });
+
+    it('allows only uploader-owned cleanup paths in linked-parent player photo writes', () => {
+        expect(teamPlayerRules).toContain("hasOnly(['photoUrl', 'photoPath', 'updatedAt'])");
+        expect(teamPlayerRules).toContain("'^profile-photos/teams/' + teamId + '/players/' + playerId + '/' + request.auth.uid + '/[^/]+$'");
+    });
 });
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engine coverage', () => {
@@ -187,6 +192,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
             parents: [{ userId: 'replacement', email: 'replacement@example.com' }]
         }));
         await assertFails(updateDoc(existingProfileRef, { parents: [] }));
+    });
+
+    it('allows linked parents to persist only their own player-photo cleanup path', async () => {
+        const parentDb = testEnv.authenticatedContext('parent-1', { email: 'parent@example.com' }).firestore();
+        const playerRef = doc(parentDb, 'teams/team-1/players/player-1');
+        const ownedPath = 'profile-photos/teams/team-1/players/player-1/parent-1/new.jpg';
+
+        await assertSucceeds(updateDoc(playerRef, {
+            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/owned',
+            photoPath: ownedPath
+        }));
+        await assertFails(updateDoc(playerRef, {
+            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/other',
+            photoPath: 'profile-photos/teams/team-1/players/player-1/other-parent/other.jpg'
+        }));
+        await assertFails(updateDoc(playerRef, {
+            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/cross-player',
+            photoPath: 'profile-photos/teams/team-1/players/player-2/parent-1/other.jpg'
+        }));
+        await assertSucceeds(updateDoc(playerRef, { photoUrl: null, photoPath: null }));
     });
 
     it('retains authorized team-manager contact-list management', async () => {
