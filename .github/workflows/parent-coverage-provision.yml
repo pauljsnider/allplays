@@ -1,0 +1,117 @@
+name: parent-coverage-provision
+run-name: parent-coverage-provision-${{ inputs.mode }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Audit or repair the dedicated parent census fixtures
+        required: true
+        default: audit
+        type: choice
+        options:
+          - audit
+          - repair
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parent-coverage-provision
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production-smoke
+
+    steps:
+      - name: Checkout trusted provisioner
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Validate protected fixture identities
+        env:
+          MODE: ${{ inputs.mode }}
+          PRIMARY_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
+          PRIMARY_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          PEER_EMAIL: ${{ secrets.PARENT_CENSUS_PEER_EMAIL || secrets.SMOKE_AUTH_EMAIL }}
+          PEER_PASSWORD: ${{ secrets.PARENT_CENSUS_PEER_PASSWORD || secrets.SMOKE_AUTH_PASSWORD }}
+          LIFECYCLE_EMAIL: ${{ secrets.PARENT_CENSUS_LIFECYCLE_EMAIL }}
+          LIFECYCLE_PASSWORD: ${{ secrets.PARENT_CENSUS_LIFECYCLE_PASSWORD }}
+          ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+        run: |
+          set -euo pipefail
+          [[ "$MODE" == "audit" || "$MODE" == "repair" ]]
+          for value in "$PRIMARY_EMAIL" "$PRIMARY_PASSWORD" "$PEER_EMAIL" "$PEER_PASSWORD" "$LIFECYCLE_EMAIL" "$LIFECYCLE_PASSWORD" "$ADMIN_EMAIL" "$STAFF_EMAIL"; do
+            [[ -n "$value" ]]
+          done
+          primary="$(printf '%s' "$PRIMARY_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          peer="$(printf '%s' "$PEER_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          lifecycle="$(printf '%s' "$LIFECYCLE_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          admin="$(printf '%s' "$ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          staff="$(printf '%s' "$STAFF_EMAIL" | tr '[:upper:]' '[:lower:]')"
+          [[ "$primary" != "$peer" && "$primary" != "$lifecycle" && "$peer" != "$lifecycle" ]]
+          [[ "$primary" != "$admin" && "$primary" != "$staff" ]]
+          [[ "$peer" != "$admin" && "$peer" != "$staff" && "$lifecycle" != "$admin" && "$lifecycle" != "$staff" ]]
+
+      - name: Audit or repair primary parent fixture
+        run: node scripts/maintain-production-smoke-parent-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: ${{ inputs.mode }}
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
+
+      - name: Audit or repair peer parent fixture
+        run: node scripts/maintain-production-smoke-parent-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: ${{ inputs.mode }}
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PEER_EMAIL || secrets.SMOKE_AUTH_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PEER_PASSWORD || secrets.SMOKE_AUTH_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
+
+      - name: Audit or repair lifecycle invite
+        run: node scripts/maintain-parent-coverage-invite.mjs
+        env:
+          PARENT_CENSUS_PROVISION_MODE: ${{ inputs.mode }}
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          PARENT_CENSUS_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          PARENT_CENSUS_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          PARENT_CENSUS_LIFECYCLE_EMAIL: ${{ secrets.PARENT_CENSUS_LIFECYCLE_EMAIL }}
+          PARENT_CENSUS_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          PARENT_CENSUS_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          PARENT_CENSUS_REDEMPTION_TEAM_ID: ${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}
+          PARENT_CENSUS_REDEMPTION_PLAYER_ID: ${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}
+
+      - name: Audit protected mailbox grant
+        run: node scripts/audit-parent-coverage-mailbox.mjs
+        env:
+          PARENT_CENSUS_MAILBOX_CLIENT_ID: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_ID }}
+          PARENT_CENSUS_MAILBOX_CLIENT_SECRET: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_SECRET }}
+          PARENT_CENSUS_MAILBOX_REFRESH_TOKEN: ${{ secrets.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN }}
