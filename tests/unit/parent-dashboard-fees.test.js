@@ -278,10 +278,10 @@ describe('parent dashboard team fees', () => {
             { title: 'Online collection', collectionMode: 'online_stripe', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
         ]);
         const checkoutHtml = renderParentTeamFees([
-            { title: 'Online collection', collectionMode: 'online_stripe', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
+            { title: 'Online collection', collectionMode: 'online_stripe', amountCents: 1000, checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment' }
         ]);
         const partialPaymentLinkHtml = renderParentTeamFees([
-            { title: 'Partial collection', collectionMode: 'online_stripe', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://pay.example/remaining' }
+            { title: 'Partial collection', collectionMode: 'online_stripe', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://checkout.stripe.com/c/pay/cs_test_remaining' }
         ]);
         const paidHtml = renderParentTeamFees([
             { title: 'Paid collection', collectionMode: 'online_stripe', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
@@ -303,12 +303,55 @@ describe('parent dashboard team fees', () => {
         expect(onlineCheckoutHtml).toContain('data-recipient-id="recipient-1"');
         expect(onlineCheckoutHtml).toContain('>Pay online</button>');
         expect(checkoutHtml).toContain('>Pay online</a>');
-        expect(checkoutHtml).toContain('https://pay.example/checkout');
+        expect(checkoutHtml).toContain('https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment');
         expect(partialPaymentLinkHtml).toContain('>Pay online</a>');
-        expect(partialPaymentLinkHtml).toContain('https://pay.example/remaining');
+        expect(partialPaymentLinkHtml).toContain('https://checkout.stripe.com/c/pay/cs_test_remaining');
         expect(paidHtml).not.toContain('Pay online');
         expect(adjustedHtml).not.toContain('Pay online');
         expect(missingContextHtml).not.toContain('data-team-fee-checkout="true"');
+        expect(missingContextHtml).toContain('Checkout link unavailable. Refresh and try again.');
+    });
+
+    it.each([
+        ['HTTP Stripe URL', 'checkoutUrl', 'http://checkout.stripe.com/c/pay/cs_test_http'],
+        ['malformed URL', 'checkoutURL', 'not a valid checkout url'],
+        ['credential-bearing URL', 'paymentLink', 'https://parent:secret@checkout.stripe.com/c/pay/cs_test_credentials'],
+        ['non-Stripe URL', 'paymentLinkUrl', 'https://payments.example.com/checkout/123'],
+        ['Stripe hostname lookalike', 'paymentUrl', 'https://checkout.stripe.com.evil.example/c/pay/cs_test_lookalike'],
+        ['nonstandard Stripe port', 'checkoutUrl', 'https://checkout.stripe.com:8443/c/pay/cs_test_port'],
+        ['root-only Stripe URL', 'checkoutUrl', 'https://checkout.stripe.com/']
+    ])('fails closed and offers retry for a stored %s', (_label, alias, untrustedUrl) => {
+        const html = renderParentTeamFees([{
+            title: 'Untrusted checkout destination',
+            collectionMode: 'online_stripe',
+            amountCents: 1000,
+            status: 'unpaid',
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            [alias]: untrustedUrl
+        }]);
+
+        expect(html).not.toContain('>Pay online</a>');
+        expect(html).not.toContain(untrustedUrl);
+        expect(html).toContain('data-team-fee-checkout="true"');
+        expect(html).toContain('>Pay online</button>');
+    });
+
+    it('shows a non-navigable recovery state when an invalid checkout URL cannot be retried', () => {
+        const untrustedUrl = 'https://parent:secret@checkout.stripe.com/c/pay/cs_test_credentials';
+        const html = renderParentTeamFees([{
+            title: 'Untrusted checkout without context',
+            collectionMode: 'online_stripe',
+            amountCents: 1000,
+            status: 'unpaid',
+            checkoutUrl: untrustedUrl
+        }]);
+
+        expect(html).not.toContain('>Pay online</a>');
+        expect(html).not.toContain('data-team-fee-checkout="true"');
+        expect(html).not.toContain(untrustedUrl);
+        expect(html).toContain('Checkout link unavailable. Refresh and try again.');
     });
 
     it('handles parent dashboard checkout clicks and redirects to Stripe', async () => {
