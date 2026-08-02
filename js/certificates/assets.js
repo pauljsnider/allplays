@@ -81,14 +81,8 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
         const docRef = await addDoc(collection(db, 'teams', safeTeamId, 'certificateAssets'), assetDoc);
         return { id: docRef.id, ...assetDoc };
     } catch (error) {
-        console.warn('[certificates] asset uploaded but Firestore asset save failed:', error);
-        return {
-            id: null,
-            ...assetDoc,
-            source: 'storage-upload',
-            firestoreSaveFailed: true,
-            firestoreSaveError: error?.message || 'Unable to save asset metadata.'
-        };
+        await deleteObject(snapshot.ref).catch(() => undefined);
+        throw error;
     }
 }
 

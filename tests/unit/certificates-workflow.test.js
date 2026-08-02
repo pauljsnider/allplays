@@ -297,7 +297,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain('Uploaded for this run');
+        expect(studio).toContain("import('./assets.js?v=3')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');

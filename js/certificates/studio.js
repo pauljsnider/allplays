@@ -908,21 +908,14 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=2');
+                const { uploadCertificateAsset } = await import('./assets.js?v=3');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
-                state.imageUploadStatus[slot] = asset.firestoreSaveFailed
-                    ? { state: 'ready', message: 'Uploaded for this run.' }
-                    : { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
+                state.imageUploadStatus[slot] = { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
                 renderSetup();
                 schedulePreviewRender();
-                showAlert(
-                    asset.firestoreSaveFailed
-                        ? 'Image uploaded for this certificate run.'
-                        : 'Image uploaded.',
-                    'success'
-                );
+                showAlert('Image uploaded.', 'success');
             } catch (error) {
                 state.imageUploadStatus[slot] = { state: 'warning', message: `Local preview only. ${formatImageUploadError(error)}` };
                 renderSetup();
@@ -955,7 +948,7 @@ function bindSetupEvents() {
             if (!file) return;
             const index = Number(input.dataset.signatureUpload);
             try {
-                const { uploadSignatureImage } = await import('./assets.js?v=2');
+                const { uploadSignatureImage } = await import('./assets.js?v=3');
                 const result = await uploadSignatureImage(state.user?.uid, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;

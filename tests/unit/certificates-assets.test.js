@@ -63,4 +63,23 @@ describe('certificate asset validation', () => {
         expect(mocks.deleteObject).toHaveBeenCalledWith(storageRef);
         expect(mocks.addDoc).not.toHaveBeenCalled();
     });
+
+    it('deletes a completed upload when its Firestore asset record cannot be saved', async () => {
+        const storageRef = { fullPath: 'team-photos/certificate.png' };
+        const firestoreError = new Error('asset record save failed');
+        mocks.ref.mockReturnValue(storageRef);
+        mocks.uploadBytes.mockResolvedValue({ ref: storageRef });
+        mocks.getDownloadURL.mockResolvedValue('https://example.com/certificate.png');
+        mocks.collection.mockReturnValue({ path: 'teams/team-1/certificateAssets' });
+        mocks.addDoc.mockRejectedValue(firestoreError);
+        const { uploadCertificateAsset } = await import('../../js/certificates/assets.js');
+
+        await expect(uploadCertificateAsset('team-1', {
+            type: 'image/png',
+            size: 128,
+            name: 'crest.png'
+        })).rejects.toThrow('asset record save failed');
+
+        expect(mocks.deleteObject).toHaveBeenCalledWith(storageRef);
+    });
 });
