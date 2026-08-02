@@ -141,6 +141,34 @@ describe('team-fee checkout attempt backfill', () => {
         expect(db.state.get(recipientPath)).not.toHaveProperty(field);
     });
 
+    it('keeps an active checkout session only in checkoutAttempts when billing state also exists', async () => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: {
+                stripeCheckoutSessionId: 'cs_active',
+                stripeCustomerId: 'cus_legacy',
+                receiptEmail: 'payer@example.com'
+            }
+        });
+
+        await backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        });
+
+        expect(db.state.get(attemptPath)).toMatchObject({ stripeCheckoutSessionId: 'cs_active' });
+        expect(db.state.get(adminBillingPath)).toMatchObject({
+            stripeCustomerId: 'cus_legacy',
+            receiptEmail: 'payer@example.com'
+        });
+        expect(db.state.get(adminBillingPath)).not.toHaveProperty('stripeCheckoutSessionId');
+        expect(db.state.get(recipientPath)).not.toHaveProperty('stripeCheckoutSessionId');
+    });
+
     it.each([
         ['lastPaidStripeCheckoutSessionId', 'lastPaidStripeCheckoutSessionId'],
         ['stripePaymentIntentId', 'stripePaymentIntentId'],
@@ -265,6 +293,88 @@ describe('team-fee checkout attempt backfill', () => {
             amountCents: 500,
             receiptMetadata: { currency: 'usd' }
         }]);
+    });
+
+    it('preserves parent-visible notes on non-refund ledger entries while migrating adjacent private fields', async () => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: {
+                ledgerEntries: [{
+                    type: 'offline_payment',
+                    amountCents: 2500,
+                    note: 'Paid by check at practice',
+                    receiptEmail: 'payer@example.com'
+                }]
+            }
+        });
+
+        await backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        });
+
+        expect(db.state.get(adminBillingPath).legacyLedgerPrivateState).toEqual({
+            ledgerEntries: [{ index: 0, receiptEmail: 'payer@example.com' }]
+        });
+        expect(db.state.get(recipientPath).ledgerEntries).toEqual([{
+            type: 'offline_payment',
+            amountCents: 2500,
+            note: 'Paid by check at practice'
+        }]);
+    });
+
+    it('does not match or rewrite a recipient whose only ledger state is a parent-visible non-refund note', async () => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const originalRecipient = {
+            ledgerEntries: [{
+                type: 'offline_payment',
+                amountCents: 2500,
+                note: 'Paid by check at practice'
+            }]
+        };
+        const db = makeFirestore({ [recipientPath]: originalRecipient });
+
+        await expect(backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        })).resolves.toEqual({ matched: 0, migrated: 0 });
+
+        expect(db.runTransaction).not.toHaveBeenCalled();
+        expect(db.state.get(recipientPath)).toEqual(originalRecipient);
+    });
+
+    it.each([
+        { kind: 'refund' },
+        { action: 'payment_refund' },
+        { refund: true },
+        { isRefund: true },
+        { refundAmountCents: 500 }
+    ])('moves and scrubs a refund-only note for marker %#', async (refundMarker) => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: {
+                ledgerEntries: [{ ...refundMarker, note: 'Manager-only refund reason' }]
+            }
+        });
+
+        await expect(backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        })).resolves.toEqual({ matched: 1, migrated: 1 });
+
+        expect(db.state.get(adminBillingPath).legacyLedgerPrivateState.ledgerEntries[0]).toMatchObject({
+            index: 0,
+            note: 'Manager-only refund reason'
+        });
+        expect(db.state.get(recipientPath).ledgerEntries[0]).not.toHaveProperty('note');
     });
 
     it('keeps dry runs read-only', async () => {

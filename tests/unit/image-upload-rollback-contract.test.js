@@ -30,11 +30,23 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain('The team save may have completed, so the uploaded photo was preserved.');
     });
 
-    it('saves roster photos and private fields in one batch and rolls back failed uploads', () => {
+    it('validates and creates a legacy roster owner before final-path upload, then reconciles the photo write', () => {
         const source = read('edit-roster.html');
         const submitIndex = source.indexOf("document.getElementById('add-player-form').addEventListener('submit'");
+        const emptyFileValidationIndex = source.indexOf('selectedPhotoFile.size <= 0', submitIndex);
+        const ownerBoundaryIndex = source.indexOf('if (!editingPlayerId && selectedPhotoFile)', submitIndex);
+        const ownerWriteIndex = source.indexOf("type: 'add'", ownerBoundaryIndex);
+        const uploadIndex = source.indexOf('const uploadedPhoto = await uploadPlayerPhoto(selectedPhotoFile, {', ownerBoundaryIndex);
+        const photoWriteIndex = source.indexOf("type: 'update'", uploadIndex);
 
-        expect(source).toContain('const uploadedPhoto = await uploadPlayerPhoto(file, {');
+        expect(emptyFileValidationIndex).toBeGreaterThan(submitIndex);
+        expect(ownerBoundaryIndex).toBeGreaterThan(emptyFileValidationIndex);
+        expect(ownerWriteIndex).toBeGreaterThan(ownerBoundaryIndex);
+        expect(uploadIndex).toBeGreaterThan(ownerWriteIndex);
+        expect(photoWriteIndex).toBeGreaterThan(uploadIndex);
+        expect(source).toContain('payload: { ...playerData, photoUrl: null, photoPath: null }');
+        expect(source).toContain('await getRosterPlayerOwnerState(reservedPlayerId)');
+        expect(source).toContain('if (ownerState !== \'committed\') throw ownerError;');
         expect(source).toContain('playerId: reservedPlayerId');
         expect(source.indexOf("let newlyUploadedPlayerPhotoPath = '';", submitIndex)).toBeGreaterThan(submitIndex);
         expect(source).toContain("type: 'add',");
@@ -44,6 +56,7 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain("getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath)");
         expect(source).not.toContain('const savedPlayerId = await addPlayer(currentTeamId, playerData);');
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
+        expect(source).toContain('Player was added, but the photo could not be saved. Edit the player to try the photo again.');
     });
 
     it('validates player edits before uploading and keeps an already referenced photo on private-save failure', () => {

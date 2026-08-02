@@ -2460,16 +2460,29 @@
             }
         }
 
+        async function getRosterPlayerOwnerState(playerId) {
+            try {
+                const players = await getPlayers(currentTeamId, { includeInactive: true });
+                return players.some((player) => String(player?.id || '').trim() === String(playerId || '').trim())
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
+        }
+
         document.getElementById('add-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             let newlyUploadedPlayerPhotoPath = '';
             let playerPhotoPersisted = false;
             let playerPhotoWriteAttempted = false;
+            let createdNewPlayerOwner = false;
             const previousPhotoPath = editingPhotoPath || '';
             let nextPhotoPath = previousPhotoPath;
             const name = document.getElementById('playerName').value;
             const number = document.getElementById('playerNumber').value;
             const photoInput = document.getElementById('playerPhoto');
+            const selectedPhotoFile = photoInput.files[0] || null;
             const removePhoto = document.getElementById('removePhoto').checked;
             const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
@@ -2481,34 +2494,27 @@
                 return;
             }
 
+            if (selectedPhotoFile) {
+                if (!selectedPhotoFile.type.startsWith('image/')) {
+                    alert('Please select an image file.');
+                    return;
+                }
+                if (!Number.isFinite(selectedPhotoFile.size) || selectedPhotoFile.size <= 0) {
+                    alert('Please select a valid image file.');
+                    return;
+                }
+                if (selectedPhotoFile.size > 5 * 1024 * 1024) {
+                    alert('Image must be smaller than 5MB.');
+                    return;
+                }
+            }
+
             try {
                 let photoUrl = editingPhotoUrl;
 
                 if (removePhoto) {
                     photoUrl = null;
                     nextPhotoPath = '';
-                }
-
-                if (photoInput.files.length > 0) {
-                    const file = photoInput.files[0];
-
-                    if (!file.type.startsWith('image/')) {
-                        alert('Please select an image file.');
-                        return;
-                    }
-                    if (file.size > 5 * 1024 * 1024) {
-                        alert('Image must be smaller than 5MB.');
-                        return;
-                    }
-
-                    const uploadedPhoto = await uploadPlayerPhoto(file, {
-                        returnUpload: true,
-                        teamId: currentTeamId,
-                        playerId: reservedPlayerId
-                    });
-                    photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
-                    newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
-                    nextPhotoPath = newlyUploadedPlayerPhotoPath;
                 }
 
                 const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
@@ -2528,11 +2534,42 @@
                     playerData.position = publicValues.position;
                 }
 
+                if (!editingPlayerId && selectedPhotoFile) {
+                    try {
+                        await applyRosterCsvImportOperations(currentTeamId, [{
+                            type: 'add',
+                            playerId: reservedPlayerId,
+                            payload: { ...playerData, photoUrl: null, photoPath: null },
+                            privateRosterFields: { ...protectedProfileValues, ...privateValues }
+                        }]);
+                    } catch (ownerError) {
+                        const ownerState = isDefinitiveFirestoreWriteFailure(ownerError)
+                            ? 'not-committed'
+                            : await getRosterPlayerOwnerState(reservedPlayerId);
+                        if (ownerState !== 'committed') throw ownerError;
+                    }
+                    createdNewPlayerOwner = true;
+                }
+
+                if (selectedPhotoFile) {
+                    const uploadedPhoto = await uploadPlayerPhoto(selectedPhotoFile, {
+                        returnUpload: true,
+                        teamId: currentTeamId,
+                        playerId: reservedPlayerId
+                    });
+                    photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
+                    nextPhotoPath = newlyUploadedPlayerPhotoPath;
+                }
+
+                playerData.photoUrl = photoUrl;
+                playerData.photoPath = nextPhotoPath || null;
+
                 playerPhotoWriteAttempted = true;
-                if (editingPlayerId) {
+                if (editingPlayerId || createdNewPlayerOwner) {
                     await applyRosterCsvImportOperations(currentTeamId, [{
                         type: 'update',
-                        playerId: editingPlayerId,
+                        playerId: editingPlayerId || reservedPlayerId,
                         payload: playerData,
                         privateRosterFields: { ...protectedProfileValues, ...privateValues }
                     }]);
@@ -2566,12 +2603,25 @@
                     }
                     if (persistenceState === 'unknown') {
                         console.error(error);
-                        alert('The player may have saved. The new photo was kept; refresh the roster before retrying.');
+                        if (createdNewPlayerOwner) {
+                            resetForm();
+                            loadRoster();
+                            alert('Player was added. The new photo was kept because its save status is unknown; refresh the roster before changing it.');
+                        } else {
+                            alert('The player may have saved. The new photo was kept; refresh the roster before retrying.');
+                        }
                         return;
                     }
                 }
                 if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
                     await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                }
+                if (createdNewPlayerOwner) {
+                    console.error(error);
+                    resetForm();
+                    loadRoster();
+                    alert('Player was added, but the photo could not be saved. Edit the player to try the photo again.');
+                    return;
                 }
                 console.error(error);
                 alert('Error saving player.');

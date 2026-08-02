@@ -59,19 +59,34 @@ const LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS = Object.freeze([
 const LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS = new Set([
     ...LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
     ...LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
-    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
-    'note'
+    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS
 ]);
 
 function hasMeaningfulValue(value) {
     return value !== undefined && value !== null && value !== '';
 }
 
+function isLegacyTeamFeeRefundLedgerEntry(entry) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const marker = normalizeString(
+        entry.type || entry.kind || entry.action || entry.category || entry.label || entry.title
+    ).toLowerCase();
+    return marker.includes('refund')
+        || entry.refund === true
+        || entry.isRefund === true
+        || entry.refundAmountCents !== undefined;
+}
+
+function isLegacyReadableTeamFeeLedgerPrivateField(field, entry) {
+    return LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(field)
+        || (field === 'note' && isLegacyTeamFeeRefundLedgerEntry(entry));
+}
+
 function hasLegacyReadableTeamFeeLedgerPrivateState(value) {
     if (Array.isArray(value)) return value.some(hasLegacyReadableTeamFeeLedgerPrivateState);
     if (!value || typeof value !== 'object') return false;
     return Object.entries(value).some(([key, childValue]) => (
-        (LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(key) && hasMeaningfulValue(childValue))
+        (isLegacyReadableTeamFeeLedgerPrivateField(key, value) && hasMeaningfulValue(childValue))
         || hasLegacyReadableTeamFeeLedgerPrivateState(childValue)
     ));
 }
@@ -85,7 +100,7 @@ function extractLegacyReadableTeamFeeLedgerPrivateState(value) {
     }
     if (!value || typeof value !== 'object') return null;
     return Object.fromEntries(Object.entries(value).flatMap(([key, childValue]) => {
-        if (LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(key) && hasMeaningfulValue(childValue)) {
+        if (isLegacyReadableTeamFeeLedgerPrivateField(key, value) && hasMeaningfulValue(childValue)) {
             return [[key, childValue]];
         }
         const nestedPrivateState = extractLegacyReadableTeamFeeLedgerPrivateState(childValue);
@@ -132,7 +147,7 @@ function buildLegacyReadableTeamFeeAdminBilling({ recipient = {}, existingAdminB
     const legacyBilling = Object.fromEntries(Object.entries({
         type: 'legacy_readable_billing_migration',
         provider: recipient.paymentProvider || receiptMetadata.provider || 'stripe',
-        stripeCheckoutSessionId: recipient.stripeCheckoutSessionId || recipient.checkoutSessionId || receiptMetadata.checkoutSessionId,
+        stripeCheckoutSessionId: receiptMetadata.checkoutSessionId,
         lastPaidStripeCheckoutSessionId: recipient.lastPaidStripeCheckoutSessionId,
         stripePaymentIntentId: recipient.stripePaymentIntentId || recipient.paymentIntentId || receiptMetadata.paymentIntentId,
         stripeCustomerId: recipient.stripeCustomerId,
@@ -715,6 +730,7 @@ module.exports = {
     LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
     LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
     LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS,
+    isLegacyReadableTeamFeeLedgerPrivateField,
     hasLegacyReadableTeamFeeCheckoutState,
     hasLegacyReadableTeamFeeBillingState,
     buildLegacyReadableTeamFeeCheckoutAttempt,

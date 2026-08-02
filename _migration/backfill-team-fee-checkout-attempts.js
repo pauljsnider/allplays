@@ -15,23 +15,17 @@ const {
     buildLegacyReadableTeamFeeCheckoutAttempt,
     buildLegacyReadableTeamFeeAdminBilling,
     hasLegacyReadableTeamFeeCheckoutState,
-    hasLegacyReadableTeamFeeBillingState
+    hasLegacyReadableTeamFeeBillingState,
+    isLegacyReadableTeamFeeLedgerPrivateField
 } = require('../functions/team-fees-core.cjs');
 
 const APPLY = process.argv.includes('--apply');
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
-const LEGACY_LEDGER_PRIVATE_FIELDS = new Set([
-    ...LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
-    ...LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
-    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
-    'note'
-]);
-
 function scrubLegacyLedgerPrivateState(value) {
     if (Array.isArray(value)) return value.map(scrubLegacyLedgerPrivateState);
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value)
-        .filter(([key]) => !LEGACY_LEDGER_PRIVATE_FIELDS.has(key))
+        .filter(([key]) => !isLegacyReadableTeamFeeLedgerPrivateField(key, value))
         .map(([key, childValue]) => [key, scrubLegacyLedgerPrivateState(childValue)]));
 }
 
