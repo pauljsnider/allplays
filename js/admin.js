@@ -15,10 +15,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=147';
+} from './db.js?v=148';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=25';
-import { checkAuth } from './auth.js?v=150';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=26';
+import { checkAuth } from './auth.js?v=151';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
