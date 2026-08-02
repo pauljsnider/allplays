@@ -102,6 +102,17 @@ function buildRecipient(index: number, overrides: Record<string, any> = {}) {
   };
 }
 
+function buildManagementModel(recipient: Record<string, any>) {
+  return {
+    team: { id: 'team-1', name: 'Bears' },
+    batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+    selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+    canManageFees: true,
+    rosterPlayers: [],
+    recipients: [recipient]
+  };
+}
+
 describe('TeamFees recipient queue', () => {
   afterEach(() => {
     delete window.__ALLPLAYS_CONFIG__;
@@ -121,7 +132,7 @@ describe('TeamFees recipient queue', () => {
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockResolvedValue(undefined);
     teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValue({ id: 'batch-2' });
-    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://checkout.stripe.test/generated' });
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/generated' });
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('shared');
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
@@ -243,48 +254,20 @@ describe('TeamFees recipient queue', () => {
 
   it('generates and shares a staff checkout link with the public URL only', async () => {
     teamFeesServiceMocks.loadTeamFeeManagementModel
-      .mockResolvedValueOnce({
-        team: { id: 'team-1', name: 'Bears' },
-        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
-        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
-        canManageFees: true,
-        rosterPlayers: [],
-        recipients: [{
-          id: 'recipient-1',
-          playerName: 'Pat Star',
-          parentName: 'Pat Parent',
-          parentEmail: 'pat@example.com',
-          status: 'unpaid',
-          collectionMode: 'online_stripe',
-          checkoutUrl: '',
-          checkoutStatus: '',
-          amountDueCents: 10000,
-          amountPaidCents: 0,
-          remainingBalanceCents: 10000,
-          paymentLedger: []
-        }]
-      })
-      .mockResolvedValueOnce({
-        team: { id: 'team-1', name: 'Bears' },
-        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
-        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
-        canManageFees: true,
-        rosterPlayers: [],
-        recipients: [{
-          id: 'recipient-1',
-          playerName: 'Pat Star',
-          parentName: 'Pat Parent',
-          parentEmail: 'pat@example.com',
-          status: 'unpaid',
-          collectionMode: 'online_stripe',
-          checkoutUrl: 'https://checkout.stripe.test/generated',
-          checkoutStatus: 'open',
-          amountDueCents: 10000,
-          amountPaidCents: 0,
-          remainingBalanceCents: 10000,
-          paymentLedger: []
-        }]
-      });
+      .mockResolvedValueOnce(buildManagementModel(buildRecipient(1, {
+        playerName: 'Pat Star',
+        parentName: 'Pat Parent',
+        parentEmail: 'pat@example.com',
+        checkoutUrl: '',
+        checkoutStatus: ''
+      })))
+      .mockResolvedValueOnce(buildManagementModel(buildRecipient(1, {
+        playerName: 'Pat Star',
+        parentName: 'Pat Parent',
+        parentEmail: 'pat@example.com',
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/generated',
+        checkoutStatus: 'open'
+      })));
 
     renderTeamFees();
 
@@ -302,9 +285,120 @@ describe('TeamFees recipient queue', () => {
     expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
       title: 'Pat Star fee checkout',
       text: '',
-      url: 'https://checkout.stripe.test/generated',
-      clipboardText: 'https://checkout.stripe.test/generated'
+      url: 'https://checkout.stripe.com/c/pay/generated',
+      clipboardText: 'https://checkout.stripe.com/c/pay/generated'
     });
+  });
+
+  it('ignores poisoned stored checkout metadata and shares only the regenerated server destination', async () => {
+    const poisonedUrl = 'https://attacker.example/collect-team-fee';
+    const generatedUrl = 'https://checkout.stripe.com/c/pay/regenerated';
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star',
+      checkoutUrl: poisonedUrl,
+      checkoutStatus: 'open'
+    })));
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: generatedUrl });
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Share checkout link' }));
+
+    expect(await screen.findByText('Shared checkout link for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      batchId: 'batch-1',
+      recipientId: 'recipient-1',
+      user: auth.user
+    });
+    expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
+      url: generatedUrl,
+      clipboardText: generatedUrl
+    }));
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalledWith(expect.objectContaining({ url: poisonedUrl }));
+  });
+
+  it('ignores poisoned stored checkout metadata and copies only the regenerated server destination', async () => {
+    const poisonedUrl = 'https://attacker.example/collect-team-fee';
+    const generatedUrl = 'https://checkout.stripe.com/c/pay/regenerated';
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star',
+      checkoutUrl: poisonedUrl,
+      checkoutStatus: 'open'
+    })));
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: generatedUrl });
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Copy checkout link' }));
+
+    expect(await screen.findByText('Copied checkout link for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      batchId: 'batch-1',
+      recipientId: 'recipient-1',
+      user: auth.user
+    });
+    expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(generatedUrl);
+    expect(publicActionMocks.copyPublicText).not.toHaveBeenCalledWith(poisonedUrl);
+  });
+
+  it('resolves a valid stored checkout through the server before reusing it', async () => {
+    const reusableUrl = 'https://checkout.stripe.com/c/pay/reusable';
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star',
+      checkoutUrl: reusableUrl,
+      checkoutStatus: 'open'
+    })));
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: reusableUrl });
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Share checkout link' }));
+
+    expect(await screen.findByText('Shared checkout link for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledTimes(1);
+    expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
+      url: reusableUrl,
+      clipboardText: reusableUrl
+    }));
+  });
+
+  it.each([
+    ['share', 'https://attacker.example/checkout'],
+    ['share', 'http://checkout.stripe.com/c/pay/insecure'],
+    ['share', 'https://checkout.stripe.com.attacker.example/c/pay/lookalike'],
+    ['share', 'https://user:password@checkout.stripe.com/c/pay/credentialed'],
+    ['copy', 'https://checkout.stripe.com:8443/c/pay/nonstandard-port'],
+    ['copy', '   '],
+    ['copy', 'not-a-url'],
+    ['copy', 'https://attacker.example/checkout']
+  ])('rejects an invalid %s server checkout destination before public actions: %s', async (action, checkoutUrl) => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue(buildManagementModel(buildRecipient(1, {
+      playerName: 'Pat Star'
+    })));
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl });
+
+    renderTeamFees();
+
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', {
+      name: action === 'share' ? 'Generate & share link' : 'Copy checkout link'
+    }));
+
+    expect(await within(recipientCard).findByText('Unable to get a trusted Stripe checkout link. Try again.')).toBeTruthy();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+    expect(publicActionMocks.copyPublicText).not.toHaveBeenCalled();
+    expect(within(recipientCard).getByRole('button', {
+      name: action === 'share' ? 'Generate & share link' : 'Copy checkout link'
+    })).not.toBeDisabled();
   });
 
   it('creates a fee batch from the native form using selected roster recipients', async () => {
