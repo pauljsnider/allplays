@@ -1338,7 +1338,8 @@ jobs:
             "functions:indexCertificateLegacySignaturesOnDefaultsWrite" \
             "certificate-signature-inventory-producer" \
             3 \
-            15
+            15 \
+            true
           node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           retry_firebase_deploy \
             "functions:cleanupCertificateSignature" \

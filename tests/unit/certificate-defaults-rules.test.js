@@ -64,6 +64,9 @@ describe('certificate defaults Firestore rules', () => {
         const nativeReadinessGate = deployWorkflow.indexOf('[[ "$native_callable_ready" == "true" ]]');
 
         expect(inventoryProducer).toBeGreaterThan(-1);
+        expect(deployWorkflow).toMatch(
+            /retry_firebase_deploy\s+\\\s+"functions:indexCertificateLegacySignaturesOnDefaultsWrite"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
+        );
         expect(inventoryProducer).toBeLessThan(inventoryBackfill);
         expect(inventoryBackfill).toBeLessThan(compatibilityCleanup);
         expect(compatibilityCleanup).toBeGreaterThan(-1);
