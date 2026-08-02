@@ -34,7 +34,7 @@ describe('drills planning access control', () => {
 
     it('reuses a newly created drill on retry and cleans up unreferenced diagram uploads', () => {
         expect(drillsHtml).toContain("document.getElementById('form-drill-id').value = drillId;");
-        expect(drillsHtml).toContain('newlyUploadedDiagrams.push({ path: upload.path });');
+        expect(drillsHtml).toContain('newlyUploadedDiagrams.push({ path: upload.path, storage: upload.storage });');
         expect(drillsHtml).toContain('if (!uploadedDiagramsPersisted)');
         expect(drillsHtml).toContain('await deleteUploadedMediaObjects(newlyUploadedDiagrams).catch(() => undefined);');
     });
