@@ -184,7 +184,12 @@ test('staff smoke writes are deterministic and removed after validation', async 
                 page,
                 `/schedule?scope=staff&teamId=${encodeURIComponent(config.teamId)}`
             );
-            await page.getByRole('button', { name: /manage schedule/i }).click();
+            const scheduleTools = page.locator('section[aria-label="Manage schedule tools"]');
+            await expect(scheduleTools).toBeVisible({ timeout: 25_000 });
+            const manageSchedule = scheduleTools.locator('button[aria-controls]').first();
+            await expect(manageSchedule).toBeVisible({ timeout: 25_000 });
+            await manageSchedule.click({ timeout: 25_000 });
+            await expect(manageSchedule).toHaveAttribute('aria-expanded', 'true', { timeout: 25_000 });
             const createGame = page.locator('section[aria-label="Create game"]');
             await expect(createGame).toBeVisible({ timeout: 25_000 });
             await createGame.getByLabel('Opponent').fill(opponentName);
