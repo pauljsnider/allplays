@@ -595,6 +595,10 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                     return schedule;
                 }
 
+                export async function hydrateParentScheduleEventOptionalDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function loadParentScheduleEventDetail(_user, options = {}) {
                     return {
                         children,

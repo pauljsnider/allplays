@@ -305,6 +305,27 @@ function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
 }
 
+function getScheduleEventRideOffersCacheKey(teamId: string, eventId: string) {
+  return `${getScheduleEventHydrationCacheKey(teamId, eventId)}:ride-offers`;
+}
+
+function getScheduleEventAssignmentClaimsCacheKey(teamId: string, eventId: string) {
+  return `${getScheduleEventHydrationCacheKey(teamId, eventId)}:assignment-claims`;
+}
+
+function invalidateScheduleEventRideOffersCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  invalidateCachedAppData(getScheduleEventRideOffersCacheKey(event.teamId, event.id));
+}
+
+function invalidateScheduleEventAssignmentClaimsCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  invalidateCachedAppData(getScheduleEventAssignmentClaimsCacheKey(event.teamId, event.id));
+}
+
+function invalidateScheduleEventOptionalCaches(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
+  invalidateScheduleEventRideOffersCache(event);
+  invalidateScheduleEventAssignmentClaimsCache(event);
+}
+
 function invalidateParentScheduleCaches(
   user: AuthUser | null | undefined,
   event?: Pick<ParentScheduleEvent, 'teamId' | 'id'> | null
@@ -318,6 +339,7 @@ function invalidateParentScheduleCaches(
   const eventId = compactString(event?.id);
   if (teamId && eventId) {
     invalidateCachedAppData(getScheduleEventHydrationCacheKey(teamId, eventId));
+    invalidateScheduleEventOptionalCaches({ teamId, id: eventId });
   }
 }
 // Default games window for schedule views: ~13 months covers the current and
@@ -4068,7 +4090,7 @@ function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent
   return Object.fromEntries([...byChild.entries()].map(([playerId, value]) => [playerId, value.note]));
 }
 
-async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser) {
+async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser, includeOptionalDetails = true) {
   const uniqueEventKeys = [...new Set(
     events
       .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
@@ -4084,9 +4106,10 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     if (!firstEvent) return;
 
     const isTeamStaff = matchingEvents.some((event) => event.isTeamStaff === true || event.isTeamAdmin === true);
-    const { rsvps: loadedRsvps, rsvpsLoaded, offers, claims, claimsLoaded } = isTeamStaff
-      ? await loadCachedEventHydrationDetails(teamId, gameId)
-      : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid);
+    const hydration = isTeamStaff
+      ? await loadCachedEventHydrationDetails(teamId, gameId, includeOptionalDetails)
+      : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid, includeOptionalDetails);
+    const { rsvps: loadedRsvps, rsvpsLoaded } = hydration;
     const ownRsvpNotes = rsvpsLoaded
       ? await mergeOwnRsvpNotes(teamId, gameId, loadedRsvps, user.uid)
       : { rsvps: loadedRsvps, noteReadsComplete: false };
@@ -4094,9 +4117,12 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = firstEvent.rsvpSummary || summarizeRsvps(rsvps);
-    const rideshareSummary = getEventRideshareSummary(offers) as ScheduleRideSummary;
-    const assignments = mergeAssignmentsWithClaims(firstEvent.assignments, claims) as ScheduleAssignment[];
-    const openAssignmentCount = countOpenScheduleAssignments(assignments);
+    const rideshareSummary = hydration.offersLoaded
+      ? getEventRideshareSummary(hydration.offers) as ScheduleRideSummary
+      : null;
+    const assignments = hydration.claimsLoaded
+      ? mergeAssignmentsWithClaims(firstEvent.assignments, hydration.claims) as ScheduleAssignment[]
+      : null;
     const preferences = firstEvent.availabilityPreferences || {};
     const isTeamAdmin = matchingEvents.some((event) => event.isTeamAdmin === true);
     const availabilityNotesVisible = canViewAvailabilityNotes(preferences, isTeamAdmin);
@@ -4115,10 +4141,14 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
         authoritativeRsvpEvents.push(event);
       }
       event.rsvpSummary = summary;
-      event.rideshareSummary = rideshareSummary;
-      event.assignments = assignments;
-      event.openAssignmentCount = openAssignmentCount;
-      event.assignmentClaimsHydrated = claimsLoaded;
+      if (hydration.offersLoaded) {
+        event.rideshareSummary = rideshareSummary;
+      }
+      if (assignments) {
+        event.assignments = assignments;
+        event.openAssignmentCount = countOpenScheduleAssignments(assignments);
+        event.assignmentClaimsHydrated = true;
+      }
       event.availabilityNotesVisible = availabilityNotesVisible;
       event.availabilityNotes = availabilityNotes;
     });
@@ -4135,61 +4165,101 @@ function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs =
     && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
 }
 
-function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
+function loadCachedRideOffers(teamId: string, gameId: string) {
   return loadCachedAppData(
-    getScheduleEventHydrationCacheKey(teamId, gameId),
-    async () => {
-      const results = await Promise.allSettled([
-        loadRsvps(teamId, gameId),
-        loadRideOffers(teamId, gameId),
-        loadAssignmentClaims(teamId, gameId)
-      ]);
-      const firstRejected = results.find((result) => result.status === 'rejected');
-      if (firstRejected && results.every((result) => result.status === 'rejected')) {
-        throw firstRejected.reason;
-      }
-      const [rsvpsResult, offersResult, claimsResult] = results;
-      return {
-        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
-        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
-        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
-        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
-        claimsLoaded: claimsResult.status === 'fulfilled'
-      };
-    },
-    {
-      ttlMs: scheduleHydrationCacheTtlMs,
-      persist: false
-    }
+    getScheduleEventRideOffersCacheKey(teamId, gameId),
+    () => loadRideOffers(teamId, gameId),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
 }
 
-function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[], userId: string) {
+function loadCachedAssignmentClaims(teamId: string, gameId: string) {
+  return loadCachedAppData(
+    getScheduleEventAssignmentClaimsCacheKey(teamId, gameId),
+    () => loadAssignmentClaims(teamId, gameId),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
+  );
+}
+
+async function loadCachedEventHydrationDetails(teamId: string, gameId: string, includeOptionalDetails = true) {
+  const rsvpsPromise = loadCachedAppData(
+    getScheduleEventHydrationCacheKey(teamId, gameId),
+    () => loadRsvps(teamId, gameId),
+    { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
+  );
+  const results = await Promise.allSettled([
+    rsvpsPromise,
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
+  ]);
+  const [rsvpsResult, offersResult, claimsResult] = results;
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
+    throw (rsvpsResult as PromiseRejectedResult).reason;
+  }
+  return {
+    rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+    rsvpsLoaded: rsvpsResult.status === 'fulfilled',
+    offers: offersResult?.status === 'fulfilled' ? offersResult.value : [],
+    offersLoaded: offersResult?.status === 'fulfilled',
+    claims: claimsResult?.status === 'fulfilled' ? claimsResult.value : {},
+    claimsLoaded: claimsResult?.status === 'fulfilled'
+  };
+}
+
+async function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[], userId: string, includeOptionalDetails = true) {
   const firstEvent = events[0];
   const teamId = firstEvent?.teamId || '';
   const gameId = firstEvent?.id || '';
   const normalizedPlayerIds = uniqueNonEmptyStrings(events.map((event) => event.childId)).sort();
-  return loadCachedAppData(
+  const rsvpsPromise = loadCachedAppData(
     `${getScheduleEventHydrationCacheKey(teamId, gameId)}:own:${userId}:${normalizedPlayerIds.join(',')}`,
-    async () => {
-      const results = await Promise.allSettled([
-        loadOwnRsvps(teamId, gameId, userId, normalizedPlayerIds),
-        loadRideOffers(teamId, gameId),
-        loadAssignmentClaims(teamId, gameId)
-      ]);
-      const firstRejected = results.find((result) => result.status === 'rejected');
-      if (firstRejected && results.every((result) => result.status === 'rejected')) throw firstRejected.reason;
-      const [rsvpsResult, offersResult, claimsResult] = results;
-      return {
-        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
-        rsvpsLoaded: rsvpsResult.status === 'fulfilled',
-        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
-        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {},
-        claimsLoaded: claimsResult.status === 'fulfilled'
-      };
-    },
+    () => loadOwnRsvps(teamId, gameId, userId, normalizedPlayerIds),
     { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
+  const results = await Promise.allSettled([
+    rsvpsPromise,
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
+  ]);
+  const [rsvpsResult, offersResult, claimsResult] = results;
+  if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
+    throw (rsvpsResult as PromiseRejectedResult).reason;
+  }
+  return {
+    rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+    rsvpsLoaded: rsvpsResult.status === 'fulfilled',
+    offers: offersResult?.status === 'fulfilled' ? offersResult.value : [],
+    offersLoaded: offersResult?.status === 'fulfilled',
+    claims: claimsResult?.status === 'fulfilled' ? claimsResult.value : {},
+    claimsLoaded: claimsResult?.status === 'fulfilled'
+  };
+}
+
+export async function hydrateParentScheduleEventOptionalDetails(schedule: ParentScheduleLoadResult): Promise<ParentScheduleLoadResult> {
+  const hydratedSchedule = {
+    ...schedule,
+    events: schedule.events.map((event) => ({ ...event }))
+  };
+  const uniqueEvents = [...new Map(hydratedSchedule.events
+    .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
+    .map((event) => [`${event.teamId}::${event.id}`, event])).values()];
+
+  await Promise.all(uniqueEvents.map(async (firstEvent) => {
+    const matchingEvents = hydratedSchedule.events.filter((event) => event.teamId === firstEvent.teamId && event.id === firstEvent.id);
+    const [offersResult, claimsResult] = await Promise.allSettled([
+      loadCachedRideOffers(firstEvent.teamId, firstEvent.id),
+      loadCachedAssignmentClaims(firstEvent.teamId, firstEvent.id)
+    ]);
+    matchingEvents.forEach((event) => {
+      if (offersResult.status === 'fulfilled') {
+        event.rideshareSummary = getEventRideshareSummary(offersResult.value) as ScheduleRideSummary;
+      }
+      if (claimsResult.status === 'fulfilled') {
+        event.assignments = mergeAssignmentsWithClaims(event.assignments, claimsResult.value) as ScheduleAssignment[];
+        event.openAssignmentCount = countOpenScheduleAssignments(event.assignments);
+        event.assignmentClaimsHydrated = true;
+      }
+    });
+  }));
+  return hydratedSchedule;
 }
 
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
@@ -4331,7 +4401,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
     const authoritativeEvents = hydrateDetails && events.length
-      ? await hydrateEventDetails(events, user)
+      ? await hydrateEventDetails(events, user, false)
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     timer.end({
@@ -6794,7 +6864,7 @@ export async function loadParentScheduleAssignments(event: ParentScheduleEvent) 
   if (!assignments.length || !event.isDbGame || event.isCancelled) {
     return assignments;
   }
-  const claims = await loadAssignmentClaims(event.teamId, event.id).catch(() => ({}));
+  const claims = await loadCachedAssignmentClaims(event.teamId, event.id).catch(() => ({}));
   return normalizeAssignments(mergeAssignmentsWithClaims(assignments, claims) as ScheduleAssignment[]);
 }
 
@@ -6847,6 +6917,7 @@ export async function createScheduleAssignment(event: ParentScheduleEvent, user:
 
   const persistedAssignments = await persistScheduleAssignments(event, [...currentAssignments, nextAssignment]);
   await clearScheduleAssignmentClaim(event, nextRole, 'assignment-create-claim-cleanup');
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6877,6 +6948,7 @@ export async function updateScheduleAssignment(event: ParentScheduleEvent, user:
     await clearScheduleAssignmentClaim(event, nextRole, 'assignment-update-claim-cleanup');
   }
 
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6891,6 +6963,7 @@ export async function removeScheduleAssignment(event: ParentScheduleEvent, user:
 
   const persistedAssignments = await persistScheduleAssignments(event, nextAssignments);
   await clearScheduleAssignmentClaim(event, role, 'assignment-remove-claim-cleanup');
+  invalidateScheduleEventAssignmentClaimsCache(event);
   return reloadPersistedScheduleAssignments(event, persistedAssignments);
 }
 
@@ -6913,6 +6986,7 @@ export async function claimParentScheduleAssignmentSlot(event: ParentScheduleEve
     logScheduleWarning('Falling back to REST assignment claim.', 'assignment-claim', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, role });
     await nativeClaimAssignment(event, user, trimmedRole, name);
   }
+  invalidateScheduleEventAssignmentClaimsCache(event);
 }
 
 export async function releaseParentScheduleAssignmentClaim(event: ParentScheduleEvent, role: string) {
@@ -6930,6 +7004,7 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
     logScheduleWarning('Falling back to REST assignment release.', 'assignment-release', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, role });
     await nativeReleaseAssignment(event, trimmedRole);
   }
+  invalidateScheduleEventAssignmentClaimsCache(event);
 }
 
 function getPracticePacketSessionId(event: ParentScheduleEvent) {
@@ -7496,7 +7571,7 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
 
 export async function loadParentScheduleRideOffers(event: ParentScheduleEvent) {
   if (!event.isDbGame || event.isCancelled) return [];
-  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id));
+  return normalizeRideOffers(await loadCachedRideOffers(event.teamId, event.id));
 }
 
 export async function createParentScheduleRideOffer(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {
@@ -7514,13 +7589,16 @@ export async function createParentScheduleRideOffer(event: ParentScheduleEvent, 
     driverName: user.displayName || user.email || 'Parent Driver'
   };
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(createRideOffer(event.teamId, event.id, payload)), 'Ride offer create');
+    result = await withTimeout(Promise.resolve(createRideOffer(event.teamId, event.id, payload)), 'Ride offer create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride offer create.', 'ride-offer-create', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
-    return nativeCreateRideOfferForEvent(event, user, payload);
+    result = await nativeCreateRideOfferForEvent(event, user, payload);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, offer: ScheduleRideOffer, user: AuthUser, child: RideRequestChildInput) {
@@ -7534,13 +7612,16 @@ export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, 
     childName: child.childName || 'Player'
   };
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(requestRideSpot(event.teamId, gameId, offer.id, payload)), 'Ride request create');
+    result = await withTimeout(Promise.resolve(requestRideSpot(event.teamId, gameId, offer.id, payload)), 'Ride request create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride request create.', 'ride-request-create', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, offerId: offer.id });
-    return nativeRequestRideSpotForChild(event, offer, user, payload);
+    result = await nativeRequestRideSpotForChild(event, offer, user, payload);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function updateParentScheduleRideRequestStatus(event: ParentScheduleEvent, offer: ScheduleRideOffer, requestId: string, status: RideRequestStatus) {
@@ -7551,13 +7632,16 @@ export async function updateParentScheduleRideRequestStatus(event: ParentSchedul
   }
   const gameId = getRideOfferGameId(event, offer);
 
+  let result;
   try {
-    return await withTimeout(Promise.resolve(updateRideRequestStatus(event.teamId, gameId, offer.id, requestId, normalizedStatus)), 'Ride request update');
+    result = await withTimeout(Promise.resolve(updateRideRequestStatus(event.teamId, gameId, offer.id, requestId, normalizedStatus)), 'Ride request update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST ride request update.', 'ride-request-update', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id, requestId });
-    return nativeUpdateRideRequestDecision(event, offer, requestId, normalizedStatus);
+    result = await nativeUpdateRideRequestDecision(event, offer, requestId, normalizedStatus);
   }
+  invalidateScheduleEventRideOffersCache(event);
+  return result;
 }
 
 export async function setParentScheduleRideOfferStatus(event: ParentScheduleEvent, offer: ScheduleRideOffer, status: RideOfferStatus) {
@@ -7572,6 +7656,7 @@ export async function setParentScheduleRideOfferStatus(event: ParentScheduleEven
     logScheduleWarning('Falling back to REST ride offer status update.', 'ride-offer-status-update', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id });
     await nativeSetRideOfferStatus(event, offer, normalizedStatus);
   }
+  invalidateScheduleEventRideOffersCache(event);
 }
 
 export async function cancelParentScheduleRideRequest(event: ParentScheduleEvent, offer: ScheduleRideOffer, requestId: string) {
@@ -7585,6 +7670,7 @@ export async function cancelParentScheduleRideRequest(event: ParentScheduleEvent
     logScheduleWarning('Falling back to REST ride request cancel.', 'ride-request-cancel', error, { fallback: 'rest', teamId: event.teamId, gameId, offerId: offer.id, requestId });
     await nativeCancelRideRequestForChild(event, offer, requestId);
   }
+  invalidateScheduleEventRideOffersCache(event);
 }
 
 export function summarizeParentScheduleRideOffers(offers: ScheduleRideOffer[]) {

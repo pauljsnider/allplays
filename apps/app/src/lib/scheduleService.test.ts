@@ -226,7 +226,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -1608,6 +1608,110 @@ describe('parent schedule detail hydration', () => {
     expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects a parent detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getMyRsvps).mockRejectedValue(new Error('parent RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('parent RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
+  it('rejects a staff detail load when its critical RSVP read fails', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'parent-1', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves'
+    } as any);
+    vi.mocked(getRsvps).mockRejectedValue(new Error('staff RSVP read failed'));
+
+    await expect(loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' }))
+      .rejects.toThrow('staff RSVP read failed');
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+  });
+
+  it('keeps optional reads off the detail critical path and shares their in-flight requests', async () => {
+    const cached = new Map<string, Promise<unknown>>();
+    vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
+      if (!cached.has(key)) cached.set(key, loader());
+      return cached.get(key) as Promise<unknown>;
+    });
+    let resolveOffers!: (value: any[]) => void;
+    let resolveClaims!: (value: Record<string, unknown>) => void;
+    vi.mocked(listRideOffersForEvent).mockReturnValue(new Promise((resolve) => { resolveOffers = resolve; }) as any);
+    vi.mocked(getAssignmentClaims).mockReturnValue(new Promise((resolve) => { resolveClaims = resolve; }) as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'game-1',
+      type: 'game',
+      date: new Date('2026-08-15T18:00:00.000Z'),
+      opponent: 'Wolves',
+      assignments: [{ role: 'Scoreboard', claimable: true, value: '' }]
+    } as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const path = String(ref?.path || '');
+      if (path.endsWith('/players/player-1')) {
+        return playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any;
+      }
+      if (path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return playerSnapshot('parent-1__player-1', { note: 'Will be there.' }) as any;
+      }
+      return playerSnapshot('', null) as any;
+    });
+
+    const detail = await loadParentScheduleEventDetail(user, { teamId: 'team-1', eventId: 'game-1' });
+
+    expect(detail.events[0]).toMatchObject({ myRsvp: 'going', myRsvpNote: 'Will be there.' });
+    expect(listRideOffersForEvent).not.toHaveBeenCalled();
+    expect(getAssignmentClaims).not.toHaveBeenCalled();
+
+    const optionalHydration = hydrateParentScheduleEventOptionalDetails(detail);
+    const rideshareLoad = loadParentScheduleRideOffers(detail.events[0]);
+    const assignmentsLoad = loadParentScheduleAssignments(detail.events[0]);
+
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
+
+    resolveOffers([{ id: 'offer-1', seatCapacity: 3, seatCountConfirmed: 1, requests: [] }]);
+    await expect(rideshareLoad).resolves.toEqual([expect.objectContaining({ id: 'offer-1' })]);
+    resolveClaims({ scoreboard: { claimedByUserId: 'parent-2' } });
+    await expect(assignmentsLoad).resolves.toEqual(expect.any(Array));
+    const hydratedDetail = await optionalHydration;
+
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
+    expect(hydratedDetail).not.toBe(detail);
+    expect(hydratedDetail.events[0]).not.toBe(detail.events[0]);
+    expect(hydratedDetail.events[0]).toMatchObject({
+      assignmentClaimsHydrated: true
+    });
+    expect(detail.events[0].assignmentClaimsHydrated).not.toBe(true);
+  });
 });
 
 describe('official assignments app service', () => {
@@ -2622,7 +2726,9 @@ describe('parent family RSVP submission', () => {
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
   });
 
   it('keeps cached schedule data when a single-child RSVP write fails', async () => {
@@ -2955,7 +3061,9 @@ describe('parent family RSVP submission', () => {
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
@@ -3260,7 +3368,9 @@ describe('staff RSVP management', () => {
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:coach-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:coach-1');
     expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(3);
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
+    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
     expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
       playerId: 'child-event-player'
     }));

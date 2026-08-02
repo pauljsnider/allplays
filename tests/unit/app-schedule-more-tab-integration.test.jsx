@@ -9,6 +9,7 @@ const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    hydrateParentScheduleEventOptionalDetails: vi.fn((result) => Promise.resolve(result)),
     loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadStaffPracticePacket: vi.fn(),

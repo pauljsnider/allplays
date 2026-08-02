@@ -540,6 +540,10 @@ async function mockScheduleModules(page, options = {}) {
                     return schedule;
                 }
 
+                export async function hydrateParentScheduleEventOptionalDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function hydrateParentScheduleRsvps(schedule, user, options = {}) {
                     schedule.events.forEach((event) => {
                         event.myRsvpNoteHydrated = true;

@@ -240,7 +240,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, hydrateParentScheduleEventOptionalDetails, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, loadTeamOverviewSchedule, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -742,7 +742,7 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
     });
 
-    it('loads schedule event detail without expanding the full team schedule', async () => {
+    it('loads critical schedule event detail without expanding the full team schedule or optional reads', async () => {
         dbMocks.getGame.mockResolvedValue({
             id: 'game-1',
             type: 'game',
@@ -787,10 +787,8 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getRsvpSummaries).not.toHaveBeenCalled();
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(1);
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
-        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(dbMocks.listRideOffersForEvent).not.toHaveBeenCalled();
+        expect(dbMocks.getAssignmentClaims).not.toHaveBeenCalled();
 
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
@@ -809,11 +807,24 @@ describe('React app schedule service contract integration', () => {
             myRsvpNote: 'Needs a ride home',
             teamNotificationEmail: 'team-notify@example.com',
             rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },
-            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+            rideshareSummary: null
         });
         expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
             myRsvp: 'maybe',
             myRsvpNote: 'Late arrival'
+        });
+
+        const hydratedResult = await hydrateParentScheduleEventOptionalDetails(result);
+
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(hydratedResult.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+        });
+        expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            rideshareSummary: null
         });
     });
 

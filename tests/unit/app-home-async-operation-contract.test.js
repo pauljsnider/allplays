@@ -74,8 +74,8 @@ describe('Home async operation contract', () => {
 
     it('treats fully swallowed schedule and fee loader failures as real secondary failures', () => {
         expect(scheduleServiceSource).toContain('const results = await Promise.allSettled([');
-        expect(scheduleServiceSource).toContain("if (firstRejected && results.every((result) => result.status === 'rejected')) {");
-        expect(scheduleServiceSource).toContain('throw firstRejected.reason;');
+        expect(scheduleServiceSource).toContain("if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {");
+        expect(scheduleServiceSource).toContain('throw (rsvpsResult as PromiseRejectedResult).reason;');
         expect(legacyDbSource).toContain("if (results.length > 0 && results.every((result) => result.status === 'rejected')) {");
         expect(legacyDbSource).toContain('throw results[0].reason;');
     });
