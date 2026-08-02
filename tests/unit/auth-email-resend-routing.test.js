@@ -126,7 +126,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('exit "$storage_status"');
         expect(productionSource).toContain('if [[ "$deploy_targets" != "$retry_enabled_function_targets"');
         expect(productionSource).toContain(
-            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then'
+            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
         );
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
@@ -135,6 +135,9 @@ describe('authentication email delivery routing', () => {
         );
         expect(productionSource).toContain(
             'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
+        );
+        expect(productionSource).toContain(
+            'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"'
         );
         expect(productionSource).toContain('"retry-enabled-functions"');
         expect(productionSource.match(/deploy_args\+=\(--force\)/g) ?? []).toHaveLength(1);

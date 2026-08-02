@@ -300,12 +300,17 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"',
+        'Production retry-enabled cleanup compatibility allowlist'
+    );
+    assertIncludes(
+        deployProd,
         'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(
         deployProd,
-        '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then',
+        '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then',
         'Production force-deploy scoped producer allowlist guard'
     );
     assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
@@ -318,6 +323,11 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_inventory_producer_target"\s+\\?\s*"certificate-signature-inventory-producer"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
         'Production retry-enabled inventory producer failure-policy acknowledgement call'
+    );
+    assertMatches(
+        deployProd,
+        /retry_firebase_deploy\s+\\?\s*"\$retry_enabled_cleanup_compatibility_target"\s+\\?\s*"certificate-signature-cleanup-compatibility"\s+\\?\s*3\s+\\?\s*15\s+\\?\s*true/,
+        'Production retry-enabled cleanup compatibility failure-policy acknowledgement call'
     );
     assertIncludes(
         deployProd,
