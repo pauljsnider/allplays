@@ -67,6 +67,14 @@ describe('parent certificate loading', () => {
         expect(legacyParentToolsMocks.listCertificatesForPlayer).not.toHaveBeenCalled();
     });
 
+    it('rejects when the direct certificate read fails operationally', async () => {
+        const readError = new Error('certificate read failed');
+        legacyParentToolsMocks.getCertificate.mockRejectedValueOnce(readError);
+
+        await expect(loadParentCertificate(parent, 'team-1', 'cert-1')).rejects.toBe(readError);
+        expect(legacyParentToolsMocks.listCertificatesForPlayer).not.toHaveBeenCalled();
+    });
+
     it('rejects requests for a team not linked to the parent without reading the certificate', async () => {
         const card = await loadParentCertificate(parent, 'team-3', 'cert-1');
 
@@ -156,6 +164,15 @@ describe('parent certificate loading', () => {
             limit: 25
         });
         expect(cards.map((card) => card.playerId)).toEqual(['player-1', 'player-2']);
+    });
+
+    it('rejects the complete list when any linked child certificate read fails', async () => {
+        const readError = new Error('certificate list read failed');
+        legacyParentToolsMocks.listCertificatesForPlayer
+            .mockResolvedValueOnce([{ id: 'cert-1', title: 'Hustle Award' }])
+            .mockRejectedValueOnce(readError);
+
+        await expect(loadParentCertificates(parent)).rejects.toBe(readError);
     });
 
     it('reuses one team read for linked children on the same team', async () => {

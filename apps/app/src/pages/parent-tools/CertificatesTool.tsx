@@ -12,7 +12,12 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
     const [requestedCard, setRequestedCard] = useState<ParentCertificateCard | null>(null);
     const [showAllAwards, setShowAllAwards] = useState(false);
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
-    const { loading: loadingAllAwards, error: allAwardsError, clearError: clearAllAwardsError, run: runAllAwardsLoad } = useParentToolAsyncOperation();
+    const {
+        loading: loadingAllAwards,
+        error: allAwardsError,
+        invalidate: invalidateAllAwardsLoad,
+        run: runAllAwardsLoad
+    } = useParentToolAsyncOperation();
     const allAwardsLoadStarted = useRef(false);
     const requestedTeamId = String(searchParams.get('teamId') || '').trim();
     const requestedCertificateId = String(searchParams.get('certificateId') || '').trim();
@@ -20,7 +25,7 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
 
     const refresh = useCallback(async () => {
         allAwardsLoadStarted.current = false;
-        clearAllAwardsError();
+        invalidateAllAwardsLoad();
         setCards([]);
         setRequestedCard(null);
         setShowAllAwards(false);
@@ -37,13 +42,14 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
             },
             'Unable to load awards.',
             {
+                ignoreStale: true,
                 onSuccess: (result) => {
                     setCards(result.cards);
                     setRequestedCard(result.requestedCard);
                 }
             }
         );
-    }, [auth.user, clearAllAwardsError, hasRequestedCertificate, requestedCertificateId, requestedTeamId, runLoad]);
+    }, [auth.user, hasRequestedCertificate, invalidateAllAwardsLoad, requestedCertificateId, requestedTeamId, runLoad]);
 
     const loadAllAwards = useCallback(async () => {
         if (!requestedCard || allAwardsLoadStarted.current) return;
@@ -52,6 +58,7 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
             () => loadParentCertificates(auth.user, { includeCertificate: requestedCard }),
             'Unable to load all awards.',
             {
+                ignoreStale: true,
                 onSuccess: (result) => {
                     setCards(result);
                     setShowAllAwards(true);
