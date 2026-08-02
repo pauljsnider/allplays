@@ -82,6 +82,29 @@ function validP20Contract() {
     });
 }
 
+function validP21Contract() {
+    const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+    return validContract({
+        workflowId: 'P21', title: catalog.workflows[20].title, actors: ['primary'],
+        mutatesProduction: true, cleanupRequired: true,
+        steps: [
+            {
+                action: 'fill', target: { kind: 'label', name: 'Note', exact: true },
+                value: '{RUN_MARKER}', mutationId: 'ride-create'
+            },
+            { action: 'click', target: button('Create offer'), mutationId: 'ride-create', commitMutation: true },
+            { action: 'click', target: button('Close offer'), mutationId: 'ride-close', scope: '{RUN_MARKER}', commitMutation: true },
+            { action: 'click', target: button('Reopen offer'), mutationId: 'ride-reopen', scope: '{RUN_MARKER}', commitMutation: true },
+            { action: 'expectText', target: { kind: 'text', name: '{RUN_MARKER}', exact: true }, value: '{RUN_MARKER}' }
+        ],
+        cleanupSteps: [
+            { action: 'click', target: button('Close offer'), mutationId: 'ride-reopen', scope: '{RUN_MARKER}' },
+            { action: 'click', target: button('Reopen offer'), mutationId: 'ride-close', scope: '{RUN_MARKER}' },
+            { action: 'click', target: button('Cancel'), mutationId: 'ride-create', scope: '{RUN_MARKER}' }
+        ]
+    });
+}
+
 function validP13Contract() {
     const save = { kind: 'role', role: 'button', name: 'Save', exact: true };
     const remove = { kind: 'role', role: 'button', name: 'Remove image', exact: true };
@@ -429,6 +452,21 @@ describe('parent coverage contract boundary', () => {
             ...contract,
             cleanupSteps: contract.cleanupSteps.slice(1)
         }, catalog, 'P36')).toThrow(/trusted target-specific inverse/);
+    });
+
+    it('makes multi-operation rideshare coverage possible and unwinds it in reverse', () => {
+        const rideshare = validP21Contract();
+        expect(validateContract(rideshare, catalog, 'P21').workflowId).toBe('P21');
+        expect(() => validateContract({
+            ...rideshare,
+            cleanupSteps: [...rideshare.cleanupSteps].reverse()
+        }, catalog, 'P21')).toThrow(/unwind completed operations in reverse order/);
+        expect(() => validateContract({
+            ...rideshare,
+            steps: rideshare.steps.map((step) => step.action === 'click'
+                ? { ...step, mutationId: 'one-unsafe-group' }
+                : step)
+        }, catalog, 'P21')).toThrow(/same mutationId|own completed operation|exactly one trusted completed/);
     });
 
     it('requires actor-specific workflow evidence in the trusted order', () => {
