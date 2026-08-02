@@ -66,7 +66,7 @@ const workflowCapabilities = new Map(Object.entries({
     P13: { mode: 'reversible', routes: ['/profile/settings'], actions: ['click', 'uploadSyntheticImage'] },
     P14: { mode: 'reversible', routes: ['/players/{TEAM_ID}/{PLAYER_ID}'], actions: ['rememberControl', 'fill', 'click', 'restoreControl', 'uploadSyntheticImage'] },
     P15: { mode: 'readOnly', routes: ['/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
-    P16: { mode: 'reversible', routes: ['/schedule', '/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'select', 'click', 'restoreControl'] },
+    P16: { mode: 'readOnly', routes: ['/schedule', '/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['select'] },
     P17: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'fill', 'click', 'restoreControl'] },
     P18: { mode: 'readOnly', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: [] },
     P19: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'restoreControl'] },
@@ -75,7 +75,7 @@ const workflowCapabilities = new Map(Object.entries({
     P22: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'click'] },
     P23: { mode: 'reversible', routes: ['/messages', '/messages/{TEAM_ID}'], actions: ['fill', 'check', 'uncheck', 'click'] },
     P24: { mode: 'reversible', routes: ['/messages/{TEAM_ID}'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
-    P25: { mode: 'reversible', routes: ['/home', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'restoreControl'] },
+    P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click'] },
     P27: { mode: 'lifecycle', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
@@ -163,6 +163,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'rememberControl', actor: 'primary', target: /name/i },
         { action: 'rememberControl', actor: 'primary', target: /phone/i },
         { action: 'fill', actor: 'primary', target: /name/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /phone/i },
         { action: 'click', actor: 'primary', target: /save|update profile/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
         { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /name/i },
@@ -198,11 +199,17 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /event|game|practice/i }
     ],
     P17: [
+        { action: 'rememberControl', actor: 'primary', target: /rsvp|going|not going|maybe/i },
+        { action: 'rememberControl', actor: 'primary', target: /note/i },
+        { action: 'rememberControl', actor: 'primary', target: /sibling/i },
         { action: 'select', actor: 'primary', target: /rsvp|going|not going|maybe/i },
-        { action: 'fill', actor: 'primary', target: /note|sibling/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /note/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /sibling/i, value: /\{RUN_MARKER\}/ },
         { action: 'click', actor: 'primary', target: /save|update rsvp/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
-        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /rsvp|note|sibling/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /rsvp|going|not going|maybe/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /note/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /sibling/i },
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|update rsvp/i }
     ],
     P18: [
@@ -243,8 +250,9 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
         { action: 'click', actor: 'primary', target: /send/i },
         { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /\{RUN_MARKER\}|message/i, value: /\{RUN_MARKER\}/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /read|seen/i },
         { action: 'click', actor: 'peer', target: /mute/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /muted|unmute|read/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /muted|unmute/i },
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i },
         { action: 'click', phase: 'cleanup', actor: 'peer', target: /unmute/i }
     ],
@@ -256,7 +264,8 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P25: [
         { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i },
-        { action: 'click', actor: 'peer', target: /notification|mark read/i },
+        { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|home/ },
+        { actions: ['expectVisible', 'expectText', 'expectNoText'], actor: 'peer', target: /read|seen|no new notifications|unread/i },
         { action: 'rememberControl', actor: 'primary', target: /email|push|sms|mute/i },
         { actions: ['check', 'uncheck'], actor: 'primary', target: /email|push|sms|mute/i },
         { action: 'click', actor: 'primary', target: /save/i },
@@ -305,6 +314,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P33: [
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /media|member|album/i },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /manage upload permissions|bulk delete|moderate all media/i },
         { action: 'uploadSyntheticImage', actor: 'primary', target: /photo|image|upload/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|uploaded|media/i },
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /remove media|delete media/i }
@@ -348,13 +358,19 @@ const reversibleClickInversePairs = new Map(Object.entries({
     P09: [['request access', 'cancel request'], ['send request', 'cancel request']],
     P13: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
     P14: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
-    P20: [['claim', 'release']], P21: [['create offer', 'close offer'], ['close offer', 'reopen offer']],
+    P20: [['claim', 'release']], P21: [
+        ['offer ride', 'cancel'], ['create offer', 'cancel'],
+        ['close offer', 'reopen offer'], ['reopen offer', 'close offer']
+    ],
     P22: [['request ride', 'cancel'], ['approve', 'cancel'], ['accept', 'cancel']],
     P23: [['send', 'delete message'], ['mute', 'unmute']],
     P24: [['send', 'delete message'], ['upload', 'remove attachment']],
-    P26: [['add friend', 'remove friend'], ['send', 'delete message']],
+    P26: [['add friend', 'remove friend'], ['accept', 'remove friend'], ['send', 'delete message']],
     P28: [['create share', 'revoke share']],
-    P33: [['upload', 'remove media']], P34: [['publish', 'delete post'], ['send', 'delete comment'], ['like', 'unlike']],
+    P33: [['upload', 'remove media']], P34: [
+        ['upload', 'remove image'], ['publish', 'delete post'], ['send', 'delete comment'], ['like', 'unlike'],
+        ['reaction', 'unlike'], ['moderate', 'unhide post'], ['hide post', 'unhide post']
+    ],
     P35: [['send', 'delete message']], P36: [['send', 'delete message'], ['upload', 'remove attachment']]
 }));
 const forbiddenMutationTarget = /(?:delete|deactivate|remove)\s+(?:my\s+)?(?:account|profile)|(?:grant|make|promote).*(?:admin|coach|manager|staff)|(?:admin|coach|manager|staff).*(?:access|permission|role)/i;
@@ -403,16 +419,17 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P28: { primary: /^(?:share|family|privacy|email|create share|revoke share)$/i },
     P33: { primary: /^(?:media|photo|image|upload|title|caption|share|remove media|delete media)$/i },
     P34: {
-        primary: /^(?:social|post|image|photo|upload|reaction|like|comment|moderate|hide post|delete post|delete comment|remove image|send|publish)$/i,
-        peer: /^(?:social|post|image|photo|upload|reaction|like|comment|moderate|hide post|delete post|delete comment|remove image|send|publish)$/i
+        primary: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i,
+        peer: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i
     },
-    P35: { primary: /^(?:ai|chat|prompt|send|clear chat|new conversation)$/i },
-    P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|remove attachment|clear chat|new conversation)$/i },
+    P35: { primary: /^(?:ai|chat|prompt|send|delete message|clear chat|new conversation)$/i },
+    P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|delete message|remove attachment|clear chat|new conversation)$/i },
     P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
 }));
 const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
     P07: { clickAndExpectGoogleAuth: /^(?:continue with google|sign in with google|google)$/i },
     P10: { clickAndExpectRoute: /^(?:schedule|tasks?|rideshare|notifications?|profile|view all)$/i },
+    P25: { clickAndExpectRoute: /^(?:notification|open notification)$/i },
     P29: { clickAndExpectDownload: /^(?:download calendar|download ics|calendar feed|export calendar)$/i },
     P30: { clickAndExpectStripeCheckout: /^(?:pay|pay fee|checkout|continue to checkout)$/i },
     P31: { clickAndExpectStripeCheckout: /^(?:register|start registration|checkout|continue to checkout|pay registration fee)$/i },
@@ -580,6 +597,17 @@ function isTrustedClickInverse(workflowId, executionStep, cleanupStep) {
     );
 }
 
+function trustedInverseScopeMatches(workflowId, executionStep, cleanupStep) {
+    if (workflowId !== 'P36' || !executionStep.action.startsWith('uploadSynthetic')) return true;
+    const suffix = executionStep.action === 'uploadSyntheticImage' ? '.png' : '.pdf';
+    return cleanupStep.scope === `{RUN_MARKER}${suffix}`;
+}
+
+function isNonProductionReversibleInteraction(workflowId, step) {
+    return workflowId === 'P16' && step.action === 'select' &&
+        /^(?:team|filter|calendar|date)$/i.test(String(step.target?.name || ''));
+}
+
 export function workflowRouteAllowed(workflowId, route, resolved = false) {
     const capability = workflowCapabilities.get(workflowId);
     return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
@@ -669,7 +697,21 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
             throw new Error(`${phase} lifecycle deletion confirmation must use the fixed disposable-fixture value`);
         }
     }
-    if (capability.mode === 'readOnly' && ['clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
+    if (capability.mode === 'readOnly' && stateChangingActions.has(step.action)) {
+        if (!isNonProductionReversibleInteraction(workflowId, step)) {
+            throw new Error(`${phase} action ${step.action} is not a trusted non-production interaction for ${workflowId}`);
+        }
+        const actor = step.actor || defaultActor;
+        const targetName = String(step.target?.name || '');
+        if (
+            !mutationTargetCapabilities.get(workflowId)?.[actor]?.test(targetName) ||
+            !['label', 'testId'].includes(step.target?.kind) ||
+            step.target?.exact !== true
+        ) {
+            throw new Error(`${phase} transient interaction is outside the trusted ${workflowId}/${actor} capability`);
+        }
+    }
+    if (['clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
         const targetCapability = readOnlyInteractionTargetCapabilities.get(workflowId)?.[step.action];
         if (!targetCapability?.test(String(step.target?.name || ''))) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${step.action} capability`);
@@ -704,8 +746,8 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
     if (step.action === 'clickAndExpectGoogleAuth' && workflowId !== 'P07') {
         throw new Error(`${label} Google handoff assertions are restricted to P07`);
     }
-    if (step.action === 'clickAndExpectRoute' && workflowId !== 'P10') {
-        throw new Error(`${label} route click assertions are restricted to P10`);
+    if (step.action === 'clickAndExpectRoute' && !['P10', 'P25'].includes(workflowId)) {
+        throw new Error(`${label} route click assertions are restricted to P10 and P25`);
     }
     if (step.action === 'clickAndExpectDownload' && !['P29', 'P32'].includes(workflowId)) {
         throw new Error(`${label} download assertions are restricted to P29 and P32`);
@@ -761,6 +803,9 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
     }
     if (step.commitMutation !== undefined && (!step.mutationId || phase !== 'execution')) {
         throw new Error(`${label} commitMutation is valid only for an execution mutation`);
+    }
+    if (isNonProductionReversibleInteraction(workflowId, step) && (step.mutationId || step.commitMutation)) {
+        throw new Error(`${label} transient filter interaction cannot declare a production mutation`);
     }
     assertParentCoverageStepCapability(workflowId, step, phase, declaredActors[0]);
 }
@@ -841,7 +886,8 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     }
     cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId, 'cleanup'));
     const executionMutationIds = contract.steps
-        .filter((step) => reversibleMutationActions.has(step.action))
+        .filter((step) => reversibleMutationActions.has(step.action) &&
+            !isNonProductionReversibleInteraction(contract.workflowId, step))
         .map((step) => step.mutationId || '');
     const cleanupMutationIds = cleanupSteps
         .filter((step) => reversibleMutationActions.has(step.action))
@@ -881,41 +927,42 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
                 throw new Error(`reversible mutation ${mutationId} cleanup cannot declare a completed forward operation`);
             }
             const commitStep = commitSteps[0];
-            for (const executionStep of executionGroup.filter((step) => controlMutationActions.has(step.action))) {
+            const rememberedTargets = new Set(contract.steps
+                .filter((step) => step.action === 'rememberControl')
+                .map((step) => `${step.actor || contract.actors[0]}:${JSON.stringify(step.target)}`));
+            const persistedControlSteps = executionGroup.filter((step) =>
+                controlMutationActions.has(step.action) &&
+                rememberedTargets.has(`${step.actor || contract.actors[0]}:${JSON.stringify(step.target)}`)
+            );
+            for (const executionStep of persistedControlSteps) {
                 if (!cleanupGroup.some((step) => step.action === 'restoreControl' && sameTarget(step, executionStep))) {
                     throw new Error(`reversible mutation ${mutationId} must restore the exact mutated control`);
                 }
             }
+            const reservedInverseIndexes = new Set();
             for (const executionStep of executionGroup.filter((step) => ['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action))) {
-                const hasDirectInverse = cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
-                    contract.workflowId,
-                    executionStep,
-                    cleanupStep
-                ));
-                const uploadCoveredByCreatedEntityInverse =
-                    ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(executionStep.action) &&
-                    commitStep !== executionStep &&
-                    commitStep.action === 'click' &&
-                    cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
-                        contract.workflowId,
-                        commitStep,
-                        cleanupStep
-                    ));
+                const directInverseIndex = cleanupGroup.findIndex((cleanupStep, index) =>
+                    !reservedInverseIndexes.has(index) &&
+                    isTrustedClickInverse(contract.workflowId, executionStep, cleanupStep) &&
+                    trustedInverseScopeMatches(contract.workflowId, executionStep, cleanupStep)
+                );
+                const hasDirectInverse = directInverseIndex >= 0;
+                if (hasDirectInverse) reservedInverseIndexes.add(directInverseIndex);
                 const isStateCommit = executionStep.action === 'click' &&
                     /^(?:save|save changes|update profile|update rsvp|submit)$/i.test(String(executionStep.target?.name || '')) &&
                     executionGroup.some((step) =>
-                        controlMutationActions.has(step.action) ||
+                        persistedControlSteps.includes(step) ||
                         ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)
                     ) &&
                     cleanupGroup.some((step) => step.action === 'click' && sameTarget(step, executionStep)) &&
-                    executionGroup.filter((step) => controlMutationActions.has(step.action)).every((step) =>
+                    persistedControlSteps.every((step) =>
                         cleanupGroup.some((cleanupStep) => cleanupStep.action === 'restoreControl' && sameTarget(cleanupStep, step))
                     );
-                if (!hasDirectInverse && !uploadCoveredByCreatedEntityInverse && !isStateCommit) {
+                if (!hasDirectInverse && !isStateCommit) {
                     throw new Error(`reversible mutation ${mutationId} must use a trusted target-specific inverse`);
                 }
             }
-            const controlSteps = executionGroup.filter((step) => controlMutationActions.has(step.action));
+            const controlSteps = persistedControlSteps;
             if (controlSteps.length > 0) {
                 const commitIndex = contract.steps.indexOf(commitStep);
                 if (
@@ -965,7 +1012,10 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
                     ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)
                 );
                 if (createsRunEntity) {
-                    if (inverseStep.scope !== '{RUN_MARKER}') {
+                    const trustedRunScopes = contract.workflowId === 'P36' && /remove attachment/i.test(String(inverseStep.target?.name || ''))
+                        ? new Set(['{RUN_MARKER}.png', '{RUN_MARKER}.pdf'])
+                        : new Set(['{RUN_MARKER}']);
+                    if (!trustedRunScopes.has(inverseStep.scope)) {
                         throw new Error(`reversible mutation ${mutationId} created-entity cleanup must be scoped to the run marker`);
                     }
                 } else if (!commitStep.scope || commitStep.scope !== inverseStep.scope) {

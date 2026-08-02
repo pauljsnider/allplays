@@ -249,6 +249,31 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P01')).toThrow(/mutation flags do not match/);
     });
 
+    it('treats the schedule filter as a bounded non-production interaction', () => {
+        const schedule = validContract({
+            workflowId: 'P16',
+            title: catalog.workflows[15].title,
+            actors: ['primary'],
+            steps: [
+                { action: 'goto', actor: 'primary', route: '/schedule' },
+                {
+                    action: 'select', actor: 'primary',
+                    target: { kind: 'label', name: 'Team', exact: true }, option: '{TEAM_ID}'
+                },
+                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Game', exact: true }, value: 'Game' },
+                { action: 'goto', actor: 'primary', route: '/schedule/{TEAM_ID}/{EVENT_ID}' },
+                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Event', exact: true }, value: 'Event' }
+            ]
+        });
+        expect(validateContract(schedule, catalog, 'P16').cleanupSteps).toEqual([]);
+        expect(() => validateContract({
+            ...schedule,
+            steps: schedule.steps.map((step) => step.action === 'select'
+                ? { ...step, mutationId: 'fake-production-change', commitMutation: true }
+                : step)
+        }, catalog, 'P16')).toThrow(/transient filter interaction cannot declare a production mutation/);
+    });
+
     it('requires paired control-state keys for reversible fixture edits', () => {
         const reversible = validP12Contract();
         expect(validateContract(reversible, catalog, 'P12').cleanupSteps).toHaveLength(3);
@@ -283,6 +308,14 @@ describe('parent coverage contract boundary', () => {
                 mutationId: 'profile-fields'
             }]
         }, catalog, 'P12')).toThrow(/exactly match one remembered control|exact mutated control/);
+    });
+
+    it('requires both profile fields advertised by P12 to be changed and restored', () => {
+        const profile = validP12Contract();
+        expect(() => validateContract({
+            ...profile,
+            steps: profile.steps.filter((step) => !(step.action === 'fill' && step.target?.name === 'Phone'))
+        }, catalog, 'P12')).toThrow(/profile-fields|ordered trusted P12 primary fill workflow behavior/);
     });
 
     it('binds reversible mutations to actor-specific targets and cleanup mutation ids', () => {
@@ -369,6 +402,33 @@ describe('parent coverage contract boundary', () => {
             ...task,
             cleanupSteps: task.cleanupSteps.map(({ scope, ...step }) => step)
         }, catalog, 'P20')).toThrow(/inverse cleanup must be bound to an exact entity scope/);
+    });
+
+    it('requires a distinct run-scoped inverse for every AI attachment', () => {
+        const removeAttachment = { kind: 'role', role: 'button', name: 'Remove attachment', exact: true };
+        const contract = validContract({
+            workflowId: 'P36', title: catalog.workflows[35].title, actors: ['primary'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Image', exact: true }, mutationId: 'ai-message' },
+                { action: 'expectText', target: { kind: 'text', name: 'Image attachment', exact: true }, value: 'image' },
+                { action: 'uploadSyntheticDocument', target: { kind: 'label', name: 'Document', exact: true }, mutationId: 'ai-message' },
+                { action: 'expectText', target: { kind: 'text', name: 'Document PDF', exact: true }, value: 'document' },
+                { action: 'fill', target: { kind: 'label', name: 'Prompt', exact: true }, value: '{RUN_MARKER}', mutationId: 'ai-message' },
+                { action: 'click', target: { kind: 'role', role: 'button', name: 'Send', exact: true }, mutationId: 'ai-message', commitMutation: true },
+                { action: 'expectText', target: { kind: 'text', name: 'Assistant response', exact: true }, value: '{RUN_MARKER}' }
+            ],
+            cleanupSteps: [
+                { action: 'click', target: removeAttachment, mutationId: 'ai-message', scope: '{RUN_MARKER}.png' },
+                { action: 'click', target: removeAttachment, mutationId: 'ai-message', scope: '{RUN_MARKER}.pdf' },
+                { action: 'click', target: { kind: 'role', role: 'button', name: 'Delete message', exact: true }, mutationId: 'ai-message', scope: '{RUN_MARKER}' }
+            ]
+        });
+        expect(validateContract(contract, catalog, 'P36').workflowId).toBe('P36');
+        expect(() => validateContract({
+            ...contract,
+            cleanupSteps: contract.cleanupSteps.slice(1)
+        }, catalog, 'P36')).toThrow(/trusted target-specific inverse/);
     });
 
     it('requires actor-specific workflow evidence in the trusted order', () => {

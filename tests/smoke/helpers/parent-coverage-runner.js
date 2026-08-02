@@ -85,7 +85,9 @@ function baseLocator(root, descriptor, variables) {
 async function locatorFor(page, descriptor, variables, scope = '') {
     if (!scope) return baseLocator(page, descriptor, variables);
     const scopeText = interpolateTextTemplate(scope, variables);
-    const anchor = page.getByText(scopeText, { exact: true }).first();
+    const anchors = page.getByText(scopeText, { exact: true });
+    await expect(anchors).toHaveCount(1, { timeout: 20_000 });
+    const anchor = anchors;
     await expect(anchor).toBeVisible({ timeout: 20_000 });
     const container = anchor.locator(
         'xpath=ancestor-or-self::*[self::article or self::li or self::tr or @role="row" or @role="listitem" or @data-testid][1]'
@@ -295,7 +297,16 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         }
 
         await assertAllowedPage(page, appBaseUrl, contract.workflowId);
-        const target = (await locatorFor(page, step.target, variables, step.scope)).first();
+        const target = await locatorFor(page, step.target, variables, step.scope);
+        if ([
+            'click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute',
+            'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill',
+            'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select',
+            'rememberControl', 'restoreControl', 'uploadSyntheticImage',
+            'uploadSyntheticDocument'
+        ].includes(step.action)) {
+            await expect(target).toHaveCount(1, { timeout: 20_000 });
+        }
         switch (step.action) {
         case 'click':
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);

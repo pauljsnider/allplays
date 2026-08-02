@@ -58,4 +58,10 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toContain('requireAppRoute: true');
         expect(runnerSource).toMatch(/requireAppRoute: true[\s\S]+assertAllowedPage\(page, appBaseUrl, contract\.workflowId\)/);
     });
+
+    it('fails closed on ambiguous entity scopes and mutation targets', () => {
+        expect(runnerSource).toContain('await expect(anchors).toHaveCount(1');
+        expect(runnerSource).toContain('await expect(target).toHaveCount(1');
+        expect(runnerSource).not.toContain("getByText(scopeText, { exact: true }).first()");
+    });
 });
