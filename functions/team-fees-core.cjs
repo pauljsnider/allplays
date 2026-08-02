@@ -6,7 +6,10 @@ function normalizeString(value) {
 
 const LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS = Object.freeze([
     'checkoutUrl',
+    'checkoutURL',
     'paymentLink',
+    'paymentLinkUrl',
+    'paymentUrl',
     'stripeCheckoutSessionId',
     'checkoutAttemptToken',
     'checkoutAmountCents',
@@ -22,12 +25,19 @@ function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
 }
 
 function buildLegacyReadableTeamFeeCheckoutAttempt({ recipient = {}, existingAttempt = {}, now = null } = {}) {
+    const readableCheckoutUrl = [
+        recipient.checkoutUrl,
+        recipient.checkoutURL,
+        recipient.paymentLink,
+        recipient.paymentLinkUrl,
+        recipient.paymentUrl
+    ].find((value) => normalizeString(value));
     const authoritativeAttempt = Object.fromEntries(
         Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
     );
     return {
         version: 1,
-        ...(recipient.checkoutUrl || recipient.paymentLink ? { checkoutUrl: recipient.checkoutUrl || recipient.paymentLink } : {}),
+        ...(readableCheckoutUrl ? { checkoutUrl: readableCheckoutUrl } : {}),
         ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
         ...(recipient.stripeCheckoutSessionId ? { stripeCheckoutSessionId: recipient.stripeCheckoutSessionId } : {}),
         ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),

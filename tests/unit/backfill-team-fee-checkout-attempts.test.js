@@ -64,7 +64,10 @@ describe('team-fee checkout attempt backfill', () => {
         const db = makeFirestore({
             [recipientPath]: {
                 checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
+                checkoutURL: 'https://checkout.stripe.com/c/pay/legacy-uppercase',
                 paymentLink: 'https://checkout.stripe.com/c/pay/legacy',
+                paymentLinkUrl: 'https://checkout.stripe.com/c/pay/legacy-link-url',
+                paymentUrl: 'https://checkout.stripe.com/c/pay/legacy-payment-url',
                 checkoutStatus: 'open',
                 stripeCheckoutSessionId: 'cs_legacy',
                 checkoutAttemptToken: 'tok_legacy_123456',
@@ -98,7 +101,10 @@ describe('team-fee checkout attempt backfill', () => {
         const recipient = db.state.get(recipientPath);
         for (const field of [
             'checkoutUrl',
+            'checkoutURL',
             'paymentLink',
+            'paymentLinkUrl',
+            'paymentUrl',
             'stripeCheckoutSessionId',
             'checkoutAttemptToken',
             'checkoutAmountCents',
@@ -108,6 +114,31 @@ describe('team-fee checkout attempt backfill', () => {
         ]) {
             expect(recipient).not.toHaveProperty(field);
         }
+    });
+
+    it.each([
+        'checkoutUrl',
+        'checkoutURL',
+        'paymentLink',
+        'paymentLinkUrl',
+        'paymentUrl'
+    ])('migrates and scrubs the %s bearer URL alias when it is the only legacy state', async (field) => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+        const checkoutUrl = `https://checkout.stripe.com/c/pay/${field}`;
+        const db = makeFirestore({
+            [recipientPath]: { [field]: checkoutUrl }
+        });
+
+        await expect(backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        })).resolves.toEqual({ matched: 1, migrated: 1 });
+
+        expect(db.state.get(attemptPath)).toMatchObject({ checkoutUrl });
+        expect(db.state.get(recipientPath)).not.toHaveProperty(field);
     });
 
     it('keeps dry runs read-only', async () => {
