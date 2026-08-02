@@ -314,8 +314,14 @@ jobs:
               if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
                 if git diff --quiet "$firestore_success_sha" "$last_success_sha" -- \
                   firestore.rules firestore.indexes.json; then
-                  echo "::notice::A newer unchanged complete production deployment supersedes the older Firestore component marker; advancing its SHA while preserving the release mode."
+                  echo "::notice::A newer unchanged complete production deployment supersedes the older Firestore component marker; advancing its SHA and forcing live mode classification."
                   firestore_success_sha="$last_success_sha"
+                  if [[ "$firestore_success_mode" != "final" ]]; then
+                    # The protected native-readiness gate can finalize the same
+                    # source without a git diff. If that marker write failed, an
+                    # older compatibility marker cannot prove the newer mode.
+                    firestore_success_mode="ambiguous"
+                  fi
                 else
                   echo "::warning::A newer complete production deployment changed Firestore configuration without a component marker; retaining the older trusted baseline so active-source verification must resolve the state."
                 fi

@@ -74,7 +74,8 @@ describe('certificate defaults Firestore rules', () => {
         );
         expect(deployWorkflow).toContain('[[ "$active_rules_variant" == *-final ]]');
         expect(deployWorkflow).toContain('firestore-baseline-compat.rules');
-        expect(deployWorkflow).toContain('advancing its SHA while preserving the release mode');
+        expect(deployWorkflow).toContain('advancing its SHA and forcing live mode classification');
+        expect(deployWorkflow).toContain('The protected native-readiness gate can finalize the same');
         expect(deployWorkflow).toContain(
             'The Firestore component deployment lookup failed; the active release mode is unknown.'
         );

@@ -581,8 +581,13 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'advancing its SHA while preserving the release mode',
-        'Production Firestore compatibility mode preservation across unchanged deploys'
+        'advancing its SHA and forcing live mode classification',
+        'Production Firestore mode classification across unchanged deploys'
+    );
+    assertIncludes(
+        deployProd,
+        'The protected native-readiness gate can finalize the same',
+        'Production Firestore external finalization ambiguity handling'
     );
     assertIncludes(
         deployProd,

@@ -152,7 +152,8 @@ concurrency:
           echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
           git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json
-          echo "advancing its SHA while preserving the release mode"
+          echo "advancing its SHA and forcing live mode classification"
+          echo "The protected native-readiness gate can finalize the same"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
