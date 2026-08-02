@@ -199,6 +199,18 @@ function makeSession(overrides = {}) {
     };
 }
 
+function makeTeamPassSession(params, overrides = {}) {
+    return {
+        id: 'cs_team_pass_current',
+        url: 'https://checkout.stripe.com/c/pay/cs_team_pass_current',
+        mode: 'payment',
+        status: 'open',
+        payment_status: 'unpaid',
+        metadata: clone(params.metadata),
+        ...overrides
+    };
+}
+
 function seedWithPrivateCheckoutAttempt(session, { recipient = {}, attempt = {} } = {}) {
     const reservationId = attempt.reservationId || 'reservation-current';
     const seed = baseSeed({
@@ -907,6 +919,123 @@ test('uses a stable idempotency key for repeated team-pass checkout creation', a
     assert.equal(attempt?.status, 'open');
     assert.equal(attempt?.stripeCheckoutSessionId, 'cs_team_pass');
     assert.deepEqual(attempt?.checkoutCreationRequest?.stripeParams, loaded.metrics.createCalls[0].params);
+});
+
+test('expires a team-pass session after a definitive pre-commit persistence failure', async () => {
+    const loaded = loadCallable({
+        firestoreOptions: {
+            failTransactionWhen: ({ call }) => call === 2
+        },
+        create: async (params) => makeTeamPassSession(params, {
+            id: 'cs_team_pass_precommit_failure',
+            url: 'https://checkout.stripe.com/c/pay/cs_team_pass_precommit_failure'
+        })
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        /Forced Firestore transaction failure/
+    );
+
+    assert.deepEqual(loaded.metrics.expireCalls, ['cs_team_pass_precommit_failure']);
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt?.status, 'failed');
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationRequest'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'stripeCheckoutSessionId'), false);
+});
+
+test('returns a team-pass session after authoritative reread proves a post-commit response failure', async () => {
+    const loaded = loadCallable({
+        firestoreOptions: {
+            failTransactionAfterCommitWhen: ({ call }) => call === 2
+        },
+        create: async (params) => makeTeamPassSession(params, {
+            id: 'cs_team_pass_postcommit_failure',
+            url: 'https://checkout.stripe.com/c/pay/cs_team_pass_postcommit_failure'
+        })
+    });
+
+    const result = await loaded.teamPassCallable(
+        { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' },
+        context
+    );
+
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_team_pass_postcommit_failure',
+        sessionId: 'cs_team_pass_postcommit_failure'
+    });
+    assert.deepEqual(loaded.metrics.expireCalls, []);
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt?.status, 'open');
+    assert.equal(attempt?.stripeCheckoutSessionId, 'cs_team_pass_postcommit_failure');
+});
+
+test('treats a false team-pass persistence result as a definitive non-commit when the attempt disappeared', async () => {
+    let loaded;
+    loaded = loadCallable({
+        create: async (params) => {
+            const attemptPath = [...loaded.firestore._state.keys()]
+                .find((path) => path.includes('/teamPassCheckoutAttempts/'));
+            loaded.firestore._state.delete(attemptPath);
+            return makeTeamPassSession(params, {
+                id: 'cs_team_pass_missing_attempt',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_missing_attempt'
+            });
+        }
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'aborted'
+    );
+    assert.deepEqual(loaded.metrics.expireCalls, ['cs_team_pass_missing_attempt']);
+});
+
+test('never returns a team-pass session when a false persistence result reconciles as unknown', async () => {
+    let loaded;
+    loaded = loadCallable({
+        create: async (params) => {
+            const attemptEntry = [...loaded.firestore._state.entries()]
+                .find(([path]) => path.includes('/teamPassCheckoutAttempts/'));
+            attemptEntry[1].checkoutCreationReservationId = 'replacement-reservation';
+            return makeTeamPassSession(params, {
+                id: 'cs_team_pass_lost_reservation',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_lost_reservation'
+            });
+        }
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'aborted'
+    );
+    assert.deepEqual(loaded.metrics.expireCalls, []);
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt?.checkoutCreationReservationId, 'replacement-reservation');
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutUrl'), false);
+});
+
+test('expires and rejects a team-pass session with mismatched provider metadata', async () => {
+    const loaded = loadCallable({
+        create: async (params) => makeTeamPassSession(params, {
+            id: 'cs_team_pass_mismatched_metadata',
+            url: 'https://checkout.stripe.com/c/pay/cs_team_pass_mismatched_metadata',
+            metadata: {
+                ...clone(params.metadata),
+                purchaserUid: 'other-purchaser'
+            }
+        })
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'internal'
+    );
+    assert.deepEqual(loaded.metrics.expireCalls, ['cs_team_pass_mismatched_metadata']);
 });
 
 test('serializes team-scoped checkout attempts without sharing checkout details across purchasers', async () => {

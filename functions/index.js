@@ -629,6 +629,19 @@ function isReusableTeamPassCheckoutCreationRequest(request, { input, purchaserUi
   );
 }
 
+function isExpectedTeamPassCheckoutSession(session, { input, purchaserUid, reservationId }) {
+  const metadata = session?.metadata;
+  return Boolean(
+    String(session?.id || '').trim()
+    && isCanonicalStripeCheckoutUrl(session?.url)
+    && metadata?.teamId === input.teamId
+    && metadata?.seasonId === input.seasonId
+    && metadata?.tier === input.tier
+    && metadata?.purchaserUid === purchaserUid
+    && metadata?.checkoutCreationReservationId === reservationId
+  );
+}
+
 async function reserveTeamPassCheckoutCreation({
   input,
   purchaserUid,
@@ -737,6 +750,42 @@ async function recordTeamPassCheckoutSession(attemptRef, reservationId, session)
     }, { merge: true });
     return true;
   });
+}
+
+async function getTeamPassCheckoutPersistenceState({
+  attemptRef,
+  reservationId,
+  session,
+  purchaserUid
+}) {
+  try {
+    const attemptSnap = await attemptRef.get();
+    if (!attemptSnap.exists) return 'not-committed';
+    const attempt = attemptSnap.data() || {};
+    const persistedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+    if (
+      persistedSessionId === String(session?.id || '').trim()
+      && attempt.checkoutUrl === session?.url
+      && attempt.status === 'open'
+      && String(attempt.purchaserUid || '').trim() === purchaserUid
+      && String(attempt.checkoutCreationReservationId || '').trim() === reservationId
+    ) {
+      return 'committed';
+    }
+    if (
+      String(attempt.checkoutCreationReservationId || '').trim() === reservationId
+      && !persistedSessionId
+    ) {
+      return 'not-committed';
+    }
+    return 'unknown';
+  } catch (error) {
+    functions.logger.error('Failed to determine whether a team-pass checkout was committed.', {
+      providerSessionId: String(session?.id || ''),
+      error: error?.message || error
+    });
+    return 'unknown';
+  }
 }
 
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
@@ -5690,7 +5739,11 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     throw error;
   }
 
-  if (!String(session?.id || '').trim() || !isCanonicalStripeCheckoutUrl(session?.url)) {
+  if (!isExpectedTeamPassCheckoutSession(session, {
+    input,
+    purchaserUid: context.auth.uid,
+    reservationId
+  })) {
     const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-validation');
     if (expired) {
       await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, 'invalid').catch(() => {});
@@ -5703,14 +5756,37 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
     throw new functions.https.HttpsError('aborted', 'The prior team-pass checkout expired. Retry to create a new checkout.');
   }
 
-  await recordTeamPassCheckoutSession(attemptRef, reservationId, session).catch((error) => {
-    functions.logger.warn('Could not record the recoverable team-pass Stripe session.', {
-      teamId,
-      seasonId,
-      providerSessionId: String(session?.id || ''),
-      error: error?.message || error
+  let persistenceError = null;
+  try {
+    const recorded = await recordTeamPassCheckoutSession(attemptRef, reservationId, session);
+    if (!recorded) {
+      persistenceError = new functions.https.HttpsError(
+        'aborted',
+        'The team-pass checkout creation reservation changed before the session was saved.'
+      );
+    }
+  } catch (error) {
+    persistenceError = error;
+  }
+
+  if (persistenceError) {
+    const persistenceState = await getTeamPassCheckoutPersistenceState({
+      attemptRef,
+      reservationId,
+      session,
+      purchaserUid: context.auth.uid
     });
-  });
+    if (persistenceState === 'committed') {
+      return { checkoutUrl: session.url, sessionId: session.id };
+    }
+    if (persistenceState === 'not-committed') {
+      const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-persistence');
+      if (expired) {
+        await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId).catch(() => {});
+      }
+    }
+    throw persistenceError;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });

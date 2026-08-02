@@ -28,7 +28,9 @@ describe('Stripe Checkout durability contract', () => {
         expect(teamFee).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(registration).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
         expect(registration).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
-        expect(teamPass).toContain('isCanonicalStripeCheckoutUrl');
+        expect(functionsSource).toMatch(
+            /function isExpectedTeamPassCheckoutSession[\s\S]*isCanonicalStripeCheckoutUrl/
+        );
         expect(teamFee).toContain('getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('function getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('isCanonicalStripeCheckoutUrl(session.url)');
@@ -45,6 +47,11 @@ describe('Stripe Checkout durability contract', () => {
         expect(functionsSource).toContain('isReusableTeamPassCheckoutCreationRequest');
         expect(teamPass).toContain('isUncertainStripeCheckoutCreationError(error)');
         expect(teamPass).toContain('clearTeamPassCheckoutCreationReservation');
+        expect(teamPass).toContain('isExpectedTeamPassCheckoutSession');
+        expect(teamPass).toContain('if (!recorded)');
+        expect(teamPass).toContain('getTeamPassCheckoutPersistenceState');
+        expect(teamPass).toContain("persistenceState === 'committed'");
+        expect(teamPass).toContain("expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-persistence')");
     });
 
     it('serializes a shared team-pass entitlement without disclosing one purchaser checkout to another', () => {
