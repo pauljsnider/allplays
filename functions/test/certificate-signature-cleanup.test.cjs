@@ -294,7 +294,7 @@ test('authenticates primary cleanup targets only with an immutable object genera
   }), []);
 });
 
-test('upgrades old primary tombstones before new writers can emit canonical identity fields', async () => {
+test('retains old primary tombstones when no historical generation was recorded', async () => {
   const storagePath = 'certificate-signatures/teams/team-1/old-writer.png';
   const result = await upgradeCertificateSignatureCleanupTarget({
     teamId: 'team-1',
@@ -311,6 +311,38 @@ test('upgrades old primary tombstones before new writers can emit canonical iden
       assert.equal(storageBucket, 'primary');
       assert.equal(requestedPath, storagePath);
       return { generation: '1700000000000002' };
+    }
+  });
+
+  assert.deepEqual(result, {
+    blockedReason: 'unverified-historical-generation',
+    missing: false,
+    target: {
+      teamId: 'team-1',
+      storageBucket: 'primary',
+      storagePath,
+      requestedBy: 'admin-1',
+      status: 'pending'
+    }
+  });
+});
+
+test('upgrades a partially canonical primary tombstone only from its recorded generation', async () => {
+  const storagePath = 'certificate-signatures/teams/team-1/recorded-generation.png';
+  const result = await upgradeCertificateSignatureCleanupTarget({
+    teamId: 'team-1',
+    target: {
+      teamId: 'team-1',
+      storageBucket: 'primary',
+      storagePath,
+      requestedBy: 'admin-1',
+      status: 'pending',
+      objectGeneration: '1700000000000002'
+    },
+    primaryBucketName: primaryBucket,
+    legacyBucketName: legacyBucket,
+    getObjectMetadata: async () => {
+      throw new Error('Current metadata must not establish historical identity.');
     }
   });
 
@@ -511,6 +543,7 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /discoveredLegacyReferences[\s\S]*registerCertificateLegacySignatureInventoryReferences[\s\S]*planCertificateSignatureCleanup/);
   assert.match(functionsSource, /exports\.cleanupCertificateSignature[\s\S]*\.onWrite/);
   assert.match(functionsSource, /hydrateCertificateSignatureCleanupTarget[\s\S]*upgradeCertificateSignatureCleanupTarget/);
+  assert.match(functionsSource, /blockedReason === 'unverified-historical-generation'[\s\S]*status: 'blocked-unverified-generation'/);
   assert.match(functionsSource, /isAuthorizedCertificateSignatureCleanupTarget\(teamId, target\)/);
   assert.match(functionsSource, /collection\(`teams\/\$\{teamId\}\/certificates`\)[\s\S]*collection\(`teams\/\$\{teamId\}\/certificateBatches`\)/);
   assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*transaction\.get\(certificatesQuery\)[\s\S]*transaction\.get\(certificateBatchesQuery\)[\s\S]*referenceRecords\.some[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);

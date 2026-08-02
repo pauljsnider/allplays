@@ -14458,6 +14458,14 @@ exports.cleanupCertificateSignature = functions
       }, { merge: true });
       return null;
     }
+    if (hydrated?.blockedReason === 'unverified-historical-generation') {
+      await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
+        status: 'blocked-unverified-generation',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
     if (
       target.teamId !== teamId ||
       (target.storageBucket === 'legacy-image' && target.legacyBucketName !== (process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')) ||

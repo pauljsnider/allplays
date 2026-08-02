@@ -422,6 +422,31 @@ async function upgradeCertificateSignatureCleanupTarget({
   const expectedLegacyBucket = String(legacyBucketName || '').trim();
   if (storageBucket === PRIMARY_STORAGE_KIND) {
     if (!isAuthorizedCertificateSignatureCleanupPath(normalizedTeamId, storagePath, requestedBy)) return null;
+    const recordedGeneration = normalizeObjectGeneration(target.objectGeneration);
+    if (!recordedGeneration) {
+      if (typeof getObjectMetadata !== 'function') return null;
+      try {
+        await getObjectMetadata(storageBucket, storagePath);
+      } catch (error) {
+        if (Number(error?.code) === 404) return { target, missing: true };
+        throw error;
+      }
+      return {
+        target,
+        missing: false,
+        blockedReason: 'unverified-historical-generation'
+      };
+    }
+    const upgradedPrimary = {
+      ...target,
+      storageBucket,
+      storageBucketName: String(primaryBucketName || '').trim(),
+      objectGeneration: recordedGeneration
+    };
+    upgradedPrimary.objectKey = getCertificateSignatureObjectKey(upgradedPrimary);
+    return isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, upgradedPrimary)
+      ? { target: upgradedPrimary, missing: false }
+      : null;
   } else if (
     String(target.legacyBucketName || '').trim() !== expectedLegacyBucket ||
     !/^[a-f0-9]{64}$/.test(String(target.sourceUrlHash || '').trim()) ||
