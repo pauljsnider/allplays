@@ -226,7 +226,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -255,6 +255,50 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+});
+
+describe('native scoring roster fallback', () => {
+  it('includes later-page players in the home scoring model', async () => {
+    const previousWindow = (globalThis as any).window;
+    const previousFetch = globalThis.fetch;
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/players/player-1',
+            fields: { name: { stringValue: 'First Player' }, active: { booleanValue: true } }
+          }],
+          nextPageToken: 'next page+/='
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/players/player-2',
+            fields: { name: { stringValue: 'Later Player' }, active: { booleanValue: true } }
+          }]
+        })
+      });
+
+    try {
+      const players = await loadHomeScoringPlayers('team-1', 'game-1');
+
+      expect(players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(String(vi.mocked(globalThis.fetch).mock.calls[1][0]))
+        .toContain('pageToken=next+page%2B%2F%3D');
+    } finally {
+      (globalThis as any).window = previousWindow;
+      globalThis.fetch = previousFetch;
+    }
+  });
 });
 
 describe('parent schedule child scope', () => {

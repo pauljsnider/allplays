@@ -97,6 +97,7 @@ import {
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
+import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import {
   countOpenScheduleAssignments,
   getCalendarLocationDetail,
@@ -2629,7 +2630,15 @@ async function loadPlayers(teamId: string) {
   return readWithNativeFallback(
     `players ${teamId}`,
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
-    () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
+    async () => {
+      const documents = await listNativeFirestoreCollectionPages<NativeFirestoreDocument>(
+        `teams/${encodeURIComponent(teamId)}/players`,
+        nativeFirestoreRequest
+      );
+      return documents
+        .map((document) => mapFirestoreDocument(document))
+        .filter(Boolean) as FirestoreDocument[];
+    }
   );
 }
 

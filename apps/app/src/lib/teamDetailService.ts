@@ -71,6 +71,7 @@ import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { isNativeRuntime as isNativeAppRuntime } from './nativeRuntime';
 import { loadProfileDocument } from './profileService';
+import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -781,7 +782,15 @@ async function loadTeamPlayers(teamId: string) {
   return readWithNativeFallback(
     `team players ${teamId}`,
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
-    async () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
+    async () => {
+      const documents = await listNativeFirestoreCollectionPages(
+        `teams/${encodeURIComponent(teamId)}/players`,
+        nativeFirestoreRequest
+      );
+      return documents
+        .map((document: any) => decodeFirestoreDocument(document))
+        .filter(Boolean) as FirestoreDocument[];
+    }
   );
 }
 
