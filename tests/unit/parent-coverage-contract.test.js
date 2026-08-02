@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
     CONTRACT_SCHEMA_VERSION,
+    createSanitizedParentCoverageError,
     interpolateTemplate,
     redactParentCoverageValue,
     stableFailureSignature,
@@ -59,16 +60,47 @@ describe('parent coverage contract boundary', () => {
     });
 
     it('requires bounded cleanup for every production mutation', () => {
-        expect(() => validateContract({
+        const reversible = {
             ...validContract(),
+            workflowId: 'P12',
+            title: catalog.workflows[11].title,
+            actors: ['primary'],
             mutatesProduction: true,
             cleanupRequired: true,
+            steps: [
+                { action: 'rememberControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name' }
+            ]
+        };
+        expect(() => validateContract({
+            ...reversible,
             cleanupSteps: []
         }, catalog)).toThrow(/must provide cleanupSteps/);
         expect(() => validateContract({
             ...validContract(),
             cleanupSteps: [{ action: 'goto', route: '/home' }]
         }, catalog)).toThrow(/read-only contracts cannot provide cleanupSteps/);
+    });
+
+    it('enforces trusted per-workflow actions routes and cleanup capabilities', () => {
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Delete account' } }]
+        }, catalog, 'P01')).toThrow(/action click is not allowed for workflow P01/);
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'goto', route: '/profile/settings' }]
+        }, catalog, 'P01')).toThrow(/outside the trusted scope/);
+
+        const reversible = validContract({
+            workflowId: 'P12',
+            title: catalog.workflows[11].title,
+            actors: ['primary'],
+            mutatesProduction: true,
+            cleanupRequired: true,
+            steps: [{ action: 'rememberControl', target: { kind: 'label', name: 'Name' }, option: 'name' }],
+            cleanupSteps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Delete account' } }]
+        });
+        expect(() => validateContract(reversible, catalog, 'P12')).toThrow(/cleanup action click is not allowed/);
     });
 
     it('allows credential fills without putting credentials in the contract', () => {
@@ -161,6 +193,15 @@ describe('parent coverage contract boundary', () => {
         expect(redacted).not.toContain(secret);
         expect(redacted).not.toContain('secret-code');
         expect(redacted).not.toContain('another-secret');
+    });
+
+    it('creates a replacement error without leaking a raw Firebase action URL', () => {
+        const rawUrl = 'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=raw-secret-code&apiKey=raw-api-key';
+        const sanitized = createSanitizedParentCoverageError(new Error(`page.goto: ${rawUrl}`));
+        expect(sanitized).not.toBeInstanceOf(TypeError);
+        expect(sanitized.message).not.toContain('raw-secret-code');
+        expect(sanitized.message).not.toContain('raw-api-key');
+        expect(sanitized.stack).not.toContain('raw-secret-code');
     });
 
     it('produces stable signatures from normalized failure identity', () => {

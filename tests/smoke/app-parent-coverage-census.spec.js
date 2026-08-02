@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
+    createSanitizedParentCoverageError,
     REPORT_SCHEMA_VERSION,
     readValidatedCatalog,
     readValidatedContract,
@@ -11,6 +12,7 @@ import {
 } from '../../scripts/parent-coverage-contract.mjs';
 import {
     createParentCoverageRuntime,
+    executeParentCoverageCleanup,
     getParentCoverageSecrets
 } from './helpers/parent-coverage-runner.js';
 
@@ -40,7 +42,7 @@ test('executes one validated parent workflow contract', async ({ browser }, test
     let cleanupAction = '';
     let setupError = null;
     let productError = null;
-    let cleanupError = null;
+    const cleanupErrors = [];
 
     try {
         runtime = await createParentCoverageRuntime(browser, contract, appBaseUrl);
@@ -59,20 +61,13 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         }
     } finally {
         if (runtime && contract.cleanupSteps?.length) {
-            for (const step of contract.cleanupSteps) {
-                currentAction = step.action;
-                try {
-                    await runtime.executeStep(step);
-                } catch (error) {
-                    cleanupError = error;
-                    cleanupAction = currentAction;
-                    break;
-                }
-            }
+            cleanupErrors.push(...await executeParentCoverageCleanup(runtime, contract.cleanupSteps));
         }
         await runtime?.close();
     }
 
+    const cleanupError = cleanupErrors[0]?.error || null;
+    cleanupAction = cleanupErrors.map(({ action }) => action).join('+');
     const error = cleanupError || setupError || productError;
     let failureClass = 'none';
     if (cleanupError) failureClass = 'cleanup-failure';
@@ -104,8 +99,15 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         failureClass,
         sourceArea,
         signature: error ? stableFailureSignature({ workflowId: contract.workflowId, failureClass, sourceArea }) : '',
-        summary: error ? redact(error?.message || error) : 'Contract completed successfully.',
-        cleanup
+        summary: cleanupErrors.length
+            ? cleanupErrors.map(({ action, error: cleanupFailure }) =>
+                `${action}: ${redact(cleanupFailure?.message || cleanupFailure)}`).join('; ')
+            : error ? redact(error?.message || error) : 'Contract completed successfully.',
+        cleanup,
+        cleanupFailures: cleanupErrors.map(({ action, error: cleanupFailure }) => ({
+            action,
+            summary: redact(cleanupFailure?.message || cleanupFailure)
+        }))
     };
     await mkdir(path.dirname(reportPath), { recursive: true });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
@@ -113,5 +115,5 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         body: Buffer.from(JSON.stringify(report)),
         contentType: 'application/json'
     });
-    if (error) throw error;
+    if (error) throw createSanitizedParentCoverageError(report.summary);
 });
