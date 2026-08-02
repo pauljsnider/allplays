@@ -249,7 +249,7 @@ describe('pages bundle staging', () => {
             .map((match) => match[1]);
 
         expect(dbModuleKeys).toHaveLength(38);
-        expect(new Set(dbModuleKeys)).toEqual(new Set(['145']));
+        expect(new Set(dbModuleKeys)).toEqual(new Set(['146']));
         expect(fs.readFileSync(path.join(destinationDir, 'team.html'), 'utf8')).toContain(
             'getPublicTeamCalendarEvents, getConfigs'
         );
