@@ -229,8 +229,9 @@ jobs:
             baseline_branch="master"
           fi
           last_success_sha=""
-          last_success_run_id=""
           last_success_run_json=""
+          latest_prior_run_id=""
+          latest_prior_run_json=""
           firestore_success_sha=""
           firestore_success_mode=""
           firestore_success_run_id=""
@@ -242,7 +243,6 @@ jobs:
               -f status=success \
               -F per_page=1)"; then
               last_success_sha="$(jq -r '.workflow_runs[0].head_sha // ""' <<< "$last_success_run_json")"
-              last_success_run_id="$(jq -r '.workflow_runs[0].id // ""' <<< "$last_success_run_json")"
               lookup_succeeded="true"
               break
             fi
@@ -254,6 +254,34 @@ jobs:
 
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "::warning::The successful production deploy lookup failed; forcing authorization rules-first ordering."
+            echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+            echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
+            echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            echo "storage_changed=true" >> "$GITHUB_OUTPUT"
+            echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          run_history_lookup_succeeded="false"
+          for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
+            if latest_prior_run_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" \
+              -f branch="$baseline_branch" \
+              -F per_page=20)"; then
+              latest_prior_run_id="$(jq -r --arg current "$GITHUB_RUN_ID" '
+                [.workflow_runs[] | select((.id | tostring) != $current)][0].id // ""
+              ' <<< "$latest_prior_run_json")"
+              run_history_lookup_succeeded="true"
+              break
+            fi
+            if (( lookup_attempt < lookup_max_attempts )); then
+              sleep $((5 * lookup_attempt))
+            fi
+          done
+          if [[ "$run_history_lookup_succeeded" != "true" ]]; then
+            echo "::warning::The production run history lookup failed; the active Firestore release mode is unknown."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
             echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
@@ -343,11 +371,10 @@ jobs:
           fi
           if [[ "$component_lookup_succeeded" == "true" ]] \
             && [[ "$component_marker_found" == "true" ]] \
-            && [[ "$firestore_success_sha" == "$last_success_sha" ]] \
-            && [[ "$last_success_run_id" =~ ^[0-9]+$ ]] \
-            && [[ "$firestore_success_run_id" != "$last_success_run_id" ]] \
+            && [[ "$latest_prior_run_id" =~ ^[0-9]+$ ]] \
+            && [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]] \
             && [[ "$firestore_success_mode" != "final" ]]; then
-            echo "::notice::The same-SHA component marker belongs to a different production run; forcing live mode classification."
+            echo "::notice::The latest prior production run did not produce the active component marker; forcing live mode classification."
             firestore_success_mode="ambiguous"
           fi
 

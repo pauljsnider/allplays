@@ -123,7 +123,10 @@ concurrency:
             baseline_branch="master"
           fi
           lookup_max_attempts=3
-          last_success_run_id="$last_success_run_id"
+          latest_prior_run_id="$latest_prior_run_id"
+          run_history_lookup_succeeded="true"
+          jq 'select((.id | tostring) != $current)'
+          echo "The production run history lookup failed; the active Firestore release mode is unknown."
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
             if last_success_run_json="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
               lookup_succeeded="true"
@@ -140,7 +143,7 @@ concurrency:
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
           component_marker_found="true"
           deployment_log_url="$deployment_log_url"
-          echo "The same-SHA component marker belongs to a different production run; forcing live mode classification."
+          echo "The latest prior production run did not produce the active component marker; forcing live mode classification."
           echo "The Firestore component deployment lookup failed; the active release mode is unknown."
           firestore_success_mode="unmarked"
           firestore_success_mode="ambiguous"

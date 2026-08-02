@@ -589,13 +589,20 @@ export function validateProductionDeployCommand(deployProd) {
         'The protected native-readiness gate can finalize the same',
         'Production Firestore external finalization ambiguity handling'
     );
-    assertIncludes(deployProd, 'last_success_run_id=', 'Production Firestore successful run identity');
+    assertIncludes(deployProd, 'latest_prior_run_id=', 'Production Firestore latest prior run identity');
+    assertIncludes(deployProd, 'select((.id | tostring) != $current)', 'Production Firestore current-run exclusion');
+    assertIncludes(deployProd, 'run_history_lookup_succeeded', 'Production Firestore run history lookup state');
+    assertIncludes(
+        deployProd,
+        'The production run history lookup failed; the active Firestore release mode is unknown.',
+        'Production Firestore run history unknown-state handling'
+    );
     assertIncludes(deployProd, 'deployment_log_url=', 'Production Firestore component marker run identity');
     assertIncludes(deployProd, 'component_marker_found="true"', 'Production Firestore component marker presence');
     assertIncludes(
         deployProd,
-        'The same-SHA component marker belongs to a different production run; forcing live mode classification.',
-        'Production Firestore same-SHA retry ambiguity handling'
+        'The latest prior production run did not produce the active component marker; forcing live mode classification.',
+        'Production Firestore failed/incomplete retry ambiguity handling'
     );
     assertIncludes(
         deployProd,
