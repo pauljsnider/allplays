@@ -75,7 +75,7 @@ const workflowCapabilities = new Map(Object.entries({
     P22: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'click'] },
     P23: { mode: 'reversible', routes: ['/messages', '/messages/{TEAM_ID}'], actions: ['fill', 'check', 'uncheck', 'click'] },
     P24: { mode: 'reversible', routes: ['/messages/{TEAM_ID}'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
-    P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
+    P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/schedule/*', '/players/*', '/teams/*', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click'] },
     P27: { mode: 'lifecycle', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
@@ -264,7 +264,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P25: [
         { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i },
-        { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|home/ },
+        { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|schedule|players|teams/ },
         { actions: ['expectVisible', 'expectText', 'expectNoText'], actor: 'peer', target: /read|seen|no new notifications|unread/i },
         { action: 'rememberControl', actor: 'primary', target: /email|push|sms|mute/i },
         { actions: ['check', 'uncheck'], actor: 'primary', target: /email|push|sms|mute/i },
@@ -909,6 +909,18 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
         ) {
             throw new Error('every reversible production mutation must have bounded cleanup with the same mutationId');
         }
+        const committedMutationOrder = contract.steps
+            .filter((step) => step.commitMutation === true)
+            .map((step) => step.mutationId);
+        const cleanupMutationOrder = cleanupSteps
+            .map((step) => step.mutationId)
+            .filter((mutationId, index, values) => mutationId && values.indexOf(mutationId) === index);
+        const everyMutationHasOneCommit = [...executionIds].every((mutationId) =>
+            contract.steps.filter((step) => step.mutationId === mutationId && step.commitMutation === true).length === 1
+        );
+        if (everyMutationHasOneCommit && cleanupMutationOrder.join('\0') !== [...committedMutationOrder].reverse().join('\0')) {
+            throw new Error('reversible cleanup mutation groups must unwind completed operations in reverse order');
+        }
         for (const mutationId of executionIds) {
             const executionGroup = contract.steps.filter((step) => step.mutationId === mutationId);
             const cleanupGroup = cleanupSteps.filter((step) => step.mutationId === mutationId);
@@ -927,6 +939,9 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
                 throw new Error(`reversible mutation ${mutationId} cleanup cannot declare a completed forward operation`);
             }
             const commitStep = commitSteps[0];
+            if (executionGroup.some((step) => step.action === 'click' && step.commitMutation !== true)) {
+                throw new Error(`reversible mutation ${mutationId} must put every production click in its own completed operation`);
+            }
             const rememberedTargets = new Set(contract.steps
                 .filter((step) => step.action === 'rememberControl')
                 .map((step) => `${step.actor || contract.actors[0]}:${JSON.stringify(step.target)}`));
