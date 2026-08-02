@@ -41,6 +41,49 @@ const allowedTemplateNames = new Set([
     'CONVERSATION_ID', 'RUN_MARKER', 'LIFECYCLE_EMAIL', 'LIFECYCLE_INVITE_CODE'
 ]);
 const lifecycleTransitionWorkflowIds = new Set(['P02', 'P03', 'P04', 'P05', 'P08', 'P27', 'P37']);
+const baseWorkflowActions = [
+    'login', 'goto', 'reload', 'expectVisible', 'expectHidden', 'expectText',
+    'expectNoText', 'expectRoute', 'logout'
+];
+const workflowCapabilities = new Map(Object.entries({
+    P01: { mode: 'readOnly', routes: ['/accept-invite'], actions: [] },
+    P02: { mode: 'lifecycle', routes: ['/auth', '/verify-pending'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click'] },
+    P03: { mode: 'lifecycle', routes: ['/verify-pending', '/auth'], actions: ['click', 'openLatestMailboxLink'] },
+    P04: { mode: 'lifecycle', routes: ['/auth', '/home'], actions: ['click'] },
+    P05: { mode: 'lifecycle', routes: ['/auth', '/reset-password'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click', 'openLatestMailboxLink'] },
+    P06: { mode: 'readOnly', routes: ['/auth', '/home'], actions: [] },
+    P07: { mode: 'readOnly', routes: ['/auth'], actions: [] },
+    P08: { mode: 'lifecycle', routes: ['/accept-invite', '/parent-tools/access'], actions: ['fill', 'click'] },
+    P09: { mode: 'reversible', routes: ['/parent-tools/access'], actions: ['fill', 'select', 'click'] },
+    P10: { mode: 'readOnly', routes: ['/home', '/parent-tools/*'], actions: [] },
+    P11: { mode: 'readOnly', routes: ['/teams/{TEAM_ID}', '/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
+    P12: { mode: 'reversible', routes: ['/profile/settings'], actions: ['rememberControl', 'fill', 'click', 'restoreControl'] },
+    P13: { mode: 'reversible', routes: ['/profile/settings'], actions: ['click', 'uploadSyntheticImage'] },
+    P14: { mode: 'reversible', routes: ['/players/{TEAM_ID}/{PLAYER_ID}'], actions: ['rememberControl', 'fill', 'click', 'restoreControl', 'uploadSyntheticImage'] },
+    P15: { mode: 'readOnly', routes: ['/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
+    P16: { mode: 'reversible', routes: ['/schedule', '/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'select', 'click', 'restoreControl'] },
+    P17: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'fill', 'click', 'restoreControl'] },
+    P18: { mode: 'readOnly', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: [] },
+    P19: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'restoreControl'] },
+    P20: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'click'] },
+    P21: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'select', 'click'] },
+    P22: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'click'] },
+    P23: { mode: 'reversible', routes: ['/messages', '/messages/{TEAM_ID}'], actions: ['fill', 'check', 'uncheck', 'click'] },
+    P24: { mode: 'reversible', routes: ['/messages/{TEAM_ID}'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P25: { mode: 'reversible', routes: ['/home', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'restoreControl'] },
+    P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click'] },
+    P27: { mode: 'lifecycle', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
+    P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click'] },
+    P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['click'] },
+    P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
+    P31: { mode: 'readOnly', routes: ['/parent-tools/registrations', '/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}'], actions: ['clickAndExpectStripeCheckout'] },
+    P32: { mode: 'readOnly', routes: ['/parent-tools/certificates', '/teams/{TEAM_ID}/certificates'], actions: ['click'] },
+    P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
+    P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P37: { mode: 'lifecycle', routes: ['/profile/settings'], actions: ['fill', 'fillActorPassword', 'click'] }
+}));
 const forbiddenText = /(?:https?:\/\/|javascript:|data:text|[\r\n]|\$\{|<script|authorization|cookie)/i;
 const stepKeysByAction = new Map([
     ['login', ['action', 'actor']],
@@ -117,6 +160,21 @@ export function validateCatalog(catalog) {
             if (!actorNames.has(actor)) throw new Error(`catalog workflow ${workflow.id} has unsupported actor ${actor}`);
         }
     }
+    if (ids.size !== workflowCapabilities.size) {
+        throw new Error('trusted workflow capability count must match the locked catalog');
+    }
+    for (const [workflowId, capability] of workflowCapabilities) {
+        if (!ids.has(workflowId)) throw new Error(`trusted workflow capability ${workflowId} is not in the catalog`);
+        if (!['readOnly', 'reversible', 'lifecycle'].includes(capability.mode)) {
+            throw new Error(`trusted workflow capability ${workflowId} has an invalid mode`);
+        }
+        if (!Array.isArray(capability.routes) || capability.routes.length === 0) {
+            throw new Error(`trusted workflow capability ${workflowId} has no routes`);
+        }
+        if (!Array.isArray(capability.actions) || capability.actions.some((action) => !actions.has(action))) {
+            throw new Error(`trusted workflow capability ${workflowId} has invalid actions`);
+        }
+    }
     return catalog;
 }
 
@@ -137,10 +195,47 @@ function validateLocator(locator, label) {
     }
 }
 
-function validateStep(step, index, declaredActors, workflowId) {
+function routeMatchesCapability(route, capabilityRoute, resolved = false) {
+    const routePath = String(route).split('?')[0];
+    if (resolved) {
+        const source = capabilityRoute
+            .split(/(\{[A-Z0-9_]+\}|\*)/g)
+            .filter(Boolean)
+            .map((part) => {
+                if (/^\{[A-Z0-9_]+\}$/.test(part)) return '[^/?#]+';
+                if (part === '*') return '.*';
+                return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            })
+            .join('');
+        return new RegExp(`^${source}$`).test(routePath);
+    }
+    if (capabilityRoute.endsWith('/*')) {
+        return routePath.startsWith(capabilityRoute.slice(0, -1));
+    }
+    return routePath === capabilityRoute;
+}
+
+export function workflowRouteAllowed(workflowId, route, resolved = false) {
+    const capability = workflowCapabilities.get(workflowId);
+    return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
+}
+
+function validateStep(step, index, declaredActors, workflowId, phase = 'execution') {
     const label = `step ${index + 1}`;
     assertPlainObject(step, label);
     if (!actions.has(step.action)) throw new Error(`${label} has unsupported action`);
+    const capability = workflowCapabilities.get(workflowId);
+    if (!capability) throw new Error(`${label} has no trusted workflow capability`);
+    const allowedActions = new Set([...baseWorkflowActions, ...capability.actions]);
+    if (!allowedActions.has(step.action)) {
+        throw new Error(`${label} action ${step.action} is not allowed for ${workflowId}`);
+    }
+    if (
+        phase === 'cleanup' &&
+        ['fillActorEmail', 'fillActorPassword', 'openLatestMailboxLink', 'uploadSyntheticImage', 'clickAndExpectStripeCheckout'].includes(step.action)
+    ) {
+        throw new Error(`${label} action ${step.action} is not allowed during cleanup`);
+    }
     assertKnownKeys(step, new Set(stepKeysByAction.get(step.action)), label);
     const actor = step.actor || declaredActors[0];
     if (!declaredActors.includes(actor)) throw new Error(`${label} uses undeclared actor ${actor}`);
@@ -162,6 +257,9 @@ function validateStep(step, index, declaredActors, workflowId) {
         validateTemplates(step.route, `${label} route`);
         if (!step.route.startsWith('/') || step.route.startsWith('//')) {
             throw new Error(`${label} route must be an app-relative route`);
+        }
+        if (!workflowRouteAllowed(workflowId, step.route)) {
+            throw new Error(`${label} route is outside the trusted ${workflowId} capability`);
         }
     }
 
@@ -201,6 +299,8 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
         throw new Error('contract workflowId does not match the requested workflow');
     }
     if (contract.title !== workflow.title) throw new Error('contract title must match the catalog');
+    const capability = workflowCapabilities.get(contract.workflowId);
+    if (!capability) throw new Error('contract workflow has no trusted execution capability');
     if (!Array.isArray(contract.actors) || contract.actors.length === 0 || contract.actors.length > 3) {
         throw new Error('contract actors must contain one to three actors');
     }
@@ -217,12 +317,19 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     ) {
         throw new Error('contract mutation flags must be boolean');
     }
-    if (!contract.lifecycleTransition && contract.mutatesProduction !== contract.cleanupRequired) {
-        throw new Error('production mutations require cleanup and read-only contracts cannot declare cleanup');
+    const expectedFlags = capability.mode === 'lifecycle'
+        ? { mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true }
+        : capability.mode === 'reversible'
+            ? { mutatesProduction: true, cleanupRequired: true, lifecycleTransition: false }
+            : { mutatesProduction: false, cleanupRequired: false, lifecycleTransition: false };
+    if (
+        contract.mutatesProduction !== expectedFlags.mutatesProduction ||
+        contract.cleanupRequired !== expectedFlags.cleanupRequired ||
+        contract.lifecycleTransition !== expectedFlags.lifecycleTransition
+    ) {
+        throw new Error(`contract mutation flags do not match the trusted ${contract.workflowId} capability`);
     }
-    if (contract.lifecycleTransition && (
-        !contract.mutatesProduction ||
-        contract.cleanupRequired ||
+    if (capability.mode === 'lifecycle' && (
         !contract.actors.includes('lifecycle') ||
         !lifecycleTransitionWorkflowIds.has(contract.workflowId)
     )) {
@@ -231,7 +338,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     if (!Array.isArray(contract.steps) || contract.steps.length === 0 || contract.steps.length > 50) {
         throw new Error('contract steps must contain one to fifty steps');
     }
-    contract.steps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId));
+    contract.steps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId, 'execution'));
     const cleanupSteps = contract.cleanupSteps || [];
     if (!Array.isArray(cleanupSteps) || cleanupSteps.length > 30) {
         throw new Error('contract cleanupSteps must contain no more than thirty steps');
@@ -242,7 +349,21 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     if ((!contract.mutatesProduction || contract.lifecycleTransition) && cleanupSteps.length > 0) {
         throw new Error('read-only contracts cannot provide cleanupSteps');
     }
-    cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId));
+    cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId, 'cleanup'));
+    const rememberedKeys = contract.steps
+        .filter((step) => step.action === 'rememberControl')
+        .map((step) => `${step.actor || contract.actors[0]}:${step.option}`);
+    const restoredKeys = cleanupSteps
+        .filter((step) => step.action === 'restoreControl')
+        .map((step) => `${step.actor || contract.actors[0]}:${step.option}`);
+    if (
+        new Set(rememberedKeys).size !== rememberedKeys.length ||
+        new Set(restoredKeys).size !== restoredKeys.length ||
+        rememberedKeys.length !== restoredKeys.length ||
+        rememberedKeys.some((key) => !restoredKeys.includes(key))
+    ) {
+        throw new Error('every remembered control must be restored exactly once during cleanup');
+    }
     return contract;
 }
 
@@ -262,6 +383,16 @@ export function interpolateTextTemplate(value, variables) {
         if (!resolved) throw new Error(`required template ${name} is unavailable`);
         return resolved;
     });
+}
+
+export function buildSanitizedParentCoverageFailureError(report) {
+    const workflowId = /^P\d{2}$/.test(String(report?.workflowId || ''))
+        ? String(report.workflowId)
+        : 'unknown';
+    const signature = /^[a-f0-9]{64}$/.test(String(report?.signature || ''))
+        ? String(report.signature)
+        : 'unavailable';
+    return new Error(`Parent coverage ${workflowId} failed; inspect sanitized report signature ${signature}.`);
 }
 
 export function stableFailureSignature({ workflowId, failureClass, sourceArea }) {

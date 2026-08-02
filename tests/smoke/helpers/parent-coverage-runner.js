@@ -2,7 +2,8 @@ import { expect } from '@playwright/test';
 import {
     interpolateTemplate,
     interpolateTextTemplate,
-    redactParentCoverageValue
+    redactParentCoverageValue,
+    workflowRouteAllowed
 } from '../../../scripts/parent-coverage-contract.mjs';
 import { findLatestParentMailboxActionLink } from '../../../scripts/parent-coverage-mailbox.mjs';
 import {
@@ -77,11 +78,17 @@ function locatorFor(page, descriptor, variables) {
     }
 }
 
-async function assertAllowedPage(page, appBaseUrl) {
+async function assertAllowedPage(page, appBaseUrl, workflowId = '') {
     const current = new URL(page.url());
     const allowed = new URL(appBaseUrl);
     if (current.origin !== allowed.origin || !current.pathname.startsWith(allowed.pathname)) {
         throw new Error('contract attempted to leave the protected AllPlays app origin');
+    }
+    if (workflowId) {
+        const route = current.hash.startsWith('#') ? current.hash.slice(1) : '/';
+        if (!workflowRouteAllowed(workflowId, route || '/', true)) {
+            throw new Error(`contract navigation left the trusted ${workflowId} route capability`);
+        }
     }
 }
 
@@ -151,12 +158,12 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
                 waitUntil: 'domcontentloaded',
                 timeout: 45_000
             });
-            await assertAllowedPage(page, appBaseUrl);
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
         if (step.action === 'reload') {
             await page.reload({ waitUntil: 'domcontentloaded' });
-            await assertAllowedPage(page, appBaseUrl);
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
         if (step.action === 'expectRoute') {
@@ -192,7 +199,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         switch (step.action) {
         case 'click':
             await target.click();
-            await assertAllowedPage(page, appBaseUrl);
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         case 'clickAndExpectStripeCheckout': {
             const popupPromise = page.waitForEvent('popup', { timeout: 20_000 });
@@ -219,7 +226,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             } finally {
                 await popup.close().catch(() => {});
             }
-            await assertAllowedPage(page, appBaseUrl);
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         }
         case 'fill':

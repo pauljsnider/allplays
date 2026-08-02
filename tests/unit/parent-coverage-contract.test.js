@@ -1,12 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+    buildSanitizedParentCoverageFailureError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
     redactParentCoverageValue,
     stableFailureSignature,
     validateCatalog,
-    validateContract
+    validateContract,
+    workflowRouteAllowed
 } from '../../scripts/parent-coverage-contract.mjs';
 
 const catalog = JSON.parse(readFileSync('tests/parent-census/workflows.json', 'utf8'));
@@ -22,7 +24,7 @@ function validContract(overrides = {}) {
         cleanupRequired: false,
         lifecycleTransition: false,
         steps: [
-            { action: 'goto', route: '/auth' },
+            { action: 'goto', route: '/accept-invite' },
             {
                 action: 'expectVisible',
                 target: { kind: 'role', role: 'heading', name: 'Sign in', exact: true }
@@ -60,7 +62,12 @@ describe('parent coverage contract boundary', () => {
 
     it('requires bounded cleanup for every production mutation', () => {
         expect(() => validateContract({
-            ...validContract(),
+            ...validContract({
+                workflowId: 'P12',
+                title: catalog.workflows[11].title,
+                actors: ['primary'],
+                steps: [{ action: 'goto', actor: 'primary', route: '/profile/settings' }]
+            }),
             mutatesProduction: true,
             cleanupRequired: true,
             cleanupSteps: []
@@ -102,7 +109,7 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract({
             ...validContract(),
             steps: [{ action: 'clickAndExpectStripeCheckout', target }]
-        }, catalog, 'P01')).toThrow(/restricted to P30 and P31/);
+        }, catalog, 'P01')).toThrow(/not allowed for P01/);
 
         const checkout = validContract({
             workflowId: 'P30',
@@ -113,12 +120,12 @@ describe('parent coverage contract boundary', () => {
         expect(validateContract(checkout, catalog, 'P30').steps).toHaveLength(1);
     });
 
-    it('restricts non-cleaned lifecycle transitions to the locked fixture sequence', () => {
+    it('binds mutation policy to the trusted workflow capability', () => {
         expect(() => validateContract({
             ...validContract(),
             mutatesProduction: true,
             lifecycleTransition: true
-        }, catalog, 'P01')).toThrow(/locked lifecycle fixture sequence/);
+        }, catalog, 'P01')).toThrow(/mutation flags do not match/);
     });
 
     it('requires paired control-state keys for reversible fixture edits', () => {
@@ -145,6 +152,34 @@ describe('parent coverage contract boundary', () => {
                 option: 'Bad Key'
             }]
         }, catalog, 'P12')).toThrow(/stable lowercase state key/);
+        expect(() => validateContract({
+            ...reversible,
+            cleanupSteps: []
+        }, catalog, 'P12')).toThrow(/must provide cleanupSteps/);
+        expect(() => validateContract({
+            ...reversible,
+            cleanupSteps: [{
+                action: 'restoreControl',
+                target: { kind: 'label', name: 'Name' },
+                option: 'different-key'
+            }]
+        }, catalog, 'P12')).toThrow(/restored exactly once/);
+    });
+
+    it('rejects routes and actions outside each trusted workflow capability', () => {
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'goto', route: '/profile/settings' }]
+        }, catalog, 'P01')).toThrow(/outside the trusted P01 capability/);
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{
+                action: 'click',
+                target: { kind: 'role', role: 'button', name: 'Delete account', exact: true }
+            }]
+        }, catalog, 'P01')).toThrow(/action click is not allowed for P01/);
+        expect(workflowRouteAllowed('P11', '/teams/team-123', true)).toBe(true);
+        expect(workflowRouteAllowed('P11', '/teams/team-123')).toBe(false);
     });
 
     it('allows only known encoded route templates', () => {
@@ -176,5 +211,18 @@ describe('parent coverage contract boundary', () => {
         });
         expect(first).toBe(second);
         expect(first).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it('never carries report summaries or raw action URLs into the thrown CI error', () => {
+        const rawUrl = 'https://game-flow-c6311.firebaseapp.com/__/auth/action?oobCode=secret-code';
+        const error = buildSanitizedParentCoverageFailureError({
+            workflowId: 'P05',
+            signature: 'a'.repeat(64),
+            summary: rawUrl
+        });
+        expect(error.message).toContain('P05');
+        expect(error.message).toContain('a'.repeat(64));
+        expect(error.message).not.toContain(rawUrl);
+        expect(error.message).not.toContain('oobCode');
     });
 });

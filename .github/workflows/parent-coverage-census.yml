@@ -138,7 +138,7 @@ jobs:
           --workflow-id "$WORKFLOW_ID"
           --sha256 "$CONTRACT_DIGEST"
 
-      - name: Audit dedicated parent fixture
+      - name: Audit primary parent fixture immediately before execution
         run: node scripts/maintain-production-smoke-parent-fixture.mjs
         env:
           SMOKE_FIXTURE_MODE: audit
@@ -151,6 +151,22 @@ jobs:
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
+
+      - name: Audit peer parent fixture immediately before execution
+        run: node scripts/maintain-production-smoke-parent-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: audit
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PEER_EMAIL || secrets.SMOKE_AUTH_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PEER_PASSWORD || secrets.SMOKE_AUTH_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium

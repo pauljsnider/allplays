@@ -47,6 +47,17 @@ describe('parent coverage workflow trust boundary', () => {
             expect(step.run).not.toMatch(/\$\{\{\s*inputs\./);
         }
     });
+
+    it('re-audits both parent actors as unprivileged immediately before every run', () => {
+        const auditSteps = workflow.jobs['run-contract'].steps.filter(
+            (step) => /parent fixture immediately before execution$/.test(step.name)
+        );
+        expect(auditSteps).toHaveLength(2);
+        expect(auditSteps.every((step) => step.env.SMOKE_FIXTURE_MODE === 'audit')).toBe(true);
+        expect(auditSteps.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
+        expect(auditSteps[0].env.SMOKE_PARENT_EMAIL).toContain('PARENT_CENSUS_PRIMARY_EMAIL');
+        expect(auditSteps[1].env.SMOKE_PARENT_EMAIL).toContain('PARENT_CENSUS_PEER_EMAIL');
+    });
 });
 
 describe('parent coverage provisioning workflow trust boundary', () => {
