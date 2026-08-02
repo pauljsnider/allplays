@@ -34,6 +34,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentCalendarTools: vi.fn(),
+    loadParentCertificate: vi.fn(),
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
     loadParentHouseholdInviteModel: vi.fn(),
@@ -82,6 +83,7 @@ vi.mock('../lib/parentRegistrationsService', () => ({
     loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations
 }));
 vi.mock('../lib/parentCertificatesService', () => ({
+    loadParentCertificate: parentToolsServiceMocks.loadParentCertificate,
     loadParentCertificates: parentToolsServiceMocks.loadParentCertificates
 }));
 vi.mock('../lib/parentToolsAccessService', () => parentToolsAccessServiceMocks);
@@ -1383,6 +1385,16 @@ describe('ParentTools access', () => {
     });
 
     it('shows deep-linked awards from notification query params', async () => {
+        parentToolsServiceMocks.loadParentCertificate.mockResolvedValue({
+            id: 'cert-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Sam Player',
+            title: 'Hustle Award',
+            narrative: 'Great effort.',
+            url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+        });
         parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([
             {
                 id: 'cert-2',
@@ -1411,6 +1423,7 @@ describe('ParentTools access', () => {
         expect(await screen.findByText('Hustle Award')).toBeTruthy();
         expect(screen.queryByText('Leadership Award')).toBeNull();
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCertificates).not.toHaveBeenCalled();
         const requestedAwardCard = screen.getByText('Hustle Award').closest('section') as HTMLElement;
         expect(within(requestedAwardCard).getByRole('button', { name: 'View award' })).toBeTruthy();
         expect(within(requestedAwardCard).getByRole('button', { name: 'Share' })).toBeTruthy();

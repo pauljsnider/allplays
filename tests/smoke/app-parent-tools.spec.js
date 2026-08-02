@@ -188,18 +188,22 @@ const parentRegistrationsServiceMock = `
 `;
 
 const parentCertificatesServiceMock = `
+    const certificate = {
+        id: 'cert-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        playerId: 'player-1',
+        playerName: 'Pat Star',
+        title: 'Hustle Award',
+        narrative: 'Great effort.',
+        url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+    };
+    export async function loadParentCertificate(_user, teamId, certificateId) {
+        return teamId === certificate.teamId && certificateId === certificate.id ? certificate : null;
+    }
     export async function loadParentCertificates() {
         window.__parentToolLoadCounts.certificates += 1;
-        return [{
-            id: 'cert-1',
-            teamId: 'team-1',
-            teamName: 'Bears',
-            playerId: 'player-1',
-            playerName: 'Pat Star',
-            title: 'Hustle Award',
-            narrative: 'Great effort.',
-            url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-        }];
+        return [certificate];
     }
 `;
 
@@ -872,26 +876,30 @@ test('awards deep links surface the requested certificate first on mobile', asyn
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const certificates = [{
+                    id: 'cert-2',
+                    teamId: 'team-2',
+                    teamName: 'Falcons',
+                    playerId: 'player-2',
+                    playerName: 'Taylor Wings',
+                    title: 'Leadership Award',
+                    narrative: 'Great teammate.',
+                    url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
+                }, {
+                    id: 'cert-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star',
+                    title: 'Hustle Award',
+                    narrative: 'Great effort.',
+                    url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+                }];
+                export async function loadParentCertificate(_user, teamId, certificateId) {
+                    return certificates.find((certificate) => certificate.teamId === teamId && certificate.id === certificateId) || null;
+                }
                 export async function loadParentCertificates() {
-                    return [{
-                        id: 'cert-2',
-                        teamId: 'team-2',
-                        teamName: 'Falcons',
-                        playerId: 'player-2',
-                        playerName: 'Taylor Wings',
-                        title: 'Leadership Award',
-                        narrative: 'Great teammate.',
-                        url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
-                    }, {
-                        id: 'cert-1',
-                        teamId: 'team-1',
-                        teamName: 'Bears',
-                        playerId: 'player-1',
-                        playerName: 'Pat Star',
-                        title: 'Hustle Award',
-                        narrative: 'Great effort.',
-                        url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
-                    }];
+                    return certificates;
                 }
             `
         });
