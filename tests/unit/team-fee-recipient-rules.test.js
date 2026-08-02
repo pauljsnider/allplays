@@ -55,6 +55,7 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(request.resource.data)');
         expect(nestedRecipientBlock).toContain('hasNoChangedServerOwnedTeamFeeCheckoutFields()');
+        expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(resource.data)');
     });
 
     it('uses the owner/admin-only fee financial state guard for recipient updates', () => {
@@ -269,6 +270,31 @@ describe('team fee recipient Firestore rules', () => {
                 }
             }
         }, 30000);
+
+        it('denies owner and admin deletion while an active checkout session is present', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const recipientId = `active-checkout-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                    {
+                        ...recipientPayload(),
+                        checkoutStatus: 'open',
+                        checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_active',
+                        stripeCheckoutSessionId: 'cs_test_active'
+                    }
+                );
+
+                await assertFails(deleteDoc(recipientRef(
+                    authedFirestore(uid, email),
+                    'team-a',
+                    'batch-a',
+                    recipientId
+                )));
+            }
+        });
 
         it('preserves owner/admin fee creation and non-checkout mutations', async () => {
             for (const [uid, email] of [

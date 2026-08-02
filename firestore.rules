@@ -4030,7 +4030,8 @@ service cloud.firestore {
                            hasRequiredTeamFeeMutationAudit(teamId, batchId, recipientId);
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId &&
-                           resource.data.batchId == batchId;
+                           resource.data.batchId == batchId &&
+                           hasNoServerOwnedTeamFeeCheckoutFields(resource.data);
 
           match /adminBilling/{billingId} {
             allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
