@@ -486,6 +486,18 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'firestore-baseline-compat.rules', 'Production Firestore compatibility baseline handoff');
     assertIncludes(
         deployProd,
+        '${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs',
+        'Production Firestore baseline exact-SHA compactor'
+    );
+    assertIncludes(
+        deployProd,
+        '${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs',
+        'Production Firestore baseline exact-SHA compatibility transformer'
+    );
+    assertIncludes(deployProd, 'node "$baseline_compactor"', 'Production Firestore baseline compactor execution');
+    assertIncludes(deployProd, 'node "$baseline_transformer"', 'Production Firestore baseline transformer execution');
+    assertIncludes(
+        deployProd,
         'firestore_baseline_mode: ${{ steps.firestore_config.outputs.firestore_baseline_mode }}',
         'Production Firestore baseline release-mode output'
     );

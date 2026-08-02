@@ -537,8 +537,14 @@ jobs:
 
           baseline_source="$RUNNER_TEMP/firestore-baseline.source.rules"
           baseline_compatibility_source="$RUNNER_TEMP/firestore-baseline-compat.source.rules"
+          baseline_compactor="$RUNNER_TEMP/firestore-baseline-compact.mjs"
+          baseline_transformer="$RUNNER_TEMP/firestore-baseline-compat-transform.mjs"
           git show "${FIRESTORE_BASELINE_SHA}:firestore.rules" > "$baseline_source"
-          node scripts/compact-firestore-rules.mjs \
+          if ! git show "${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs" > "$baseline_compactor"; then
+            echo "The trusted Firestore baseline does not contain its exact rules compactor." >&2
+            exit 1
+          fi
+          node "$baseline_compactor" \
             "$baseline_source" \
             "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
 
@@ -548,10 +554,10 @@ jobs:
             echo "The trusted Firestore baseline does not have a recognized release mode." >&2
             exit 1
           fi
-          if node scripts/build-certificate-defaults-compat-rules.mjs \
-            "$baseline_source" \
-            "$baseline_compatibility_source"; then
-            node scripts/compact-firestore-rules.mjs \
+          if git show "${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs" \
+            > "$baseline_transformer" \
+            && node "$baseline_transformer" "$baseline_source" "$baseline_compatibility_source"; then
+            node "$baseline_compactor" \
               "$baseline_compatibility_source" \
               "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
           else

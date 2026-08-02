@@ -187,9 +187,11 @@ concurrency:
           FIRESTORE_BASELINE_SHA: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
         run: |
           git show "\${FIRESTORE_BASELINE_SHA}:firestore.rules" > "$baseline_source"
-          node scripts/compact-firestore-rules.mjs "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
-          node scripts/build-certificate-defaults-compat-rules.mjs "$baseline_source" "$baseline_compatibility_source"
-          node scripts/compact-firestore-rules.mjs "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+          git show "\${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs" > "$baseline_compactor"
+          node "$baseline_compactor" "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
+          git show "\${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs" > "$baseline_transformer"
+          node "$baseline_transformer" "$baseline_source" "$baseline_compatibility_source"
+          node "$baseline_compactor" "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
           echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules."
           FIRESTORE_BASELINE_MODE="compatibility"
           printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"

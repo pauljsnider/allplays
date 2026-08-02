@@ -119,6 +119,23 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toContain('forcing live exact-source classification');
     });
 
+    it('reconstructs a baseline with only that exact baseline SHA toolchain', () => {
+        const baselineStage = deployWorkflow.slice(
+            deployWorkflow.indexOf('- name: Stage exact Firestore baseline variants'),
+            deployWorkflow.indexOf('- name: Archive installed Functions runtime into trusted handoff')
+        );
+
+        expect(baselineStage).toContain('${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs');
+        expect(baselineStage).toContain('${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs');
+        expect(baselineStage).toContain('node "$baseline_compactor"');
+        expect(baselineStage).toContain('node "$baseline_transformer"');
+        expect(baselineStage).not.toContain('node scripts/compact-firestore-rules.mjs');
+        expect(baselineStage).not.toContain('node scripts/build-certificate-defaults-compat-rules.mjs');
+        expect(repositoryInstructions).toMatch(
+            /historical baseline variant only with the transformer and compactor from that exact baseline SHA[\s\S]*today's generator[\s\S]*must never be used as deployment provenance/i
+        );
+    });
+
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('transitional emulator coverage', () => {
         let compatibilityEnv;
 
