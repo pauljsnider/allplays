@@ -220,22 +220,28 @@ export function workflowRouteAllowed(workflowId, route, resolved = false) {
     return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
 }
 
-function validateStep(step, index, declaredActors, workflowId, phase = 'execution') {
-    const label = `step ${index + 1}`;
-    assertPlainObject(step, label);
-    if (!actions.has(step.action)) throw new Error(`${label} has unsupported action`);
+export function assertParentCoverageStepCapability(workflowId, step, phase = 'execution') {
     const capability = workflowCapabilities.get(workflowId);
-    if (!capability) throw new Error(`${label} has no trusted workflow capability`);
+    if (!capability) throw new Error(`${phase} has no trusted workflow capability for ${workflowId}`);
     const allowedActions = new Set([...baseWorkflowActions, ...capability.actions]);
     if (!allowedActions.has(step.action)) {
-        throw new Error(`${label} action ${step.action} is not allowed for ${workflowId}`);
+        throw new Error(`${phase} action ${step.action} is not allowed for ${workflowId}`);
     }
     if (
         phase === 'cleanup' &&
         ['fillActorEmail', 'fillActorPassword', 'openLatestMailboxLink', 'uploadSyntheticImage', 'clickAndExpectStripeCheckout'].includes(step.action)
     ) {
-        throw new Error(`${label} action ${step.action} is not allowed during cleanup`);
+        throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
+    if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
+        throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
+    }
+}
+
+function validateStep(step, index, declaredActors, workflowId, phase = 'execution') {
+    const label = `step ${index + 1}`;
+    assertPlainObject(step, label);
+    if (!actions.has(step.action)) throw new Error(`${label} has unsupported action`);
     assertKnownKeys(step, new Set(stepKeysByAction.get(step.action)), label);
     const actor = step.actor || declaredActors[0];
     if (!declaredActors.includes(actor)) throw new Error(`${label} uses undeclared actor ${actor}`);
@@ -281,6 +287,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
             throw new Error(`${label} option must be a stable lowercase state key`);
         }
     }
+    assertParentCoverageStepCapability(workflowId, step, phase);
 }
 
 export function validateContract(contract, catalog, expectedWorkflowId = '') {
@@ -350,18 +357,21 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
         throw new Error('read-only contracts cannot provide cleanupSteps');
     }
     cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId, 'cleanup'));
-    const rememberedKeys = contract.steps
-        .filter((step) => step.action === 'rememberControl')
-        .map((step) => `${step.actor || contract.actors[0]}:${step.option}`);
-    const restoredKeys = cleanupSteps
-        .filter((step) => step.action === 'restoreControl')
-        .map((step) => `${step.actor || contract.actors[0]}:${step.option}`);
-    if (
-        new Set(rememberedKeys).size !== rememberedKeys.length ||
-        new Set(restoredKeys).size !== restoredKeys.length ||
-        rememberedKeys.length !== restoredKeys.length ||
-        rememberedKeys.some((key) => !restoredKeys.includes(key))
-    ) {
+    const remembered = new Map();
+    for (const step of contract.steps.filter(({ action }) => action === 'rememberControl')) {
+        const key = `${step.actor || contract.actors[0]}:${step.option}`;
+        if (remembered.has(key)) throw new Error('every remembered control must use a unique state key');
+        remembered.set(key, JSON.stringify(step.target));
+    }
+    const restored = new Set();
+    for (const step of cleanupSteps.filter(({ action }) => action === 'restoreControl')) {
+        const key = `${step.actor || contract.actors[0]}:${step.option}`;
+        if (restored.has(key) || remembered.get(key) !== JSON.stringify(step.target)) {
+            throw new Error('every restored control must exactly match one remembered control');
+        }
+        restored.add(key);
+    }
+    if (remembered.size !== restored.size || [...remembered.keys()].some((key) => !restored.has(key))) {
         throw new Error('every remembered control must be restored exactly once during cleanup');
     }
     return contract;

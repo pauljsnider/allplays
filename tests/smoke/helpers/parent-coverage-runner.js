@@ -1,5 +1,6 @@
 import { expect } from '@playwright/test';
 import {
+    assertParentCoverageStepCapability,
     interpolateTemplate,
     interpolateTextTemplate,
     redactParentCoverageValue,
@@ -103,6 +104,18 @@ async function makeSyntheticImage() {
     };
 }
 
+export async function executeParentCoverageCleanup(runtime, cleanupSteps) {
+    const failures = [];
+    for (const step of cleanupSteps) {
+        try {
+            await runtime.executeStep(step, 'cleanup');
+        } catch (error) {
+            failures.push({ action: step.action, error });
+        }
+    }
+    return failures;
+}
+
 export async function createParentCoverageRuntime(browser, contract, appBaseUrl) {
     const actors = new Map();
     const rememberedControls = new Map();
@@ -142,7 +155,8 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         return runtime;
     }
 
-    async function executeStep(step) {
+    async function executeStep(step, phase = 'execution') {
+        assertParentCoverageStepCapability(contract.workflowId, step, phase);
         const actor = step.actor || contract.actors[0];
         const runtime = await actorRuntime(actor);
         const { page } = runtime;

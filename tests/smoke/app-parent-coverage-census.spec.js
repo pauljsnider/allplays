@@ -12,6 +12,7 @@ import {
 } from '../../scripts/parent-coverage-contract.mjs';
 import {
     createParentCoverageRuntime,
+    executeParentCoverageCleanup,
     getParentCoverageSecrets
 } from './helpers/parent-coverage-runner.js';
 
@@ -59,14 +60,7 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         }
     } finally {
         if (runtime && contract.cleanupSteps?.length) {
-            for (const step of contract.cleanupSteps) {
-                currentAction = step.action;
-                try {
-                    await runtime.executeStep(step);
-                } catch (error) {
-                    cleanupFailures.push({ action: currentAction, error });
-                }
-            }
+            cleanupFailures.push(...await executeParentCoverageCleanup(runtime, contract.cleanupSteps));
         }
         await runtime?.close();
     }
@@ -118,7 +112,11 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         sourceArea,
         signature: error ? stableFailureSignature({ workflowId: contract.workflowId, failureClass, sourceArea }) : '',
         summary: failureSummary,
-        cleanup
+        cleanup,
+        cleanupFailures: cleanupFailures.map(({ action, error: cleanupFailure }) => ({
+            action,
+            summary: redact(cleanupFailure?.message || cleanupFailure)
+        }))
     };
     await mkdir(path.dirname(reportPath), { recursive: true });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });

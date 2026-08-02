@@ -78,6 +78,28 @@ describe('parent coverage contract boundary', () => {
         }, catalog)).toThrow(/read-only contracts cannot provide cleanupSteps/);
     });
 
+    it('enforces trusted per-workflow actions routes and cleanup capabilities', () => {
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Delete account' } }]
+        }, catalog, 'P01')).toThrow(/action click is not allowed for P01/);
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'goto', route: '/profile/settings' }]
+        }, catalog, 'P01')).toThrow(/outside the trusted P01 capability/);
+
+        const reversible = validContract({
+            workflowId: 'P13',
+            title: catalog.workflows[12].title,
+            actors: ['primary'],
+            mutatesProduction: true,
+            cleanupRequired: true,
+            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Edit photo' } }],
+            cleanupSteps: [{ action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image' } }]
+        });
+        expect(() => validateContract(reversible, catalog, 'P13')).toThrow(/cleanup action uploadSyntheticImage is not allowed/);
+    });
+
     it('allows credential fills without putting credentials in the contract', () => {
         const signup = validContract({
             workflowId: 'P02',
@@ -109,7 +131,7 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract({
             ...validContract(),
             steps: [{ action: 'clickAndExpectStripeCheckout', target }]
-        }, catalog, 'P01')).toThrow(/not allowed for P01/);
+        }, catalog, 'P01')).toThrow(/restricted to P30 and P31/);
 
         const checkout = validContract({
             workflowId: 'P30',
@@ -163,7 +185,15 @@ describe('parent coverage contract boundary', () => {
                 target: { kind: 'label', name: 'Name' },
                 option: 'different-key'
             }]
-        }, catalog, 'P12')).toThrow(/restored exactly once/);
+        }, catalog, 'P12')).toThrow(/exactly match one remembered control/);
+        expect(() => validateContract({
+            ...reversible,
+            cleanupSteps: [{
+                action: 'restoreControl',
+                target: { kind: 'label', name: 'Different field' },
+                option: 'profile-name'
+            }]
+        }, catalog, 'P12')).toThrow(/exactly match one remembered control/);
     });
 
     it('rejects routes and actions outside each trusted workflow capability', () => {

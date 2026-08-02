@@ -48,15 +48,14 @@ describe('parent coverage workflow trust boundary', () => {
         }
     });
 
-    it('re-audits both parent actors as unprivileged immediately before every run', () => {
-        const auditSteps = workflow.jobs['run-contract'].steps.filter(
-            (step) => /parent fixture immediately before execution$/.test(step.name)
-        );
-        expect(auditSteps).toHaveLength(2);
-        expect(auditSteps.every((step) => step.env.SMOKE_FIXTURE_MODE === 'audit')).toBe(true);
-        expect(auditSteps.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
-        expect(auditSteps[0].env.SMOKE_PARENT_EMAIL).toContain('PARENT_CENSUS_PRIMARY_EMAIL');
-        expect(auditSteps[1].env.SMOKE_PARENT_EMAIL).toContain('PARENT_CENSUS_PEER_EMAIL');
+    it('re-audits both census actors as unprivileged immediately before execution', () => {
+        const steps = workflow.jobs['run-contract'].steps;
+        const runIndex = steps.findIndex((step) => step.name === 'Run one parent workflow contract');
+        const fixtureAudits = steps.filter((step) => /Audit (?:primary|peer) parent fixture as unprivileged/.test(step.name));
+        expect(fixtureAudits).toHaveLength(2);
+        expect(fixtureAudits.every((step) => step.env.SMOKE_FIXTURE_MODE === 'audit')).toBe(true);
+        expect(fixtureAudits.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
+        expect(fixtureAudits.map((step) => steps.indexOf(step))).toEqual([runIndex - 2, runIndex - 1]);
     });
 });
 
