@@ -352,6 +352,15 @@ concurrency:
             validDeployCommand.replace('"retry-enabled-functions" 3 15 true', '"retry-enabled-functions" 3 15')
         )).toThrow('Production retry-enabled function failure-policy acknowledgement call');
         expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('if [[ "$deploy_targets" != "$retry_enabled_function_targets"', 'if [[ "disabled" == "true"')
+        )).toThrow('Production force-deploy scoped function-group allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_inventory_producer_target"', '&& "disabled" == "true"')
+        )).toThrow('Production force-deploy scoped inventory-producer allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then', '&& "disabled" == "true" ]]; then')
+        )).toThrow('Production force-deploy scoped cleanup allowlist guard');
+        expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('"certificate-signature-cleanup-compatibility" 3 15 true', '"certificate-signature-cleanup-compatibility" 3 15')
         )).toThrow('Production retry-enabled cleanup compatibility failure-policy acknowledgement call');
         expect(() => validateProductionDeployCommand(

@@ -126,6 +126,9 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('exit "$storage_status"');
         expect(productionSource).toContain('if [[ "$deploy_targets" != "$retry_enabled_function_targets"');
         expect(productionSource).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
+        );
+        expect(productionSource).toContain(
             '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
         );
         expect(productionSource).toContain('deploy_args+=(--force)');

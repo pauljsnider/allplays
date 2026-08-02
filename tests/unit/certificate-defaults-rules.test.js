@@ -71,6 +71,9 @@ describe('certificate defaults Firestore rules', () => {
             'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"'
         );
         expect(deployWorkflow).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
+        );
+        expect(deployWorkflow).toContain(
             '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
         );
         expect(deployWorkflow).toMatch(

@@ -310,8 +310,18 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'if [[ "$deploy_targets" != "$retry_enabled_function_targets"',
+        'Production force-deploy scoped function-group allowlist guard'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target"',
+        'Production force-deploy scoped inventory-producer allowlist guard'
+    );
+    assertIncludes(
+        deployProd,
         '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then',
-        'Production force-deploy scoped producer allowlist guard'
+        'Production force-deploy scoped cleanup allowlist guard'
     );
     assertIncludes(deployProd, 'deploy_args+=(--force)', 'Production targeted failure-policy acknowledgement');
     assertMatches(
