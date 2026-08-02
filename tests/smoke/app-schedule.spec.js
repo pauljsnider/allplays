@@ -1234,7 +1234,7 @@ test('@visual app schedule loads agenda filters, player select, calendar, export
     await expect(page.getByText('vs. Falcons').first()).toBeVisible();
 
     await page.getByRole('button', { name: '.ics' }).click();
-    await expect(page.getByText('Calendar export started.')).toBeVisible();
+    await expect(page.getByText('Calendar download started.')).toBeVisible();
 
     await page.getByLabel('Player', { exact: true }).selectOption('');
     await page.getByRole('button', { name: 'Copy agenda' }).click();

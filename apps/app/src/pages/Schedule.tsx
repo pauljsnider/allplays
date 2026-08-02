@@ -21,7 +21,7 @@ import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
-import { openPublicUrl } from '../lib/publicActions';
+import { exportCalendarIcsFile, openPublicUrl } from '../lib/publicActions';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
@@ -223,6 +223,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     run: runPastHistoryRead
   } = useAsyncOperation();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
@@ -944,7 +945,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     if (!isDesktopWeb || !hasManageableScheduleTeams) setDesktopStaffToolsOpen(false);
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    setStatusMessage(null);
+    setExportError(null);
     const exportEvents = filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
       playerId: activeSelectedPlayerId,
@@ -956,20 +959,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
       return;
     }
 
-    const ics = buildScheduleIcs(exportEvents);
-    const blob = new Blob([ics], { type: 'text/calendar' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
     const selectedChild = scopeChildren.find((child) => child.playerId === activeSelectedPlayerId);
-    link.download = selectedChild
+    const filename = selectedChild
       ? `${selectedChild.playerName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
       : scheduleScope === 'staff' ? 'team-schedule.ics' : 'family-schedule.ics';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setStatusMessage('Calendar export started.');
+    try {
+      const result = await exportCalendarIcsFile(filename, buildScheduleIcs(exportEvents));
+      setStatusMessage(result === 'shared' ? 'Calendar file ready to share.' : 'Calendar download started.');
+    } catch (calendarError: any) {
+      setExportError(calendarError?.message || 'Unable to export the calendar file. Try again or use another calendar option.');
+    }
   };
 
   const handleCopyAgenda = async () => {
@@ -1241,6 +1240,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
+          {exportError ? <Status tone="error" message={exportError} /> : null}
           {bulkRsvpResult ? <Status tone={bulkRsvpResult.tone} message={bulkRsvpResult.message} /> : null}
           {!rsvpHydrationPending && unavailableBulkRsvpCount > 0 ? (
             <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
