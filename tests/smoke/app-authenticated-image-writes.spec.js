@@ -25,12 +25,13 @@ const extendedEnabled = process.env.SMOKE_EXTENDED_WRITES === '1';
 const runId = String(config.runId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48);
 const attemptNonce = randomUUID().replace(/-/g, '');
 const smokePrefix = `allplays-smoke-${runId}-${attemptNonce}`;
-const secretValues = [config.staffEmail, config.staffPassword];
+const secretValues = [config.staffEmail, config.staffPassword, config.parentEmail, config.parentPassword];
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 
 let staffSession;
 let staffRestSession;
+let parentRestSession;
 
 test.beforeAll(async ({ browser }) => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
@@ -40,12 +41,14 @@ test.beforeAll(async ({ browser }) => {
         SMOKE_TEAM_ID: config.teamId,
         SMOKE_PLAYER_ID: config.playerId,
         SMOKE_STAFF_EMAIL: config.staffEmail,
-        SMOKE_STAFF_PASSWORD: config.staffPassword
+        SMOKE_STAFF_PASSWORD: config.staffPassword,
+        SMOKE_PARENT_EMAIL: config.parentEmail,
+        SMOKE_PARENT_PASSWORD: config.parentPassword
     })) {
         expect(value, `${name} is required for the reversible image suite`).toBeTruthy();
     }
 
-    [staffSession, staffRestSession] = await Promise.all([
+    [staffSession, staffRestSession, parentRestSession] = await Promise.all([
         createAuthenticatedAppSession(browser, {
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,
@@ -56,6 +59,11 @@ test.beforeAll(async ({ browser }) => {
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,
             password: config.staffPassword
+        }),
+        createFirebaseRestSession({
+            appBaseUrl: config.appBaseUrl,
+            email: config.parentEmail,
+            password: config.parentPassword
         })
     ]);
 });
@@ -77,7 +85,7 @@ async function openRoute(page, route) {
 }
 
 async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.keys(documentState.expectedFields)) {
-    const currentDocument = await getFirestoreDocument(staffRestSession, documentState.documentPath);
+    const currentDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
     if (!currentDocument) return;
     const expectedEntries = Object.entries(documentState.expectedFields)
         .filter(([fieldName]) => fieldNames.includes(fieldName));
@@ -88,13 +96,13 @@ async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.
     if (!stillOwnsTestValues) return;
 
     await restoreFirestoreDocumentFields(
-        staffRestSession,
+        documentState.restSession,
         documentState.documentPath,
         documentState.originalDocument,
         expectedEntries.map(([fieldName]) => fieldName),
         { updateTime: currentDocument.updateTime }
     );
-    const restoredDocument = await getFirestoreDocument(staffRestSession, documentState.documentPath);
+    const restoredDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
     for (const [fieldName] of expectedEntries) {
         expect(restoredDocument?.fields?.[fieldName]).toEqual(
             documentState.originalDocument?.fields?.[fieldName]
@@ -107,11 +115,11 @@ function isAbandonedSmokeImageValue(value) {
         || String(value || '').startsWith('https://allplays.ai/img/logo_small.png?smoke=');
 }
 
-async function clearAbandonedField(documentPath, fieldName, expectedValue) {
-    const currentDocument = await getFirestoreDocument(staffRestSession, documentPath);
+async function clearAbandonedField(restSession, documentPath, fieldName, expectedValue) {
+    const currentDocument = await getFirestoreDocument(restSession, documentPath);
     if (getFirestoreStringField(currentDocument, fieldName) !== expectedValue) return false;
     await restoreFirestoreDocumentFields(
-        staffRestSession,
+        restSession,
         documentPath,
         { fields: {} },
         [fieldName],
@@ -124,7 +132,7 @@ async function reconcileDedicatedImageFixture(target) {
     const abandonedPaths = [];
 
     for (const documentTarget of target.documents) {
-        const document = await getFirestoreDocument(staffRestSession, documentTarget.documentPath);
+        const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
         expect(document, `${target.recordType} fixture document must exist`).toBeTruthy();
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             const fieldValue = getFirestoreStringField(document, fieldName);
@@ -139,26 +147,26 @@ async function reconcileDedicatedImageFixture(target) {
 
     for (const documentTarget of target.documents) {
         if (!Object.hasOwn(documentTarget.expectedFields, 'photoUrl')) continue;
-        const document = await getFirestoreDocument(staffRestSession, documentTarget.documentPath);
+        const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
         const abandonedUrl = getFirestoreStringField(document, 'photoUrl');
         if (isAbandonedSmokeImageValue(abandonedUrl)) {
-            await clearAbandonedField(documentTarget.documentPath, 'photoUrl', abandonedUrl);
+            await clearAbandonedField(target.restSession, documentTarget.documentPath, 'photoUrl', abandonedUrl);
         }
     }
     for (const abandonedPath of [...new Set(abandonedPaths)]) {
-        await deleteFirebaseStorageObject(staffRestSession, abandonedPath);
+        await deleteFirebaseStorageObject(target.restSession, abandonedPath);
     }
     for (const documentTarget of target.documents) {
         if (!Object.hasOwn(documentTarget.expectedFields, 'photoPath')) continue;
-        const document = await getFirestoreDocument(staffRestSession, documentTarget.documentPath);
+        const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
         const abandonedPath = getFirestoreStringField(document, 'photoPath');
         if (isAbandonedSmokeImageValue(abandonedPath)) {
-            await clearAbandonedField(documentTarget.documentPath, 'photoPath', abandonedPath);
+            await clearAbandonedField(target.restSession, documentTarget.documentPath, 'photoPath', abandonedPath);
         }
     }
 
     for (const documentTarget of target.documents) {
-        const document = await getFirestoreDocument(staffRestSession, documentTarget.documentPath);
+        const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
@@ -217,6 +225,7 @@ test('profile image paths accept authenticated storage and document writes', asy
     const targets = [
         {
             recordType: 'own-profile-image',
+            restSession: staffRestSession,
             storagePath: ownProfilePath,
             documents: [{
                 documentPath: `users/${staffRestSession.localId}`,
@@ -228,6 +237,7 @@ test('profile image paths accept authenticated storage and document writes', asy
         },
         {
             recordType: 'linked-player-image',
+            restSession: parentRestSession,
             storagePath: linkedPlayerPath,
             documents: [
                 {
@@ -248,9 +258,9 @@ test('profile image paths accept authenticated storage and document writes', asy
             await reconcileDedicatedImageFixture(target);
             const documentStates = [];
             for (const documentTarget of target.documents) {
-                const originalDocument = await getFirestoreDocument(staffRestSession, documentTarget.documentPath);
+                const originalDocument = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
                 expect(originalDocument, `${target.recordType} fixture document must exist`).toBeTruthy();
-                documentStates.push({ ...documentTarget, originalDocument });
+                documentStates.push({ ...documentTarget, originalDocument, restSession: target.restSession });
             }
             cleanupTasks.push({
                 recordType: target.recordType,
@@ -258,7 +268,7 @@ test('profile image paths accept authenticated storage and document writes', asy
                     for (const documentState of [...documentStates].reverse()) {
                         await restoreImageFieldsIfUnchanged(documentState, ['photoUrl']);
                     }
-                    await deleteFirebaseStorageObject(staffRestSession, target.storagePath);
+                    await deleteFirebaseStorageObject(target.restSession, target.storagePath);
                     for (const documentState of [...documentStates].reverse()) {
                         await restoreImageFieldsIfUnchanged(documentState, ['photoPath']);
                     }
@@ -267,18 +277,18 @@ test('profile image paths accept authenticated storage and document writes', asy
 
             for (const documentState of documentStates) {
                 await patchFirestoreDocumentFields(
-                    staffRestSession,
+                    target.restSession,
                     documentState.documentPath,
                     documentState.expectedFields,
                     { updateTime: documentState.originalDocument.updateTime }
                 );
-                const savedDocument = await getFirestoreDocument(staffRestSession, documentState.documentPath);
+                const savedDocument = await getFirestoreDocument(target.restSession, documentState.documentPath);
                 for (const [fieldName, fieldValue] of Object.entries(documentState.expectedFields)) {
                     expect(getFirestoreStringField(savedDocument, fieldName)).toBe(fieldValue.stringValue);
                 }
             }
             const uploaded = await uploadFirebaseStorageObject(
-                staffRestSession,
+                target.restSession,
                 target.storagePath,
                 png,
                 'image/png'
