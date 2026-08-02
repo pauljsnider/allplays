@@ -544,10 +544,9 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
   };
 }
 
-function buildTeamPassCheckoutAttemptRef(input, purchaserUid) {
+function buildTeamPassCheckoutAttemptRef(input) {
   const attemptId = buildTeamPassCheckoutAttemptId({
-    ...input,
-    uid: purchaserUid
+    ...input
   });
   return firestore.doc(`teams/${input.teamId}/teamPassCheckoutAttempts/${attemptId}`);
 }
@@ -626,7 +625,7 @@ async function reserveTeamPassCheckoutCreation({
   appUrl,
   proposedReservationId
 }) {
-  const attemptRef = buildTeamPassCheckoutAttemptRef(input, purchaserUid);
+  const attemptRef = buildTeamPassCheckoutAttemptRef(input);
   const entitlementRef = firestore.doc(`teams/${input.teamId}/entitlements/${input.seasonId}_${input.tier}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
   return firestore.runTransaction(async (transaction) => {
@@ -640,9 +639,10 @@ async function reserveTeamPassCheckoutCreation({
     const attempt = attemptSnap.exists ? attemptSnap.data() || {} : {};
     const existingReservationId = String(attempt.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
+      const reservedPurchaserUid = String(attempt.purchaserUid || '').trim();
       if (!isReusableTeamPassCheckoutCreationRequest(attempt.checkoutCreationRequest, {
         input,
-        purchaserUid,
+        purchaserUid: reservedPurchaserUid,
         reservationId: existingReservationId
       })) {
         throw new functions.https.HttpsError(
@@ -6534,7 +6534,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     const eventRef = firestore.doc(`stripeEvents/${event.id}`);
     const entitlementRef = entitlement ? firestore.doc(entitlement.refPath) : null;
     const teamPassInput = normalizeTeamPassCheckoutInput(session.metadata || {});
-    const attemptRef = buildTeamPassCheckoutAttemptRef(teamPassInput, session.metadata?.purchaserUid);
+    const attemptRef = buildTeamPassCheckoutAttemptRef(teamPassInput);
 
     await firestore.runTransaction(async (transaction) => {
       const [eventSnap, attemptSnap] = await Promise.all([

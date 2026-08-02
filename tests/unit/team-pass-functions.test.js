@@ -50,7 +50,7 @@ describe('team pass function helpers', () => {
         expect(isEligibleTeamPassPurchaser({ team, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
     });
 
-    it('builds a private stable attempt id and reservation-scoped idempotency key', () => {
+    it('builds a team-entitlement-scoped attempt id and reservation-scoped idempotency key', () => {
         const input = {
             teamId: 'team_123',
             seasonId: '2026',
@@ -59,6 +59,10 @@ describe('team pass function helpers', () => {
             checkoutCreationReservationId: 'reservation_123'
         };
         const attemptId = buildTeamPassCheckoutAttemptId(input);
+        const anotherPurchaserAttemptId = buildTeamPassCheckoutAttemptId({
+            ...input,
+            uid: 'another_parent'
+        });
         const first = buildTeamPassCheckoutIdempotencyKey(input);
         const second = buildTeamPassCheckoutIdempotencyKey({ ...input });
         const anotherSeason = buildTeamPassCheckoutIdempotencyKey({ ...input, seasonId: '2027' });
@@ -68,6 +72,7 @@ describe('team pass function helpers', () => {
         });
 
         expect(attemptId).toMatch(/^team_pass_attempt_[a-f0-9]{64}$/);
+        expect(anotherPurchaserAttemptId).toBe(attemptId);
         expect(first).toMatch(/^team_pass_checkout_[a-f0-9]{64}$/);
         expect(second).toBe(first);
         expect(anotherSeason).not.toBe(first);

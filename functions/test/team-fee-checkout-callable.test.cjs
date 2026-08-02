@@ -656,6 +656,62 @@ test('uses a stable idempotency key for repeated team-pass checkout creation', a
     assert.deepEqual(attempt?.checkoutCreationRequest?.stripeParams, loaded.metrics.createCalls[0].params);
 });
 
+test('uses one team-scoped checkout attempt across different authorized purchasers', async () => {
+    let releaseFirstCreate;
+    let markFirstCreateStarted;
+    const firstCreateStarted = new Promise((resolve) => {
+        markFirstCreateStarted = resolve;
+    });
+    let createCount = 0;
+    const seed = baseSeed();
+    seed['teams/team-1'].adminEmails = ['admin@example.com'];
+    seed['users/admin-1'] = { email: 'admin@example.com' };
+    const loaded = loadCallable({
+        seed,
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                markFirstCreateStarted();
+                await new Promise((resolve) => {
+                    releaseFirstCreate = resolve;
+                });
+            }
+            return {
+                id: 'cs_team_pass_shared',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_shared',
+                status: 'open',
+                payment_status: 'unpaid',
+                metadata: clone(params.metadata)
+            };
+        }
+    });
+    const teamPassInput = { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' };
+    const adminContext = {
+        auth: {
+            uid: 'admin-1',
+            token: { email: 'admin@example.com', email_verified: true }
+        }
+    };
+
+    const ownerPromise = loaded.teamPassCallable(teamPassInput, context);
+    await firstCreateStarted;
+    const adminPromise = loaded.teamPassCallable(teamPassInput, adminContext);
+    while (loaded.metrics.createCalls.length < 2) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    releaseFirstCreate();
+    const [ownerResult, adminResult] = await Promise.all([ownerPromise, adminPromise]);
+
+    assert.deepEqual(adminResult, ownerResult);
+    assert.equal(ownerResult.sessionId, 'cs_team_pass_shared');
+    assert.equal(loaded.metrics.createCalls.length, 2);
+    assert.deepEqual(loaded.metrics.createCalls[1], loaded.metrics.createCalls[0]);
+    assert.equal(
+        [...loaded.firestore._state.keys()].filter((path) => path.includes('/teamPassCheckoutAttempts/')).length,
+        1
+    );
+});
+
 test('does not create another checkout for an already active team pass', async () => {
     const seed = baseSeed();
     seed['teams/team-1/entitlements/2026_team-pass'] = {
