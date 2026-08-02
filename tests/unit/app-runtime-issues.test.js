@@ -52,29 +52,6 @@ describe('app runtime issue collection', () => {
         expect(issues).toEqual([]);
     });
 
-    it('ignores browser cancellations caused by controlled navigation', () => {
-        const page = new EventEmitter();
-        const issues = collectAppRuntimeIssues(page, [], { includeApiFailures: true });
-
-        page.emit('requestfailed', request(
-            'fetch',
-            'https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel',
-            { errorText: 'net::ERR_ABORTED' }
-        ));
-        page.emit('requestfailed', request(
-            'image',
-            'https://firebasestorage.googleapis.com/v0/b/project/o/team.png',
-            { errorText: 'NS_BINDING_ABORTED' }
-        ));
-        page.emit('requestfailed', request(
-            'font',
-            'https://example.test/app.woff2',
-            { errorText: 'Load request cancelled' }
-        ));
-
-        expect(issues).toEqual([]);
-    });
-
     it('keeps broad API monitoring opt-in for the parent census', () => {
         const page = new EventEmitter();
         const issues = collectAppRuntimeIssues(page);
@@ -87,5 +64,24 @@ describe('app runtime issue collection', () => {
         page.emit('requestfailed', request('script', 'https://example.test/app.js', { errorText: 'failed' }));
 
         expect(issues).toEqual(['asset:failed:https://example.test/app.js']);
+    });
+
+    it('ignores only aborted requests during a runner-controlled navigation window', () => {
+        const page = new EventEmitter();
+        let controlled = true;
+        const issues = collectAppRuntimeIssues(page, [], {
+            includeApiFailures: true,
+            isControlledNavigation: () => controlled
+        });
+
+        page.emit('requestfailed', request('fetch', 'https://example.test/old', { errorText: 'net::ERR_ABORTED' }));
+        page.emit('requestfailed', request('fetch', 'https://example.test/failure', { errorText: 'net::ERR_FAILED' }));
+        controlled = false;
+        page.emit('requestfailed', request('image', 'https://example.test/broken.png', { errorText: 'net::ERR_ABORTED' }));
+
+        expect(issues).toEqual([
+            'network:net::ERR_FAILED:https://example.test/failure',
+            'network:net::ERR_ABORTED:https://example.test/broken.png'
+        ]);
     });
 });
