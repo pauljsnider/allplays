@@ -58,6 +58,9 @@ const {
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
   getTeamFeeRecipientTargetUserIds,
+  LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+  hasLegacyReadableTeamFeeCheckoutState,
+  buildLegacyReadableTeamFeeCheckoutAttempt,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
   isCanonicalStripeCheckoutUrl,
@@ -735,19 +738,6 @@ function buildTeamFeeCheckoutAttemptRef(recipientRef) {
   return recipientRef.collection('checkoutAttempts').doc('current');
 }
 
-function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
-  return [
-    'checkoutUrl',
-    'paymentLink',
-    'stripeCheckoutSessionId',
-    'checkoutAttemptToken',
-    'checkoutAmountCents',
-    'checkoutCreationPayerUid',
-    'checkoutCreationAmountCents',
-    'checkoutCreationRequest'
-  ].some((field) => recipient[field] !== undefined && recipient[field] !== null && recipient[field] !== '');
-}
-
 async function migrateLegacyReadableTeamFeeCheckoutState(recipientRef) {
   const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -763,24 +753,11 @@ async function migrateLegacyReadableTeamFeeCheckoutState(recipientRef) {
     const recipient = recipientSnap.data() || {};
     const existingAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
     if (!hasLegacyReadableTeamFeeCheckoutState(recipient)) return existingAttempt;
-    const existingAuthoritativeAttempt = Object.fromEntries(
-      Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
-    );
-    const privateAttempt = {
-      version: 1,
-      ...(recipient.checkoutUrl || recipient.paymentLink ? { checkoutUrl: recipient.checkoutUrl || recipient.paymentLink } : {}),
-      ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
-      ...(recipient.stripeCheckoutSessionId ? { stripeCheckoutSessionId: recipient.stripeCheckoutSessionId } : {}),
-      ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),
-      ...(recipient.checkoutAmountCents ? { checkoutAmountCents: recipient.checkoutAmountCents } : {}),
-      ...(recipient.checkoutCreationReservationId ? { reservationId: recipient.checkoutCreationReservationId } : {}),
-      ...(recipient.checkoutCreationPayerUid ? { payerUid: recipient.checkoutCreationPayerUid } : {}),
-      ...(recipient.checkoutCreationAmountCents ? { amountCents: recipient.checkoutCreationAmountCents } : {}),
-      ...(recipient.checkoutCreationRequest ? { checkoutCreationRequest: recipient.checkoutCreationRequest } : {}),
-      createdAt: recipient.checkoutCreatedAt || now,
-      updatedAt: now,
-      ...existingAuthoritativeAttempt
-    };
+    const privateAttempt = buildLegacyReadableTeamFeeCheckoutAttempt({
+      recipient,
+      existingAttempt,
+      now
+    });
     transaction.set(checkoutAttemptRef, privateAttempt, { merge: true });
     transaction.set(recipientRef, {
       checkoutUrl: admin.firestore.FieldValue.delete(),
@@ -6931,7 +6908,15 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         }
 
         const recipient = recipientSnap.data() || {};
-        const checkoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+        const hasLegacyReadableCheckout = hasLegacyReadableTeamFeeCheckoutState(recipient);
+        const persistedCheckoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+        const checkoutAttempt = hasLegacyReadableCheckout
+          ? buildLegacyReadableTeamFeeCheckoutAttempt({
+            recipient,
+            existingAttempt: persistedCheckoutAttempt,
+            now: receivedAt
+          })
+          : persistedCheckoutAttempt;
         const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, checkoutAttempt, session });
         const ignoredReason = shouldApplyCheckoutEvent
           ? null
@@ -6949,6 +6934,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           const changedFields = getChangedTeamFeeFinancialFields(recipient, recipientUpdate);
           transaction.set(recipientRef, {
             ...withTeamFeeParentBillingClears(recipientUpdate),
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
             checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
             checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             latestAuditId: paymentAuditRef.id,
@@ -6978,9 +6967,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeCustomerId: null,
             stripeEventId: null,
             checkoutAttemptToken: null,
-            checkoutUrl: null,
-            paymentLink: null,
-            checkoutAmountCents: null,
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
             updatedAt: receivedAt
           }, { merge: true });
           transaction.delete(checkoutAttemptRef);
@@ -6991,6 +6981,15 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeEventId: event.id,
             paymentStatus: session.payment_status || null,
             recordedAt: receivedAt,
+            updatedAt: receivedAt
+          }, { merge: true });
+        } else if (hasLegacyReadableCheckout) {
+          transaction.set(checkoutAttemptRef, checkoutAttempt, { merge: true });
+          transaction.set(recipientRef, {
+            ...Object.fromEntries(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.map((field) => [
+              field,
+              admin.firestore.FieldValue.delete()
+            ])),
             updatedAt: receivedAt
           }, { merge: true });
         }

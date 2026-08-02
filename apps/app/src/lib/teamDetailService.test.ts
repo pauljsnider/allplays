@@ -612,10 +612,42 @@ describe('addRosterPlayerForApp native writes', () => {
     expect(dbMocks.addPlayer).not.toHaveBeenCalled();
   });
 
-  it('keeps a native roster photo when the create commit outcome is uncertain', async () => {
+  it('accepts an ambiguous native roster create after the private photo path confirms it committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/player.jpg';
     nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
       Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
     );
+    dbMocks.getPlayerPrivateProfile.mockResolvedValueOnce({ photoPath: newPath });
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result.playerId).toBe('native-player-1');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes an ambiguous native roster photo after the private path proves it did not commit', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/player.jpg';
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+    dbMocks.getPlayerPrivateProfile.mockResolvedValueOnce({ photoPath: null });
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(newPath);
+  });
+
+  it('keeps a native roster photo when the authoritative create check is unavailable', async () => {
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+    dbMocks.getPlayerPrivateProfile.mockRejectedValueOnce(new Error('read unavailable'));
 
     await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
       name: 'Sam Player',

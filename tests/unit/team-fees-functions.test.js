@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    hasLegacyReadableTeamFeeCheckoutState,
+    buildLegacyReadableTeamFeeCheckoutAttempt,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeeBalanceCents,
@@ -31,6 +34,41 @@ const {
 } = require('../../functions/team-fees-core.cjs');
 
 describe('team fee checkout function helpers', () => {
+    it('moves legacy readable checkout state while preserving an existing private attempt', () => {
+        const recipient = {
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
+            paymentLink: 'https://checkout.stripe.com/c/pay/legacy',
+            checkoutStatus: 'open',
+            stripeCheckoutSessionId: 'cs_legacy',
+            checkoutAttemptToken: 'tok_legacy_123456',
+            checkoutAmountCents: 7500,
+            checkoutCreationPayerUid: 'legacy-payer',
+            checkoutCreationRequest: { idempotencyKey: 'legacy-key' }
+        };
+
+        expect(hasLegacyReadableTeamFeeCheckoutState(recipient)).toBe(true);
+        expect(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS).toContain('checkoutUrl');
+        expect(buildLegacyReadableTeamFeeCheckoutAttempt({
+            recipient,
+            existingAttempt: {
+                checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+                stripeCheckoutSessionId: 'cs_private',
+                payerUid: 'private-payer'
+            },
+            now: 'server-now'
+        })).toMatchObject({
+            version: 1,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+            stripeCheckoutSessionId: 'cs_private',
+            checkoutAttemptToken: 'tok_legacy_123456',
+            checkoutAmountCents: 7500,
+            payerUid: 'private-payer',
+            checkoutCreationRequest: { idempotencyKey: 'legacy-key' },
+            createdAt: 'server-now',
+            updatedAt: 'server-now'
+        });
+    });
+
     it('normalizes bounded team fee checkout input', () => {
         expect(normalizeTeamFeeCheckoutInput({
             teamId: ' team_123 ',

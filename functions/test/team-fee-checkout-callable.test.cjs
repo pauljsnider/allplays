@@ -499,6 +499,60 @@ test('validates a paid team-fee webhook against the private attempt and then del
     ), false);
 });
 
+test('migrates a legacy readable team-fee attempt inside a paid webhook transaction', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+    const session = makeSession({
+        status: 'complete',
+        payment_status: 'paid',
+        payment_intent: 'pi_legacy_paid'
+    });
+    const webhookEvent = {
+        id: 'evt_team_fee_legacy_paid',
+        type: 'checkout.session.completed',
+        data: { object: session }
+    };
+    const loaded = loadCallable({
+        seed: baseSeed({
+            checkoutUrl: session.url,
+            paymentLink: session.url,
+            checkoutStatus: 'open',
+            stripeCheckoutSessionId: session.id,
+            checkoutAttemptToken: session.metadata.checkoutAttemptToken,
+            checkoutAmountCents: 7500,
+            checkoutCreationPayerUid: 'owner-1',
+            checkoutCreationRequest: { idempotencyKey: 'legacy-key' }
+        }),
+        webhookEvent
+    });
+    const response = makeWebhookResponse();
+
+    await loaded.teamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' },
+        ip: '127.0.0.4'
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true, teamFeeUpdated: true });
+    const recipient = loaded.firestore._state.get(recipientPath);
+    assert.equal(recipient.status, 'paid');
+    for (const field of [
+        'checkoutUrl',
+        'paymentLink',
+        'stripeCheckoutSessionId',
+        'checkoutAttemptToken',
+        'checkoutAmountCents',
+        'checkoutCreationPayerUid',
+        'checkoutCreationRequest'
+    ]) {
+        assert.equal(Object.prototype.hasOwnProperty.call(recipient, field), false, `${field} must be scrubbed by the webhook`);
+    }
+    assert.equal(loaded.firestore._state.has(attemptPath), false);
+    assert.equal(loaded.firestore._state.get('stripeEvents/evt_team_fee_legacy_paid').ignored, false);
+});
+
 test('replaces a definitively expired persisted session with a validated fresh session', async () => {
     const expired = makeSession({ status: 'expired' });
     const { callable, metrics } = loadCallable({

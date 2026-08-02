@@ -664,7 +664,34 @@ describe('saveStaffPlayerRosterDetails', () => {
     );
   });
 
-  it('keeps a native roster photo when the player commit outcome is uncertain', async () => {
+  it('accepts an ambiguous native roster save after the private photo path confirms it committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/player-1/kid.jpg';
+    nativeRuntimeState.isNative = true;
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/kid.jpg',
+      path: newPath
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ photoPath: newPath });
+
+    const result = await saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player' },
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result.payload).toMatchObject({ photoPath: newPath });
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('keeps a native roster photo when the authoritative commit check is unavailable', async () => {
     nativeRuntimeState.isNative = true;
     nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
       url: 'https://primary.example/kid.jpg',
@@ -673,6 +700,9 @@ describe('saveStaffPlayerRosterDetails', () => {
     nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
       Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
     );
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('read unavailable'));
 
     await expect(saveStaffPlayerRosterDetails({
       user: { uid: 'coach-1', email: 'coach@example.com' } as any,
@@ -876,10 +906,58 @@ describe('updateParentPlayerEditableProfile native photo upload', () => {
     expect(legacyPlayerDbMocks.updatePlayerProfile).not.toHaveBeenCalled();
   });
 
-  it('keeps a native player photo when the parent profile commit outcome is uncertain', async () => {
+  it('accepts an ambiguous native parent photo save after the private path confirms it committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/player-1/kid.jpg';
     nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
       Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
     );
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ photoPath: newPath });
+
+    const result = await updateParentPlayerEditableProfile({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result).toMatchObject({ photoPath: newPath });
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes an ambiguous native parent photo after the private path proves it did not commit', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/player-1/kid.jpg';
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ photoPath: 'profile-photos/teams/team-1/players/player-1/old.jpg' });
+
+    await expect(updateParentPlayerEditableProfile({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      photoFile: new File(['photo'], 'kid.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(newPath);
+  });
+
+  it('keeps a native parent photo when the authoritative commit check is unavailable', async () => {
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('read unavailable'));
 
     await expect(updateParentPlayerEditableProfile({
       user: {

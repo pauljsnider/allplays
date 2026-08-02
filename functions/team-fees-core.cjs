@@ -4,6 +4,44 @@ function normalizeString(value) {
     return String(value || '').trim();
 }
 
+const LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS = Object.freeze([
+    'checkoutUrl',
+    'paymentLink',
+    'stripeCheckoutSessionId',
+    'checkoutAttemptToken',
+    'checkoutAmountCents',
+    'checkoutCreationPayerUid',
+    'checkoutCreationAmountCents',
+    'checkoutCreationRequest'
+]);
+
+function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
+    return LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.some((field) => (
+        recipient[field] !== undefined && recipient[field] !== null && recipient[field] !== ''
+    ));
+}
+
+function buildLegacyReadableTeamFeeCheckoutAttempt({ recipient = {}, existingAttempt = {}, now = null } = {}) {
+    const authoritativeAttempt = Object.fromEntries(
+        Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    );
+    return {
+        version: 1,
+        ...(recipient.checkoutUrl || recipient.paymentLink ? { checkoutUrl: recipient.checkoutUrl || recipient.paymentLink } : {}),
+        ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
+        ...(recipient.stripeCheckoutSessionId ? { stripeCheckoutSessionId: recipient.stripeCheckoutSessionId } : {}),
+        ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),
+        ...(recipient.checkoutAmountCents ? { checkoutAmountCents: recipient.checkoutAmountCents } : {}),
+        ...(recipient.checkoutCreationReservationId ? { reservationId: recipient.checkoutCreationReservationId } : {}),
+        ...(recipient.checkoutCreationPayerUid ? { payerUid: recipient.checkoutCreationPayerUid } : {}),
+        ...(recipient.checkoutCreationAmountCents ? { amountCents: recipient.checkoutCreationAmountCents } : {}),
+        ...(recipient.checkoutCreationRequest ? { checkoutCreationRequest: recipient.checkoutCreationRequest } : {}),
+        ...(recipient.checkoutCreatedAt || now ? { createdAt: recipient.checkoutCreatedAt || now } : {}),
+        ...(now ? { updatedAt: now } : {}),
+        ...authoritativeAttempt
+    };
+}
+
 function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
     const token = normalizeString(value);
     if (!token) return '';
@@ -522,6 +560,9 @@ function buildTeamFeePaidUpdate({ recipient = {}, checkoutAttempt = recipient, s
 }
 
 module.exports = {
+    LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    hasLegacyReadableTeamFeeCheckoutState,
+    buildLegacyReadableTeamFeeCheckoutAttempt,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeePaidCents,

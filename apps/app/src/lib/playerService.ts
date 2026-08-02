@@ -928,10 +928,15 @@ export async function updateParentPlayerEditableProfile({
       }
       await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
     } catch (error) {
-      if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+      const persistenceState = nativePhotoPath && !isDefinitiveFirestoreWriteFailure(error)
+        ? await getPlayerPhotoPersistenceState(teamId, playerId, nativePhotoPath)
+        : 'not-committed';
+      if (persistenceState !== 'committed') {
+        if (nativePhotoPath && persistenceState === 'not-committed') {
+          await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+        }
+        throw error;
       }
-      throw error;
     }
   } else {
     try {
@@ -1072,10 +1077,15 @@ export async function saveStaffPlayerRosterDetails({
       }
       await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
     } catch (error) {
-      if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+      const persistenceState = nativePhotoPath && !isDefinitiveFirestoreWriteFailure(error)
+        ? await getPlayerPhotoPersistenceState(teamId, playerId, nativePhotoPath)
+        : 'not-committed';
+      if (persistenceState !== 'committed') {
+        if (nativePhotoPath && persistenceState === 'not-committed') {
+          await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+        }
+        throw error;
       }
-      throw error;
     }
   } else {
     try {

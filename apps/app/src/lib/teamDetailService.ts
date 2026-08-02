@@ -1444,18 +1444,17 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
       if (!savedPlayerId) throw new Error('The new roster player could not be saved.');
     }
   } catch (error) {
-    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-      throw error;
-    }
-    if (webPhotoPath) {
+    const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
+    if (uploadedPhotoPath) {
       const persistenceState = isDefinitiveFirestoreWriteFailure(error)
         ? 'not-committed'
-        : await getPlayerPhotoPersistenceState(normalizedTeamId, playerId, webPhotoPath);
+        : await getPlayerPhotoPersistenceState(normalizedTeamId, playerId, uploadedPhotoPath);
       if (persistenceState === 'committed') {
         savedPlayerId = playerId;
       } else {
-        if (persistenceState === 'not-committed') {
+        if (persistenceState === 'not-committed' && nativePhotoPath) {
+          await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+        } else if (persistenceState === 'not-committed' && webPhotoPath) {
           await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
         }
         throw error;
