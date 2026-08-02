@@ -362,12 +362,16 @@ export async function applyTrackStatsheetImportForApp({
   }
 
   let statSheetPhotoUrl = String(uploadedPhotoUrl || '')
-  let newlyUploadedPhoto: { url: string; path: string } | null = null
+  let newlyUploadedPhoto: { url: string; path: string; storage?: 'image' | 'primary' } | null = null
   if (file && !statSheetPhotoUrl) {
     const uploaded = await uploadStatSheetPhoto(teamId, file, { returnUpload: true })
     statSheetPhotoUrl = typeof uploaded === 'string' ? uploaded : String(uploaded?.url || '')
     if (typeof uploaded !== 'string' && uploaded?.path) {
-      newlyUploadedPhoto = { url: statSheetPhotoUrl, path: String(uploaded.path) }
+      newlyUploadedPhoto = {
+        url: statSheetPhotoUrl,
+        path: String(uploaded.path),
+        storage: uploaded.storage
+      }
     }
   }
 
@@ -437,7 +441,10 @@ export async function applyTrackStatsheetImportForApp({
     }
   } catch (error) {
     if (newlyUploadedPhoto && !photoReferencedByGame) {
-      await deleteUploadedMediaObjects([{ path: newlyUploadedPhoto.path }]).catch(() => undefined)
+      await deleteUploadedMediaObjects([{
+        path: newlyUploadedPhoto.path,
+        storage: newlyUploadedPhoto.storage
+      }]).catch(() => undefined)
     }
     throw error
   }

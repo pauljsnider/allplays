@@ -754,7 +754,7 @@ RETURN JSON:
       const applyStatus = document.getElementById('apply-status');
       const applyBtn = document.getElementById('apply-btn');
       applyStatus.textContent = '';
-      let newlyUploadedStatSheetPath = '';
+      let newlyUploadedStatSheet = null;
       let statSheetPersisted = false;
 
       const includedVisitor = visitorRows.filter(r => r.include);
@@ -802,9 +802,11 @@ RETURN JSON:
             }, 30000);
           });
           uploadPromise.then((lateUpload) => {
-            const latePath = typeof lateUpload === 'string' ? '' : lateUpload?.path;
-            if (uploadTimedOut && latePath) {
-              deleteUploadedMediaObjects([{ path: latePath }]).catch(() => undefined);
+            if (uploadTimedOut && typeof lateUpload !== 'string' && lateUpload?.path) {
+              deleteUploadedMediaObjects([{
+                path: lateUpload.path,
+                storage: lateUpload.storage
+              }]).catch(() => undefined);
             }
           }).catch(() => undefined);
           let upload;
@@ -814,7 +816,9 @@ RETURN JSON:
             clearTimeout(uploadTimeoutId);
           }
           statSheetUrl = typeof upload === 'string' ? upload : upload.url;
-          newlyUploadedStatSheetPath = typeof upload === 'string' ? '' : upload.path;
+          newlyUploadedStatSheet = typeof upload === 'string'
+            ? null
+            : { path: upload.path, storage: upload.storage };
           uploadedStatSheetFile = statSheetFile;
           uploadedStatSheetUrl = statSheetUrl;
         }
@@ -870,8 +874,8 @@ RETURN JSON:
         // Keep the apply control available so coaches can correct and re-save stats before leaving.
 
       } catch (error) {
-        if (newlyUploadedStatSheetPath && !statSheetPersisted && error?.commitStateUnknown !== true) {
-          await deleteUploadedMediaObjects([{ path: newlyUploadedStatSheetPath }]).catch(() => undefined);
+        if (newlyUploadedStatSheet && !statSheetPersisted && error?.commitStateUnknown !== true) {
+          await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
           uploadedStatSheetFile = null;
           uploadedStatSheetUrl = currentGame.statSheetPhotoUrl || '';
         }

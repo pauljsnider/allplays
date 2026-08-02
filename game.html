@@ -742,7 +742,9 @@
                 try {
                     const upload = await uploadStatSheetPhoto(teamId, file, { returnUpload: true });
                     const url = typeof upload === 'string' ? upload : upload.url;
-                    newlyUploadedStatSheet = typeof upload === 'string' ? null : { path: upload.path };
+                    newlyUploadedStatSheet = typeof upload === 'string'
+                        ? null
+                        : { path: upload.path, storage: upload.storage };
                     await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
                     statSheetPersisted = true;
                     game.statSheetPhotoUrl = url;

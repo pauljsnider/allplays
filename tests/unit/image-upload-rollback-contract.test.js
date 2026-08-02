@@ -41,6 +41,7 @@ describe('legacy image upload rollback contracts', () => {
         const source = read('game.html');
 
         expect(source).toContain("uploadStatSheetPhoto(teamId, file, { returnUpload: true })");
+        expect(source).toContain('{ path: upload.path, storage: upload.storage }');
         expect(source).toContain('if (newlyUploadedStatSheet && !statSheetPersisted)');
         expect(source).toContain('await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);');
     });
@@ -53,7 +54,8 @@ describe('legacy image upload rollback contracts', () => {
         expect(uploadIndex).toBeGreaterThan(confirmIndex);
         expect(source).toContain('{ commitStateUnknown: true }');
         expect(source).toContain("error?.commitStateUnknown !== true");
-        expect(source).toContain('if (uploadTimedOut && latePath)');
-        expect(source).toContain("deleteUploadedMediaObjects([{ path: newlyUploadedStatSheetPath }])");
+        expect(source).toContain("storage: lateUpload.storage");
+        expect(source).toContain('{ path: upload.path, storage: upload.storage }');
+        expect(source).toContain('deleteUploadedMediaObjects([newlyUploadedStatSheet])');
     });
 });
