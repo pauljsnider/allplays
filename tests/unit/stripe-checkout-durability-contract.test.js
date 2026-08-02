@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const teamFeeCoreSource = readFileSync(new URL('../../functions/team-fees-core.cjs', import.meta.url), 'utf8');
+const teamFeesPageSource = readFileSync(new URL('../../apps/app/src/pages/TeamFees.tsx', import.meta.url), 'utf8');
+const teamFeesServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamFeesService.ts', import.meta.url), 'utf8');
 const agentGuidance = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
 const pullRequestTemplate = readFileSync(new URL('../../.github/pull_request_template.md', import.meta.url), 'utf8');
 
@@ -50,6 +52,15 @@ describe('Stripe Checkout durability contract', () => {
         expect(functionsSource).toContain('Another purchaser already has a team-pass checkout in progress.');
         expect(agentGuidance).toContain('cross-principal retries fail closed');
         expect(pullRequestTemplate).toContain('same-principal and different-principal concurrency');
+    });
+
+    it('never shares a manager-owned team-fee provider session with a family', () => {
+        expect(teamFeesPageSource).not.toContain('initiateStaffTeamFeeCheckout');
+        expect(teamFeesPageSource).not.toContain('Share the public Stripe checkout URL');
+        expect(teamFeesPageSource).toContain('buildTeamFeeFamilyPaymentUrl');
+        expect(teamFeesServiceSource).toContain("appendAppRouteParams('/parent-tools/fees'");
+        expect(teamFeesServiceSource).toContain("buildAppUrl('/auth', { next: nextRoute }");
+        expect(agentGuidance).toContain('must never create a payer-bound provider session and then copy/share that URL');
     });
 
     it('reserves team-fee creation before Stripe and compensates persistence failure', () => {

@@ -3,8 +3,8 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, DollarSign, Loader2, RefreshCw, Shield } from 'lucide-react';
 import {
   buildTeamFeeInstallmentSchedule,
+  buildTeamFeeFamilyPaymentUrl,
   createTeamFeeBatchForApp,
-  initiateStaffTeamFeeCheckout,
   loadTeamFeeManagementModel,
   recordOfflineTeamFeePayment,
   recordOfflineTeamFeeRefund,
@@ -322,17 +322,12 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     }
   };
 
-  const resolveCheckoutUrl = async (recipient: TeamFeeRecipientSummary) => {
-    const existingUrl = getActiveCheckoutUrl(recipient);
-    const result = await initiateStaffTeamFeeCheckout({
+  const getFamilyPaymentUrl = (recipient: TeamFeeRecipientSummary) => {
+    return buildTeamFeeFamilyPaymentUrl({
       teamId,
       batchId: selectedBatchId,
-      recipientId: recipient.id,
-      user: auth.user
+      recipientId: recipient.id
     });
-    const checkoutUrl = getTrustedStripeCheckoutUrl(result.checkoutUrl);
-
-    return { checkoutUrl, created: existingUrl !== checkoutUrl };
   };
 
   const shareCheckoutLink = async (recipient: TeamFeeRecipientSummary) => {
@@ -340,26 +335,25 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSuccess('');
     setSubmittingId(`checkout-share:${recipient.id}`);
     try {
-      const { checkoutUrl, created } = await resolveCheckoutUrl(recipient);
+      const paymentUrl = getFamilyPaymentUrl(recipient);
       const result = await sharePublicUrl({
-        title: `${recipient.playerName} fee checkout`,
-        text: '',
-        url: checkoutUrl,
-        clipboardText: checkoutUrl
+        title: `${recipient.playerName} fee payment`,
+        text: 'Sign in to ALL PLAYS to review and pay this team fee.',
+        url: paymentUrl,
+        clipboardText: paymentUrl
       });
-      if (created) await refresh();
       if (result === 'shared') {
-        setSuccess(`Shared checkout link for ${recipient.playerName}.`);
+        setSuccess(`Shared payment sign-in link for ${recipient.playerName}.`);
         return;
       }
       if (result === 'copied') {
-        setSuccess(`Copied checkout link for ${recipient.playerName}.`);
+        setSuccess(`Copied payment sign-in link for ${recipient.playerName}.`);
         return;
       }
       if (result === 'cancelled') return;
-      throw new Error('Unable to share checkout link.');
+      throw new Error('Unable to share payment sign-in link.');
     } catch (shareError: any) {
-      updateForm(recipient.id, { checkoutError: toAppServiceError(shareError, 'Unable to share checkout link.').message });
+      updateForm(recipient.id, { checkoutError: toAppServiceError(shareError, 'Unable to share payment sign-in link.').message });
     } finally {
       setSubmittingId('');
     }
@@ -370,15 +364,14 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSuccess('');
     setSubmittingId(`checkout-copy:${recipient.id}`);
     try {
-      const { checkoutUrl, created } = await resolveCheckoutUrl(recipient);
-      const result = await copyPublicText(checkoutUrl);
-      if (created) await refresh();
+      const paymentUrl = getFamilyPaymentUrl(recipient);
+      const result = await copyPublicText(paymentUrl);
       if (result !== 'copied') {
-        throw new Error('Unable to copy checkout link.');
+        throw new Error('Unable to copy payment sign-in link.');
       }
-      setSuccess(`Copied checkout link for ${recipient.playerName}.`);
+      setSuccess(`Copied payment sign-in link for ${recipient.playerName}.`);
     } catch (copyError: any) {
-      updateForm(recipient.id, { checkoutError: toAppServiceError(copyError, 'Unable to copy checkout link.').message });
+      updateForm(recipient.id, { checkoutError: toAppServiceError(copyError, 'Unable to copy payment sign-in link.').message });
     } finally {
       setSubmittingId('');
     }
@@ -663,35 +656,9 @@ function isOnlineCollectionRecipient(recipient: TeamFeeRecipientSummary) {
   return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(String(recipient.collectionMode || '').trim().toLowerCase());
 }
 
-function getActiveCheckoutUrl(recipient: TeamFeeRecipientSummary) {
-  return String(recipient.checkoutStatus || '').trim().toLowerCase() === 'open' && String(recipient.checkoutUrl || '').trim()
-    ? String(recipient.checkoutUrl || '').trim()
-    : '';
-}
-
-function getTrustedStripeCheckoutUrl(value: unknown) {
-  const checkoutUrl = String(value || '').trim();
-  try {
-    const parsed = new URL(checkoutUrl);
-    if (
-      parsed.protocol === 'https:'
-      && parsed.hostname === 'checkout.stripe.com'
-      && !parsed.username
-      && !parsed.password
-      && !parsed.port
-    ) {
-      return checkoutUrl;
-    }
-  } catch {
-    // Fall through to the same recoverable error for every invalid destination.
-  }
-
-  throw new Error('Unable to get a trusted Stripe checkout link. Try again.');
-}
-
 function getCheckoutStatusLabel(recipient: TeamFeeRecipientSummary) {
   const normalized = String(recipient.checkoutStatus || '').trim().toLowerCase();
-  if (normalized === 'open') return 'Active link';
+  if (normalized === 'open') return 'Checkout in progress';
   if (normalized === 'paid' || normalized === 'complete') return 'Paid';
   if (normalized === 'cancelled' || normalized === 'canceled') return 'Cancelled';
   if (normalized === 'expired') return 'Expired';
@@ -938,23 +905,20 @@ function CheckoutLinkSection({
   if (recipient.status === 'paid' || recipient.status === 'canceled' || recipient.status === 'cancelled') return null;
 
   const onlineCollection = isOnlineCollectionRecipient(recipient);
-  const hasActiveLink = Boolean(getActiveCheckoutUrl(recipient));
-  const shareLabel = hasActiveLink ? 'Share checkout link' : 'Generate & share link';
-
   return (
     <section className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.06em] text-sky-700">Online checkout</div>
-          <p className="mt-1 text-xs font-semibold text-sky-900">{onlineCollection ? `${getCheckoutStatusLabel(recipient)}. Share the public Stripe checkout URL with the family.` : 'This fee is marked for offline collection only, so no Stripe checkout link can be generated from the app.'}</p>
+          <p className="mt-1 text-xs font-semibold text-sky-900">{onlineCollection ? `${getCheckoutStatusLabel(recipient)}. Share an ALL PLAYS sign-in link with the family; checkout is created only for the authorized family member who signs in.` : 'This fee is marked for offline collection only, so no online payment link is available from the app.'}</p>
         </div>
         {onlineCollection ? <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black uppercase text-sky-700">{getCheckoutStatusLabel(recipient)}</span> : null}
       </div>
 
       {onlineCollection ? (
         <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <button type="button" className="secondary-button flex-1 justify-center" disabled={recipientSubmitting} onClick={() => { void onShare(); }}>{shareLabel}</button>
-          <button type="button" className="ghost-button flex-1 justify-center" disabled={recipientSubmitting} onClick={() => { void onCopy(); }}>Copy checkout link</button>
+          <button type="button" className="secondary-button flex-1 justify-center" disabled={recipientSubmitting} onClick={() => { void onShare(); }}>Share family payment link</button>
+          <button type="button" className="ghost-button flex-1 justify-center" disabled={recipientSubmitting} onClick={() => { void onCopy(); }}>Copy family payment link</button>
         </div>
       ) : null}
 

@@ -9,12 +9,7 @@ const dbMocks = vi.hoisted(() => ({
     updateTeamFeeRecipient: vi.fn()
 }));
 
-const stripeServiceMocks = vi.hoisted(() => ({
-    initiateTeamFeeCheckout: vi.fn()
-}));
-
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/stripe-service.js', () => stripeServiceMocks);
 vi.mock('../../js/team-access.js', () => ({
     hasFullTeamAccess: (user: any, team: any) => Boolean(user?.isAdmin || user?.uid === team?.ownerId)
 }));
@@ -26,7 +21,7 @@ import {
     buildOfflineTeamFeeRefundUpdate,
     buildTeamFeeInstallmentSchedule,
     buildManualPaymentUpdate,
-    initiateStaffTeamFeeCheckout,
+    buildTeamFeeFamilyPaymentUrl,
     loadTeamFeeManagementModel,
     recordOfflineTeamFeePayment,
     recordOfflineTeamFeeRefund,
@@ -36,7 +31,6 @@ import {
 describe('React app team fee offline payment service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        stripeServiceMocks.initiateTeamFeeCheckout.mockReset();
     });
 
     it('builds a partial offline payment update with the legacy ledger shape', () => {
@@ -396,29 +390,19 @@ describe('React app team fee offline payment service', () => {
         });
     });
 
-    it('initiates a staff team fee checkout only for fee managers', async () => {
-        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
-        stripeServiceMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
-
-        await expect(initiateStaffTeamFeeCheckout({
+    it('builds a family sign-in link without creating a staff-owned provider checkout', () => {
+        expect(buildTeamFeeFamilyPaymentUrl({
             teamId: 'team-1',
             batchId: 'batch-1',
             recipientId: 'recipient-1',
-            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
-        })).resolves.toEqual({ success: true, checkoutUrl: 'https://checkout.stripe.test/team-fee' });
+            origin: 'https://preview.example/path'
+        })).toBe('https://preview.example/app/#/auth?next=%2Fparent-tools%2Ffees%3FteamId%3Dteam-1%26batchId%3Dbatch-1%26recipientId%3Drecipient-1');
 
-        expect(stripeServiceMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({
+        expect(() => buildTeamFeeFamilyPaymentUrl({
             teamId: 'team-1',
-            batchId: 'batch-1',
+            batchId: '',
             recipientId: 'recipient-1'
-        });
-
-        await expect(initiateStaffTeamFeeCheckout({
-            teamId: 'team-1',
-            batchId: 'batch-1',
-            recipientId: 'recipient-1',
-            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
-        })).rejects.toThrow('do not have access');
+        })).toThrow('Missing required fields for the family payment link.');
     });
 
     it('creates a simple fee batch using the legacy document shape', async () => {
