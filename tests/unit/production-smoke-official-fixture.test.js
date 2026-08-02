@@ -10,6 +10,7 @@ import {
 import {
     createFirebaseRestSession,
     deleteFirestoreDocument,
+    isEmptyFirestoreDocument,
     patchFirestoreDocumentFields,
     restoreFirestoreDocumentFields
 } from '../smoke/helpers/firebase-rest.js';
@@ -252,6 +253,17 @@ describe('production officials smoke fixture maintenance', () => {
             method: 'DELETE',
             headers: { authorization: 'Bearer redacted-token' }
         });
+    });
+
+    it('distinguishes an empty interrupted image document from a metadata-bearing fixture', () => {
+        expect(isEmptyFirestoreDocument({ fields: {} })).toBe(true);
+        expect(isEmptyFirestoreDocument({
+            fields: {
+                smokeOwned: { booleanValue: true },
+                parentUserId: { stringValue: 'smoke-parent' }
+            }
+        })).toBe(false);
+        expect(isEmptyFirestoreDocument(null)).toBe(false);
     });
 
     it('loads canonical-host Firebase configuration from the AllPlays runtime fallback', async () => {

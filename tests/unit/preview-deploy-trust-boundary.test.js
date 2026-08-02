@@ -464,7 +464,10 @@ describe('preview deployment workflow trust boundary', () => {
         expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
         expect(imageWorkflowStart).toBeGreaterThanOrEqual(0);
         expect(profileImageWorkflowStart).toBeGreaterThan(imageWorkflowStart);
-        expect(staffWorkflow).toContain("getByRole('button', { name: /manage schedule/i }).click()");
+        expect(staffWorkflow).toContain('section[aria-label="Manage schedule tools"]');
+        expect(staffWorkflow).toContain("locator('button[aria-controls]').first()");
+        expect(staffWorkflow).toContain('manageSchedule.click({ timeout: 25_000 })');
+        expect(staffWorkflow).toContain("toHaveAttribute('aria-expanded', 'true'");
         expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
         expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
         expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
@@ -488,8 +491,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(profileImageWorkflow).toContain('createFirestoreDocument(');
         expect(imageWriteProductionSmoke).toContain('deleteFirestoreDocument(');
         expect(imageWriteProductionSmoke).toContain('Object.keys(createdDocument.fields || {})');
-        expect(reconciliationWorkflow).toContain("canonical private-profile baseline is missing");
-        expect(reconciliationWorkflow).toContain('Object.keys(cleanupDocument?.fields || {})');
+        expect(reconciliationWorkflow).toContain('Existing fixture metadata is a real');
+        expect(reconciliationWorkflow).toContain('isEmptyFirestoreDocument(cleanupDocument)');
         expect(reconciliationWorkflow).toContain('updateTime: cleanupDocument.updateTime');
         expect(reconciliationWorkflow).not.toContain('deleteFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
