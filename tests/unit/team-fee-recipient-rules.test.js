@@ -10,6 +10,7 @@ import {
     deleteDoc,
     deleteField,
     doc,
+    getDoc,
     getDocs,
     query,
     serverTimestamp,
@@ -85,6 +86,11 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+    });
+
+    it('keeps exact checkout requests in an Admin-SDK-only attempt document', () => {
+        expect(nestedRecipientBlock).toContain('match /checkoutAttempts/{attemptId} {');
+        expect(nestedRecipientBlock).toContain('allow read, create, update, delete: if false;');
     });
 
     it('allows atomic append-only fee audit entries from the authenticated team admin', () => {
@@ -275,6 +281,36 @@ describe('team fee recipient Firestore rules', () => {
                 }
             }
         }, 30000);
+
+        it('denies every client role access to exact team-fee checkout attempts', async () => {
+            const attemptPath = 'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt/checkoutAttempts/current';
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt',
+                recipientPayload()
+            );
+            await seedRecipient(attemptPath, {
+                reservationId: 'reservation-private',
+                payerUid: 'parent-a',
+                amountCents: 2500,
+                checkoutCreationRequest: {
+                    idempotencyKey: 'private-key',
+                    stripeParams: { customer_email: 'parent-a@example.com' }
+                }
+            });
+
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com'],
+                ['parent-a', 'parent-a@example.com'],
+                ['unrelated-a', 'unrelated-a@example.com']
+            ]) {
+                const attemptRef = doc(authedFirestore(uid, email), attemptPath);
+                await assertFails(getDoc(attemptRef));
+                await assertFails(setDoc(attemptRef, { reservationId: 'forged' }));
+                await assertFails(updateDoc(attemptRef, { payerUid: uid }));
+                await assertFails(deleteDoc(attemptRef));
+            }
+        });
 
         it('denies owner and admin deletion while an active checkout session is present', async () => {
             for (const [uid, email] of [

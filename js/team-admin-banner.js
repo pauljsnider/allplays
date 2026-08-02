@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=24';
+import { escapeHtml } from './utils.js?v=25';
 import { getTeamAccessInfo } from './team-access.js';
 
 export { getTeamAccessInfo } from './team-access.js';

@@ -384,6 +384,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       teamId: resolvedTeamId,
       teamName: child.teamName,
       photoUrl: playerDoc.photoUrl || (child as any).playerPhotoUrl || null,
+      photoPath: visiblePrivateProfile?.photoPath || playerDoc.photoPath || null,
       number: playerDoc.number || (child as any).playerNumber || null
     },
     team,
@@ -885,9 +886,8 @@ export async function updateParentPlayerEditableProfile({
   if (photoFile) {
     validateImageFile(photoFile);
     try {
-      const players = await getPlayers(teamId, { includeInactive: true });
-      previousPhotoPath = String((Array.isArray(players) ? players : [])
-        .find((player) => player?.id === playerId)?.photoPath || '').trim();
+      const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
+      previousPhotoPath = String(privateProfile?.photoPath || '').trim();
     } catch {
       previousPhotoPath = '';
     }
@@ -914,12 +914,16 @@ export async function updateParentPlayerEditableProfile({
     try {
       const writes: Array<{ pathSegments: string[]; data: Record<string, unknown> }> = [{
         pathSegments: ['teams', teamId, 'players', playerId, 'private', 'profile'],
-        data: { ...privatePayload, updatedAt: new Date() }
+        data: {
+          ...privatePayload,
+          ...(typeof photoUrl !== 'undefined' ? { photoPath: nativePhotoPath || null } : {}),
+          updatedAt: new Date()
+        }
       }];
       if (typeof photoUrl !== 'undefined') {
         writes.push({
           pathSegments: ['teams', teamId, 'players', playerId],
-          data: { photoUrl, photoPath: nativePhotoPath || null, updatedAt: new Date() }
+          data: { photoUrl, updatedAt: new Date() }
         });
       }
       await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
@@ -1009,7 +1013,13 @@ export async function saveStaffPlayerRosterDetails({
   const currentName = String(currentPlayer?.name || '').trim();
   const currentNumber = String(currentPlayer?.number || '').trim();
   const currentPhotoUrl = String(currentPlayer?.photoUrl || '').trim();
-  const currentPhotoPath = String(currentPlayer?.photoPath || '').trim();
+  let currentPrivateProfile: Record<string, any> | null = null;
+  try {
+    currentPrivateProfile = await getPlayerPrivateProfile(teamId, playerId);
+  } catch {
+    currentPrivateProfile = null;
+  }
+  const currentPhotoPath = String(currentPrivateProfile?.photoPath || currentPlayer?.photoPath || '').trim();
   const nativeRuntime = isNativeRuntime();
   const payload: Record<string, any> = {};
   let nativePhotoPath = '';
@@ -1046,10 +1056,21 @@ export async function saveStaffPlayerRosterDetails({
 
   if (nativeRuntime) {
     try {
-      await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites([{
+      const publicPayload = { ...payload };
+      const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPayload, 'photoPath');
+      const privatePhotoPath = hasPhotoPath ? (publicPayload.photoPath || null) : undefined;
+      delete publicPayload.photoPath;
+      const writes: Array<{ pathSegments: string[]; data: Record<string, unknown> }> = [{
         pathSegments: ['teams', teamId, 'players', playerId],
-        data: { ...payload, updatedAt: new Date() }
-      }]));
+        data: { ...publicPayload, updatedAt: new Date() }
+      }];
+      if (hasPhotoPath) {
+        writes.push({
+          pathSegments: ['teams', teamId, 'players', playerId, 'private', 'profile'],
+          data: { photoPath: privatePhotoPath, updatedAt: new Date() }
+        });
+      }
+      await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
     } catch (error) {
       if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
         await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
@@ -1496,9 +1517,8 @@ function buildAthleteProfileData({
 async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, expectedPhotoPath: string) {
   if (!expectedPhotoPath) return 'not-committed' as const;
   try {
-    const players = await getPlayers(teamId, { includeInactive: true });
-    const player = players.find((candidate) => candidate?.id === playerId);
-    return String(player?.photoPath || '').trim() === expectedPhotoPath
+    const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
+    return String(privateProfile?.photoPath || '').trim() === expectedPhotoPath
       ? 'committed' as const
       : 'not-committed' as const;
   } catch {

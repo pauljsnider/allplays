@@ -15,17 +15,19 @@ function requireProfilePhotoPathSegment(value, label) {
 }
 
 function buildProfilePhotoFileName(fileName, timestamp = Date.now()) {
-    return `${timestamp}_${sanitizeProfilePhotoPathSegment(fileName, 'profile-photo')}`;
+    const extensionMatch = sanitizeProfilePhotoPathSegment(fileName).match(/\.([A-Za-z0-9]{1,10})$/);
+    const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : '';
+    return `${timestamp}_profile-photo${extension}`;
 }
 
 export function buildUserProfilePhotoPath(userId, fileName, timestamp = Date.now()) {
     return `profile-photos/users/${requireProfilePhotoPathSegment(userId, 'User')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
 }
 
-export function buildPlayerProfilePhotoPath(teamId, playerId, userId, fileName, timestamp = Date.now()) {
-    return `profile-photos/teams/${requireProfilePhotoPathSegment(teamId, 'Team')}/players/${requireProfilePhotoPathSegment(playerId, 'Player')}/${requireProfilePhotoPathSegment(userId, 'User')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
+export function buildPlayerProfilePhotoPath(teamId, playerId, fileName, timestamp = Date.now()) {
+    return `profile-photos/teams/${requireProfilePhotoPathSegment(teamId, 'Team')}/players/${requireProfilePhotoPathSegment(playerId, 'Player')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
 }
 
-export function buildTeamProfilePhotoPath(teamId, userId, fileName, timestamp = Date.now()) {
-    return `profile-photos/teams/${requireProfilePhotoPathSegment(teamId, 'Team')}/team/${requireProfilePhotoPathSegment(userId, 'User')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
+export function buildTeamProfilePhotoPath(teamId, fileName, timestamp = Date.now()) {
+    return `profile-photos/teams/${requireProfilePhotoPathSegment(teamId, 'Team')}/team/${buildProfilePhotoFileName(fileName, timestamp)}`;
 }

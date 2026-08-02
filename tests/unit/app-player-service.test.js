@@ -209,7 +209,7 @@ beforeEach(() => {
     });
     dbMocks.uploadPlayerPhoto.mockResolvedValue({
         url: 'https://example.test/new-photo.jpg',
-        path: 'profile-photos/teams/team-1/players/player-1/user-1/new-photo.jpg'
+        path: 'profile-photos/teams/team-1/players/player-1/new-photo.jpg'
     });
     dbMocks.getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball' }]);
     dbMocks.getPlayerTrackingStatuses.mockResolvedValue([{ playerId: 'player-1', itemId: 'item-1', status: 'complete' }]);
@@ -550,7 +550,7 @@ describe('React app parent player detail service', () => {
         });
         expect(dbMocks.updatePlayerProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             photoUrl: 'https://example.test/new-photo.jpg',
-            photoPath: 'profile-photos/teams/team-1/players/player-1/user-1/new-photo.jpg'
+            photoPath: 'profile-photos/teams/team-1/players/player-1/new-photo.jpg'
         });
     });
 

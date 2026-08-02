@@ -327,24 +327,24 @@ service firebase.storage {
       allow update: if false;
     }
 
-    match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {
+    // Player and team photos use resource-scoped object names because Firebase
+    // download URLs expose the encoded Storage path. Authorization comes from
+    // the team/player relationship, never an uploader UID embedded in the URL.
+    match /profile-photos/teams/{teamId}/players/{playerId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
       allow create: if isSignedIn() &&
-        request.auth.uid == userId &&
         (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId)) &&
         isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
       allow delete: if isSignedIn() &&
-        (isTeamOwnerOrAdmin(teamId) ||
-         (request.auth.uid == userId && isParentForPlayer(teamId, playerId)));
+        (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId));
       allow update: if false;
     }
 
-    match /profile-photos/teams/{teamId}/team/{userId}/{fileName} {
+    match /profile-photos/teams/{teamId}/team/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
       allow create: if isVerifiedForSensitiveWrite() &&
-        request.auth.uid == userId &&
         isTeamOwnerOrAdmin(teamId) &&
         isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
       allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);

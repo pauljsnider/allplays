@@ -60,7 +60,7 @@ describe('native primary Storage profile uploads', () => {
 
     const url = await uploadNativeUserProfilePhoto(file, 'user-1');
 
-    const expectedPath = 'profile-photos/users/user-1/12345_My_photo.jpg';
+    const expectedPath = 'profile-photos/users/user-1/12345_profile-photo.jpg';
     const expectedRequestUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o?uploadType=media&name=${encodeURIComponent(expectedPath)}`;
     expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
     expect(appCheckMocks.getPrimaryAppCheckHeaders).toHaveBeenCalledWith({
@@ -88,24 +88,24 @@ describe('native primary Storage profile uploads', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('scopes a player photo to its team, player, and signed-in uploader', async () => {
+  it('scopes a player photo to its team and player without exposing the uploader ID', async () => {
     const file = new File(['photo'], 'kid photo.png', { type: 'image/png' });
 
     await uploadNativePlayerPhoto(file, 'team-1', 'player-7');
 
-    const expectedPath = 'profile-photos/teams/team-1/players/player-7/user-1/12345_kid_photo.png';
+    const expectedPath = 'profile-photos/teams/team-1/players/player-7/12345_profile-photo.png';
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
     );
   });
 
-  it('scopes a team photo to its team and signed-in manager', async () => {
+  it('scopes a team photo to its team without exposing the manager ID', async () => {
     const file = new File(['photo'], 'team logo.png', { type: 'image/png' });
 
     await uploadNativeTeamPhotoFile(file, 'team-1');
 
-    const expectedPath = 'profile-photos/teams/team-1/team/user-1/12345_team_logo.png';
+    const expectedPath = 'profile-photos/teams/team-1/team/12345_profile-photo.png';
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
@@ -114,7 +114,7 @@ describe('native primary Storage profile uploads', () => {
 
   it('deletes a failed native upload with the same auth and App Check boundary', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 204 } as Response);
-    const path = 'profile-photos/teams/team-1/players/player-1/user-1/photo.jpg';
+    const path = 'profile-photos/teams/team-1/players/player-1/photo.jpg';
 
     await deleteNativePrimaryStorageFile(path);
 

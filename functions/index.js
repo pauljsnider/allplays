@@ -731,6 +731,10 @@ function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
 }
 
+function buildTeamFeeCheckoutAttemptRef(recipientRef) {
+  return recipientRef.collection('checkoutAttempts').doc('current');
+}
+
 function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId) {
   const hash = crypto.createHash('sha256')
     .update([
@@ -880,8 +884,10 @@ async function reserveTeamFeeCheckoutCreation({
   appUrl
 }) {
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
   return firestore.runTransaction(async (transaction) => {
     const latestSnap = await transaction.get(recipientRef);
+    const attemptSnap = await transaction.get(attemptRef);
     if (!latestSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
     }
@@ -904,12 +910,19 @@ async function reserveTeamFeeCheckoutCreation({
 
     const existingReservationId = String(latestRecipient.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
-      const existingPayerUid = String(latestRecipient.checkoutCreationPayerUid || '').trim();
-      const existingAmountCents = Math.round(Number(latestRecipient.checkoutCreationAmountCents || 0));
+      const existingAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      const existingPayerUid = String(existingAttempt.payerUid || '').trim();
+      const existingAmountCents = Math.round(Number(existingAttempt.amountCents || 0));
       if (existingPayerUid !== uid || existingAmountCents !== amountCents) {
         throw new functions.https.HttpsError('failed-precondition', 'Team fee checkout creation is already in progress.');
       }
-      const existingRequest = latestRecipient.checkoutCreationRequest;
+      if (String(existingAttempt.reservationId || '').trim() !== existingReservationId) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      const existingRequest = existingAttempt.checkoutCreationRequest;
       if (!isReusableTeamFeeCheckoutCreationRequest(existingRequest, {
         input,
         uid,
@@ -940,11 +953,19 @@ async function reserveTeamFeeCheckoutCreation({
     transaction.set(recipientRef, {
       checkoutCreationReservationId: proposedReservationId,
       checkoutCreationStartedAt: now,
-      checkoutCreationPayerUid: uid,
-      checkoutCreationAmountCents: amountCents,
-      checkoutCreationRequest,
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
+    transaction.set(attemptRef, {
+      reservationId: proposedReservationId,
+      payerUid: uid,
+      amountCents,
+      checkoutCreationRequest,
+      createdAt: now,
+      updatedAt: now
+    });
     return {
       reservationId: proposedReservationId,
       checkoutCreationRequest
@@ -954,11 +975,14 @@ async function reserveTeamFeeCheckoutCreation({
 
 async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservationId) {
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
   return firestore.runTransaction(async (transaction) => {
     const latestSnap = await transaction.get(recipientRef);
+    const attemptSnap = await transaction.get(attemptRef);
     if (!latestSnap.exists) return false;
     const latestRecipient = latestSnap.data() || {};
     if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    if (attemptSnap.exists && String(attemptSnap.data()?.reservationId || '').trim() !== reservationId) return false;
     transaction.set(recipientRef, {
       checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
       checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
@@ -967,6 +991,7 @@ async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservation
       checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
+    if (attemptSnap.exists) transaction.delete(attemptRef);
     return true;
   });
 }
@@ -1118,6 +1143,10 @@ function normalizeRegistrationCheckoutCancelInput(data = {}) {
 
 function buildRegistrationRef({ teamId, formId, registrationId }) {
   return firestore.doc(`teams/${teamId}/registrationForms/${formId}/registrations/${registrationId}`);
+}
+
+function buildRegistrationCheckoutAttemptRef(registrationRef) {
+  return registrationRef.collection('checkoutAttempts').doc('current');
 }
 
 function buildRegistrationFormRef({ teamId, formId }) {
@@ -2526,13 +2555,17 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
 
 async function reserveRegistrationCheckoutCreation(input, options = {}) {
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const checkoutCreationReservationId = String(options.checkoutCreationReservationId || '').trim();
   const amountCents = Math.max(0, Math.round(Number(options.amountCents || 0) || 0));
   const checkoutCreationRequest = options.checkoutCreationRequest;
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const registrationSnap = await transaction.get(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!registrationSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration not found.');
     }
@@ -2562,11 +2595,15 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     }
     const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
-      if (isReusableRegistrationCheckoutCreationRequest(registration.checkoutCreationRequest, checkoutCreationRequest)) {
+      const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+      if (
+        String(checkoutAttempt.reservationId || '').trim() === existingReservationId
+        && isReusableRegistrationCheckoutCreationRequest(checkoutAttempt.checkoutCreationRequest, checkoutCreationRequest)
+      ) {
         return {
           reserved: true,
           reservationId: existingReservationId,
-          checkoutCreationRequest: registration.checkoutCreationRequest,
+          checkoutCreationRequest: checkoutAttempt.checkoutCreationRequest,
           retryCapacityReservationId: String(registration.retryCapacityReservationId || '').trim() || null
         };
       }
@@ -2576,9 +2613,17 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     transaction.set(registrationRef, {
       checkoutCreationReservationId,
       checkoutCreationStartedAt: now,
-      checkoutCreationRequest,
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
+    transaction.set(checkoutAttemptRef, {
+      version: 1,
+      reservationId: checkoutCreationReservationId,
+      amountCents,
+      checkoutCreationRequest,
+      createdAt: now,
+      updatedAt: now
+    });
     return {
       reserved: true,
       reservationId: checkoutCreationReservationId,
@@ -2590,10 +2635,14 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
 
 async function clearRegistrationCheckoutCreationReservation(input, checkoutCreationReservationId) {
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const registrationSnap = await transaction.get(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!registrationSnap.exists) return false;
     const registration = registrationSnap.data() || {};
     if (String(registration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) return false;
@@ -2603,6 +2652,12 @@ async function clearRegistrationCheckoutCreationReservation(input, checkoutCreat
       checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
+    if (
+      checkoutAttemptSnap.exists
+      && String(checkoutAttemptSnap.data()?.reservationId || '').trim() === checkoutCreationReservationId
+    ) {
+      transaction.delete(checkoutAttemptRef);
+    }
     return true;
   });
 }
@@ -5561,9 +5616,11 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
 
   const changedAt = admin.firestore.FieldValue.serverTimestamp();
   const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);
+  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
   try {
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
+      const attemptSnap = await transaction.get(checkoutAttemptRef);
       if (!latestSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
       }
@@ -5579,6 +5636,20 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       }
       if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== checkoutCreationReservationId) {
         throw new functions.https.HttpsError('aborted', 'Team fee checkout creation reservation was lost.');
+      }
+      const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      if (
+        String(latestAttempt.reservationId || '').trim() !== checkoutCreationReservationId ||
+        String(latestAttempt.payerUid || '').trim() !== context.auth.uid ||
+        Math.round(Number(latestAttempt.amountCents || 0)) !== amountCents ||
+        !isReusableTeamFeeCheckoutCreationRequest(latestAttempt.checkoutCreationRequest, {
+          input,
+          uid: context.auth.uid,
+          amountCents,
+          reservationId: checkoutCreationReservationId
+        })
+      ) {
+        throw new functions.https.HttpsError('aborted', 'Team fee checkout creation request was lost.');
       }
       if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
         throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
@@ -5616,6 +5687,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       } : recipientUpdate;
 
       transaction.set(recipientRef, auditedUpdate, { merge: true });
+      transaction.delete(checkoutAttemptRef);
       if (changedFields.length > 0) {
         transaction.set(checkoutAuditRef, {
           teamId: input.teamId,
@@ -6080,13 +6152,27 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   const now = admin.firestore.FieldValue.serverTimestamp();
   try {
     await firestore.runTransaction(async (transaction) => {
-      const latestSnap = await transaction.get(resolvedInput.registrationRef);
+      const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+      const [latestSnap, checkoutAttemptSnap] = await Promise.all([
+        transaction.get(resolvedInput.registrationRef),
+        transaction.get(checkoutAttemptRef)
+      ]);
       if (!latestSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Registration not found.');
       }
       const latestRegistration = latestSnap.data() || {};
       if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
         throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
+      }
+      const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+      if (
+        String(checkoutAttempt.reservationId || '').trim() !== checkoutCreationReservationId
+        || !isReusableRegistrationCheckoutCreationRequest(
+          checkoutAttempt.checkoutCreationRequest,
+          checkoutCreationRequest
+        )
+      ) {
+        throw new functions.https.HttpsError('aborted', 'Registration checkout creation request was lost.');
       }
       if (latestRegistration.status === 'rejected') {
         throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
@@ -6110,6 +6196,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
         retryCapacityReservationId: admin.firestore.FieldValue.delete(),
         updatedAt: now
       }, { merge: true });
+      transaction.delete(checkoutAttemptRef);
     });
   } catch (error) {
     const persistenceState = await getRegistrationCheckoutPersistenceState({

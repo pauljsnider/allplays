@@ -42,6 +42,7 @@ export const inviteParent = (...args: any[]) => callLegacyDb('inviteParent', arg
 export const getLocalAttractionSponsors = (...args: any[]) => callLegacyDb('getLocalAttractionSponsors', args);
 export const getPlayers = (...args: any[]) => callLegacyDb('getPlayers', args);
 export const getPlayersWithPrivateRosterContacts = (...args: any[]) => callLegacyDb('getPlayersWithPrivateRosterContacts', args);
+export const getPlayerPrivateProfile = (...args: any[]) => callLegacyDb('getPlayerPrivateProfile', args);
 export const getPlayerTrackingStatuses = (...args: any[]) => callLegacyDb('getPlayerTrackingStatuses', args);
 export const getPublicTrackingItems = (...args: any[]) => callLegacyDb('getPublicTrackingItems', args);
 export const getRosterFieldDefinitions = (...args: any[]) => callLegacyDb('getRosterFieldDefinitions', args);

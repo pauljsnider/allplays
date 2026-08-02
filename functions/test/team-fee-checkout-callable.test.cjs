@@ -90,12 +90,20 @@ function makeFirestore(seed = {}, metrics = {}, options = {}) {
             const result = await handler({
                 get: async (ref) => snapshot(ref.path),
                 set: (ref, value, writeOptions) => operations.push({ ref, value, options: writeOptions }),
-                update: (ref, value) => operations.push({ ref, value, options: { merge: true } })
+                update: (ref, value) => operations.push({ ref, value, options: { merge: true } }),
+                delete: (ref) => operations.push({ ref, delete: true })
             });
             if (options.failTransactionWhen?.({ call: metrics.transactionCalls, operations })) {
                 throw new Error('Forced Firestore transaction failure.');
             }
-            operations.forEach((operation) => write(operation.ref.path, operation.value, operation.options));
+            operations.forEach((operation) => {
+                if (operation.delete) {
+                    state.delete(operation.ref.path);
+                    metrics.writes.push({ path: operation.ref.path, delete: true });
+                    return;
+                }
+                write(operation.ref.path, operation.value, operation.options);
+            });
             if (options.failTransactionAfterCommitWhen?.({ call: metrics.transactionCalls, operations })) {
                 throw new Error('Forced Firestore post-commit response failure.');
             }
@@ -551,6 +559,7 @@ test('uses one durable idempotency reservation for concurrent checkout creation'
 
 test('replays the exact team-fee Stripe request after an uncertain provider response, even after the app timeout', async () => {
     const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
     let createCount = 0;
     const loaded = loadCallable({
         seed: baseSeed({
@@ -573,6 +582,10 @@ test('replays the exact team-fee Stripe request after an uncertain provider resp
 
     await assert.rejects(loaded.callable(input, context), /provider connection closed/);
     const reserved = loaded.firestore._state.get(recipientPath);
+    const privateAttempt = loaded.firestore._state.get(attemptPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(reserved, 'checkoutCreationRequest'), false);
+    assert.equal(privateAttempt.payerUid, 'owner-1');
+    assert.equal(privateAttempt.checkoutCreationRequest.stripeParams.customer_email, 'owner@example.com');
     reserved.feeTitle = 'Changed dues';
     reserved.playerName = 'Changed Player';
     reserved.parentEmail = 'changed-parent@example.com';
@@ -594,10 +607,37 @@ test('replays the exact team-fee Stripe request after an uncertain provider resp
         loaded.firestore._state.get(recipientPath),
         'checkoutCreationRequest'
     ), false);
+    assert.equal(loaded.firestore._state.has(attemptPath), false);
+});
+
+test('does not replay one eligible payer exact request to another eligible payer', async () => {
+    const seed = baseSeed();
+    seed['teams/team-1'].adminEmails = ['other-admin@example.com'];
+    seed['users/other-admin'] = { email: 'other-admin@example.com' };
+    const loaded = loadCallable({
+        seed,
+        create: async () => {
+            throw Object.assign(new Error('provider connection closed'), { type: 'StripeConnectionError' });
+        }
+    });
+
+    await assert.rejects(loaded.callable(input, context), /provider connection closed/);
+    await assert.rejects(
+        loaded.callable(input, {
+            auth: {
+                uid: 'other-admin',
+                token: { email: 'other-admin@example.com', email_verified: true }
+            }
+        }),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Team fee checkout creation is already in progress.'
+    );
+    assert.equal(loaded.metrics.createCalls.length, 1);
 });
 
 test('clears an exact team-fee creation request after a definitive Stripe rejection', async () => {
     const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
     let createCount = 0;
     const loaded = loadCallable({
         create: async (params) => {
@@ -620,6 +660,7 @@ test('clears an exact team-fee creation request after a definitive Stripe reject
     const afterFailure = loaded.firestore._state.get(recipientPath);
     assert.equal(Object.prototype.hasOwnProperty.call(afterFailure, 'checkoutCreationReservationId'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(afterFailure, 'checkoutCreationRequest'), false);
+    assert.equal(loaded.firestore._state.has(attemptPath), false);
 
     const result = await loaded.callable(input, context);
     assert.equal(result.sessionId, 'cs_test_after_definitive_rejection');

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const teamPlayersMatch = rules.match(/match \/teams\/\{teamId\} \{[\s\S]*?match \/players\/\{playerId\} \{[\s\S]*?match \/private\/profile \{/);
@@ -46,17 +46,19 @@ describe('player Firestore privacy rules', () => {
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers)');
     });
 
-    it('keeps linked-parent private-profile writes limited to emergency and medical data', () => {
-        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
-        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
+    it('keeps linked-parent private-profile writes limited to medical data and cleanup paths', () => {
+        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'photoPath', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'photoPath', 'updatedAt'])");
         expect(rules).not.toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
         expect(rules).not.toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
         expect(rules).not.toContain('request.resource.data.parents.hasAll(resource.data.parents)');
     });
 
-    it('allows only uploader-owned cleanup paths in linked-parent player photo writes', () => {
-        expect(teamPlayerRules).toContain("hasOnly(['photoUrl', 'photoPath', 'updatedAt'])");
-        expect(teamPlayerRules).toContain("'^profile-photos/teams/' + teamId + '/players/' + playerId + '/' + request.auth.uid + '/[^/]+$'");
+    it('keeps cleanup paths private and scoped to the linked player', () => {
+        expect(teamPlayerRules).toContain("hasOnly(['photoUrl', 'updatedAt'])");
+        expect(rules).toContain("hasOnly(['emergencyContact', 'medicalInfo', 'photoPath', 'updatedAt'])");
+        expect(rules).toContain("'^profile-photos/teams/' + teamId + '/players/' + playerId + '/[^/]+$'");
+        expect(rules).toContain("'photoPath'");
     });
 });
 
@@ -150,6 +152,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
             position: 'Forward',
             profile: { preferredName: 'Rocket', position: 'Forward', alternateNumber: '14' }
         }));
+        await assertFails(setDoc(doc(ownerDb, 'teams/team-1/players/public-path-leak'), {
+            name: 'Public Path Leak',
+            photoPath: 'profile-photos/teams/team-1/players/public-path-leak/private.jpg'
+        }));
     });
 
     it('allows status and public-field updates on legacy docs while keeping protected containers immutable', async () => {
@@ -194,24 +200,31 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('player privacy rules engi
         await assertFails(updateDoc(existingProfileRef, { parents: [] }));
     });
 
-    it('allows linked parents to persist only their own player-photo cleanup path', async () => {
+    it('atomically keeps linked-parent player-photo cleanup paths in the private profile', async () => {
         const parentDb = testEnv.authenticatedContext('parent-1', { email: 'parent@example.com' }).firestore();
         const playerRef = doc(parentDb, 'teams/team-1/players/player-1');
-        const ownedPath = 'profile-photos/teams/team-1/players/player-1/parent-1/new.jpg';
+        const privateRef = doc(parentDb, 'teams/team-1/players/player-1/private/profile');
+        const ownedPath = 'profile-photos/teams/team-1/players/player-1/new.jpg';
 
-        await assertSucceeds(updateDoc(playerRef, {
-            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/owned',
-            photoPath: ownedPath
+        const saveBatch = writeBatch(parentDb);
+        saveBatch.update(playerRef, {
+            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/owned'
+        });
+        saveBatch.set(privateRef, { photoPath: ownedPath }, { merge: true });
+        await assertSucceeds(saveBatch.commit());
+        await assertSucceeds(getDoc(playerRef));
+        await assertSucceeds(getDoc(privateRef));
+        await assertFails(updateDoc(playerRef, { photoPath: ownedPath }));
+        await assertFails(updateDoc(privateRef, {
+            photoPath: 'profile-photos/teams/team-1/players/player-2/other.jpg'
         }));
-        await assertFails(updateDoc(playerRef, {
-            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/other',
-            photoPath: 'profile-photos/teams/team-1/players/player-1/other-parent/other.jpg'
+        await assertFails(updateDoc(privateRef, {
+            photoPath: 'profile-photos/teams/team-1/players/player-1/nested/other.jpg'
         }));
-        await assertFails(updateDoc(playerRef, {
-            photoUrl: 'https://firebasestorage.googleapis.com/v0/b/game-flow-c6311.firebasestorage.app/o/cross-player',
-            photoPath: 'profile-photos/teams/team-1/players/player-2/parent-1/other.jpg'
-        }));
-        await assertSucceeds(updateDoc(playerRef, { photoUrl: null, photoPath: null }));
+        const removeBatch = writeBatch(parentDb);
+        removeBatch.update(playerRef, { photoUrl: null });
+        removeBatch.set(privateRef, { photoPath: null }, { merge: true });
+        await assertSucceeds(removeBatch.commit());
     });
 
     it('retains authorized team-manager contact-list management', async () => {

@@ -18,6 +18,13 @@ export function sanitizeNativeStorageSegment(value: unknown, fallback: string) {
     .replace(/[^\w.-]+/g, '_') || fallback;
 }
 
+export function buildNativeProfilePhotoFileName(fileName: unknown, timestamp = Date.now()) {
+  const safeFileName = sanitizeNativeStorageSegment(fileName, '');
+  const extensionMatch = safeFileName.match(/\.([A-Za-z0-9]{1,10})$/);
+  const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : '';
+  return `${timestamp}_profile-photo${extension}`;
+}
+
 async function runNativeStorageOperation<T>({
   timeoutMs,
   timeoutMessage,
@@ -112,15 +119,16 @@ export async function uploadNativePrimaryStorageFile({
 }
 
 export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
+  const privateFileName = buildNativeProfilePhotoFileName(file.name);
   const uploaded = await uploadNativePrimaryStorageFile({
     file,
     label: 'Profile photo',
     timeoutMs: 20000,
-    buildPath: (userId, safeFileName) => {
+    buildPath: (userId) => {
       if (uid && uid !== userId) {
         throw new Error('The signed-in account does not match this profile photo upload.');
       }
-      return `profile-photos/users/${userId}/${Date.now()}_${safeFileName}`;
+      return `profile-photos/users/${userId}/${privateFileName}`;
     }
   });
   return uploaded.url;
@@ -132,12 +140,13 @@ export async function uploadNativePlayerPhotoFile(file: File, teamId: string, pl
   if (!safeTeamId || !safePlayerId) {
     throw new Error('Team and player are required for a player photo upload.');
   }
+  const privateFileName = buildNativeProfilePhotoFileName(file.name);
   return uploadNativePrimaryStorageFile({
     file,
     label: 'Player photo',
     timeoutMs: 20000,
-    buildPath: (userId, safeFileName) => (
-      `profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${userId}/${Date.now()}_${safeFileName}`
+    buildPath: () => (
+      `profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${privateFileName}`
     )
   });
 }
@@ -149,12 +158,13 @@ export async function uploadNativePlayerPhoto(file: File, teamId: string, player
 export async function uploadNativeTeamPhotoFile(file: File, teamId: string) {
   const safeTeamId = sanitizeNativeStorageSegment(teamId, '');
   if (!safeTeamId) throw new Error('Team is required for a team photo upload.');
+  const privateFileName = buildNativeProfilePhotoFileName(file.name);
   return uploadNativePrimaryStorageFile({
     file,
     label: 'Team photo',
     timeoutMs: 20000,
-    buildPath: (userId, safeFileName) => (
-      `profile-photos/teams/${safeTeamId}/team/${userId}/${Date.now()}_${safeFileName}`
+    buildPath: () => (
+      `profile-photos/teams/${safeTeamId}/team/${privateFileName}`
     )
   });
 }

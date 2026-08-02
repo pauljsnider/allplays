@@ -22,6 +22,7 @@ import {
   getGames,
   getLocalAttractionSponsors,
   getPlayerTrackingStatuses,
+  getPlayerPrivateProfile,
   getPlayers,
   getPlayersWithPrivateRosterContacts,
   getPublicTrackingItems,
@@ -1408,7 +1409,6 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     name,
     number: cleanString(input?.number),
     photoUrl,
-    photoPath: nativePhotoPath || webPhotoPath || null,
     ...(position ? { position } : {}),
     profile: {
       customFields: publicValues
@@ -1427,6 +1427,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
         {
           pathSegments: ['teams', normalizedTeamId, 'players', playerId, 'private', 'profile'],
           data: {
+            photoPath: nativePhotoPath || null,
             ...(Object.keys(privateValues).length ? { rosterFields: privateValues } : {}),
             updatedAt: new Date()
           }
@@ -1436,7 +1437,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
       const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [{
         type: 'add',
         playerId,
-        payload: player,
+        payload: { ...player, photoPath: webPhotoPath || null },
         privateRosterFields: privateValues
       }]);
       savedPlayerId = cleanString(savedOperation?.playerId);
@@ -1467,7 +1468,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
 
   return {
     playerId: savedPlayerId,
-    player
+    player: { ...player, photoPath: nativePhotoPath || webPhotoPath || null }
   };
 }
 
@@ -3069,9 +3070,8 @@ function isDefinitiveFirestoreWriteFailure(error: unknown) {
 async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, expectedPhotoPath: string) {
   if (!expectedPhotoPath) return 'not-committed' as const;
   try {
-    const players = await getPlayers(teamId, { includeInactive: true });
-    const player = players.find((candidate: any) => candidate?.id === playerId);
-    return cleanString(player?.photoPath) === expectedPhotoPath
+    const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
+    return cleanString(privateProfile?.photoPath) === expectedPhotoPath
       ? 'committed' as const
       : 'not-committed' as const;
   } catch {

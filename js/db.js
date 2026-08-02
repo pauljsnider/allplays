@@ -517,8 +517,8 @@ export async function uploadTeamPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    const userId = getRequiredSignedInUserId();
-    const path = buildTeamProfilePhotoPath(options?.teamId, userId, file.name);
+    getRequiredSignedInUserId();
+    const path = buildTeamProfilePhotoPath(options?.teamId, file.name);
     console.log('Upload path:', path);
 
     const storageRef = ref(storage, path);
@@ -542,8 +542,8 @@ export async function uploadPlayerPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    const userId = getRequiredSignedInUserId();
-    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, userId, file.name);
+    getRequiredSignedInUserId();
+    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
     const storageRef = ref(storage, path);
 
     const snapshot = await uploadBytes(storageRef, file, {
@@ -745,7 +745,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
     }
 }
 
-import { resolveZip } from './utils.js?v=24'; // Import resolveZip
+import { resolveZip } from './utils.js?v=25'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -2744,7 +2744,8 @@ function assertNoSensitivePlayerFields(playerData) {
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
-        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'photoPath'
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
@@ -2929,6 +2930,9 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                // Cleanup paths can contain authorization-sensitive storage
+                // coordinates. Merge them only after this privileged read.
+                photoPath: privateProfile?.photoPath || player?.photoPath || null,
                 privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
@@ -3053,9 +3057,30 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
-    assertNoSensitivePlayerFields(playerData);
-    playerData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
+    const updatedAt = Timestamp.now();
+    if (!hasPhotoPath) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            ...publicPlayerData,
+            updatedAt
+        });
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...publicPlayerData,
+        photoPath: deleteField(),
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
@@ -3071,19 +3096,28 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
     if (Array.isArray(extraData?.contacts)) {
         privateProfileUpdate.contacts = extraData.contacts;
     }
+    if (Object.prototype.hasOwnProperty.call(extraData || {}, 'photoPath')) {
+        privateProfileUpdate.photoPath = extraData.photoPath || null;
+    }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
 export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
-    assertNoSensitivePlayerFields(playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
     const updatedAt = Timestamp.now();
     const batch = writeBatch(db);
     batch.update(doc(db, `teams/${teamId}/players`, playerId), {
-        ...playerData,
+        ...publicPlayerData,
+        ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
         updatedAt
     });
     batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
         rosterFields: rosterFields || {},
+        ...(hasPhotoPath ? { photoPath } : {}),
         updatedAt
     }, { merge: true });
     await batch.commit();
@@ -3110,6 +3144,9 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
+        const hasPhotoPath = Object.prototype.hasOwnProperty.call(payload, 'photoPath');
+        const photoPath = hasPhotoPath ? (payload.photoPath || null) : undefined;
+        delete payload.photoPath;
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
         if (type !== 'add' && !existingPlayerId) {
@@ -3123,7 +3160,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
-            batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
+            batch.update(playerRef, {
+                ...payload,
+                ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
+                updatedAt: Timestamp.now()
+            });
         } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
@@ -3145,10 +3186,13 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             });
         }
 
-        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts || hasPhotoPath)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };
+            if (hasPhotoPath) {
+                privateProfileUpdate.photoPath = photoPath;
+            }
             if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
                 privateProfileUpdate.rosterFields = operation.privateRosterFields;
             }
@@ -6746,26 +6790,43 @@ export async function getParentDashboardData(userId) {
 export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents.
     // SECURITY: sensitive fields must never live on the public player doc.
-    assertNoSensitivePlayerFields(data || {});
+    const publicInput = { ...(data || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicInput, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicInput.photoPath || null) : undefined;
+    delete publicInput.photoPath;
+    assertNoSensitivePlayerFields(publicInput);
     const now = Timestamp.now();
 
-    // Public player doc: allow photo URL/path and non-sensitive roster profile fields.
+    // Public player doc: allow the display URL and non-sensitive roster profile
+    // fields. The cleanup path is stored in the linked private profile because
+    // Firebase download URLs expose encoded object paths.
     const publicUpdate = {};
-    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
-        publicUpdate.photoUrl = data.photoUrl || null;
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'photoUrl')) {
+        publicUpdate.photoUrl = publicInput.photoUrl || null;
     }
-    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
-        publicUpdate.photoPath = data.photoPath || null;
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'profile')) {
+        publicUpdate.profile = publicInput.profile || {};
     }
-    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
-        publicUpdate.profile = data.profile || {};
+    if (!hasPhotoPath) {
+        if (Object.keys(publicUpdate).length > 0) {
+            await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+                ...publicUpdate,
+                updatedAt: now
+            });
+        }
+        return;
     }
-    if (Object.keys(publicUpdate).length > 0) {
-        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
             ...publicUpdate,
+            photoPath: deleteField(),
             updatedAt: now
-        });
-    }
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt: now
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function updatePlayerPrivateProfile(teamId, playerId, data) {
@@ -6775,6 +6836,9 @@ export async function updatePlayerPrivateProfile(teamId, playerId, data) {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
         privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
+        privateUpdate.photoPath = data.photoPath || null;
     }
     if (Object.keys(privateUpdate).length > 0) {
         privateUpdate.updatedAt = Timestamp.now();

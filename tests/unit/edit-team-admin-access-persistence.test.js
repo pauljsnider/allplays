@@ -370,7 +370,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=24';",
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=25';",
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -990,7 +990,7 @@ describe('edit team admin access persistence', () => {
                     operations.push({ type: 'upload', file, options: deepClone(options) });
                     return {
                         url: 'https://cdn.example.test/team-created.jpg',
-                        path: 'profile-photos/teams/team-created/team/owner-1/team.jpg'
+                        path: 'profile-photos/teams/team-created/team/team.jpg'
                     };
                 },
                 async updateTeam(teamId, teamData) {
@@ -1012,7 +1012,7 @@ describe('edit team admin access persistence', () => {
                 teamId: 'team-created',
                 teamData: {
                     photoUrl: 'https://cdn.example.test/team-created.jpg',
-                    photoPath: 'profile-photos/teams/team-created/team/owner-1/team.jpg'
+                    photoPath: 'profile-photos/teams/team-created/team/team.jpg'
                 }
             });
         } finally {
@@ -1037,7 +1037,7 @@ describe('edit team admin access persistence', () => {
                 isPublic: true,
                 adminEmails: ['admin2@example.com'],
                 photoUrl: 'https://cdn.example.test/old.jpg',
-                photoPath: 'profile-photos/teams/team-1/team/owner-1/old.jpg'
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
             },
             updateCalls: []
         };
@@ -1046,7 +1046,7 @@ describe('edit team admin access persistence', () => {
                 async uploadTeamPhoto() {
                     return {
                         url: 'https://cdn.example.test/new.jpg',
-                        path: 'profile-photos/teams/team-1/team/admin-2/new.jpg'
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
                     };
                 },
                 async deleteLegacyImageUpload(path) {
@@ -1062,9 +1062,9 @@ describe('edit team admin access persistence', () => {
             expect(env.state.updateCalls).toHaveLength(1);
             expect(env.state.updateCalls[0].teamData).toMatchObject({
                 photoUrl: 'https://cdn.example.test/new.jpg',
-                photoPath: 'profile-photos/teams/team-1/team/admin-2/new.jpg'
+                photoPath: 'profile-photos/teams/team-1/team/new.jpg'
             });
-            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/owner-1/old.jpg']);
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
         } finally {
             env.cleanup();
         }
@@ -1086,7 +1086,7 @@ describe('edit team admin access persistence', () => {
                 zip: '66209',
                 isPublic: true,
                 photoUrl: 'https://cdn.example.test/old.jpg',
-                photoPath: 'profile-photos/teams/team-1/team/owner-1/old.jpg'
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
             },
             updateCalls: []
         };
@@ -1095,7 +1095,7 @@ describe('edit team admin access persistence', () => {
                 async uploadTeamPhoto() {
                     return {
                         url: 'https://cdn.example.test/new.jpg',
-                        path: 'profile-photos/teams/team-1/team/owner-1/new.jpg'
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
                     };
                 },
                 async updateTeam() {
@@ -1133,7 +1133,7 @@ describe('edit team admin access persistence', () => {
                 async uploadTeamPhoto() {
                     return {
                         url: 'https://cdn.example.test/new.jpg',
-                        path: 'profile-photos/teams/team-created/team/owner-1/new.jpg'
+                        path: 'profile-photos/teams/team-created/team/new.jpg'
                     };
                 },
                 async updateTeam() {

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
     assertFails,
@@ -8,6 +8,15 @@ import {
 
 const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const storageRules = readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8');
+
+describe('profile photo Storage rule shape', () => {
+    it('keeps uploader UIDs out of public team and player object paths', () => {
+        expect(storageRules).toContain('match /profile-photos/teams/{teamId}/players/{playerId}/{fileName} {');
+        expect(storageRules).toContain('match /profile-photos/teams/{teamId}/team/{fileName} {');
+        expect(storageRules).not.toContain('match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {');
+        expect(storageRules).not.toContain('match /profile-photos/teams/{teamId}/team/{userId}/{fileName} {');
+    });
+});
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_STORAGE_EMULATOR_HOST)(
     'Storage rules team boundary',
@@ -40,6 +49,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     parentTeamIds: ['team-a'],
                     parentPlayerKeys: ['team-a::player-a'],
                     teamMediaUploadTeamIds: ['team-a']
+                });
+                await firestore.doc('users/member-b').set({
+                    isAdmin: false,
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-a']
                 });
                 await firestore.doc('teams/team-a/players/player-a').set({ parentIds: ['member-a'] });
                 await firestore.doc('teams/team-b/players/player-b').set({ parentIds: ['owner-b'] });
@@ -117,21 +131,35 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
             await assertSucceeds(
-                memberStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/player.jpg').put(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a/player.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
             await assertFails(
-                memberStorage.ref('profile-photos/teams/team-b/players/player-b/member-a/cross-team.jpg').put(
+                memberStorage.ref('profile-photos/teams/team-b/players/player-b/cross-team.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
             await assertFails(
-                memberStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/not-an-image.txt').put(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a/not-an-image.txt').put(
                     new Uint8Array([1]),
                     { contentType: 'text/plain' }
+                )
+            );
+
+            const secondParentStorage = testEnv.authenticatedContext('member-b', {
+                email: 'member-b@example.com',
+                email_verified: true
+            }).storage();
+            await assertSucceeds(
+                secondParentStorage.ref('profile-photos/teams/team-a/players/player-a/player.jpg').delete()
+            );
+            await assertSucceeds(
+                secondParentStorage.ref('profile-photos/teams/team-a/players/player-a/replacement.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
                 )
             );
         });
@@ -152,7 +180,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
             await assertSucceeds(
-                unverifiedParentStorage.ref('profile-photos/teams/team-a/players/player-a/member-a/unverified-player.jpg').put(
+                unverifiedParentStorage.ref('profile-photos/teams/team-a/players/player-a/unverified-player.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
@@ -176,7 +204,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 email_verified: true
             }).storage();
 
-            const ownerPhotoRef = ownerStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg');
+            const ownerPhotoRef = ownerStorage.ref('profile-photos/teams/team-a/team/team.jpg');
             await assertSucceeds(
                 ownerPhotoRef.put(
                     new Uint8Array([1]),
@@ -184,7 +212,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
             await assertFails(
-                memberStorage.ref('profile-photos/teams/team-a/team/member-a/team.jpg').put(
+                memberStorage.ref('profile-photos/teams/team-a/team/team.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
@@ -202,17 +230,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
             await assertSucceeds(
-                adminStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg').delete()
+                adminStorage.ref('profile-photos/teams/team-a/team/team.jpg').delete()
             );
             await assertSucceeds(
-                adminStorage.ref('profile-photos/teams/team-a/team/admin-a/replacement.jpg').put(
+                adminStorage.ref('profile-photos/teams/team-a/team/replacement.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
             );
 
             const ownerPlayerPhotoRef = ownerStorage.ref(
-                'profile-photos/teams/team-a/players/player-a/owner-a/player.jpg'
+                'profile-photos/teams/team-a/players/player-a/player.jpg'
             );
             await assertSucceeds(
                 ownerPlayerPhotoRef.put(
@@ -221,10 +249,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
             await assertSucceeds(
-                adminStorage.ref('profile-photos/teams/team-a/players/player-a/owner-a/player.jpg').delete()
+                adminStorage.ref('profile-photos/teams/team-a/players/player-a/player.jpg').delete()
             );
             await assertSucceeds(
-                adminStorage.ref('profile-photos/teams/team-a/players/player-a/admin-a/replacement.jpg').put(
+                adminStorage.ref('profile-photos/teams/team-a/players/player-a/replacement.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )

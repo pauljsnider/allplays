@@ -611,7 +611,7 @@ describe('React app team detail model', () => {
         ]);
         uploadPlayerPhoto.mockResolvedValue({
             url: 'https://img.example.test/player-1.png',
-            path: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png'
+            path: 'profile-photos/teams/team-1/players/player-1/player.png'
         });
         applyRosterCsvImportOperations.mockImplementation(async (_teamId, operations) => operations);
 
@@ -642,7 +642,7 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
-                photoPath: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/player.png',
                 position: 'Forward',
                 profile: {
                     customFields: {
@@ -660,7 +660,7 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
-                photoPath: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/player.png',
                 position: 'Forward',
                 profile: {
                     customFields: {
@@ -681,9 +681,12 @@ describe('React app team detail model', () => {
         getRosterFieldDefinitions.mockResolvedValue([]);
         uploadPlayerPhoto.mockResolvedValue({
             url: 'https://img.example.test/new-player.png',
-            path: 'player-photos/new-player.png'
+            path: 'profile-photos/teams/team-1/players/new-player/new-player.png'
         });
-        applyRosterCsvImportOperations.mockRejectedValueOnce(new Error('player create denied'));
+        applyRosterCsvImportOperations.mockRejectedValueOnce(Object.assign(
+            new Error('player create denied'),
+            { code: 'permission-denied' }
+        ));
 
         await expect(addRosterPlayerForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
             name: 'Pat Star',
@@ -691,7 +694,9 @@ describe('React app team detail model', () => {
             rosterFieldValues: {}
         })).rejects.toThrow('player create denied');
 
-        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('player-photos/new-player.png');
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith(
+            'profile-photos/teams/team-1/players/new-player/new-player.png'
+        );
     });
 
     it('validates required roster fields before creating a roster player', async () => {
@@ -1961,7 +1966,7 @@ describe('React app team detail model', () => {
         updateTeam.mockResolvedValue(undefined);
         uploadTeamPhoto.mockResolvedValue({
             url: 'https://img.example.test/updated.png',
-            path: 'profile-photos/teams/team-1/team/coach-1/team.png'
+            path: 'profile-photos/teams/team-1/team/team.png'
         });
 
         const photoFile = new File(['abc'], 'team.png', { type: 'image/png' });
@@ -1980,7 +1985,7 @@ describe('React app team detail model', () => {
             zip: '662101234',
             isPublic: false,
             photoUrl: 'https://img.example.test/updated.png',
-            photoPath: 'profile-photos/teams/team-1/team/coach-1/team.png',
+            photoPath: 'profile-photos/teams/team-1/team/team.png',
             leagueUrl: null,
             twitchChannel: null,
             streamEmbedUrl: null,
@@ -2001,7 +2006,7 @@ describe('React app team detail model', () => {
         getConfigs.mockResolvedValue([]);
         uploadTeamPhoto.mockResolvedValue({
             url: 'https://img.example.test/updated.png',
-            path: 'profile-photos/teams/team-1/team/coach-1/team.png'
+            path: 'profile-photos/teams/team-1/team/team.png'
         });
         updateTeam.mockRejectedValueOnce(Object.assign(new Error('team save denied'), { code: 'permission-denied' }));
 
@@ -2013,7 +2018,7 @@ describe('React app team detail model', () => {
             photoFile: new File(['abc'], 'team.png', { type: 'image/png' })
         })).rejects.toThrow('team save denied');
 
-        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/coach-1/team.png');
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.png');
     });
 
     it('rejects empty team names and non-staff team setting edits', async () => {

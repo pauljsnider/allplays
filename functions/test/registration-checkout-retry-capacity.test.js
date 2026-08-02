@@ -171,7 +171,8 @@ function makeFirestore(seed = {}, options = {}) {
                     }
                     return ref.set(value, writeOptions);
                 },
-                update: (ref, value) => ref.update(value)
+                update: (ref, value) => ref.update(value),
+                delete: (ref) => state.delete(ref.path)
             };
             const result = await handler(transaction);
             if (matchedPostCommitField) {
@@ -752,6 +753,7 @@ test('returns a committed registration checkout without expiring or releasing it
 
 test('retries an uncertain Stripe creation with the exact persisted request and idempotency key', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const checkoutAttemptPath = `${registrationPath}/checkoutAttempts/current`;
     const formPath = 'teams/team-1/registrationForms/form-1';
     const stripeCalls = [];
     let createCount = 0;
@@ -782,7 +784,10 @@ test('retries an uncertain Stripe creation with the exact persisted request and 
 
     const reservedRegistration = firestore.snapshot(registrationPath);
     assert.match(reservedRegistration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
-    assert.match(reservedRegistration.checkoutCreationRequest?.idempotencyKey || '', /^registration_checkout_[a-f0-9]{64}$/);
+    assert.equal(Object.prototype.hasOwnProperty.call(reservedRegistration, 'checkoutCreationRequest'), false);
+    const checkoutAttempt = firestore.snapshot(checkoutAttemptPath);
+    assert.equal(checkoutAttempt.reservationId, reservedRegistration.checkoutCreationReservationId);
+    assert.match(checkoutAttempt.checkoutCreationRequest?.idempotencyKey || '', /^registration_checkout_[a-f0-9]{64}$/);
     assert.equal(reservedRegistration.registrationCapacityReleased, false);
     reservedRegistration.checkoutCreationStartedAt = Date.now() - (24 * 60 * 60 * 1000);
     reservedRegistration.guardian.email = 'changed-parent@example.com';
@@ -802,6 +807,7 @@ test('retries an uncertain Stripe creation with the exact persisted request and 
     assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
     assert.equal(completedRegistration.registrationCapacityReleased, false);
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationRequest'), false);
+    assert.equal(firestore.snapshot(checkoutAttemptPath), undefined);
 });
 
 test('checkout owner adopts and releases an overlapping retry reservation when Stripe creation fails', async () => {
