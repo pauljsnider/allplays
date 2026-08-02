@@ -351,12 +351,15 @@ const {
 const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
-  authenticateLegacyImageSignatureReferences,
   authenticatePrimaryCertificateSignatureReferences,
+  discoverLegacyImageSignatureReferences,
+  getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
   isCertificateSignatureTargetReferenced,
+  isMatchingCertificateLegacySignatureBinding,
   normalizeCertificateTeamId,
-  planCertificateSignatureCleanup
+  planCertificateSignatureCleanup,
+  upgradeCertificateSignatureCleanupTarget
 } = require('./certificate-signature-cleanup-core.cjs');
 
 if (admin.apps.length === 0) {
@@ -14158,6 +14161,99 @@ async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
   return [...uploaderIds];
 }
 
+async function discoverCertificateLegacySignatureReferences({ defaults, teamId, team, context = {} }) {
+  const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const legacyImageBucket = admin.storage().bucket(legacyImageBucketName);
+  return discoverLegacyImageSignatureReferences({
+    defaults,
+    teamId,
+    legacyBucketName: legacyImageBucketName,
+    allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
+    lookupExistingUserIds: async (candidates) => {
+      const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
+      return result.users.map((userRecord) => userRecord.uid);
+    },
+    getObjectMetadata: async (storagePath) => {
+      const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
+      return metadata;
+    }
+  });
+}
+
+async function registerCertificateLegacySignatureInventoryReferences(references = []) {
+  const authenticated = [];
+  for (const reference of references) {
+    const bindingId = getCertificateLegacySignatureInventoryId(reference);
+    if (!bindingId) continue;
+    const bindingRef = firestore.doc(`certificateLegacySignatureInventory/${bindingId}`);
+    const bound = await firestore.runTransaction(async (transaction) => {
+      const bindingSnap = await transaction.get(bindingRef);
+      const existing = bindingSnap.exists ? bindingSnap.data() || {} : null;
+      if (existing && !isMatchingCertificateLegacySignatureBinding(existing, reference)) {
+        transaction.set(bindingRef, {
+          conflicted: true,
+          lastConflictAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return false;
+      }
+      transaction.set(bindingRef, {
+        conflicted: false,
+        legacyOwnerId: reference.legacyOwnerId,
+        objectGeneration: reference.objectGeneration,
+        objectKey: reference.objectKey,
+        signerField: reference.legacySignerField,
+        sourceUrlHash: reference.sourceUrlHash,
+        storageBucketName: reference.storageBucketName,
+        storagePath: reference.storagePath,
+        teamId: reference.legacyTeamId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...(bindingSnap.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() })
+      }, { merge: true });
+      return true;
+    });
+    if (bound) {
+      authenticated.push({
+        ...reference,
+        legacyProvenance: 'server-inventory-team-binding'
+      });
+    }
+  }
+  return authenticated;
+}
+
+async function lookupCertificateLegacySignatureBinding(reference) {
+  const bindingId = getCertificateLegacySignatureInventoryId(reference);
+  if (!bindingId) return null;
+  const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
+  return bindingSnap.exists ? bindingSnap.data() || {} : null;
+}
+
+exports.indexCertificateLegacySignaturesOnDefaultsWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/settings/certificateDefaults')
+  .onWrite(async (change, triggerContext) => {
+    const teamId = normalizeCertificateTeamId(triggerContext.params.teamId);
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    if (!teamSnap.exists) return null;
+    const discovered = [];
+    for (const snapshot of [change.before, change.after]) {
+      if (!snapshot.exists) continue;
+      discovered.push(...await discoverCertificateLegacySignatureReferences({
+        defaults: snapshot.data() || {},
+        teamId,
+        team: teamSnap.data() || {}
+      }));
+    }
+    const uniqueReferences = [...new Map(discovered.map((reference) => [
+      `${reference.objectKey}\n${reference.legacyTeamId}\n${reference.legacySignerField}`,
+      reference
+    ])).values()];
+    await registerCertificateLegacySignatureInventoryReferences(uniqueReferences);
+    return null;
+  });
+
 exports.commitCertificateDefaults = functions.https.onCall(async (data, context = {}) => {
   let teamId;
   try {
@@ -14185,31 +14281,20 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
   } = requestedDefaults;
   const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
   const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
-  const legacyImageBucket = admin.storage().bucket(legacyImageBucketName);
   const primaryImageBucket = admin.storage().bucket();
   const previousDefaultsForAuthentication = await defaultsRef.get();
   let authenticatedLegacyReferences = [];
   let authenticatedPrimaryReferences = [];
   try {
-    authenticatedLegacyReferences = await authenticateLegacyImageSignatureReferences({
+    const discoveredLegacyReferences = await discoverCertificateLegacySignatureReferences({
       defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
       teamId,
-      legacyBucketName: legacyImageBucketName,
-      allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
-      lookupExistingUserIds: async (candidates) => {
-        const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
-        return result.users.map((userRecord) => userRecord.uid);
-      },
-      getObjectMetadata: async (storagePath) => {
-        const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
-        return metadata;
-      },
-      lookupTeamObjectBinding: async (reference) => {
-        const bindingId = crypto.createHash('sha256').update(reference.objectKey).digest('hex');
-        const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
-        return bindingSnap.exists ? bindingSnap.data() || {} : null;
-      }
+      team,
+      context
     });
+    authenticatedLegacyReferences = await registerCertificateLegacySignatureInventoryReferences(
+      discoveredLegacyReferences
+    );
   } catch (error) {
     console.warn('Unable to authenticate a URL-only legacy certificate signature.', {
       teamId,
@@ -14323,6 +14408,35 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
   return { success: true, defaults: clientDefaults };
 });
 
+async function hydrateCertificateSignatureCleanupTarget(teamId, cleanup = {}) {
+  const legacyBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const primaryBucket = admin.storage().bucket();
+  const legacyBucket = admin.storage().bucket(legacyBucketName);
+  return upgradeCertificateSignatureCleanupTarget({
+    teamId,
+    target: cleanup,
+    primaryBucketName: primaryBucket.name,
+    legacyBucketName,
+    getObjectMetadata: async (storageBucket, storagePath) => {
+      const bucket = storageBucket === 'legacy-image' ? legacyBucket : primaryBucket;
+      const [metadata] = await bucket.file(storagePath).getMetadata();
+      return metadata;
+    },
+    lookupTeamObjectBinding: lookupCertificateLegacySignatureBinding
+  });
+}
+
+function getCanonicalCertificateSignatureCleanupFields(target = {}) {
+  return {
+    legacyProvenance: target.legacyProvenance || null,
+    legacySignerField: target.legacySignerField || null,
+    legacyTeamId: target.legacyTeamId || null,
+    objectGeneration: target.objectGeneration || null,
+    objectKey: target.objectKey || null,
+    storageBucketName: target.storageBucketName || null
+  };
+}
+
 exports.cleanupCertificateSignature = functions
   .runWith({ failurePolicy: true })
   .firestore
@@ -14332,18 +14446,30 @@ exports.cleanupCertificateSignature = functions
     if (!cleanupSnap.exists) return null;
     const teamId = String(triggerContext.params.teamId || '').trim();
     const cleanup = cleanupSnap.data() || {};
-    const storagePath = String(cleanup.storagePath || '').trim();
     if (cleanup.status !== 'pending') return null;
+    const hydrated = await hydrateCertificateSignatureCleanupTarget(teamId, cleanup);
+    const target = hydrated?.target || cleanup;
+    const storagePath = String(target.storagePath || '').trim();
+    if (hydrated?.missing === true) {
+      await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
+        status: 'completed-missing',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return null;
+    }
     if (
-      cleanup.teamId !== teamId ||
-      (cleanup.storageBucket === 'legacy-image' && cleanup.legacyBucketName !== (process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')) ||
-      !isAuthorizedCertificateSignatureCleanupTarget(teamId, cleanup)
+      target.teamId !== teamId ||
+      (target.storageBucket === 'legacy-image' && target.legacyBucketName !== (process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')) ||
+      !hydrated ||
+      !isAuthorizedCertificateSignatureCleanupTarget(teamId, target)
     ) {
       console.error('Discarding invalid certificate signature cleanup job.', {
         teamId,
         cleanupId: triggerContext.params.cleanupId
       });
       await cleanupSnap.ref.set({
+        ...getCanonicalCertificateSignatureCleanupFields(target),
         status: 'rejected',
         completedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
@@ -14364,8 +14490,9 @@ exports.cleanupCertificateSignature = functions
         ...certificatesSnap.docs.map((document) => document.data() || {}),
         ...certificateBatchesSnap.docs.map((document) => document.data() || {})
       ];
-      if (referenceRecords.some((record) => isCertificateSignatureTargetReferenced(record, cleanup))) {
+      if (referenceRecords.some((record) => isCertificateSignatureTargetReferenced(record, target))) {
         transaction.set(cleanupSnap.ref, {
+          ...getCanonicalCertificateSignatureCleanupFields(target),
           status: 'blocked-referenced',
           completedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
@@ -14375,18 +14502,19 @@ exports.cleanupCertificateSignature = functions
     });
     if (!shouldDelete) return null;
 
-    const cleanupBucket = cleanup.storageBucket === 'legacy-image'
+    const cleanupBucket = target.storageBucket === 'legacy-image'
       ? admin.storage().bucket(process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')
       : admin.storage().bucket();
     try {
       await cleanupBucket.file(storagePath, {
         preconditionOpts: {
-          ifGenerationMatch: String(cleanup.objectGeneration || '').trim()
+          ifGenerationMatch: String(target.objectGeneration || '').trim()
         }
       }).delete({ ignoreNotFound: true });
     } catch (error) {
       if (Number(error?.code) === 412) {
         await cleanupSnap.ref.set({
+          ...getCanonicalCertificateSignatureCleanupFields(target),
           status: 'blocked-generation-changed',
           completedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
@@ -14395,6 +14523,7 @@ exports.cleanupCertificateSignature = functions
       throw error;
     }
     await cleanupSnap.ref.set({
+      ...getCanonicalCertificateSignatureCleanupFields(target),
       status: 'completed',
       completedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });

@@ -41,6 +41,13 @@ function hashLegacyImageSignatureReference(bucketName, storagePath, downloadToke
     .digest('hex');
 }
 
+function getCertificateLegacySignatureInventoryId(reference = {}) {
+  const objectKey = getCertificateSignatureObjectKey(reference);
+  return objectKey
+    ? crypto.createHash('sha256').update(objectKey).digest('hex')
+    : '';
+}
+
 function normalizeObjectGeneration(value) {
   const generation = String(value || '').trim();
   return /^\d+$/.test(generation) ? generation : '';
@@ -91,6 +98,32 @@ function getLegacyImageSignatureOwnerCandidates(storagePath) {
   return [...new Set(candidates)].slice(0, 100);
 }
 
+function getFirebaseStorageDownloadTokens(metadata = {}) {
+  const tokenMetadata = metadata?.metadata?.firebaseStorageDownloadTokens ?? metadata?.firebaseStorageDownloadTokens;
+  return [...new Set((Array.isArray(tokenMetadata) ? tokenMetadata : String(tokenMetadata || '').split(','))
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+}
+
+function doesLegacyImageMetadataMatchSourceHash(reference = {}, metadata = {}) {
+  const bucketName = String(reference.storageBucketName || reference.legacyBucketName || '').trim();
+  const storagePath = String(reference.storagePath || '').trim();
+  const sourceUrlHash = String(reference.sourceUrlHash || '').trim();
+  if (!bucketName || !storagePath || !/^[a-f0-9]{64}$/.test(sourceUrlHash)) return false;
+  return getFirebaseStorageDownloadTokens(metadata).some((downloadToken) => (
+    hashLegacyImageSignatureReference(bucketName, storagePath, downloadToken) === sourceUrlHash
+  ));
+}
+
+function isMatchingCertificateLegacySignatureBinding(binding = {}, reference = {}) {
+  return binding?.conflicted !== true &&
+    String(binding?.teamId || '').trim() === String(reference?.legacyTeamId || '').trim() &&
+    String(binding?.signerField || '').trim() === String(reference?.legacySignerField || '').trim() &&
+    String(binding?.legacyOwnerId || '').trim() === String(reference?.legacyOwnerId || '').trim() &&
+    String(binding?.sourceUrlHash || '').trim() === String(reference?.sourceUrlHash || '').trim() &&
+    String(binding?.objectKey || '').trim() === getCertificateSignatureObjectKey(reference);
+}
+
 function collectCertificateSignerEntries(record = {}) {
   return [record?.signers, record?.shared?.signers]
     .flatMap((signers) => Array.isArray(signers) ? signers : []);
@@ -121,14 +154,13 @@ function collectLegacyImageSignatureUrls(defaults = {}, legacyBucketName) {
     .filter(Boolean));
 }
 
-async function authenticateLegacyImageSignatureReferences({
+async function discoverLegacyImageSignatureReferences({
   defaults = {},
   teamId,
   legacyBucketName,
   allowedUploaderIds = [],
   lookupExistingUserIds,
-  getObjectMetadata,
-  lookupTeamObjectBinding
+  getObjectMetadata
 }) {
   const normalizedTeamId = normalizeCertificateTeamId(teamId);
   const allowed = new Set(allowedUploaderIds.map((value) => String(value || '').trim()).filter(Boolean));
@@ -147,11 +179,7 @@ async function authenticateLegacyImageSignatureReferences({
       if (existingUserIds.length !== 1 || !allowed.has(existingUserIds[0])) continue;
       if (typeof getObjectMetadata !== 'function') continue;
       const metadata = await getObjectMetadata(parsed.storagePath);
-      const tokenMetadata = metadata?.metadata?.firebaseStorageDownloadTokens ?? metadata?.firebaseStorageDownloadTokens;
-      const storedTokens = Array.isArray(tokenMetadata)
-        ? tokenMetadata.map(String)
-        : String(tokenMetadata || '').split(',').map((value) => value.trim()).filter(Boolean);
-      if (!storedTokens.includes(parsed.downloadToken)) continue;
+      if (!getFirebaseStorageDownloadTokens(metadata).includes(parsed.downloadToken)) continue;
       const reference = {
         legacyBucketName: String(legacyBucketName || '').trim(),
         legacyOwnerId: existingUserIds[0],
@@ -165,22 +193,31 @@ async function authenticateLegacyImageSignatureReferences({
         url: parsed.url
       };
       reference.objectKey = getCertificateSignatureObjectKey(reference);
-      if (!reference.objectKey || typeof lookupTeamObjectBinding !== 'function') continue;
-      const binding = await lookupTeamObjectBinding(reference);
-      if (
-        String(binding?.teamId || '').trim() !== normalizedTeamId ||
-        String(binding?.signerField || '').trim() !== reference.legacySignerField ||
-        String(binding?.objectKey || '').trim() !== reference.objectKey
-      ) continue;
-      references.push({
-        ...reference,
-        legacyProvenance: 'server-inventory-team-binding'
-      });
+      if (reference.objectKey) references.push(reference);
     } catch {
       // Missing objects and unavailable Auth/Storage evidence are unverified.
     }
   }
   return references;
+}
+
+async function authenticateLegacyImageSignatureReferences(options = {}) {
+  const references = await discoverLegacyImageSignatureReferences(options);
+  if (typeof options.lookupTeamObjectBinding !== 'function') return [];
+  const authenticated = [];
+  for (const reference of references) {
+    try {
+      const binding = await options.lookupTeamObjectBinding(reference);
+      if (!isMatchingCertificateLegacySignatureBinding(binding, reference)) continue;
+      authenticated.push({
+        ...reference,
+        legacyProvenance: 'server-inventory-team-binding'
+      });
+    } catch {
+      // An unavailable or conflicting server binding is unverified.
+    }
+  }
+  return authenticated;
 }
 
 async function authenticatePrimaryCertificateSignatureReferences({
@@ -345,6 +382,7 @@ function isCertificateSignaturePathReferenced(defaults, storagePath) {
 }
 
 function isAuthorizedCertificateSignatureCleanupTarget(teamId, target = {}) {
+  const objectKey = getCertificateSignatureObjectKey(target);
   if (target.storageBucket === LEGACY_IMAGE_STORAGE_KIND) {
     return LEGACY_IMAGE_SIGNATURE_PATH_PATTERN.test(String(target.storagePath || '').trim()) &&
       /^[a-f0-9]{64}$/.test(String(target.sourceUrlHash || '').trim()) &&
@@ -355,10 +393,80 @@ function isAuthorizedCertificateSignatureCleanupTarget(teamId, target = {}) {
       ) &&
       getLegacyImageSignatureOwnerCandidates(target.storagePath)
         .includes(String(target.legacyOwnerId || '').trim()) &&
-      getCertificateSignatureObjectKey(target) === String(target.objectKey || '').trim();
+      Boolean(objectKey) &&
+      objectKey === String(target.objectKey || '').trim();
   }
   return isAuthorizedCertificateSignatureCleanupPath(teamId, target.storagePath, target.requestedBy) &&
-    getCertificateSignatureObjectKey(target) === String(target.objectKey || '').trim();
+    Boolean(objectKey) &&
+    objectKey === String(target.objectKey || '').trim();
+}
+
+async function upgradeCertificateSignatureCleanupTarget({
+  teamId,
+  target = {},
+  primaryBucketName,
+  legacyBucketName,
+  getObjectMetadata,
+  lookupTeamObjectBinding
+}) {
+  const normalizedTeamId = normalizeCertificateTeamId(teamId);
+  if (String(target.teamId || '').trim() !== normalizedTeamId) return null;
+  if (isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, target)) {
+    return { target, missing: false };
+  }
+  const storageBucket = target.storageBucket === LEGACY_IMAGE_STORAGE_KIND
+    ? LEGACY_IMAGE_STORAGE_KIND
+    : PRIMARY_STORAGE_KIND;
+  const storagePath = String(target.storagePath || '').trim();
+  const requestedBy = String(target.requestedBy || '').trim();
+  const expectedLegacyBucket = String(legacyBucketName || '').trim();
+  if (storageBucket === PRIMARY_STORAGE_KIND) {
+    if (!isAuthorizedCertificateSignatureCleanupPath(normalizedTeamId, storagePath, requestedBy)) return null;
+  } else if (
+    String(target.legacyBucketName || '').trim() !== expectedLegacyBucket ||
+    !/^[a-f0-9]{64}$/.test(String(target.sourceUrlHash || '').trim()) ||
+    !getLegacyImageSignatureOwnerCandidates(storagePath)
+      .includes(String(target.legacyOwnerId || '').trim())
+  ) {
+    return null;
+  }
+  if (typeof getObjectMetadata !== 'function') return null;
+  let metadata;
+  try {
+    metadata = await getObjectMetadata(storageBucket, storagePath);
+  } catch (error) {
+    if (Number(error?.code) === 404) return { target, missing: true };
+    throw error;
+  }
+  const upgraded = {
+    ...target,
+    storageBucket,
+    storageBucketName: storageBucket === LEGACY_IMAGE_STORAGE_KIND
+      ? expectedLegacyBucket
+      : String(primaryBucketName || '').trim(),
+    objectGeneration: normalizeObjectGeneration(metadata?.generation)
+  };
+  upgraded.objectKey = getCertificateSignatureObjectKey(upgraded);
+  if (!upgraded.objectKey) return null;
+  if (storageBucket === LEGACY_IMAGE_STORAGE_KIND) {
+    if (
+      !doesLegacyImageMetadataMatchSourceHash(upgraded, metadata) ||
+      typeof lookupTeamObjectBinding !== 'function'
+    ) return null;
+    const binding = await lookupTeamObjectBinding(upgraded);
+    if (
+      binding?.conflicted === true ||
+      String(binding?.objectKey || '').trim() !== upgraded.objectKey ||
+      String(binding?.legacyOwnerId || '').trim() !== String(upgraded.legacyOwnerId || '').trim() ||
+      String(binding?.sourceUrlHash || '').trim() !== String(upgraded.sourceUrlHash || '').trim()
+    ) return null;
+    upgraded.legacyTeamId = String(binding?.teamId || '').trim();
+    upgraded.legacySignerField = String(binding?.signerField || '').trim();
+    upgraded.legacyProvenance = 'server-inventory-team-binding';
+  }
+  return isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, upgraded)
+    ? { target: upgraded, missing: false }
+    : null;
 }
 
 function isCertificateSignatureTargetReferenced(defaults, target = {}) {
@@ -379,7 +487,10 @@ module.exports = {
   collectCertificateSignaturePaths,
   collectCertificateSignerEntries,
   collectLegacyImageSignatureUrls,
+  discoverLegacyImageSignatureReferences,
+  doesLegacyImageMetadataMatchSourceHash,
   extractFirebaseStoragePathFromUrl,
+  getCertificateLegacySignatureInventoryId,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
@@ -388,8 +499,10 @@ module.exports = {
   isCertificateSignaturePathReferenced,
   isCertificateSignatureTargetReferenced,
   isLegacyUserSignaturePath,
+  isMatchingCertificateLegacySignatureBinding,
   isTeamSignaturePath,
   parseLegacyImageSignatureUrl,
   normalizeCertificateTeamId,
-  planCertificateSignatureCleanup
+  planCertificateSignatureCleanup,
+  upgradeCertificateSignatureCleanupTarget
 };

@@ -53,6 +53,8 @@ describe('certificate defaults Firestore rules', () => {
     });
 
     it('keeps installed native callers compatible and gates the final denial after updated callers', () => {
+        const inventoryProducer = deployWorkflow.indexOf('certificate-signature-inventory-producer');
+        const inventoryBackfill = deployWorkflow.indexOf('backfill-certificate-legacy-signature-inventory.mjs" --apply');
         const compatibilityCleanup = deployWorkflow.indexOf('certificate-signature-cleanup-compatibility');
         const compatibilityFunction = deployWorkflow.indexOf('certificate-defaults-writer-compatibility');
         const firestoreChangeBranch = deployWorkflow.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]');
@@ -61,6 +63,9 @@ describe('certificate defaults Firestore rules', () => {
         const finalRules = deployWorkflow.indexOf('certificate-defaults-rules-final');
         const nativeReadinessGate = deployWorkflow.indexOf('[[ "$native_callable_ready" == "true" ]]');
 
+        expect(inventoryProducer).toBeGreaterThan(-1);
+        expect(inventoryProducer).toBeLessThan(inventoryBackfill);
+        expect(inventoryBackfill).toBeLessThan(compatibilityCleanup);
         expect(compatibilityCleanup).toBeGreaterThan(-1);
         expect(compatibilityCleanup).toBeLessThan(firestoreChangeBranch);
         expect(compatibilityFunction).toBeGreaterThan(compatibilityCleanup);
@@ -276,6 +281,7 @@ describe('certificate defaults Firestore rules', () => {
             const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
             const cleanupPath = 'teams/team-a/certificateSignatureCleanup/server-job';
             const inventoryPath = 'certificateLegacySignatureInventory/legacy-object-key';
+            const migrationPath = 'systemMigrations/certificateLegacySignatureInventoryV1';
 
             await assertFails(getDoc(doc(ownerDb, cleanupPath)));
             await assertFails(updateDoc(doc(ownerDb, cleanupPath), { status: 'pending' }));
@@ -291,6 +297,41 @@ describe('certificate defaults Firestore rules', () => {
                 signerIndex: 0,
                 objectKey: 'bucket\ncertificate-signatures/users/victim/known.png\n1700000000000000'
             }));
+            await assertFails(getDoc(doc(ownerDb, migrationPath)));
+            await assertFails(setDoc(doc(ownerDb, migrationPath), { status: 'completed' }));
+        });
+
+        it('allows exact historical URL-only defaults in new saved output snapshots', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const historicalUrl = 'https://firebasestorage.googleapis.com/v0/b/game-flow-img.firebasestorage.app/o/user-photos%2F1700000000000_certificate-signature_owner-a_signature.png?alt=media&token=historical-token';
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
+                    signers: [{ signatureImageUrl: historicalUrl }],
+                    retiredSignatureImageObjectKeys: [],
+                    retiredSignatureImagePaths: []
+                });
+            });
+
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificates/historical-url-only'), {
+                signers: [{ signatureImageUrl: historicalUrl }],
+                status: 'draft'
+            }));
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificateBatches/historical-url-only'), {
+                shared: { signers: [{ signatureImageUrl: historicalUrl }] },
+                status: 'draft'
+            }));
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
+                    signers: [{
+                        signatureImageUrl: 'https://images.example.test/current-signature.png',
+                        signatureImagePath: 'certificate-signatures/teams/team-a/current.png'
+                    }],
+                    retiredSignatureImageObjectKeys: ['bucket\ncertificate-signatures/teams/team-a/retired.png\n1700000000000000'],
+                    retiredSignatureImagePaths: ['certificate-signatures/teams/team-a/retired.png'],
+                    updatedBy: 'server'
+                });
+            });
         });
 
         it('rejects stale certificate and batch references after signature retirement', async () => {

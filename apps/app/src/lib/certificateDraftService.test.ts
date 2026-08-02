@@ -168,7 +168,7 @@ describe('certificateDraftService', () => {
           role: 'Head Coach',
           signatureStyle: 'image',
           signatureImageUrl: 'https://example.test/signature.png',
-          signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+          signatureImagePath: 'certificate-signatures/teams/team-1/private.png'
         }]
       },
       selectedPlayers: [
@@ -206,10 +206,13 @@ describe('certificateDraftService', () => {
       playerId: 'player-2',
       recipientName: 'Alex Ace'
     }));
-    expect(dbMocks.createCertificate.mock.calls[0]?.[1]?.signers?.[0]).not.toHaveProperty('signatureImagePath');
+    expect(dbMocks.createCertificate.mock.calls[0]?.[1]?.signers?.[0]).toHaveProperty(
+      'signatureImagePath',
+      'certificate-signatures/teams/team-1/private.png'
+    );
     expect(dbMocks.setCertificateDefaults.mock.calls[0]?.[1]?.signers?.[0]).toHaveProperty(
       'signatureImagePath',
-      'certificate-signatures/users/coach-1/private.png'
+      'certificate-signatures/teams/team-1/private.png'
     );
     expect(dbMocks.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', expect.objectContaining({
       generatedCertificateIds: ['cert-1', 'cert-2'],
@@ -240,7 +243,7 @@ describe('certificateDraftService', () => {
         role: 'Head Coach',
         signatureStyle: 'image',
         signatureImageUrl: 'https://example.test/signature.png',
-        signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+        signatureImagePath: 'certificate-signatures/teams/team-1/private.png'
       }]
     };
     const payload = buildCertificatePayloadForApp({
@@ -257,7 +260,10 @@ describe('certificateDraftService', () => {
     });
 
     expect(rendererMocks.resolveColors).toHaveBeenCalledWith(sharedWithPrivateSignaturePath, team);
-    expect(payload.signers[0]).not.toHaveProperty('signatureImagePath');
+    expect(payload.signers[0]).toHaveProperty(
+      'signatureImagePath',
+      'certificate-signatures/teams/team-1/private.png'
+    );
     expect(payload).toMatchObject({
       batchId: 'batch-1',
       templateId: 'banner',

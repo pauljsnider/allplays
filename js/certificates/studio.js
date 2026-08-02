@@ -1103,7 +1103,7 @@ function buildCertificatePayload(draft, status = draft.status || 'draft') {
         footerUrl: state.shared.footerUrl || '',
         framePurchaseLink: String(state.shared.framePurchaseLink || '').trim(),
         fonts: state.shared.fonts || null,
-        signers: normalizeSigners(state.shared.signers).map(({ signatureImagePath, ...signer }) => signer),
+        signers: normalizeSigners(state.shared.signers),
         foregroundImageRef: state.shared.foregroundImageRef || null,
         backgroundImageRef: state.shared.backgroundImageRef || null,
         backgroundOpacity: state.shared.backgroundOpacity,

@@ -606,6 +606,8 @@ jobs:
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-team-fee-checkout-attempts.mjs"
           cp _migration/backfill-registration-checkout-attempts.js \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-registration-checkout-attempts.mjs"
+          cp _migration/backfill-certificate-legacy-signature-inventory.js \
+            "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
@@ -719,6 +721,8 @@ jobs:
           test ! -L "$bundle/_migration/backfill-team-fee-checkout-attempts.mjs"
           test -f "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
           test ! -L "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
+          test -f "$bundle/_migration/backfill-certificate-legacy-signature-inventory.mjs"
+          test ! -L "$bundle/_migration/backfill-certificate-legacy-signature-inventory.mjs"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore-certificate-defaults-compat.rules"
           test ! -L "$bundle/firestore-certificate-defaults-compat.rules"
@@ -850,7 +854,7 @@ jobs:
             firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."
           fi
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
-          retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+          retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
 
           if ! jq -e '
             .firestore.rules == "firestore.rules"
@@ -1327,8 +1331,15 @@ jobs:
             FIRESTORE_CONFIG_CHANGED="true"
           fi
           # The full Functions deploy does not guarantee per-function update order.
-          # Publish this backward-compatible consumer before any current or future
-          # writer can emit a new certificate-signature tombstone schema.
+          # Install the durable legacy binding producer, backfill authoritative
+          # current defaults, then publish the superset consumer before any current
+          # or future writer can emit a new certificate-signature tombstone schema.
+          retry_firebase_deploy \
+            "functions:indexCertificateLegacySignaturesOnDefaultsWrite" \
+            "certificate-signature-inventory-producer" \
+            3 \
+            15
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           retry_firebase_deploy \
             "functions:cleanupCertificateSignature" \
             "certificate-signature-cleanup-compatibility" \

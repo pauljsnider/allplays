@@ -255,7 +255,8 @@ describe('awards and certificates workflow wiring', () => {
         expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
         expect(studio).toContain("import('./assets.js?v=6')");
         expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
-        expect(studio).toContain(".map(({ signatureImagePath, ...signer }) => signer)");
+        expect(studio).toContain('signers: normalizeSigners(state.shared.signers),');
+        expect(studio).not.toContain('.map(({ signatureImagePath, ...signer }) => signer)');
         expect(studio).toContain('await persistCertificateDefaults();');
         expect(studio).not.toContain('pendingSignatureCleanupPaths');
         expect(studio).toContain('Both images were preserved; refresh before retrying.');

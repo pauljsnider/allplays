@@ -222,7 +222,7 @@ concurrency:
               --config "$deploy_config"
               --non-interactive
             )
-            retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+            retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
@@ -280,6 +280,9 @@ concurrency:
           write_firestore_finalization_blocked_summary() {
             echo "No client outage was introduced."
           }
+          retry_firebase_deploy "functions:indexCertificateLegacySignaturesOnDefaultsWrite" "certificate-signature-inventory-producer" 3 15
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
+          retry_firebase_deploy "functions:cleanupCertificateSignature" "certificate-signature-cleanup-compatibility" 3 15
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             if [[ "$native_callable_ready" == "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
               FIRESTORE_CONFIG_CHANGED="true"
@@ -412,7 +415,7 @@ concurrency:
             `ensure_exact_firestore_ruleset`,
             `retry_firebase_deploy "hosting,functions" "application"
             ensure_exact_firestore_ruleset`
-        ))).toThrow('Production certificate defaults must deploy writer, transitional rules, callers, then the final denial');
+        ))).toThrow('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'

@@ -295,7 +295,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(
         deployProd,
-        'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
+        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(
@@ -470,6 +470,9 @@ export function validateProductionDeployCommand(deployProd) {
         'Production certificate defaults unknown-baseline fail-closed state'
     );
     assertIncludes(deployProd, 'certificate-defaults-writer-compatibility', 'Production certificate defaults writer compatibility deploy');
+    assertIncludes(deployProd, 'certificate-signature-inventory-producer', 'Production certificate signature inventory producer deploy');
+    assertIncludes(deployProd, 'backfill-certificate-legacy-signature-inventory.mjs" --apply', 'Production certificate signature inventory backfill');
+    assertIncludes(deployProd, 'certificate-signature-cleanup-compatibility', 'Production certificate signature cleanup compatibility deploy');
     assertIncludes(deployProd, 'certificate-defaults-rules-compatibility', 'Production certificate defaults transitional rules activation');
     assertIncludes(deployProd, 'certificate-defaults-rules-final', 'Production certificate defaults final rules activation');
     assertIncludes(
@@ -537,17 +540,23 @@ export function validateProductionDeployCommand(deployProd) {
         'return 2',
         'Production active Firestore rules unknown-state classification'
     );
+    const certificateInventoryProducer = deployProd.indexOf('certificate-signature-inventory-producer');
+    const certificateInventoryBackfill = deployProd.indexOf('backfill-certificate-legacy-signature-inventory.mjs" --apply');
+    const certificateCleanupConsumer = deployProd.indexOf('certificate-signature-cleanup-compatibility');
     const certificateWriterDeploy = deployProd.indexOf('certificate-defaults-writer-compatibility');
     const certificateCompatibilityRules = deployProd.indexOf('certificate-defaults-rules-compatibility');
     const certificateApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
     const certificateFinalRules = deployProd.indexOf('certificate-defaults-rules-final');
     if (
-        certificateWriterDeploy === -1
+        certificateInventoryProducer === -1
+        || certificateInventoryBackfill <= certificateInventoryProducer
+        || certificateCleanupConsumer <= certificateInventoryBackfill
+        || certificateWriterDeploy <= certificateCleanupConsumer
         || certificateCompatibilityRules <= certificateWriterDeploy
         || certificateApplicationDeploy <= certificateCompatibilityRules
         || certificateFinalRules <= certificateApplicationDeploy
     ) {
-        throw new Error('Production certificate defaults must deploy writer, transitional rules, callers, then the final denial.');
+        throw new Error('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial.');
     }
     assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(

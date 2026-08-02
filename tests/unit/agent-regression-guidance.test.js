@@ -41,8 +41,10 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('allow every authorized team admin to replace and delete them');
         expect(guidance).toContain('no production upload may hard-require its anonymous auth');
         expect(guidance).toContain('Every upload helper must return both the display URL and exact cleanup path');
-        expect(guidance).toContain('every adapter, native wrapper, normalizer, persisted nested object, and test mock must preserve that object');
-        expect(guidance).toContain('never narrow it back to a URL string or retain a compatibility branch that accepts a string-only success');
+        expect(guidance).toContain('every adapter, native wrapper, normalizer, saved-output serializer, persisted nested object, and test mock must preserve that pair');
+        expect(guidance).toContain('never narrow it back to a URL string, strip the path from a certificate/batch snapshot');
+        expect(guidance).toContain('Deploy the server-only inventory producer first, backfill every authoritative active legacy reference before enabling cleanup');
+        expect(guidance).toContain('make the cleanup worker hydrate and safely process every old and new tombstone schema it can observe');
         expect(guidance).toContain('A failed read of the previous cleanup path is `unknown`');
         expect(guidance).toContain('Reconcile a removal after an ambiguous write even though it has no new upload path');
         pathAwareUploadConsumers.forEach((source) => {

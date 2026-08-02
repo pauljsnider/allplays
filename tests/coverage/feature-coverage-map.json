@@ -541,6 +541,7 @@
                 "cleanupCertificateSignature",
                 "commitCertificateDefaults",
                 "dispatchDueTeamMediaNotificationBatches",
+                "indexCertificateLegacySignaturesOnDefaultsWrite",
                 "notifyPublishedCertificateAward",
                 "queueTeamMediaNotificationBatch"
             ],
@@ -549,6 +550,7 @@
                 "functions/test/team-media-notification-batches.test.js",
                 "tests/unit/athlete-profile-storage-rules.test.js",
                 "tests/unit/certificate-award-notifications.test.js",
+                "tests/unit/certificate-legacy-signature-inventory-backfill.test.js",
                 "tests/unit/certificates-workflow.test.js",
                 "tests/unit/fallback-media-storage.test.js",
                 "tests/unit/team-media-page.test.js",

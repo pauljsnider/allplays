@@ -819,7 +819,8 @@ service cloud.firestore {
              (imageUrl is string &&
                (imageUrl.size() == 0 ||
                  (imagePath is string &&
-                   imagePath.matches('^certificate-signatures/teams/' + teamId + '/[^/]+$'))));
+                   imagePath.matches('^certificate-signatures/teams/' + teamId + '/[^/]+$')) ||
+                 certificateSignerUsesCurrentImage(teamId, signer)));
     }
 
     function certificateSignersHaveCanonicalImagePaths(teamId, data) {

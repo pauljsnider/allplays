@@ -320,7 +320,7 @@ describe('certificateAwardService', () => {
         role: 'Head Coach',
         signatureStyle: 'image',
         signatureImageUrl: 'https://example.test/signature.png',
-        signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+        signatureImagePath: 'certificate-signatures/teams/team-1/private.png'
       }]
     };
     const payload = buildCertificateAwardPayloadForApp({
@@ -338,7 +338,10 @@ describe('certificateAwardService', () => {
     expect(legacyDraftMocks.resolveColors).toHaveBeenCalledWith(sharedWithPrivateSignaturePath, team);
     expect(legacyDraftMocks.normalizeSigners).toHaveBeenCalledWith(sharedWithPrivateSignaturePath.signers);
     expect(payload.description.length).toBeLessThanOrEqual(350);
-    expect(payload.signers[0]).not.toHaveProperty('signatureImagePath');
+    expect(payload.signers[0]).toHaveProperty(
+      'signatureImagePath',
+      'certificate-signatures/teams/team-1/private.png'
+    );
     expect(payload).toMatchObject({
       playerId: 'player-1',
       framePurchaseLink: 'https://frames.example.test/team-store',
