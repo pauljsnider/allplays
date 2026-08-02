@@ -280,6 +280,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 email: 'owner-a@example.com',
                 email_verified: false
             }).storage();
+            const ownerFirestore = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).firestore();
+            const adminFirestore = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).firestore();
 
             const assetRef = ownerStorage.ref('certificate-assets/teams/team-a/background.png');
             await assertSucceeds(assetRef.put(new Uint8Array([1]), { contentType: 'image/png' }));
@@ -323,6 +331,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 { contentType: 'image/webp' }
             ));
             await assertSucceeds(adminStorage.ref('certificate-signatures/teams/team-a/signature.webp').delete());
+            await assertFails(ownerFirestore.doc('teams/team-a/certificateSignatureCleanup/forged-owner').set({
+                teamId: 'team-a',
+                storagePath: 'certificate-signatures/users/victim/private.webp'
+            }));
+            await assertFails(adminFirestore.doc('teams/team-a/certificateSignatureCleanup/forged-admin').set({
+                teamId: 'team-a',
+                storagePath: 'certificate-signatures/users/victim/private.webp'
+            }));
         });
 
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {

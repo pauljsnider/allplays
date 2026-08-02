@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=151';
+import { checkAuth } from '../auth.js?v=152';
 import {
     getTeam,
     getUserProfile,
@@ -22,8 +22,8 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=148';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=26';
+} from '../db.js?v=149';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=27';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=12';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
@@ -69,7 +69,6 @@ const state = {
     certificatePersistenceUnavailable: false,
     activeRegenerationPromise: null,
     imageUploadStatus: {},
-    pendingSignatureCleanupPaths: new Set(),
     pendingPreviewTimer: null,
     descriptionGeneration: null,
     savedListExpanded: {},
@@ -77,35 +76,6 @@ const state = {
 };
 
 renderFooter(document.getElementById('footer-container'));
-
-function getSignatureImagePaths(signers = state.shared?.signers || []) {
-    return new Set(normalizeSigners(signers)
-        .map((signer) => String(signer.signatureImagePath || '').trim())
-        .filter(Boolean));
-}
-
-function queueSignatureCleanup(signer) {
-    const path = String(signer?.signatureImagePath || '').trim();
-    if (path) state.pendingSignatureCleanupPaths.add(path);
-}
-
-async function cleanupUnreferencedSignatureImages() {
-    if (!state.pendingSignatureCleanupPaths.size) return;
-    const referencedPaths = getSignatureImagePaths();
-    const cleanupPaths = [...state.pendingSignatureCleanupPaths].filter((path) => !referencedPaths.has(path));
-    if (!cleanupPaths.length) return;
-    const { deleteSignatureImage } = await import('./assets.js?v=6');
-    const results = await Promise.allSettled(cleanupPaths.map((path) => (
-        deleteSignatureImage(state.teamId, path)
-    )));
-    results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-            state.pendingSignatureCleanupPaths.delete(cleanupPaths[index]);
-        } else {
-            console.warn('[certificates] Signature cleanup deferred:', result.reason);
-        }
-    });
-}
 
 async function persistCertificateDefaults() {
     try {
@@ -124,7 +94,6 @@ async function persistCertificateDefaults() {
             throw persistenceError;
         }
     }
-    await cleanupUnreferencedSignatureImages();
 }
 
 function escapeAttr(value) {
@@ -982,7 +951,6 @@ function bindSetupEvents() {
             const index = Number(input.dataset.signerIndex);
             const field = input.dataset.signerField;
             if (field === 'signatureStyle' && input.value !== 'image') {
-                queueSignatureCleanup(state.shared.signers[index]);
                 state.shared.signers[index].signatureImageUrl = null;
                 state.shared.signers[index].signatureImagePath = null;
             }
@@ -1006,7 +974,6 @@ function bindSetupEvents() {
             try {
                 const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=6');
                 const result = await uploadSignatureImage(state.teamId, file);
-                queueSignatureCleanup(previousSigner);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
                 state.shared.signers[index].signatureImagePath = result.path;
@@ -1020,7 +987,6 @@ function bindSetupEvents() {
                     }
                     await deleteSignatureImage(state.teamId, result.path).catch(() => undefined);
                     state.shared.signers[index] = previousSigner;
-                    state.pendingSignatureCleanupPaths.delete(String(previousSigner.signatureImagePath || '').trim());
                     throw persistenceError;
                 }
                 renderSetup();
@@ -1035,7 +1001,6 @@ function bindSetupEvents() {
     document.querySelectorAll('[data-signer-remove]').forEach((button) => {
         button.addEventListener('click', () => {
             const index = Number(button.dataset.signerRemove);
-            queueSignatureCleanup(state.shared.signers[index]);
             state.shared.signers.splice(index, 1);
             renderSetup();
             schedulePreviewRender();

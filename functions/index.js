@@ -350,6 +350,11 @@ const {
 } = require('./parent-invite-auto-link-core.cjs');
 const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
+const {
+  isAuthorizedCertificateSignatureCleanupPath,
+  normalizeCertificateTeamId,
+  planCertificateSignatureCleanup
+} = require('./certificate-signature-cleanup-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -14017,6 +14022,113 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
     messageId: messageRef.id
   };
 });
+
+async function requireCertificateTeamAdmin(teamId, context) {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to save certificate defaults.');
+  }
+  await assertSensitiveEmailVerified(context, 'certificate-defaults-save');
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team.adminEmails)
+    ? team.adminEmails.map((email) => String(email || '').trim().toLowerCase())
+    : [];
+  const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
+    .map((email) => String(email || '').trim().toLowerCase())
+    .filter(Boolean);
+  const canManage = team.ownerId === context.auth.uid ||
+    (callerEmail && (adminEmails.includes(callerEmail) || ownerEmails.includes(callerEmail))) ||
+    user.isAdmin === true;
+  if (!canManage) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can save certificate defaults.');
+  }
+}
+
+exports.commitCertificateDefaults = functions.https.onCall(async (data, context = {}) => {
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(data?.teamId);
+  } catch {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team is required.');
+  }
+  const requestedDefaults = data?.defaults;
+  if (!requestedDefaults || typeof requestedDefaults !== 'object' || Array.isArray(requestedDefaults)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Certificate defaults are required.');
+  }
+  const serializedDefaults = JSON.stringify(requestedDefaults);
+  if (serializedDefaults.length > 500_000) {
+    throw new functions.https.HttpsError('invalid-argument', 'Certificate defaults are too large.');
+  }
+  await requireCertificateTeamAdmin(teamId, context);
+
+  const {
+    id: _ignoredId,
+    updatedAt: _ignoredUpdatedAt,
+    updatedBy: _ignoredUpdatedBy,
+    ...clientDefaults
+  } = requestedDefaults;
+  const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+  await firestore.runTransaction(async (transaction) => {
+    const previousSnap = await transaction.get(defaultsRef);
+    let cleanupPaths;
+    try {
+      ({ cleanupPaths } = planCertificateSignatureCleanup({
+        teamId,
+        previousDefaults: previousSnap.exists ? previousSnap.data() || {} : {},
+        nextDefaults: clientDefaults
+      }));
+    } catch (error) {
+      throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
+    }
+
+    cleanupPaths.forEach((storagePath) => {
+      const cleanupId = crypto.createHash('sha256').update(`${teamId}\n${storagePath}`).digest('hex');
+      const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
+      transaction.set(cleanupRef, {
+        teamId,
+        storagePath,
+        requestedBy: context.auth.uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    transaction.set(defaultsRef, {
+      ...clientDefaults,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: context.auth.uid
+    }, { merge: true });
+  });
+
+  return { success: true, defaults: clientDefaults };
+});
+
+exports.cleanupCertificateSignature = functions
+  .runWith({ failurePolicy: true })
+  .firestore
+  .document('teams/{teamId}/certificateSignatureCleanup/{cleanupId}')
+  .onCreate(async (cleanupSnap, triggerContext) => {
+    const teamId = String(triggerContext.params.teamId || '').trim();
+    const cleanup = cleanupSnap.data() || {};
+    const storagePath = String(cleanup.storagePath || '').trim();
+    if (cleanup.teamId !== teamId || !isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath)) {
+      console.error('Discarding invalid certificate signature cleanup job.', {
+        teamId,
+        cleanupId: triggerContext.params.cleanupId
+      });
+      await cleanupSnap.ref.delete();
+      return null;
+    }
+    await admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+    await cleanupSnap.ref.delete();
+    return null;
+  });
 
 async function requireTeamEmailSender(teamId, context) {
   if (!context.auth?.uid) {

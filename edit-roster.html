@@ -107,6 +107,7 @@
                             <input type="file" id="playerPhoto" accept="image/*"
                                 class="mt-1 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                             <p class="text-xs text-gray-500 mt-1">JPG/PNG up to 5MB.</p>
+                            <p id="player-photo-ownership-status" class="hidden text-xs text-red-600 mt-1">Photo details could not be loaded. Refresh the roster before replacing or removing this photo.</p>
                             <div id="player-photo-preview" class="mt-2 flex items-center gap-3 hidden">
                                 <span
                                     class="inline-flex h-12 w-12 rounded-full bg-gray-100 overflow-hidden border border-gray-200"
@@ -556,11 +557,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getPlayerPrivateProfile, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=148';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getPlayerPrivateProfile, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=149';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=26';
-        import { checkAuth } from './js/auth.js?v=151';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=27';
+        import { checkAuth } from './js/auth.js?v=152';
         import { queueInviteEmail } from './js/invite-email.js?v=1';
         import { buildAppJoinUrl } from './js/join-code.js?v=2';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -580,6 +581,7 @@
         let editingPlayerId = null;
         let editingPhotoUrl = null;
         let editingPhotoPath = null;
+        let editingPhotoOwnershipLoaded = true;
         let editingPlayerProfile = null;
         let rosterFieldDefinitions = [];
         let rosterFieldDefinitionDrafts = [];
@@ -2046,6 +2048,7 @@
             editingPlayerId = null;
             editingPhotoUrl = null;
             editingPhotoPath = null;
+            editingPhotoOwnershipLoaded = true;
             editingPlayerProfile = null;
             document.getElementById('add-player-form').reset();
             document.getElementById('submit-player').textContent = 'Add Player';
@@ -2054,6 +2057,9 @@
             document.getElementById('player-photo-preview').classList.add('hidden');
             document.getElementById('player-photo-thumb').innerHTML = '';
             document.getElementById('removePhoto').checked = false;
+            document.getElementById('playerPhoto').disabled = false;
+            document.getElementById('removePhoto').disabled = false;
+            document.getElementById('player-photo-ownership-status').classList.add('hidden');
             renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
         }
 
@@ -2370,6 +2376,7 @@
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
             editingPhotoPath = player.photoPath || null;
+            editingPhotoOwnershipLoaded = player.photoOwnershipLoaded !== false;
             editingPlayerProfile = player.profile || null;
             document.getElementById('playerName').value = player.name || '';
             document.getElementById('playerNumber').value = player.number || '';
@@ -2378,6 +2385,9 @@
             document.getElementById('cancel-edit').classList.remove('hidden');
             document.getElementById('playerPhoto').value = '';
             document.getElementById('removePhoto').checked = false;
+            document.getElementById('playerPhoto').disabled = !editingPhotoOwnershipLoaded;
+            document.getElementById('removePhoto').disabled = !editingPhotoOwnershipLoaded;
+            document.getElementById('player-photo-ownership-status').classList.toggle('hidden', editingPhotoOwnershipLoaded);
 
             const previewWrap = document.getElementById('player-photo-preview');
             const thumb = document.getElementById('player-photo-thumb');
@@ -2484,6 +2494,7 @@
             const photoInput = document.getElementById('playerPhoto');
             const selectedPhotoFile = photoInput.files[0] || null;
             const removePhoto = document.getElementById('removePhoto').checked;
+            const photoOwnershipLoaded = !editingPlayerId || editingPhotoOwnershipLoaded;
             const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
@@ -2491,6 +2502,11 @@
 
             if (validationErrors.length) {
                 alert(validationErrors.join('\n'));
+                return;
+            }
+
+            if ((selectedPhotoFile || removePhoto) && !photoOwnershipLoaded) {
+                alert('Photo details could not be loaded. Refresh the roster before changing the photo.');
                 return;
             }
 
@@ -2526,10 +2542,12 @@
                 const playerData = {
                     name,
                     number,
-                    photoUrl,
-                    photoPath: nextPhotoPath || null,
                     profile: publicProfile
                 };
+                if (photoOwnershipLoaded) {
+                    playerData.photoUrl = photoUrl;
+                    playerData.photoPath = nextPhotoPath || null;
+                }
                 if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
                     playerData.position = publicValues.position;
                 }
@@ -2562,8 +2580,10 @@
                     nextPhotoPath = newlyUploadedPlayerPhotoPath;
                 }
 
-                playerData.photoUrl = photoUrl;
-                playerData.photoPath = nextPhotoPath || null;
+                if (photoOwnershipLoaded) {
+                    playerData.photoUrl = photoUrl;
+                    playerData.photoPath = nextPhotoPath || null;
+                }
 
                 playerPhotoWriteAttempted = true;
                 if (editingPlayerId || createdNewPlayerOwner) {

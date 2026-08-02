@@ -52,7 +52,9 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain("type: 'add',");
         expect(source).toContain('playerId: reservedPlayerId,');
         expect(source).toContain('payload: playerData,');
-        expect(source).toContain('photoPath: nextPhotoPath || null');
+        expect(source).toContain('playerData.photoPath = nextPhotoPath || null;');
+        expect(source).toContain('if ((selectedPhotoFile || removePhoto) && !photoOwnershipLoaded)');
+        expect(source).toContain('if (photoOwnershipLoaded) {');
         expect(source).toContain("getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath)");
         expect(source).toContain("(selectedPhotoFile || removePhoto) && playerPhotoWriteAttempted");
         expect(source).toContain("removePhoto && !previousPhotoPath");

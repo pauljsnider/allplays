@@ -122,6 +122,7 @@ import {
     buildFriendshipId,
     getDisplayName
 } from './friend-invite.js?v=1';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=1';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
@@ -747,7 +748,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=26'; // Import resolveZip
+import { resolveZip } from './utils.js?v=27'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -2935,12 +2936,15 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
                 // Cleanup paths can contain authorization-sensitive storage
                 // coordinates. Merge them only after this privileged read.
                 photoPath: privateProfile?.photoPath || player?.photoPath || null,
+                photoOwnershipLoaded: true,
                 privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
         } catch (error) {
-            if (error?.code === 'permission-denied') return player;
+            if (error?.code === 'permission-denied') {
+                return { ...player, photoOwnershipLoaded: false };
+            }
             throw error;
         }
     }));
@@ -7308,15 +7312,7 @@ export async function getCertificateDefaults(teamId) {
 }
 
 export async function setCertificateDefaults(teamId, defaults = {}) {
-    if (!teamId) throw new Error('Missing team for certificate defaults');
-    const actor = getCertificateActor();
-    const payload = {
-        ...defaults,
-        updatedAt: Timestamp.now(),
-        updatedBy: actor.actorId
-    };
-    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
-    return payload;
+    return commitCertificateDefaults(teamId, defaults);
 }
 
 export async function listCertificateAssets(teamId) {

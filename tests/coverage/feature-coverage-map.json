@@ -538,11 +538,14 @@
                 "apps/app/src/pages/TeamMedia.tsx"
             ],
             "cloudFunctions": [
+                "cleanupCertificateSignature",
+                "commitCertificateDefaults",
                 "dispatchDueTeamMediaNotificationBatches",
                 "notifyPublishedCertificateAward",
                 "queueTeamMediaNotificationBatch"
             ],
             "unitTests": [
+                "functions/test/certificate-signature-cleanup.test.cjs",
                 "functions/test/team-media-notification-batches.test.js",
                 "tests/unit/athlete-profile-storage-rules.test.js",
                 "tests/unit/certificate-award-notifications.test.js",
