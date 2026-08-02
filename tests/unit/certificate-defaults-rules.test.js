@@ -57,7 +57,7 @@ describe('certificate defaults Firestore rules', () => {
             'Keeping certificate-defaults compatibility rules until supported installed native versions use the callable.'
         );
         expect(deployWorkflow).toMatch(
-            /baseline_firestore_mode" == "compatibility"[\s\S]*firestore_component_description="Firestore compatibility rules and indexes/
+            /baseline_firestore_mode" == "compatibility"[\s\S]*firestore_component_description="Firestore compatibility rules at/
         );
         expect(deployWorkflow).toMatch(
             /native_callable_ready" == "true"[\s\\]*&& "\$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true"[\s\S]*FIRESTORE_CONFIG_CHANGED="true"/

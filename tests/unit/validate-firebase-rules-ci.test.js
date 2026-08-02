@@ -168,7 +168,7 @@ concurrency:
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
             firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
-            firestore_component_description="Firestore compatibility rules and indexes are current at \${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."
+            firestore_component_description="Firestore compatibility rules at \${GITHUB_SHA}; packaged native clients still use direct writes."
             jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
             jq -e 'and (.firestore | has("rules") | not)' "$firestore_indexes_config"
             deploy_config="$firebase_config"

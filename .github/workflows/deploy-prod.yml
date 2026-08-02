@@ -701,7 +701,7 @@ jobs:
           finalize_firestore_rules="false"
           firestore_component_description="Firestore rules and indexes are current at ${GITHUB_SHA}."
           if [[ "$baseline_firestore_mode" == "compatibility" ]]; then
-            firestore_component_description="Firestore compatibility rules and indexes are current at ${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."
+            firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."
           fi
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
           retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
@@ -1290,7 +1290,7 @@ jobs:
                 fi
                 finalize_firestore_rules="true"
               else
-                firestore_component_description="Firestore compatibility rules and indexes are current at ${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."
+                firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."
                 echo "::notice::Keeping certificate-defaults compatibility rules until supported installed native versions use the callable."
               fi
             fi

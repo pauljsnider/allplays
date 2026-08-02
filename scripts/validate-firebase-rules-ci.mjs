@@ -496,7 +496,7 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'firestore_component_description="Firestore compatibility rules and indexes are current at ${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."',
+        'firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."',
         'Production Firestore compatibility marker preservation'
     );
     assertIncludes(
