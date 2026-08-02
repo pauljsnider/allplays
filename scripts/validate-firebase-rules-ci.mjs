@@ -553,7 +553,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
     assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
-    assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');
+    assertIncludes(deployProd, 'if last_success_run_json="$(gh api', 'Production successful deploy guarded lookup');
     assertIncludes(deployProd, 'if [[ "$lookup_succeeded" != "true" ]]; then', 'Production successful deploy lookup failure fallback');
     assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing authorization rules-first ordering.', 'Production successful deploy lookup warning');
     const lookupFallbackStart = deployProd.indexOf('if [[ "$lookup_succeeded" != "true" ]]; then');
@@ -588,6 +588,14 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         'The protected native-readiness gate can finalize the same',
         'Production Firestore external finalization ambiguity handling'
+    );
+    assertIncludes(deployProd, 'last_success_run_id=', 'Production Firestore successful run identity');
+    assertIncludes(deployProd, 'deployment_log_url=', 'Production Firestore component marker run identity');
+    assertIncludes(deployProd, 'component_marker_found="true"', 'Production Firestore component marker presence');
+    assertIncludes(
+        deployProd,
+        'The same-SHA component marker belongs to a different production run; forcing live mode classification.',
+        'Production Firestore same-SHA retry ambiguity handling'
     );
     assertIncludes(
         deployProd,

@@ -123,8 +123,9 @@ concurrency:
             baseline_branch="master"
           fi
           lookup_max_attempts=3
+          last_success_run_id="$last_success_run_id"
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
-            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
+            if last_success_run_json="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
               lookup_succeeded="true"
             fi
           done
@@ -137,6 +138,9 @@ concurrency:
             exit 0
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          component_marker_found="true"
+          deployment_log_url="$deployment_log_url"
+          echo "The same-SHA component marker belongs to a different production run; forcing live mode classification."
           echo "The Firestore component deployment lookup failed; the active release mode is unknown."
           firestore_success_mode="unmarked"
           firestore_success_mode="ambiguous"
@@ -350,8 +354,8 @@ concurrency:
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
         ))).toThrow('Production Firestore component change detection is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'if last_success_sha="$(gh api',
-            'last_success_sha="$(gh api'
+            'if last_success_run_json="$(gh api',
+            'last_success_run_json="$(gh api'
         ))).toThrow('Production successful deploy guarded lookup is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'echo "changed=true" >> "$GITHUB_OUTPUT"',
