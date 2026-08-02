@@ -38,6 +38,12 @@ import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-imag
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
+import {
+    buildPlayerProfilePhotoPath,
+    buildTeamDraftProfilePhotoPath,
+    buildTeamProfilePhotoPath,
+    buildUserProfilePhotoPath
+} from './profile-photo-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -494,6 +500,10 @@ async function getDownloadUrlOrDeleteUpload(storageRef) {
 export async function deleteLegacyImageUpload(path) {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath) return;
+    if (normalizedPath.startsWith('profile-photos/')) {
+        await deleteObject(ref(storage, normalizedPath));
+        return;
+    }
     if (!/^(team-photos|player-photos|user-photos)\//.test(normalizedPath)) {
         throw new Error('Invalid legacy image upload path.');
     }
@@ -508,15 +518,18 @@ export async function uploadTeamPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
-
-    const path = `team-photos/${Date.now()}_${file.name}`;
+    const userId = getRequiredSignedInUserId();
+    const path = options?.teamId
+        ? buildTeamProfilePhotoPath(options.teamId, userId, file.name)
+        : buildTeamDraftProfilePhotoPath(userId, file.name);
     console.log('Upload path:', path);
 
-    const storageRef = ref(imageStorage, path);
+    const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadBytes(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     console.log('Upload complete, getting download URL...');
 
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
@@ -532,12 +545,13 @@ export async function uploadPlayerPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    const userId = getRequiredSignedInUserId();
+    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, userId, file.name);
+    const storageRef = ref(storage, path);
 
-    const path = `player-photos/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadBytes(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
@@ -551,13 +565,16 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    const userId = getRequiredSignedInUserId();
+    if (uid && String(uid).trim() !== userId) {
+        throw new Error('The signed-in account does not match this profile photo upload.');
+    }
+    const path = buildUserProfilePhotoPath(userId, file.name);
+    const storageRef = ref(storage, path);
 
-    const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
-    const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadBytes(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 

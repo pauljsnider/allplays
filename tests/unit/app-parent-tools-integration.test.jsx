@@ -15,6 +15,20 @@ const serviceMocks = vi.hoisted(() => ({
     getCalendarEventShareText: vi.fn((event) => `${event.teamName} ${event.title || event.opponent}`),
     getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`),
     getPrivateTeamCalendarFeedUrl: vi.fn(),
+    getTrustedStripeCheckoutUrl: vi.fn((value) => {
+        try {
+            const parsed = new URL(String(value || '').trim());
+            return parsed.protocol === 'https:'
+                && parsed.hostname === 'checkout.stripe.com'
+                && !parsed.username
+                && !parsed.password
+                && !parsed.port
+                ? String(value || '').trim()
+                : '';
+        } catch {
+            return '';
+        }
+    }),
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentCalendarTools: vi.fn(),
@@ -50,6 +64,7 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => serviceMocks);
 vi.mock('../../apps/app/src/lib/parentFeesService.ts', () => ({
+    getTrustedStripeCheckoutUrl: serviceMocks.getTrustedStripeCheckoutUrl,
     loadParentFeesForApp: serviceMocks.loadParentFeesForApp,
     initiateParentTeamFeeCheckout: serviceMocks.initiateParentTeamFeeCheckout
 }));
@@ -265,7 +280,7 @@ beforeEach(() => {
         dueLabel: 'Jun 1',
         statusLabel: 'Open',
         balanceDueCents: 12000,
-        checkoutUrl: 'https://pay.example.test/fee',
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/fee',
         canPay: true,
         lineItems: [{ title: 'Season', amountCents: 12000 }],
         installments: [{ label: 'Deposit', amountCents: 6000 }],
@@ -276,7 +291,7 @@ beforeEach(() => {
         teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
     });
     serviceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/team-1.ics');
-    serviceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://pay.example.test/created-fee' });
+    serviceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' });
     serviceMocks.loadFamilyShareModel.mockResolvedValue({
         children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
         tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/app/#/family/token-1', childCount: 1, extraCalendarUrls: [] }]
@@ -361,7 +376,7 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'View details');
         expect(container.textContent).toContain('Line items');
         await clickButton(container, 'Pay fee');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fee');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/fee');
         expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
 
         await clickLink(container, 'Calendar');
@@ -624,7 +639,7 @@ describe('React app parent tools integration', () => {
             dueLabel: 'Jul 1',
             statusLabel: 'Open',
             balanceDueCents: 7500,
-            checkoutUrl: 'https://pay.example.test/tournament',
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/tournament',
             notes: 'Uniform deposit is included.',
             paymentInstructions: 'Bring a check payable to Bears Booster Club.',
             canPay: true,
@@ -647,7 +662,7 @@ describe('React app parent tools integration', () => {
         expect(container.textContent).toContain('Uniform deposit is included.');
 
         await clickButton(container, 'Pay fee');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/tournament');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/tournament');
         expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
     });
 
@@ -679,7 +694,7 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'Pay fee');
 
         expect(serviceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/created-fee');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/created-fee');
     });
 
     it('shows an inline fee checkout error without leaving Parent Tools', async () => {

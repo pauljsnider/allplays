@@ -480,6 +480,27 @@ describe('Profile', () => {
     expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(2);
   });
 
+  it('reports an upload permission failure as Storage failure before profile persistence', async () => {
+    profilePhotoServiceMocks.uploadProfilePhoto.mockRejectedValueOnce(new Error('storage/unauthorized'));
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: {
+        files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })]
+      }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('Firebase Storage denied this profile photo upload. Refresh your session and try again.')).toBeTruthy();
+    expect(profileServiceMocks.saveProfileDocument).not.toHaveBeenCalled();
+  });
+
   it('disables account merge while parent team eligibility is loading', async () => {
     const parentTeamsRequest = createDeferredPromise<Array<{ id: string; name: string }>>();
     profileServiceMocks.loadParentTeams.mockImplementation(() => parentTeamsRequest.promise);

@@ -17,6 +17,20 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     getCalendarEventShareText: vi.fn(),
     getGoogleCalendarFeedUrl: vi.fn(),
     getPrivateTeamCalendarFeedUrl: vi.fn(),
+    getTrustedStripeCheckoutUrl: vi.fn((value: unknown) => {
+        try {
+            const parsed = new URL(String(value || '').trim());
+            return parsed.protocol === 'https:'
+                && parsed.hostname === 'checkout.stripe.com'
+                && !parsed.username
+                && !parsed.password
+                && !parsed.port
+                ? String(value || '').trim()
+                : '';
+        } catch {
+            return '';
+        }
+    }),
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentCalendarTools: vi.fn(),
@@ -50,6 +64,7 @@ vi.mock('../lib/parentCalendarService', () => ({
     loadParentCalendarTools: parentToolsServiceMocks.loadParentCalendarTools
 }));
 vi.mock('../lib/parentFeesService', () => ({
+    getTrustedStripeCheckoutUrl: parentToolsServiceMocks.getTrustedStripeCheckoutUrl,
     initiateParentTeamFeeCheckout: parentToolsServiceMocks.initiateParentTeamFeeCheckout,
     loadParentFeesForApp: parentToolsServiceMocks.loadParentFeesForApp
 }));
@@ -1111,7 +1126,7 @@ describe('ParentTools access', () => {
         expect(screen.getByText('https://allplays.ai/app/#/family/token-9')).toBeTruthy();
     });
 
-    it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
+    it('opens trusted reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
                 id: 'fee-1',
@@ -1124,7 +1139,7 @@ describe('ParentTools access', () => {
                 dueLabel: 'Today',
                 statusLabel: 'Open',
                 balanceDueCents: 10000,
-                checkoutUrl: 'https://pay.example.test/legacy',
+                checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
                 canPay: true,
                 checkoutInitiatable: false,
                 paymentAction: '',
@@ -1140,9 +1155,52 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
 
         await waitFor(() => {
-            expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/legacy');
+            expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/legacy');
         });
         expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['a non-Stripe host', 'https://attacker.example/checkout'],
+        ['a deceptive Stripe suffix', 'https://checkout.stripe.com.attacker.example/checkout'],
+        ['an executable scheme', 'javascript:alert(1)']
+    ])('regenerates %s instead of opening the stored parent fee destination', async (_caseName, checkoutUrl) => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-unsafe',
+                title: 'Team dues',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                status: 'open',
+                statusLabel: 'Open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                balanceDueCents: 10000,
+                checkoutUrl,
+                canPay: true,
+                checkoutInitiatable: false,
+                paymentAction: 'checkoutUrl',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/regenerated'
+        });
+
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        });
+        expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/regenerated');
+        expect(openPublicUrl).not.toHaveBeenCalledWith(checkoutUrl);
     });
 
     it('keeps online fee payment primary and reveals invoice details on demand', async () => {

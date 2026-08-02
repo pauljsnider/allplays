@@ -236,7 +236,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=140';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=141';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
@@ -1297,7 +1297,11 @@
                 }
 
                 if (photoFile) {
-                    const uploadedPhoto = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+                    const uploadedPhoto = await uploadPlayerPhoto(photoFile, {
+                        returnUpload: true,
+                        teamId: currentTeamId,
+                        playerId: currentPlayer.id
+                    });
                     photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
                     newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
                 }

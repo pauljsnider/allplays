@@ -536,7 +536,11 @@ describe('React app parent player detail service', () => {
             photoFile: file
         });
 
-        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, { returnUpload: true });
+        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, {
+            returnUpload: true,
+            teamId: 'team-1',
+            playerId: 'player-1'
+        });
         expect(dbMocks.updatePlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             emergencyContact: { name: 'Alex Parent', phone: '555-0199' },
             medicalInfo: 'Inhaler'

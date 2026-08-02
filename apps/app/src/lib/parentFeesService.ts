@@ -120,7 +120,7 @@ function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
     return !checkoutStatus || checkoutStatus === 'open';
 }
 
-function getTrustedStripeCheckoutUrl(value: unknown) {
+export function getTrustedStripeCheckoutUrl(value: unknown) {
     const checkoutUrl = compactString(value);
     try {
         const parsed = new URL(checkoutUrl);

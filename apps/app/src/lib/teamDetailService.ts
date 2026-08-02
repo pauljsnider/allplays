@@ -1378,8 +1378,11 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   const position = cleanString(publicValues.position);
 
   const nativeRuntime = isNativeRuntime();
-  const nativeMutation = nativeRuntime ? await import('./nativeFirestoreMutation') : null;
-  const playerId = nativeMutation ? nativeMutation.createNativeFirestoreDocumentId() : '';
+  const mutationModule = await import('./nativeFirestoreMutation');
+  const nativeMutation = nativeRuntime ? mutationModule : null;
+  // Reserve the final player id before any photo upload so web and native use
+  // the same team/player/uploader Storage boundary.
+  const playerId = mutationModule.createNativeFirestoreDocumentId();
   let photoUrl: string | null = null;
   let nativePhotoPath = '';
   let webPhotoPath = '';
@@ -1390,7 +1393,11 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      const uploaded = await uploadPlayerPhoto(input.photoFile, { returnUpload: true });
+      const uploaded = await uploadPlayerPhoto(input.photoFile, {
+        returnUpload: true,
+        teamId: normalizedTeamId,
+        playerId
+      });
       photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
       webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
@@ -1426,6 +1433,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     } else {
       const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [{
         type: 'add',
+        playerId,
         payload: player,
         privateRosterFields: privateValues
       }]);
@@ -1680,7 +1688,7 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true });
+      const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true, teamId: normalizedTeamId });
       photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
       webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }

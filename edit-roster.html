@@ -556,7 +556,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=140';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, getUsersByParentPlayerKey, getUsersByParentTeamId, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, deleteLegacyImageUpload, inviteParent, removeParentFromPlayer, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=141';
         import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterParentContacts, collectRosterProfileValues, getRosterAiImportFieldCatalog, getRosterProfileValues, mergeStandardRosterFieldDefinitions, normalizeRosterFieldDefinitions, planRosterAiImport, planRosterCsvImport, renderRosterProfileFields, splitProtectedRosterProfileValues, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=9';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=18';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=22';
@@ -2442,6 +2442,7 @@
             const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
             const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
             const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFieldDefinitions, profileValues);
+            const reservedPlayerId = editingPlayerId || crypto.randomUUID().replace(/-/g, '');
 
             if (validationErrors.length) {
                 alert(validationErrors.join('\n'));
@@ -2467,7 +2468,11 @@
                         return;
                     }
 
-                    const uploadedPhoto = await uploadPlayerPhoto(file, { returnUpload: true });
+                    const uploadedPhoto = await uploadPlayerPhoto(file, {
+                        returnUpload: true,
+                        teamId: currentTeamId,
+                        playerId: reservedPlayerId
+                    });
                     photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
                     newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
                 }
@@ -2498,6 +2503,7 @@
                 } else {
                     await applyRosterCsvImportOperations(currentTeamId, [{
                         type: 'add',
+                        playerId: reservedPlayerId,
                         payload: playerData,
                         privateRosterFields: { ...protectedProfileValues, ...privateValues }
                     }]);

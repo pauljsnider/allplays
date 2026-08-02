@@ -23,9 +23,10 @@ function clone(value) {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, clone(entry)]));
 }
 
-function makeFirestore(seed = {}, metrics = {}) {
+function makeFirestore(seed = {}, metrics = {}, options = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
     metrics.writes = [];
+    metrics.transactionCalls = 0;
 
     function snapshot(path) {
         const value = state.get(path);
@@ -62,6 +63,9 @@ function makeFirestore(seed = {}, metrics = {}) {
 
     function write(path, value, options = {}) {
         const next = options.merge ? { ...(state.get(path) || {}), ...clone(value) } : clone(value);
+        Object.entries(next || {}).forEach(([key, entry]) => {
+            if (entry?.__op === 'delete') delete next[key];
+        });
         state.set(path, next);
         metrics.writes.push({ path, value: clone(value), options: clone(options) });
     }
@@ -81,13 +85,17 @@ function makeFirestore(seed = {}, metrics = {}) {
             };
         },
         async runTransaction(handler) {
+            metrics.transactionCalls += 1;
             const operations = [];
             const result = await handler({
                 get: async (ref) => snapshot(ref.path),
-                set: (ref, value, options) => operations.push(() => write(ref.path, value, options)),
-                update: (ref, value) => operations.push(() => write(ref.path, value, { merge: true }))
+                set: (ref, value, writeOptions) => operations.push({ ref, value, options: writeOptions }),
+                update: (ref, value) => operations.push({ ref, value, options: { merge: true } })
             });
-            operations.forEach((operation) => operation());
+            if (options.failTransactionWhen?.({ call: metrics.transactionCalls, operations })) {
+                throw new Error('Forced Firestore transaction failure.');
+            }
+            operations.forEach((operation) => write(operation.ref.path, operation.value, operation.options));
             return result;
         }
     };
@@ -120,7 +128,11 @@ function makeFunctionsStub() {
 
     return {
         config: () => ({
-            stripe: { secret_key: 'sk_test_123', app_url: 'https://allplays.test' },
+            stripe: {
+                secret_key: 'sk_test_123',
+                app_url: 'https://allplays.test',
+                team_pass_price_id: 'price_team_pass'
+            },
             security: { verified_email_mode: 'observe' }
         }),
         https: { HttpsError, onCall: (handler) => handler, onRequest: (handler) => handler },
@@ -175,17 +187,17 @@ function makeSession(overrides = {}) {
     };
 }
 
-function loadCallable({ seed, retrieve, create } = {}) {
+function loadCallable({ seed, retrieve, create, expire, firestoreOptions } = {}) {
     delete require.cache[repoIndexPath];
-    const metrics = { retrieveCalls: [], createCalls: [] };
-    const firestore = makeFirestore(seed || baseSeed(), metrics);
+    const metrics = { retrieveCalls: [], createCalls: [], expireCalls: [] };
+    const firestore = makeFirestore(seed || baseSeed(), metrics, firestoreOptions);
 
     adminStub = {
         apps: [true],
         initializeApp() {},
         firestore: Object.assign(() => firestore, {
             FieldValue: {
-                serverTimestamp: () => 'server-time',
+                serverTimestamp: () => Date.now(),
                 delete: () => ({ __op: 'delete' }),
                 increment: (amount) => ({ __op: 'increment', amount }),
                 arrayUnion: (...items) => ({ __op: 'arrayUnion', items })
@@ -206,13 +218,17 @@ function loadCallable({ seed, retrieve, create } = {}) {
                             metrics.retrieveCalls.push(sessionId);
                             return retrieve ? retrieve(sessionId) : makeSession();
                         },
-                        create: async (params) => {
-                            metrics.createCalls.push(clone(params));
-                            return create ? create(params) : makeSession({
+                        create: async (params, options) => {
+                            metrics.createCalls.push({ params: clone(params), options: clone(options) });
+                            return create ? create(params, options) : makeSession({
                                 id: 'cs_test_new',
                                 url: 'https://checkout.stripe.com/c/pay/cs_test_new',
                                 metadata: clone(params.metadata)
                             });
+                        },
+                        expire: async (sessionId) => {
+                            metrics.expireCalls.push(sessionId);
+                            return expire ? expire(sessionId) : { id: sessionId, status: 'expired' };
                         }
                     }
                 },
@@ -223,7 +239,12 @@ function loadCallable({ seed, retrieve, create } = {}) {
     };
 
     const exports = require('../index.js');
-    return { callable: exports.createStripeTeamFeeCheckout, firestore, metrics };
+    return {
+        callable: exports.createStripeTeamFeeCheckout,
+        teamPassCallable: exports.createStripeTeamPassCheckout,
+        firestore,
+        metrics
+    };
 }
 
 const input = { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' };
@@ -350,7 +371,8 @@ test('fails closed when Stripe cannot determine whether the persisted session is
 });
 
 test('does not persist or return an unsafe destination from fresh Stripe creation', async () => {
-    const { callable, metrics } = loadCallable({
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { callable, firestore, metrics } = loadCallable({
         create: async (params) => makeSession({
             id: 'cs_test_new',
             url: 'https://example.com/poisoned',
@@ -360,5 +382,103 @@ test('does not persist or return an unsafe destination from fresh Stripe creatio
 
     await assert.rejects(callable(input, context), (error) => error.code === 'internal');
     assert.equal(metrics.createCalls.length, 1);
-    assert.equal(metrics.writes.length, 0);
+    assert.deepEqual(metrics.expireCalls, ['cs_test_new']);
+    assert.equal(metrics.writes.some(({ value }) => Boolean(value?.checkoutUrl)), false);
+    const recipient = firestore._state.get(recipientPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+});
+
+test('expires a new Stripe session and clears its reservation when Firestore persistence fails', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { callable, firestore, metrics } = loadCallable({
+        firestoreOptions: {
+            failTransactionWhen: ({ operations }) => operations.some(({ value }) => Boolean(value?.checkoutUrl))
+        }
+    });
+
+    await assert.rejects(callable(input, context), /Forced Firestore transaction failure/);
+
+    assert.deepEqual(metrics.expireCalls, ['cs_test_new']);
+    const recipient = firestore._state.get(recipientPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationStartedAt'), false);
+});
+
+test('uses one durable idempotency reservation for concurrent checkout creation', async () => {
+    let releaseFirstCreate;
+    let markFirstCreateStarted;
+    const firstCreateStarted = new Promise((resolve) => {
+        markFirstCreateStarted = resolve;
+    });
+    let createCount = 0;
+    const loaded = loadCallable({
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                markFirstCreateStarted();
+                await new Promise((resolve) => {
+                    releaseFirstCreate = resolve;
+                });
+            }
+            return makeSession({
+                id: 'cs_test_concurrent',
+                url: 'https://checkout.stripe.com/c/pay/cs_test_concurrent',
+                metadata: clone(params.metadata)
+            });
+        }
+    });
+
+    const first = loaded.callable(input, context);
+    await firstCreateStarted;
+    const second = loaded.callable(input, context);
+    while (loaded.metrics.createCalls.length < 2) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    releaseFirstCreate();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.deepEqual(firstResult, secondResult);
+    assert.equal(loaded.metrics.createCalls.length, 2);
+    const idempotencyKeys = loaded.metrics.createCalls.map(({ options }) => options?.idempotencyKey);
+    assert.match(idempotencyKeys[0], /^team_fee_checkout_[a-f0-9]{64}$/);
+    assert.equal(idempotencyKeys[0], idempotencyKeys[1]);
+});
+
+test('uses a stable idempotency key for repeated team-pass checkout creation', async () => {
+    const loaded = loadCallable({
+        create: async (params) => ({
+            id: 'cs_team_pass',
+            url: 'https://checkout.stripe.com/c/pay/cs_team_pass',
+            status: 'open',
+            payment_status: 'unpaid',
+            metadata: clone(params.metadata)
+        })
+    });
+    const teamPassInput = { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' };
+
+    await loaded.teamPassCallable(teamPassInput, context);
+    await loaded.teamPassCallable(teamPassInput, context);
+
+    const idempotencyKeys = loaded.metrics.createCalls.map(({ options }) => options?.idempotencyKey);
+    assert.equal(idempotencyKeys.length, 2);
+    assert.match(idempotencyKeys[0], /^team_pass_checkout_[a-f0-9]{64}$/);
+    assert.equal(idempotencyKeys[0], idempotencyKeys[1]);
+});
+
+test('expires and rejects an untrusted team-pass checkout destination', async () => {
+    const loaded = loadCallable({
+        create: async (params) => ({
+            id: 'cs_unsafe_team_pass',
+            url: 'https://example.com/poisoned',
+            status: 'open',
+            payment_status: 'unpaid',
+            metadata: clone(params.metadata)
+        })
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'internal'
+    );
+    assert.deepEqual(loaded.metrics.expireCalls, ['cs_unsafe_team_pass']);
 });

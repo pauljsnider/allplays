@@ -180,6 +180,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
+            await assertSucceeds(
+                ownerStorage.ref('profile-photos/team-drafts/owner-a/team.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/team-drafts/owner-a/spoofed.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
         });
 
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {

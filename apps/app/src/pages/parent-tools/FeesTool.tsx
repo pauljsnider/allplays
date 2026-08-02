@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { DollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
-import { initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentFeesService';
+import { getTrustedStripeCheckoutUrl, initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentFeesService';
 import type { AuthState } from '../../lib/types';
 import { arePaymentsEnabled } from '../../lib/launchFeatures';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, formatDetailAmount, formatMoney, useParentToolAsyncOperation } from './shared';
@@ -71,17 +71,21 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
         paymentInFlightRef.current = true;
         const feeKey = getFeeCardKey(fee);
         const checkoutStatus = String(fee.checkoutStatus || '').toLowerCase();
-        const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
+        const trustedCheckoutUrl = getTrustedStripeCheckoutUrl(fee.checkoutUrl);
+        const reusableCheckoutUrl = Boolean(trustedCheckoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
+        const canRegenerateCheckout = Boolean(fee.teamId && fee.batchId && fee.recipientId);
         setPayingFeeId(feeKey);
         setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
         payOperation.clearError();
         await payOperation.run(
             async () => {
                 if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
-                    await openPublicUrl(String(fee.checkoutUrl));
-                    return;
+                    if (reusableCheckoutUrl) {
+                        await openPublicUrl(trustedCheckoutUrl);
+                        return;
+                    }
                 }
-                if (fee.paymentAction === 'createCheckout' || (!fee.paymentAction && fee.checkoutInitiatable)) {
+                if (fee.paymentAction === 'createCheckout' || fee.checkoutInitiatable || canRegenerateCheckout) {
                     const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
                     await openPublicUrl(checkout.checkoutUrl);
                     return;
@@ -89,7 +93,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                 if (!reusableCheckoutUrl) {
                     throw new Error('Checkout is not available for this fee.');
                 }
-                await openPublicUrl(String(fee.checkoutUrl));
+                await openPublicUrl(trustedCheckoutUrl);
             },
             'Unable to open checkout. Please try again.',
             {

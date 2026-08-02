@@ -784,6 +784,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     setBusy('profile');
     setProfileStatus(null);
 
+    let saveStage: 'upload' | 'document' = 'document';
     try {
       const trimmedFullName = fullName.trim();
       const trimmedPhone = phone.trim();
@@ -791,6 +792,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       const selectedPhotoChanged = photoChangedRef.current;
       let nextPhotoUrl = photoUrlRef.current || '';
       if (selectedPhotoChanged && selectedPhotoFile) {
+        saveStage = 'upload';
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
         const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
         nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile, user.uid);
@@ -801,6 +803,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         setPhotoFile(null);
       }
 
+      saveStage = 'document';
       await saveProfileDocument(user.uid, {
         fullName: trimmedFullName,
         phone: trimmedPhone,
@@ -830,7 +833,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         logger.warn('Unable to refresh auth after profile save.', { error });
       });
     } catch (error: any) {
-      setProfileStatus({ message: formatProfileSaveError(error), tone: 'error' });
+      setProfileStatus({ message: formatProfileSaveError(error, saveStage), tone: 'error' });
     } finally {
       setBusy('');
     }
@@ -2075,12 +2078,15 @@ function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function formatProfileSaveError(error: any) {
+function formatProfileSaveError(error: any, stage: 'upload' | 'document' = 'document') {
   const message = String(error?.message || 'Profile save failed.');
   if (/requests-from-referer/i.test(message)) {
     return 'Image uploads are allowlisted for the app and local dev on localhost:8000 or localhost:8100. Refresh the app and try again.';
   }
   if (/permission|unauthori[sz]ed/i.test(message)) {
+    if (stage === 'upload') {
+      return 'Firebase Storage denied this profile photo upload. Refresh your session and try again.';
+    }
     return 'Upload reached Firebase, but this account does not have permission to save the image.';
   }
   if (/cors/i.test(message)) {

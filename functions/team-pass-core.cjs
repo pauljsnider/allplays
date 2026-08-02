@@ -1,4 +1,5 @@
 const TEAM_PASS_TIER = 'team-pass';
+const crypto = require('node:crypto');
 
 function asTrimmedString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -50,6 +51,22 @@ function isEligibleTeamPassPurchaser({ team = {}, user = {}, uid = '', email = '
   if (parentTeamIds.includes(team.id)) return true;
 
   return false;
+}
+
+function buildTeamPassCheckoutIdempotencyKey({ teamId, seasonId, tier, uid, email = '' } = {}) {
+  const normalized = normalizeTeamPassCheckoutInput({ teamId, seasonId, tier });
+  const purchaserUid = asTrimmedString(uid);
+  if (!purchaserUid) throw new Error('Missing purchaser uid');
+  const digest = crypto.createHash('sha256')
+    .update([
+      normalized.teamId,
+      normalized.seasonId,
+      normalized.tier,
+      purchaserUid,
+      normalizeEmail(email)
+    ].join('|'))
+    .digest('hex');
+  return `team_pass_checkout_${digest}`;
 }
 
 function isPaidCheckoutSession(session = {}) {
@@ -105,6 +122,7 @@ module.exports = {
   TEAM_PASS_TIER,
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutIdempotencyKey,
   isPaidCheckoutSession,
   hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,

@@ -610,7 +610,7 @@ describe('React app team detail model', () => {
             }
         ]);
         uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
-        applyRosterCsvImportOperations.mockResolvedValue([{ type: 'add', playerId: 'player-1' }]);
+        applyRosterCsvImportOperations.mockImplementation(async (_teamId, operations) => operations);
 
         const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
         const result = await addRosterPlayerForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -625,9 +625,16 @@ describe('React app team detail model', () => {
             }
         });
 
-        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
+        const reservedPlayerId = uploadPlayerPhoto.mock.calls[0][1].playerId;
+        expect(reservedPlayerId).toEqual(expect.any(String));
+        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile, {
+            returnUpload: true,
+            teamId: 'team-1',
+            playerId: reservedPlayerId
+        });
         expect(applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', [{
             type: 'add',
+            playerId: reservedPlayerId,
             payload: {
                 name: 'Pat Star',
                 number: '9',
@@ -644,7 +651,7 @@ describe('React app team detail model', () => {
             privateRosterFields: { medical_notes: 'Peanut allergy' }
         }]);
         expect(result).toEqual({
-            playerId: 'player-1',
+            playerId: reservedPlayerId,
             player: {
                 name: 'Pat Star',
                 number: '9',
@@ -1958,7 +1965,7 @@ describe('React app team detail model', () => {
             photoFile
         });
 
-        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
+        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true, teamId: 'team-1' });
         expect(updateTeam).toHaveBeenCalledWith('team-1', {
             name: 'Lady Bears',
             sport: 'Soccer',

@@ -167,7 +167,7 @@ export async function deleteLegacyImageUpload(path: string) {
     return await Promise.resolve(legacyDeleteLegacyImageUpload(path));
 }
 
-export async function uploadPlayerPhoto(file: File, options: { returnUpload?: boolean } = {}): Promise<string | { url: string; path: string }> {
+export async function uploadPlayerPhoto(file: File, options: { returnUpload?: boolean; teamId?: string; playerId?: string } = {}): Promise<string | { url: string; path: string }> {
     return await Promise.resolve(legacyUploadPlayerPhoto(file, options));
 }
 

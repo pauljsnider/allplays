@@ -693,6 +693,11 @@ describe('saveStaffPlayerRosterDetails', () => {
       photoFile: file
     });
 
+    expect(legacyPlayerDbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, {
+      returnUpload: true,
+      teamId: 'team-1',
+      playerId: 'player-1'
+    });
     expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
       number: '44',
       photoUrl: 'https://cdn.example.com/photo.jpg'

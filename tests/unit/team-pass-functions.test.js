@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const {
     normalizeTeamPassCheckoutInput,
     isEligibleTeamPassPurchaser,
+    buildTeamPassCheckoutIdempotencyKey,
     shouldUnlockTeamPassFromEvent,
     buildTeamPassEntitlement
 } = require('../../functions/team-pass-core.cjs');
@@ -46,6 +47,25 @@ describe('team pass function helpers', () => {
             uid: 'parent_1'
         })).toBe(true);
         expect(isEligibleTeamPassPurchaser({ team, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
+    });
+
+    it('builds a stable bounded idempotency key for one purchaser and checkout scope', () => {
+        const input = {
+            teamId: 'team_123',
+            seasonId: '2026',
+            tier: 'team-pass',
+            uid: 'parent_123',
+            email: 'Parent@Example.com'
+        };
+        const first = buildTeamPassCheckoutIdempotencyKey(input);
+        const second = buildTeamPassCheckoutIdempotencyKey({ ...input, email: 'parent@example.com' });
+        const anotherSeason = buildTeamPassCheckoutIdempotencyKey({ ...input, seasonId: '2027' });
+
+        expect(first).toMatch(/^team_pass_checkout_[a-f0-9]{64}$/);
+        expect(second).toBe(first);
+        expect(anotherSeason).not.toBe(first);
+        expect(first).not.toContain('team_123');
+        expect(first).not.toContain('parent_123');
     });
 
     it('unlocks only paid completed checkout events with team pass metadata', () => {

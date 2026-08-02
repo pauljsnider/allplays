@@ -266,7 +266,7 @@ function installModuleStubs(firestore) {
                     stripeState.checkoutSessions.push(clone(payload));
                     return {
                         id: `cs_test_${stripeState.checkoutSessions.length}`,
-                        url: `https://stripe.test/checkout/${stripeState.checkoutSessions.length}`,
+                        url: `https://checkout.stripe.com/c/pay/${stripeState.checkoutSessions.length}`,
                         payment_status: 'unpaid',
                         ...(clone(stripeState.nextCheckoutResponse) || {})
                     };
@@ -775,7 +775,7 @@ test('applies the staged App Check gate to public registration checkout and canc
         (error) => error.code === 'failed-precondition' && error.details.reason === 'app-check-required'
     );
     const checkout = await mod.createStripeRegistrationCheckout(checkoutInput, verifiedContext);
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
 
     const cancelCheckoutAttemptToken = 'cancelcheckouttoken123456';
     const cancelSubmission = await mod.submitPublicRegistration(buildSubmission({
@@ -915,7 +915,7 @@ test('keeps checkout available when an observe-only limiter reservation fails', 
         checkoutAttemptToken
     }, context);
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions.length, 1);
 });
 
@@ -1180,7 +1180,7 @@ test('charges only the first scheduled installment for installment registrations
         checkoutAttemptToken: 'checkouttoken123456'
     });
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions.length, 1);
     assert.equal(stripeState.checkoutSessions[0].line_items[0].price_data.unit_amount, 4166);
     assert.match(stripeState.checkoutSessions[0].success_url, /paymentPlanId=installments/);
@@ -1246,7 +1246,7 @@ test('keeps the stored installment schedule for later checkout attempts after fo
         checkoutAttemptToken: 'checkouttoken123456'
     });
 
-    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(checkout.checkoutUrl, 'https://checkout.stripe.com/c/pay/1');
     assert.equal(stripeState.checkoutSessions[0].line_items[0].price_data.unit_amount, 4166);
     assert.match(stripeState.checkoutSessions[0].success_url, /paymentPlanId=installments/);
     assert.match(stripeState.checkoutSessions[0].success_url, /paidInstallmentCount=2/);

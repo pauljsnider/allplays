@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
   addPlayer: vi.fn(),
+  applyRosterCsvImportOperations: vi.fn(),
   createConfig: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAdSpaceSponsors: vi.fn(),
@@ -363,6 +364,24 @@ describe('updateTeamSettingsForApp', () => {
     }));
   });
 
+  it('binds a browser team photo upload to the team and primary Storage contract', async () => {
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
+    });
+    const file = new File(['photo'], 'team.jpg', { type: 'image/jpeg' });
+
+    await updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: file
+    });
+
+    expect(dbMocks.uploadTeamPhoto).toHaveBeenCalledWith(file, { returnUpload: true, teamId: 'team-1' });
+    expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      photoUrl: 'https://primary.example/team.jpg'
+    }));
+  });
+
   it('rejects invalid livestream links before writing', async () => {
     await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
       name: 'Bears',
@@ -465,6 +484,45 @@ describe('addRosterPlayerForApp native writes', () => {
     })).rejects.toThrow('may have completed');
 
     expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('addRosterPlayerForApp browser photo scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeRuntimeState.isNative = false;
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.getRosterFieldDefinitions.mockResolvedValue([]);
+    dbMocks.uploadPlayerPhoto.mockResolvedValue({
+      url: 'https://primary.example/player.jpg',
+      path: 'profile-photos/teams/team-1/players/native-player-1/owner-1/player.jpg'
+    });
+    dbMocks.applyRosterCsvImportOperations.mockResolvedValue([{ playerId: 'native-player-1' }]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('reserves the final player id before uploading and persists that same id', async () => {
+    const file = new File(['photo'], 'player.jpg', { type: 'image/jpeg' });
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: file
+    });
+
+    expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, {
+      returnUpload: true,
+      teamId: 'team-1',
+      playerId: 'native-player-1'
+    });
+    expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', [expect.objectContaining({
+      type: 'add',
+      playerId: 'native-player-1',
+      payload: expect.objectContaining({ photoUrl: 'https://primary.example/player.jpg' })
+    })]);
+    expect(result.playerId).toBe('native-player-1');
   });
 });
 

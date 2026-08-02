@@ -67,6 +67,10 @@ The repo has three automated test tiers:
 - **New static HTML page:** unit test checking structure, data attributes, JS wiring, and internal link targets; smoke test checking boot, key selectors, and interactive behaviors.
 - **Bug fix:** add a regression unit test that fails before the fix and passes after.
 - **UI flow change:** update or extend the relevant smoke spec.
+- **Provider-backed mutation:** reserve ownership durably before creating an external object or capability, use a stable provider idempotency key, validate the provider response, and compensate when local persistence fails. Add tests for concurrent calls, provider success followed by persistence failure, and uncertain cleanup.
+- **Payment destination change:** accept only canonical HTTPS provider URLs at both stored-data and fresh-response boundaries. Never navigate to or persist an unvalidated destination.
+- **Image upload change:** web, iOS, and Android must use the same authenticated project, scoped object path, content constraints, and rollback policy. Pair path-builder tests with Storage rules-engine tests; a mocked successful upload alone is not regression coverage.
+- **Multi-stage save:** preserve the failing stage in user-visible errors and tests. Do not report a Storage authorization failure as a Firestore/profile-save failure, or vice versa.
 
 ### Manual test pages (legacy)
 HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.html`, etc.) remain valid for quick visual checks. `PR-TESTING-GUIDE.md` and `FOUL-TRACKING-TEST-GUIDE.md` cover critical manual flows not yet covered by automation.
@@ -86,6 +90,13 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
   - What changed and why (bullet summary).
   - Manual test steps executed, with affected pages (e.g., `edit-schedule.html`, `login.html`).
   - Screenshots or short clips for UI changes when relevant.
+
+## Production Handoff
+
+- A merged PR is not a completed production change. Confirm the exact merge SHA has a successful `deploy-prod` run, exact-SHA release marker, and successful `post-deploy-smoke` before reporting it as deployed.
+- If the latest `master` deployment failed or is incomplete, treat `master` as undeployed. Do not merge another dependent PR to trigger a retry; diagnose or repair the failed release first.
+- Firestore rule changes require rules-engine regression coverage and must remain coupled to the Functions/Hosting code that depends on them. A failed rules activation must leave application publishing blocked.
+- For Stripe or another external side effect followed by Firestore persistence, require explicit reservation, idempotency, response validation, rollback, and concurrency evidence in the PR.
 
 ## Security & Configuration Tips
 - Admin access is controlled by the `isAdmin` field in Firestore; don’t bypass it client-side.

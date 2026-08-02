@@ -580,7 +580,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=140';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=141';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=22';
@@ -1975,7 +1975,10 @@
                 if (fileInput.files.length > 0) {
                     try {
                         btn.textContent = 'Uploading photo...';
-                        const uploadedPhoto = await uploadTeamPhoto(fileInput.files[0], { returnUpload: true });
+                        const uploadedPhoto = await uploadTeamPhoto(fileInput.files[0], {
+                            returnUpload: true,
+                            teamId: currentTeamId || ''
+                        });
                         currentPhotoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
                         newlyUploadedTeamPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
                         btn.textContent = 'Saving...';

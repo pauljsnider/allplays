@@ -327,6 +327,19 @@ service firebase.storage {
       allow update: if false;
     }
 
+    // A team does not have an id until its initial document is created. Legacy
+    // web team creation may stage one authenticated photo immediately before
+    // that create; only the uploader can create or remove that draft object.
+    match /profile-photos/team-drafts/{userId}/{fileName} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
+      allow update: if false;
+    }
+
     match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;

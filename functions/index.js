@@ -44,6 +44,7 @@ const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutIdempotencyKey,
   shouldUnlockTeamPassFromEvent,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
@@ -57,6 +58,7 @@ const {
   getTeamFeeRecipientTargetUserIds,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
+  isCanonicalStripeCheckoutUrl,
   getTeamFeeCheckoutReuseFailure,
   getNewTeamFeeCheckoutSessionFailure,
   getTeamFeeCheckoutGuardFailure,
@@ -542,6 +544,117 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
 
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
+}
+
+const TEAM_FEE_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
+
+function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId) {
+  const hash = crypto.createHash('sha256')
+    .update([
+      input.teamId,
+      input.batchId,
+      input.recipientId,
+      checkoutCreationReservationId
+    ].join('|'))
+    .digest('hex');
+  return `team_fee_checkout_${hash}`;
+}
+
+async function expireStripeCheckoutSessionForRollback(stripe, session, operation) {
+  const sessionId = String(session?.id || '').trim();
+  if (!sessionId || (session?.status && session.status !== 'open')) return true;
+  try {
+    await stripe.checkout.sessions.expire(sessionId);
+    return true;
+  } catch (error) {
+    const alreadyUnavailable = error?.code === 'resource_missing'
+      || error?.code === 'checkout_session_not_open';
+    if (alreadyUnavailable) return true;
+    functions.logger.error('Failed to expire a Stripe Checkout session after local persistence failed.', {
+      operation,
+      providerCode: String(error?.code || ''),
+      providerStatus: Number(error?.statusCode || 0) || null
+    });
+    return false;
+  }
+}
+
+async function reserveTeamFeeCheckoutCreation({
+  input,
+  recipientRef,
+  team,
+  user,
+  uid,
+  email,
+  amountCents,
+  observedSessionId,
+  proposedReservationId
+}) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+    }
+    if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
+      throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout creation began.');
+    }
+    if (!isEligibleTeamFeePayer({ team, user, uid, email, recipient: latestRecipient })) {
+      throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
+    }
+
+    const latestSessionId = String(latestRecipient.stripeCheckoutSessionId || '').trim();
+    if (latestSessionId !== String(observedSessionId || '').trim()) {
+      throw new functions.https.HttpsError('aborted', 'The team fee checkout changed. Retry to use the current session.');
+    }
+
+    const existingReservationId = String(latestRecipient.checkoutCreationReservationId || '').trim();
+    const existingReservationStartedAtMillis = firestoreTimestampToMillis(latestRecipient.checkoutCreationStartedAt);
+    const existingReservationIsActive = Boolean(existingReservationId) && (
+      !Number.isFinite(existingReservationStartedAtMillis)
+      || Date.now() - existingReservationStartedAtMillis < TEAM_FEE_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS
+    );
+    if (existingReservationIsActive) {
+      const existingPayerUid = String(latestRecipient.checkoutCreationPayerUid || '').trim();
+      const existingAmountCents = Math.round(Number(latestRecipient.checkoutCreationAmountCents || 0));
+      if (existingPayerUid !== uid || existingAmountCents !== amountCents) {
+        throw new functions.https.HttpsError('failed-precondition', 'Team fee checkout creation is already in progress.');
+      }
+      return { reservationId: existingReservationId, recipient: latestRecipient };
+    }
+
+    transaction.set(recipientRef, {
+      checkoutCreationReservationId: proposedReservationId,
+      checkoutCreationStartedAt: now,
+      checkoutCreationPayerUid: uid,
+      checkoutCreationAmountCents: amountCents,
+      updatedAt: now
+    }, { merge: true });
+    return { reservationId: proposedReservationId, recipient: latestRecipient };
+  });
+}
+
+async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservationId) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    if (!latestSnap.exists) return false;
+    const latestRecipient = latestSnap.data() || {};
+    if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    transaction.set(recipientRef, {
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
 }
 
 function buildTeamFeeAdminBillingRef(recipientRef, id) {
@@ -1646,12 +1759,32 @@ function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input =
 
 function canReuseRegistrationCheckoutSession(registration = {}, amountCents, input = {}) {
   return Boolean(
-    registration.checkoutUrl
+    isCanonicalStripeCheckoutUrl(registration.checkoutUrl)
     && registration.stripeCheckoutSessionId
     && registration.checkoutStatus === 'open'
     && Number(registration.checkoutAmountCents || 0) === amountCents
     && registrationCheckoutAuthorityMatches(registration, input)
   );
+}
+
+function buildRegistrationCheckoutIdempotencyKey({ input, registration, amountCents, currency }) {
+  const publicCapabilityHash = input.publicCheckoutCapability
+    ? hashPublicCheckoutCapability(input.publicCheckoutCapability)
+    : '';
+  const digest = crypto.createHash('sha256')
+    .update([
+      input.teamId,
+      input.formId,
+      input.registrationId,
+      input.checkoutAttemptToken || '',
+      publicCapabilityHash,
+      amountCents,
+      currency,
+      String(registration.paymentPlan?.id || 'pay_full'),
+      getRegistrationPaymentPlanPaidInstallmentCount(registration)
+    ].join('|'))
+    .digest('hex');
+  return `registration_checkout_${digest}`;
 }
 
 function buildRegistrationCheckoutMetadata({ input, registration }) {
@@ -4812,7 +4945,20 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
       tier,
       purchaserUid: context.auth.uid
     }
+  }, {
+    idempotencyKey: buildTeamPassCheckoutIdempotencyKey({
+      teamId,
+      seasonId,
+      tier,
+      uid: context.auth.uid,
+      email
+    })
   });
+
+  if (!String(session?.id || '').trim() || !isCanonicalStripeCheckoutUrl(session?.url)) {
+    await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-validation');
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team pass checkout session.');
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -4890,35 +5036,58 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     }
   }
 
+  const proposedReservationId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  const reservation = await reserveTeamFeeCheckoutCreation({
+    input,
+    recipientRef,
+    team,
+    user,
+    uid: context.auth.uid,
+    email,
+    amountCents,
+    observedSessionId: persistedSessionId,
+    proposedReservationId
+  });
+  const checkoutCreationReservationId = reservation.reservationId;
+  const checkoutAttemptToken = checkoutCreationReservationId.replace(/-/g, '');
   const { appUrl } = getStripeConfig();
   const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
-  const checkoutAttemptToken = (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')).replace(/-/g, '');
-  const title = recipient.feeTitle || recipient.title || 'Team fee';
-  const playerName = recipient.playerName || recipient.childName || '';
+  const checkoutRecipient = reservation.recipient;
+  const title = checkoutRecipient.feeTitle || checkoutRecipient.title || 'Team fee';
+  const playerName = checkoutRecipient.playerName || checkoutRecipient.childName || '';
   const description = playerName ? `${title} for ${playerName}` : title;
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{
-      price_data: {
-        currency: 'usd',
-        unit_amount: amountCents,
-        product_data: {
-          name: description
-        }
-      },
-      quantity: 1
-    }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: email || recipient.parentEmail || recipient.email || undefined,
-    client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
-    metadata: buildTeamFeeCheckoutMetadata({
-      ...input,
-      payerUid: context.auth.uid,
-      checkoutAttemptToken,
-      checkoutAmountCents: amountCents
-    })
-  });
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          unit_amount: amountCents,
+          product_data: {
+            name: description
+          }
+        },
+        quantity: 1
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      customer_email: email || checkoutRecipient.parentEmail || checkoutRecipient.email || undefined,
+      client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
+      metadata: buildTeamFeeCheckoutMetadata({
+        ...input,
+        payerUid: context.auth.uid,
+        checkoutAttemptToken,
+        checkoutAmountCents: amountCents
+      })
+    }, {
+      idempotencyKey: buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId)
+    });
+  } catch (error) {
+    // Preserve the reservation because Stripe may have accepted an uncertain
+    // request. A retry by the same payer reuses the exact idempotency key.
+    throw error;
+  }
 
   const newSessionFailure = getNewTeamFeeCheckoutSessionFailure({
     session,
@@ -4927,61 +5096,88 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     amountCents
   });
   if (newSessionFailure) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-validation');
+    if (expired) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
+    }
     throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team fee checkout session.');
   }
 
   const changedAt = admin.firestore.FieldValue.serverTimestamp();
   const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);
-  await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(recipientRef);
-    if (!latestSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
-    }
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(recipientRef);
+      if (!latestSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+      }
 
-    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
-    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
-      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
-    }
-    if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
-      throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout was saved.');
-    }
-    if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient: latestRecipient })) {
-      throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
-    }
+      const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+      const latestSessionId = String(latestRecipient.stripeCheckoutSessionId || '').trim();
+      if (
+        latestSessionId === session.id
+        && latestRecipient.checkoutUrl === session.url
+        && getTeamFeeBalanceCents(latestRecipient) === amountCents
+      ) {
+        return;
+      }
+      if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== checkoutCreationReservationId) {
+        throw new functions.https.HttpsError('aborted', 'Team fee checkout creation reservation was lost.');
+      }
+      if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+        throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+      }
+      if (!isTeamFeeCheckoutEligible(latestRecipient) || getTeamFeeBalanceCents(latestRecipient) !== amountCents) {
+        throw new functions.https.HttpsError('aborted', 'The team fee balance changed before checkout was saved.');
+      }
+      if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient: latestRecipient })) {
+        throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
+      }
 
-    const recipientUpdate = {
-      checkoutUrl: session.url,
-      paymentLink: session.url,
-      checkoutStatus: 'open',
-      paymentProvider: 'stripe',
-      stripeCheckoutSessionId: session.id,
-      checkoutAttemptToken,
-      stripePaymentStatus: session.payment_status || 'unpaid',
-      checkoutAmountCents: amountCents,
-      balanceDueCents: amountCents,
-      checkoutCreatedAt: changedAt,
-      updatedAt: changedAt
-    };
-    const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
-    const auditedUpdate = changedFields.length > 0 ? {
-      ...recipientUpdate,
-      latestAuditId: checkoutAuditRef.id,
-      latestAuditAt: changedAt
-    } : recipientUpdate;
+      const recipientUpdate = {
+        checkoutUrl: session.url,
+        paymentLink: session.url,
+        checkoutStatus: 'open',
+        paymentProvider: 'stripe',
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken,
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: amountCents,
+        balanceDueCents: amountCents,
+        checkoutCreatedAt: changedAt,
+        checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+        checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+        checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+        checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+        updatedAt: changedAt
+      };
+      const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);
+      const auditedUpdate = changedFields.length > 0 ? {
+        ...recipientUpdate,
+        latestAuditId: checkoutAuditRef.id,
+        latestAuditAt: changedAt
+      } : recipientUpdate;
 
-    transaction.set(recipientRef, auditedUpdate, { merge: true });
-    if (changedFields.length > 0) {
-      transaction.set(checkoutAuditRef, {
-        teamId: input.teamId,
-        batchId: input.batchId,
-        recipientId: input.recipientId,
-        actorId: context.auth.uid,
-        changedFields,
-        mutationType: 'stripe_checkout_created',
-        changedAt
-      });
+      transaction.set(recipientRef, auditedUpdate, { merge: true });
+      if (changedFields.length > 0) {
+        transaction.set(checkoutAuditRef, {
+          teamId: input.teamId,
+          batchId: input.batchId,
+          recipientId: input.recipientId,
+          actorId: context.auth.uid,
+          changedFields,
+          mutationType: 'stripe_checkout_created',
+          changedAt
+        });
+      }
+    });
+  } catch (error) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-persistence');
+    if (expired) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
     }
-  });
+    throw error;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -5370,6 +5566,13 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
       customer_email: getRegistrationCustomerEmail(registration),
       client_reference_id: `${resolvedInput.teamId}:${resolvedInput.formId}:${resolvedInput.registrationId}`,
       metadata: buildRegistrationCheckoutMetadata({ input: checkoutUrlInput, registration })
+    }, {
+      idempotencyKey: buildRegistrationCheckoutIdempotencyKey({
+        input: resolvedInput,
+        registration,
+        amountCents,
+        currency
+      })
     });
   } catch (error) {
     await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch((clearError) => {
@@ -5402,38 +5605,74 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw error;
   }
 
+  if (!String(session?.id || '').trim() || !isCanonicalStripeCheckoutUrl(session?.url)) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'registration-validation');
+    if (expired) {
+      await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch(() => {});
+      if (retryCapacityReservation.reserved) {
+        await releaseRegistrationCheckoutCapacity({
+          ...resolvedInput,
+          publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
+        }, {}, {
+          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          checkoutCreationReservationId,
+          suppressPublicCheckoutCapabilityRotation: true
+        }).catch(() => {});
+      }
+    }
+    throw new functions.https.HttpsError('internal', 'Stripe returned an invalid registration checkout session.');
+  }
+
   const now = admin.firestore.FieldValue.serverTimestamp();
-  await firestore.runTransaction(async (transaction) => {
-    const latestSnap = await transaction.get(resolvedInput.registrationRef);
-    if (!latestSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(resolvedInput.registrationRef);
+      if (!latestSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Registration not found.');
+      }
+      const latestRegistration = latestSnap.data() || {};
+      if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
+        throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
+      }
+      if (latestRegistration.status === 'rejected') {
+        throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
+      }
+      transaction.set(resolvedInput.registrationRef, {
+        checkoutUrl: session.url,
+        paymentLink: session.url,
+        checkoutStatus: 'open',
+        paymentProvider: 'stripe',
+        paymentStatus: 'checkout_open',
+        stripeCheckoutSessionId: session.id,
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: amountCents,
+        checkoutCurrency: currency,
+        checkoutAttemptToken: input.checkoutAttemptToken || null,
+        publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+        checkoutCreatedAt: now,
+        checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+        checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+        retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+    });
+  } catch (error) {
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'registration-persistence');
+    if (expired) {
+      await clearRegistrationCheckoutCreationReservation(resolvedInput, checkoutCreationReservationId).catch(() => {});
+      if (retryCapacityReservation.reserved) {
+        await releaseRegistrationCheckoutCapacity({
+          ...resolvedInput,
+          publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
+        }, {}, {
+          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          checkoutCreationReservationId,
+          suppressPublicCheckoutCapabilityRotation: true
+        }).catch(() => {});
+      }
     }
-    const latestRegistration = latestSnap.data() || {};
-    if (String(latestRegistration.checkoutCreationReservationId || '') !== checkoutCreationReservationId) {
-      throw new functions.https.HttpsError('aborted', 'Registration checkout creation reservation was lost.');
-    }
-    if (latestRegistration.status === 'rejected') {
-      throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
-    }
-    transaction.set(resolvedInput.registrationRef, {
-      checkoutUrl: session.url,
-      paymentLink: session.url,
-      checkoutStatus: 'open',
-      paymentProvider: 'stripe',
-      paymentStatus: 'checkout_open',
-      stripeCheckoutSessionId: session.id,
-      stripePaymentStatus: session.payment_status || 'unpaid',
-      checkoutAmountCents: amountCents,
-      checkoutCurrency: currency,
-      checkoutAttemptToken: input.checkoutAttemptToken || null,
-      publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
-      checkoutCreatedAt: now,
-      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
-      checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
-      retryCapacityReservationId: admin.firestore.FieldValue.delete(),
-      updatedAt: now
-    }, { merge: true });
-  });
+    throw error;
+  }
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -15846,6 +16085,8 @@ async function deleteAccountStorage(uid, mediaDocuments, profilePhotoUrls = []) 
   const athletePrefix = `athlete-profile-media/${uid}/`;
   await Promise.all([
     primaryBucket.deleteFiles({ prefix: athletePrefix, force: true }),
+    primaryBucket.deleteFiles({ prefix: `profile-photos/users/${uid}/`, force: true }),
+    primaryBucket.deleteFiles({ prefix: `profile-photos/team-drafts/${uid}/`, force: true }),
     imageBucket.deleteFiles({ prefix: athletePrefix, force: true }),
     imageBucket.deleteFiles({ prefix: `user-photos/${uid}/`, force: true })
   ]);

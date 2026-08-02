@@ -888,7 +888,7 @@ export async function updateParentPlayerEditableProfile({
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true, teamId, playerId });
       photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
       webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }
@@ -993,7 +993,7 @@ export async function saveStaffPlayerRosterDetails({
       payload.photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
     } else {
-      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true });
+      const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true, teamId, playerId });
       payload.photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
       webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
     }

@@ -30,6 +30,20 @@ const parentHouseholdServiceMock = `
 `;
 
 const parentFeesServiceMock = `
+    export function getTrustedStripeCheckoutUrl(value) {
+        try {
+            const parsed = new URL(String(value || '').trim());
+            return parsed.protocol === 'https:'
+                && parsed.hostname === 'checkout.stripe.com'
+                && !parsed.username
+                && !parsed.password
+                && !parsed.port
+                ? String(value || '').trim()
+                : '';
+        } catch {
+            return '';
+        }
+    }
     export async function loadParentFeesForApp() {
         window.__parentToolLoadCounts.fees += 1;
         return [{
@@ -43,7 +57,7 @@ const parentFeesServiceMock = `
             dueLabel: 'Jun 1',
             statusLabel: 'Open',
             balanceDueCents: 12000,
-            checkoutUrl: 'https://pay.example.test/fee',
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/fee',
             canPay: true,
             lineItems: [{ title: 'Season', amountCents: 12000 }],
             installments: [{ label: 'Deposit', amountCents: 6000 }],
@@ -51,7 +65,7 @@ const parentFeesServiceMock = `
         }];
     }
     export async function initiateParentTeamFeeCheckout() {
-        return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+        return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' };
     }
 `;
 
@@ -117,7 +131,7 @@ const parentRegistrationsServiceMock = `
         return { status: 'pending', registrationId: 'registration-1' };
     }
     export async function initiateRegistrationCheckout() {
-        return { success: true, checkoutUrl: 'https://pay.example.test/registration-checkout' };
+        return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/registration-checkout' };
     }
     export async function cancelRegistrationCheckout() {
         return { released: true };
@@ -422,7 +436,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                         dueLabel: 'Jun 1',
                         statusLabel: 'Open',
                         balanceDueCents: 12000,
-                        checkoutUrl: 'https://pay.example.test/fee',
+                        checkoutUrl: 'https://checkout.stripe.com/c/pay/fee',
                         canPay: true,
                         lineItems: [{ title: 'Season', amountCents: 12000 }],
                         installments: [{ label: 'Deposit', amountCents: 6000 }],
@@ -430,7 +444,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
                     }];
                 }
                 export async function initiateParentTeamFeeCheckout() {
-                    return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+                    return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' };
                 }
                 export async function loadParentCalendarTools() {
                     window.__parentToolLoadCounts.calendar += 1;
@@ -569,7 +583,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'View details' }).click();
     await expect(page.getByText('Line items')).toBeVisible();
     await page.getByRole('button', { name: /Pay fee/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/fee');
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/fee');
 
     await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Calendar' }).click();
     await expect(page.getByText('Calendar tools')).toBeVisible();
@@ -609,7 +623,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     })).toBe(true);
     await expect(page.getByRole('button', { name: 'Pay registration with Stripe' })).toBeVisible();
     await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/registration-checkout');
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/registration-checkout');
 
     await page.goto(appUrl(baseURL, '/parent-tools/certificates'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Hustle Award')).toBeVisible();
@@ -674,6 +688,20 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export function getTrustedStripeCheckoutUrl(value) {
+                    try {
+                        const parsed = new URL(String(value || '').trim());
+                        return parsed.protocol === 'https:'
+                            && parsed.hostname === 'checkout.stripe.com'
+                            && !parsed.username
+                            && !parsed.password
+                            && !parsed.port
+                            ? String(value || '').trim()
+                            : '';
+                    } catch {
+                        return '';
+                    }
+                }
                 export async function loadParentFeesForApp() {
                     window.__parentToolLoadCounts.fees += 1;
                     return [{
@@ -780,7 +808,7 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
                 export async function initiateParentTeamFeeCheckout(teamId, batchId, recipientId) {
                     window.__teamFeeCheckoutCalls.push({ teamId, batchId, recipientId });
                     return new Promise((resolve) => {
-                        window.__resolveTeamFeeCheckout = () => resolve({ success: true, checkoutUrl: 'https://pay.example.test/online-registration' });
+                        window.__resolveTeamFeeCheckout = () => resolve({ success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/online-registration' });
                     });
                 }
             `
@@ -811,7 +839,7 @@ test('parent fees workflow renders payment states and blocks overlapping checkou
     }]);
 
     await page.evaluate(() => window.__resolveTeamFeeCheckout());
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/online-registration');
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/online-registration');
 
     await page.getByRole('button', { name: 'All' }).click();
     await expect(page.getByText('Paid registration')).toBeVisible();

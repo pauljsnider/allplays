@@ -6,10 +6,18 @@ function read(relativePath) {
 }
 
 describe('legacy image upload rollback contracts', () => {
+    it('removes own authenticated profile and team-draft uploads during account deletion', () => {
+        const source = read('functions/index.js');
+
+        expect(source).toContain('primaryBucket.deleteFiles({ prefix: `profile-photos/users/${uid}/`, force: true })');
+        expect(source).toContain('primaryBucket.deleteFiles({ prefix: `profile-photos/team-drafts/${uid}/`, force: true })');
+    });
+
     it('rolls back team photos until the team document references them', () => {
         const source = read('edit-team.html');
 
-        expect(source).toContain("uploadTeamPhoto(fileInput.files[0], { returnUpload: true })");
+        expect(source).toContain('const uploadedPhoto = await uploadTeamPhoto(fileInput.files[0], {');
+        expect(source).toContain("teamId: currentTeamId || ''");
         expect(source).toContain('teamPhotoPersisted = true;');
         expect(source).toContain('if (newlyUploadedTeamPhotoPath && !teamPhotoPersisted)');
         expect(source).toContain('await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);');
@@ -19,9 +27,12 @@ describe('legacy image upload rollback contracts', () => {
         const source = read('edit-roster.html');
         const submitIndex = source.indexOf("document.getElementById('add-player-form').addEventListener('submit'");
 
-        expect(source).toContain("uploadPlayerPhoto(file, { returnUpload: true })");
+        expect(source).toContain('const uploadedPhoto = await uploadPlayerPhoto(file, {');
+        expect(source).toContain('playerId: reservedPlayerId');
         expect(source.indexOf("let newlyUploadedPlayerPhotoPath = '';", submitIndex)).toBeGreaterThan(submitIndex);
-        expect(source).toContain("type: 'add',\n                        payload: playerData,");
+        expect(source).toContain("type: 'add',");
+        expect(source).toContain('playerId: reservedPlayerId,');
+        expect(source).toContain('payload: playerData,');
         expect(source).not.toContain('const savedPlayerId = await addPlayer(currentTeamId, playerData);');
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
     });
@@ -29,7 +40,7 @@ describe('legacy image upload rollback contracts', () => {
     it('validates player edits before uploading and keeps an already referenced photo on private-save failure', () => {
         const source = read('player.html');
         const validationIndex = source.indexOf('const validationErrors = validateRosterProfileValues');
-        const uploadIndex = source.indexOf("uploadPlayerPhoto(photoFile, { returnUpload: true })", validationIndex);
+        const uploadIndex = source.indexOf('uploadPlayerPhoto(photoFile, {', validationIndex);
 
         expect(validationIndex).toBeGreaterThan(0);
         expect(uploadIndex).toBeGreaterThan(validationIndex);
