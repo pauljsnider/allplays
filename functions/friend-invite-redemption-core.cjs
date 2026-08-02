@@ -12,7 +12,7 @@ function normalizeVerifiedRecipientEmail(token) {
 
 function normalizeVerifiedRecipientPhone(token) {
   if (typeof token?.phone_number !== 'string') return '';
-  const phone = token.phone_number.trim();
+  const phone = token.phone_number;
   return E164_PHONE_PATTERN.test(phone) ? phone : '';
 }
 

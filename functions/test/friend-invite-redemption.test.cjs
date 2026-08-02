@@ -58,7 +58,7 @@ test('extracts a normalized verified email identity', () => {
 test('extracts a canonical Firebase phone identity', () => {
   assert.deepEqual(extract({
     uid: 'user-1',
-    token: { phone_number: ' +13125551212 ' }
+    token: { phone_number: '+13125551212' }
   }), {
     uid: 'user-1',
     email: '',
@@ -170,6 +170,7 @@ test('rejects malformed phone claims with one generic error', () => {
     '   ',
     '3125551212',
     '+1 (312) 555-1212',
+    ' +13125551212 ',
     '+0123456789',
     '+1234567',
     '+1234567890123456',
