@@ -275,6 +275,7 @@ describe('certificate defaults Firestore rules', () => {
         it('keeps cleanup tombstones private and server-writable only', async () => {
             const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
             const cleanupPath = 'teams/team-a/certificateSignatureCleanup/server-job';
+            const inventoryPath = 'certificateLegacySignatureInventory/legacy-object-key';
 
             await assertFails(getDoc(doc(ownerDb, cleanupPath)));
             await assertFails(updateDoc(doc(ownerDb, cleanupPath), { status: 'pending' }));
@@ -283,6 +284,12 @@ describe('certificate defaults Firestore rules', () => {
                 storagePath: 'certificate-signatures/users/victim/known.png',
                 requestedBy: 'owner-a',
                 status: 'pending'
+            }));
+            await assertFails(getDoc(doc(ownerDb, inventoryPath)));
+            await assertFails(setDoc(doc(ownerDb, inventoryPath), {
+                teamId: 'team-a',
+                signerIndex: 0,
+                objectKey: 'bucket\ncertificate-signatures/users/victim/known.png\n1700000000000000'
             }));
         });
 
