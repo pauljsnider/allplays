@@ -210,6 +210,22 @@ export async function patchFirestoreDocumentFields(
     return readJson(response, 'Firestore smoke document patch');
 }
 
+export async function createFirestoreDocument(session, documentPath, fields) {
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    url.searchParams.set('currentDocument.exists', 'false');
+    const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ fields })
+    });
+    return readJson(response, 'Firestore smoke document create');
+}
+
 export async function restoreFirestoreDocument(session, documentPath, originalDocument) {
     if (!originalDocument) {
         await deleteFirestoreDocument(session, documentPath);

@@ -1,0 +1,206 @@
+name: parent-coverage-census
+run-name: parent-census-${{ inputs.workflow_id }}-${{ inputs.contract_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_id:
+        description: Locked parent workflow identifier (P01-P99)
+        required: true
+        type: string
+      contract_sha:
+        description: Exact same-repository commit containing the declarative contract
+        required: true
+        type: string
+      contract_ref:
+        description: Dedicated PaulBot census branch containing the exact contract commit
+        required: true
+        type: string
+      contract_digest:
+        description: SHA-256 of the immutable declarative contract
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+concurrency:
+  group: parent-coverage-census
+  cancel-in-progress: false
+
+jobs:
+  run-contract:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production-smoke
+
+    steps:
+      - name: Validate immutable request
+        env:
+          WORKFLOW_ID: ${{ inputs.workflow_id }}
+          CONTRACT_SHA: ${{ inputs.contract_sha }}
+          CONTRACT_REF: ${{ inputs.contract_ref }}
+          CONTRACT_DIGEST: ${{ inputs.contract_digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$WORKFLOW_ID" =~ ^P[0-9]{2}$ ]]
+          [[ "$CONTRACT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTRACT_REF" =~ ^paulbot/parent-coverage-census-[0-9]{8}$ ]]
+          [[ "$CONTRACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ref_sha="$(
+            gh api --method GET \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${CONTRACT_REF}" \
+              --jq '.object.sha // ""'
+          )"
+          [[ "$ref_sha" == "$CONTRACT_SHA" ]]
+          expected_path="tests/parent-census/contracts/${WORKFLOW_ID}.json"
+          commit_json="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/commits/${CONTRACT_SHA}")"
+          [[ "$(jq -r '.parents | length' <<<"$commit_json")" == "1" ]]
+          [[ "$(jq -r '.files | length' <<<"$commit_json")" == "1" ]]
+          [[ "$(jq -r '.files[0].filename // ""' <<<"$commit_json")" == "$expected_path" ]]
+
+      - name: Checkout trusted census runner
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Resolve current complete production release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deployed_sha=""
+          while IFS=$'\t' read -r deployment_id deployment_sha; do
+            [[ "$deployment_id" =~ ^[0-9]+$ ]] || continue
+            [[ "$deployment_sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            state="$(
+              gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+                -F per_page=1 \
+                --jq '.[0].state // ""'
+            )"
+            if [[ "$state" == "success" ]]; then
+              deployed_sha="$deployment_sha"
+              break
+            fi
+          done < <(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/deployments" \
+              -f environment=production-release \
+              -F per_page=50 \
+              --jq '.[] | [.id, .sha] | @tsv'
+          )
+          [[ "$deployed_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$deployed_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download declarative contract as untrusted data
+        id: contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_ID: ${{ inputs.workflow_id }}
+          CONTRACT_SHA: ${{ inputs.contract_sha }}
+        run: |
+          set -euo pipefail
+          contract_path="tests/parent-census/contracts/${WORKFLOW_ID}.json"
+          contract_file="$RUNNER_TEMP/parent-census-contract.json"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/contents/${contract_path}?ref=${CONTRACT_SHA}" \
+            --jq '.content' \
+            | tr -d '\n' \
+            | base64 --decode > "$contract_file"
+          chmod 600 "$contract_file"
+          echo "path=$contract_file" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate contract boundary
+        env:
+          CONTRACT_PATH: ${{ steps.contract.outputs.path }}
+          WORKFLOW_ID: ${{ inputs.workflow_id }}
+          CONTRACT_DIGEST: ${{ inputs.contract_digest }}
+        run: >-
+          node scripts/validate-parent-coverage-contract.mjs
+          --catalog tests/parent-census/workflows.json
+          --input "$CONTRACT_PATH"
+          --workflow-id "$WORKFLOW_ID"
+          --sha256 "$CONTRACT_DIGEST"
+
+      - name: Audit dedicated parent fixture
+        run: node scripts/maintain-production-smoke-parent-fixture.mjs
+        env:
+          SMOKE_FIXTURE_MODE: audit
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          SMOKE_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+          SMOKE_STAFF_EMAIL: ${{ secrets.SMOKE_STAFF_EMAIL }}
+          SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
+          SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run one parent workflow contract
+        id: run_contract
+        continue-on-error: true
+        run: >-
+          npx playwright test
+          tests/smoke/app-parent-coverage-census.spec.js
+          --config=playwright.smoke.config.js
+          --project=smoke
+          --workers=1
+          --reporter=line
+        env:
+          SMOKE_SUITE: parent-coverage-census
+          SMOKE_APP_BASE_URL: https://allplays.ai/app/
+          PARENT_CENSUS_CATALOG_PATH: tests/parent-census/workflows.json
+          PARENT_CENSUS_CONTRACT_PATH: ${{ steps.contract.outputs.path }}
+          PARENT_CENSUS_REPORT_PATH: test-results/parent-census/parent-qa-report.json
+          PARENT_CENSUS_WORKFLOW_ID: ${{ inputs.workflow_id }}
+          PARENT_CENSUS_TEST_SHA: ${{ inputs.contract_sha }}
+          PARENT_CENSUS_DEPLOYED_SHA: ${{ steps.release.outputs.sha }}
+          PARENT_CENSUS_RUN_MARKER: allplays-parent-qa-${{ github.run_id }}
+          PARENT_CENSUS_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          PARENT_CENSUS_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
+          PARENT_CENSUS_GAME_ID: ${{ vars.PARENT_CENSUS_GAME_ID }}
+          PARENT_CENSUS_EVENT_ID: ${{ vars.PARENT_CENSUS_EVENT_ID }}
+          PARENT_CENSUS_REGISTRATION_FORM_ID: ${{ vars.PARENT_CENSUS_REGISTRATION_FORM_ID }}
+          PARENT_CENSUS_CONVERSATION_ID: ${{ vars.PARENT_CENSUS_CONVERSATION_ID }}
+          PARENT_CENSUS_PRIMARY_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
+          PARENT_CENSUS_PRIMARY_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          PARENT_CENSUS_PEER_EMAIL: ${{ secrets.PARENT_CENSUS_PEER_EMAIL || secrets.SMOKE_AUTH_EMAIL }}
+          PARENT_CENSUS_PEER_PASSWORD: ${{ secrets.PARENT_CENSUS_PEER_PASSWORD || secrets.SMOKE_AUTH_PASSWORD }}
+          PARENT_CENSUS_LIFECYCLE_EMAIL: ${{ secrets.PARENT_CENSUS_LIFECYCLE_EMAIL }}
+          PARENT_CENSUS_LIFECYCLE_PASSWORD: ${{ secrets.PARENT_CENSUS_LIFECYCLE_PASSWORD }}
+          PARENT_CENSUS_LIFECYCLE_INVITE_CODE: ${{ secrets.PARENT_CENSUS_LIFECYCLE_INVITE_CODE }}
+          PARENT_CENSUS_MAILBOX_CLIENT_ID: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_ID }}
+          PARENT_CENSUS_MAILBOX_CLIENT_SECRET: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_SECRET }}
+          PARENT_CENSUS_MAILBOX_REFRESH_TOKEN: ${{ secrets.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN }}
+
+      - name: Upload sanitized parent census result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: parent-coverage-report-${{ inputs.workflow_id }}-${{ github.run_id }}
+          path: test-results/parent-census/parent-qa-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce contract verdict
+        if: steps.run_contract.outcome != 'success'
+        run: exit 1
