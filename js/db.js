@@ -771,7 +771,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=28'; // Import resolveZip
+import { resolveZip } from './utils.js?v=29'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
