@@ -80,8 +80,10 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         }
         await auth.refresh();
         const redirectRoute = result.wasNewUser
-          ? '/verify-pending'
-          : inviteCode
+          ? requestedNextRoute
+            ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}`
+            : '/verify-pending'
+          : inviteCode || requestedNextRoute
             ? postAuthRoute
             : '/home';
         navigate(redirectRoute, { replace: true });
@@ -96,7 +98,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth, inviteCode, navigate, postAuthRoute]);
+  }, [auth, inviteCode, navigate, postAuthRoute, requestedNextRoute]);
 
   const clearStatus = () => {
     setError('');
