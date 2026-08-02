@@ -32,7 +32,9 @@ import {
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type ScheduleHomeScoringPlayer,
+  type ParentScheduleLoadResult,
 } from '../lib/scheduleService';
+import { consumeScheduleEventDetailHandoff, peekScheduleEventDetailHandoff } from '../lib/scheduleEventDetailHandoff';
 import type { PlayerGameStatResult, LineupDraftPreviewResult } from '../lib/scheduleGameDayService';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
@@ -337,7 +339,20 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
+  const decodedTeamId = decodeURIComponent(teamId);
+  const decodedEventId = decodeURIComponent(eventId);
+  const initialHandoffScopeRef = useRef({
+    userId: auth.user?.uid || '',
+    teamId: decodedTeamId,
+    eventId: decodedEventId
+  });
+  const initialHandoffRef = useRef(
+    auth.user?.uid
+      ? peekScheduleEventDetailHandoff(auth.user.uid, decodedTeamId, decodedEventId)
+      : null
+  );
+  const initialHandoffAppliedRef = useRef(false);
+  const [events, setEvents] = useState<ParentScheduleEvent[]>(() => initialHandoffRef.current?.events || []);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<EventDetailSectionId | null>(() => (
@@ -345,13 +360,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   ));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
-  const [initialLoadPending, setInitialLoadPending] = useState(true);
-  const hasLoadedEventRef = useRef(false);
+  const [initialLoadPending, setInitialLoadPending] = useState(() => !initialHandoffRef.current);
+  const hasLoadedEventRef = useRef(Boolean(initialHandoffRef.current?.events.length));
   const loadGenerationRef = useRef(0);
   const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
-
-  const decodedTeamId = decodeURIComponent(teamId);
-  const decodedEventId = decodeURIComponent(eventId);
 
   const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string; panel?: GameHubPanelId | null }) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -395,6 +407,48 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     replaceEventRouteParams({ section: 'game', panel });
   };
 
+  const applyLoadedEvent = useCallback((result: ParentScheduleLoadResult, loadGeneration: number) => {
+    setEvents(result.events);
+    hasLoadedEventRef.current = result.events.length > 0;
+    if (!selectedChildId && result.events[0]?.childId) {
+      setSelectedChildId(result.events[0].childId);
+    }
+    const optionalBaselines = new Map(result.events.map((event) => [event.eventKey, {
+      rideshareSummary: event.rideshareSummary,
+      assignments: event.assignments,
+      openAssignmentCount: event.openAssignmentCount,
+      assignmentClaimsHydrated: event.assignmentClaimsHydrated
+    }]));
+    const optionalSnapshot = {
+      ...result,
+      events: result.events.map((event) => ({ ...event }))
+    };
+    void hydrateParentScheduleEventOptionalDetails(optionalSnapshot).then((hydrated) => {
+      if (loadGenerationRef.current !== loadGeneration) return;
+      const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
+      setEvents((current) => current.map((event) => {
+        const optionalBaseline = optionalBaselines.get(event.eventKey);
+        const hydratedEvent = hydratedByKey.get(event.eventKey);
+        if (!optionalBaseline || !hydratedEvent) return event;
+        return {
+          ...event,
+          ...(event.rideshareSummary === optionalBaseline.rideshareSummary
+            ? { rideshareSummary: hydratedEvent.rideshareSummary }
+            : {}),
+          ...(event.assignments === optionalBaseline.assignments
+            && event.openAssignmentCount === optionalBaseline.openAssignmentCount
+            && event.assignmentClaimsHydrated === optionalBaseline.assignmentClaimsHydrated
+            ? {
+              assignments: hydratedEvent.assignments,
+              openAssignmentCount: hydratedEvent.openAssignmentCount,
+              assignmentClaimsHydrated: hydratedEvent.assignmentClaimsHydrated
+            }
+            : {})
+        };
+      }));
+    }).catch(() => undefined);
+  }, [selectedChildId]);
+
   const loadEvent = useCallback(async () => {
     const loadGeneration = ++loadGenerationRef.current;
     if (!auth.user) {
@@ -414,45 +468,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           ),
           rethrow: false,
           onSuccess: (result) => {
-            setEvents(result.events);
-            hasLoadedEventRef.current = result.events.length > 0;
-            if (!selectedChildId && result.events[0]?.childId) {
-              setSelectedChildId(result.events[0].childId);
-            }
-            const optionalBaselines = new Map(result.events.map((event) => [event.eventKey, {
-              rideshareSummary: event.rideshareSummary,
-              assignments: event.assignments,
-              openAssignmentCount: event.openAssignmentCount,
-              assignmentClaimsHydrated: event.assignmentClaimsHydrated
-            }]));
-            const optionalSnapshot = {
-              ...result,
-              events: result.events.map((event) => ({ ...event }))
-            };
-            void hydrateParentScheduleEventOptionalDetails(optionalSnapshot).then((hydrated) => {
-              if (loadGenerationRef.current !== loadGeneration) return;
-              const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
-              setEvents((current) => current.map((event) => {
-                const optionalBaseline = optionalBaselines.get(event.eventKey);
-                const hydratedEvent = hydratedByKey.get(event.eventKey);
-                if (!optionalBaseline || !hydratedEvent) return event;
-                return {
-                  ...event,
-                  ...(event.rideshareSummary === optionalBaseline.rideshareSummary
-                    ? { rideshareSummary: hydratedEvent.rideshareSummary }
-                    : {}),
-                  ...(event.assignments === optionalBaseline.assignments
-                    && event.openAssignmentCount === optionalBaseline.openAssignmentCount
-                    && event.assignmentClaimsHydrated === optionalBaseline.assignmentClaimsHydrated
-                    ? {
-                      assignments: hydratedEvent.assignments,
-                      openAssignmentCount: hydratedEvent.openAssignmentCount,
-                      assignmentClaimsHydrated: hydratedEvent.assignmentClaimsHydrated
-                    }
-                    : {})
-                };
-              }));
-            }).catch(() => undefined);
+            applyLoadedEvent(result, loadGeneration);
           },
           onError: () => {
             if (!hasExistingEvent) {
@@ -465,10 +481,37 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     } finally {
       setInitialLoadPending(false);
     }
-  }, [auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad, selectedChildId]);
+  }, [applyLoadedEvent, auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad]);
 
   useEffect(() => {
     hasLoadedEventRef.current = false;
+    const initialHandoffScope = initialHandoffScopeRef.current;
+    if (
+      initialHandoffRef.current
+      && initialHandoffScope.userId === auth.user?.uid
+      && initialHandoffScope.teamId === decodedTeamId
+      && initialHandoffScope.eventId === decodedEventId
+    ) {
+      hasLoadedEventRef.current = initialHandoffRef.current.events.length > 0;
+      if (!initialHandoffAppliedRef.current) {
+        consumeScheduleEventDetailHandoff(auth.user.uid, decodedTeamId, decodedEventId);
+        const loadGeneration = ++loadGenerationRef.current;
+        applyLoadedEvent(initialHandoffRef.current, loadGeneration);
+        initialHandoffAppliedRef.current = true;
+        setInitialLoadPending(false);
+      }
+      return;
+    }
+    initialHandoffRef.current = null;
+    const handedOffDetail = auth.user?.uid
+      ? consumeScheduleEventDetailHandoff(auth.user.uid, decodedTeamId, decodedEventId)
+      : null;
+    if (handedOffDetail) {
+      const loadGeneration = ++loadGenerationRef.current;
+      applyLoadedEvent(handedOffDetail, loadGeneration);
+      setInitialLoadPending(false);
+      return;
+    }
     // Warm-start from cached parent schedule data when the same event was just
     // rendered in Schedule/Home, so in-app navigation shows content immediately
     // and only true cold loads fall back to the full-page skeleton (#2649).

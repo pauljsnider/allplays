@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { getGenericEventDetailPath } from '../lib/scheduleLogic'
+import { storeScheduleEventDetailHandoff } from '../lib/scheduleEventDetailHandoff'
 import { loadParentScheduleEventDetail, resolveParentGameRoute } from '../lib/scheduleService'
 import type { AuthState } from '../lib/types'
 
@@ -64,6 +65,7 @@ export function GameDetail({ auth }: { auth: AuthState }) {
           if (cancelled) return
 
           const matchedEvent = detail.events.find((event) => event.childId === targetRoute.childId) || detail.events[0]
+          storeScheduleEventDetailHandoff(auth.user.uid, targetRoute.teamId, targetRoute.eventId, detail)
 
           setState({
             loading: false,
