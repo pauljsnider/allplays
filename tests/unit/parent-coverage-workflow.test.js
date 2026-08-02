@@ -65,6 +65,12 @@ describe('parent coverage workflow trust boundary', () => {
         expect(runStep.env.PARENT_CENSUS_REDEMPTION_TEAM_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}');
         expect(runStep.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}');
     });
+
+    it('has no mailbox credential or mailbox-audit dependency', () => {
+        expect(source).not.toContain('PARENT_CENSUS_MAILBOX_');
+        expect(provisionSource).not.toContain('PARENT_CENSUS_MAILBOX_');
+        expect(provisionSource).not.toContain('Audit protected mailbox grant');
+    });
 });
 
 describe('parent coverage provisioning workflow trust boundary', () => {

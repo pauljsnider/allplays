@@ -96,9 +96,12 @@ describe('parent coverage cleanup execution', () => {
         expect(censusSource).not.toContain('productError?.message');
     });
 
-    it('requires mailbox actions to finish on the workflow-scoped app route', () => {
-        expect(runnerSource).toContain('requireAppRoute: true');
-        expect(runnerSource).toMatch(/requireAppRoute: true[\s\S]+assertAllowedPage\(page, appBaseUrl, contract\.workflowId\)/);
+    it('redeems the exact run-scoped household invite without mailbox access', () => {
+        expect(runnerSource).toContain("step.action === 'redeemRunScopedHouseholdInvite'");
+        expect(runnerSource).toContain('run-scoped household invite code is unavailable');
+        expect(runnerSource).toContain("filter({ hasText: /invite accepted/i })");
+        expect(runnerSource).not.toContain('PARENT_CENSUS_MAILBOX_');
+        expect(runnerSource).not.toContain('findLatestParentMailboxActionLink');
     });
 
     it('fails closed on ambiguous entity scopes and mutation targets', () => {

@@ -5,6 +5,16 @@ export const CATALOG_SCHEMA_VERSION = 'parent-coverage-catalog-v1';
 export const CONTRACT_SCHEMA_VERSION = 'parent-coverage-contract-v1';
 export const REPORT_SCHEMA_VERSION = 'parent-coverage-report-v1';
 
+const requestOnlyEvidenceScopes = new Map([
+    ['P02', 'account-created-email-delivery-unverified'],
+    ['P03', 'verification-request-email-delivery-unverified'],
+    ['P05', 'reset-request-email-delivery-unverified']
+]);
+
+export function parentCoverageEvidenceScope(workflowId) {
+    return requestOnlyEvidenceScopes.get(workflowId) || 'end-to-end';
+}
+
 const actorNames = new Set(['anonymous', 'primary', 'peer', 'lifecycle']);
 const viewportNames = new Set(['mobile', 'desktop']);
 const actions = new Set([
@@ -26,7 +36,7 @@ const actions = new Set([
     'restoreControl',
     'restoreFriendship',
     'restoreHouseholdAccess',
-    'openLatestMailboxLink',
+    'redeemRunScopedHouseholdInvite',
     'openRunScopedShareLink',
     'uploadSyntheticImage',
     'uploadSyntheticDocument',
@@ -56,12 +66,12 @@ const baseWorkflowActions = [
 const workflowCapabilities = new Map(Object.entries({
     P01: { mode: 'readOnly', routes: ['/accept-invite'], actions: [] },
     P02: { mode: 'lifecycle', routes: ['/auth', '/verify-pending'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click'] },
-    P03: { mode: 'lifecycle', routes: ['/verify-pending', '/reset-password', '/auth'], actions: ['click', 'openLatestMailboxLink'] },
+    P03: { mode: 'lifecycle', routes: ['/home', '/verify-pending'], actions: ['click'] },
     P04: { mode: 'lifecycle', routes: ['/auth', '/home'], actions: ['click'] },
-    P05: { mode: 'lifecycle', routes: ['/auth', '/reset-password'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click', 'openLatestMailboxLink'] },
+    P05: { mode: 'lifecycle', routes: ['/auth'], actions: ['fillActorEmail', 'click'] },
     P06: { mode: 'readOnly', routes: ['/auth', '/home'], actions: [] },
     P07: { mode: 'readOnly', routes: ['/auth'], actions: ['clickAndExpectGoogleAuth'] },
-    P08: { mode: 'lifecycle', routes: ['/accept-invite', '/parent-tools/access'], actions: ['fill', 'click'] },
+    P08: { mode: 'lifecycle', routes: ['/home', '/accept-invite', '/parent-tools/access'], actions: ['fill', 'click'] },
     P09: { mode: 'reversible', routes: ['/parent-tools/access'], actions: ['fill', 'select', 'click'] },
     P10: { mode: 'readOnly', routes: ['/home', '/parent-tools/*'], actions: ['clickAndExpectRoute'] },
     P11: { mode: 'readOnly', routes: ['/teams/{TEAM_ID}', '/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
@@ -80,7 +90,7 @@ const workflowCapabilities = new Map(Object.entries({
     P24: { mode: 'reversible', routes: ['/messages/{TEAM_ID}'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/schedule/*', '/players/*', '/teams/*', '/profile/settings'], actions: ['rememberControl', 'fill', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click', 'restoreFriendship'] },
-    P27: { mode: 'reversible', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink', 'restoreHouseholdAccess'] },
+    P27: { mode: 'reversible', routes: ['/parent-tools/household', '/accept-invite', '/home'], actions: ['fill', 'click', 'redeemRunScopedHouseholdInvite', 'restoreHouseholdAccess'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
     P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['clickAndExpectDownload'] },
     P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
@@ -98,7 +108,7 @@ const stateChangingActions = new Set([
 ]);
 const reversibleMutationActions = new Set([
     'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'restoreFriendship', 'restoreHouseholdAccess',
-    'uploadSyntheticImage', 'uploadSyntheticDocument'
+    'redeemRunScopedHouseholdInvite', 'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const controlMutationActions = new Set(['fill', 'check', 'uncheck', 'select']);
 const workflowCoverageRequirements = new Map(Object.entries({
@@ -115,14 +125,16 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'expectRoute', actor: 'lifecycle', route: /verify-pending/ }
     ],
     P03: [
+        { action: 'login', actor: 'lifecycle' },
+        { action: 'goto', actor: 'lifecycle', route: /verify-pending/ },
+        { action: 'click', actor: 'lifecycle', target: /i've verified, continue/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /could not confirm verification|wait a few seconds/i },
         { action: 'click', actor: 'lifecycle', target: /resend verification/i },
-        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'verifyEmail' },
-        { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /verified|continue/i },
-        { action: 'expectRoute', actor: 'lifecycle', route: /verify-pending|auth/ }
+        { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /verification email queued|check your inbox/i },
+        { action: 'expectRoute', actor: 'lifecycle', route: /verify-pending/ }
     ],
     P04: [
         { action: 'login', actor: 'lifecycle' },
-        { action: 'click', actor: 'lifecycle', target: /continue|get started|finish/i },
         { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /home|welcome|action/i },
         { action: 'expectRoute', actor: 'lifecycle', route: /home/ }
     ],
@@ -130,11 +142,8 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', actor: 'lifecycle', target: /forgot password/i },
         { action: 'fillActorEmail', actor: 'lifecycle', target: /email/i },
         { action: 'click', actor: 'lifecycle', target: /send reset/i },
-        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'resetPassword' },
-        { action: 'fillActorPassword', actor: 'lifecycle', target: /new password|password/i },
-        { action: 'click', actor: 'lifecycle', target: /reset password/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /sign in|login|password.*reset/i },
-        { action: 'expectRoute', actor: 'lifecycle', route: /auth|reset-password/ }
+        { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /reset email has been queued|if an account exists/i },
+        { action: 'expectRoute', actor: 'lifecycle', route: /auth/ }
     ],
     P06: [
         { action: 'login', actor: 'primary' },
@@ -149,10 +158,12 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'expectRoute', actor: 'anonymous', route: /^\/auth/ }
     ],
     P08: [
+        { action: 'login', actor: 'lifecycle' },
+        { action: 'goto', actor: 'lifecycle', route: /accept-invite/ },
         { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_TEAM_INVITE_CODE\}/ },
         { action: 'click', actor: 'lifecycle', target: /redeem|join|apply code|accept invite/i },
         { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /team|access|joined/i },
-        { action: 'expectRoute', actor: 'lifecycle', route: /parent-tools\/access|accept-invite/ }
+        { action: 'expectRoute', actor: 'lifecycle', route: /home|parent-tools\/access|accept-invite/ }
     ],
     P09: [
         { action: 'fill', actor: 'primary', target: /player search|search/i, value: /\{RUN_MARKER\}/ },
@@ -299,9 +310,11 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P27: [
         { action: 'fill', actor: 'primary', target: /email/i, value: /\{LIFECYCLE_EMAIL\}/ },
-        { action: 'click', actor: 'primary', target: /send invite/i },
-        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
-        { action: 'click', actor: 'lifecycle', target: /accept invite/i },
+        { action: 'fill', actor: 'primary', target: /relation/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /create invite|send invite/i },
+        { action: 'login', actor: 'lifecycle' },
+        { action: 'redeemRunScopedHouseholdInvite', actor: 'lifecycle', option: 'primary' },
+        { action: 'reload', actor: 'primary' },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /\{LIFECYCLE_EMAIL\}|household/i },
         { action: 'restoreHouseholdAccess', phase: 'cleanup', actor: 'primary' }
     ],
@@ -366,6 +379,8 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i }
     ],
     P37: [
+        { action: 'login', actor: 'lifecycle' },
+        { action: 'goto', actor: 'lifecycle', route: /profile\/settings/ },
         { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
         { action: 'fill', actor: 'lifecycle', target: /type delete to confirm/i, value: /^DELETE$/ },
         { action: 'click', actor: 'lifecycle', target: /delete account|confirm deletion/i },
@@ -433,7 +448,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:friend|search|add friend|accept|remove friend|message|chat|send|delete message)$/i
     },
     P27: {
-        primary: /^(?:household|invite|email|relation|send invite|revoke (?:invite|access) for \{LIFECYCLE_EMAIL\})$/i,
+        primary: /^(?:household|invite|email|relation|create invite|send invite|revoke (?:invite|access) for \{LIFECYCLE_EMAIL\})$/i,
         lifecycle: /^(?:invite code|accept invite|continue)$/i
     },
     P28: { primary: /^(?:share|family|privacy|email|create share|revoke share)$/i },
@@ -476,7 +491,7 @@ const stepKeysByAction = new Map([
     ['restoreControl', ['action', 'actor', 'target', 'option', 'mutationId', 'scope']],
     ['restoreFriendship', ['action', 'actor', 'mutationId']],
     ['restoreHouseholdAccess', ['action', 'actor', 'mutationId']],
-    ['openLatestMailboxLink', ['action', 'actor', 'option']],
+    ['redeemRunScopedHouseholdInvite', ['action', 'actor', 'option', 'mutationId', 'scope', 'commitMutation']],
     ['openRunScopedShareLink', ['action', 'actor', 'option']],
     ['uploadSyntheticImage', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
     ['uploadSyntheticDocument', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
@@ -619,8 +634,10 @@ function isTrustedClickInverse(workflowId, executionStep, cleanupStep) {
     if (
         workflowId === 'P27' &&
         cleanupStep.action === 'restoreHouseholdAccess' &&
-        executionStep.action === 'click' &&
-        /^(?:send invite|accept invite)$/i.test(String(executionStep.target?.name || ''))
+        (
+            executionStep.action === 'redeemRunScopedHouseholdInvite' ||
+            executionStep.action === 'click' && /(?:create|send) invite/i.test(String(executionStep.target?.name || ''))
+        )
     ) return true;
     if (!['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(executionStep.action) || cleanupStep.action !== 'click') return false;
     const executionName = executionStep.action.startsWith('uploadSynthetic')
@@ -640,8 +657,10 @@ function trustedInverseScopeMatches(workflowId, executionStep, cleanupStep) {
 
 function isBoundedRelationshipLifecycle(workflowId, executionGroup, cleanupGroup, defaultActor) {
     const forwards = executionGroup
-        .filter((step) => step.action === 'click')
-        .map((step) => `${step.actor || defaultActor}:${String(step.target?.name || '').toLowerCase()}`);
+        .filter((step) => step.action === 'click' || step.action === 'redeemRunScopedHouseholdInvite')
+        .map((step) => `${step.actor || defaultActor}:${step.action === 'redeemRunScopedHouseholdInvite'
+            ? 'accept invite'
+            : String(step.target?.name || '').toLowerCase()}`);
     const inverses = cleanupGroup
         .filter((step) => ['click', 'restoreFriendship', 'restoreHouseholdAccess'].includes(step.action))
         .map((step) => step.action === 'restoreFriendship'
@@ -658,7 +677,7 @@ function isBoundedRelationshipLifecycle(workflowId, executionGroup, cleanupGroup
             inverses.join('\0') === 'peer:cancel';
     }
     if (workflowId === 'P27') {
-        return forwards.join('\0') === 'primary:send invite\0lifecycle:accept invite' &&
+        return /^primary:(?:create|send) invite\0lifecycle:accept invite$/.test(forwards.join('\0')) &&
             inverses.join('\0') === 'primary:restore household access';
     }
     return false;
@@ -683,7 +702,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     }
     if (
         phase === 'cleanup' &&
-        ['fillActorEmail', 'fillActorPassword', 'openLatestMailboxLink', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'clickAndExpectStripeCheckout'].includes(step.action)
+        ['fillActorEmail', 'fillActorPassword', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'clickAndExpectStripeCheckout'].includes(step.action)
     ) {
         throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
@@ -708,6 +727,12 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         workflowId !== 'P27' || phase !== 'cleanup' || (step.actor || defaultActor) !== 'primary'
     )) {
         throw new Error('restoreHouseholdAccess is restricted to P27 primary cleanup');
+    }
+    if (step.action === 'redeemRunScopedHouseholdInvite' && (
+        workflowId !== 'P27' || phase !== 'execution' ||
+        (step.actor || defaultActor) !== 'lifecycle' || step.option !== 'primary'
+    )) {
+        throw new Error('run-scoped household invite redemption is restricted to P27 lifecycle from primary');
     }
     if (step.action === 'expectUploadDenied' && (
         workflowId !== 'P33' || phase !== 'execution' || (step.actor || defaultActor) !== 'primary' ||
@@ -810,11 +835,10 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
     if (['login', 'logout', 'fillActorEmail', 'fillActorPassword'].includes(step.action) && actor === 'anonymous') {
         throw new Error(`${label} action ${step.action} requires an authenticated fixture actor`);
     }
-    if (step.action === 'openLatestMailboxLink') {
-        if (actor !== 'lifecycle') throw new Error(`${label} mailbox actions require the lifecycle actor`);
-        if (!['verifyEmail', 'resetPassword', 'invite'].includes(step.option)) {
-            throw new Error(`${label} has unsupported mailbox action`);
-        }
+    if (step.action === 'redeemRunScopedHouseholdInvite' && (
+        workflowId !== 'P27' || actor !== 'lifecycle' || step.option !== 'primary'
+    )) {
+        throw new Error(`${label} run-scoped household invite redemption is restricted to P27 lifecycle from primary`);
     }
     if (step.action === 'openRunScopedShareLink' && (
         workflowId !== 'P28' || actor !== 'anonymous' || step.option !== 'primary'
@@ -1024,7 +1048,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             if (
                 (commitSteps.length !== 1 && !boundedRelationshipLifecycle) ||
                 commitSteps.length === 0 ||
-                commitSteps.some((step) => !['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)) ||
+                commitSteps.some((step) => !['click', 'redeemRunScopedHouseholdInvite', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)) ||
                 boundedRelationshipLifecycle && commitSteps.length !== 2
             ) {
                 throw new Error(`reversible mutation ${mutationId} must declare exactly one trusted completed forward operation`);
@@ -1063,7 +1087,9 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
                 }
             }
             const reservedInverseIndexes = new Set();
-            for (const executionStep of executionGroup.filter((step) => ['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action))) {
+            for (const executionStep of executionGroup.filter((step) => [
+                'click', 'redeemRunScopedHouseholdInvite', 'uploadSyntheticImage', 'uploadSyntheticDocument'
+            ].includes(step.action))) {
                 const directInverseIndex = cleanupGroup.findIndex((cleanupStep, index) =>
                     !reservedInverseIndexes.has(index) &&
                     isTrustedClickInverse(contract.workflowId, executionStep, cleanupStep) &&

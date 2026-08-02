@@ -127,10 +127,10 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                             </select>
                         </label>
                         <div className="grid gap-3 sm:grid-cols-2">
-                            <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
-                            <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" disabled={saving || !linkedPlayers.length} />
+                            <input aria-label="Name" className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
+                            <input aria-label="Email" className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" disabled={saving || !linkedPlayers.length} />
                         </div>
-                        <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
+                        <input aria-label="Relation" className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
                         <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
                             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
                             {saving ? 'Creating invite...' : 'Create invite'}

@@ -7,10 +7,6 @@ import {
     workflowRouteAllowed
 } from '../../../scripts/parent-coverage-contract.mjs';
 import {
-    findLatestParentMailboxActionLink,
-    validateParentMailboxActionUrl
-} from '../../../scripts/parent-coverage-mailbox.mjs';
-import {
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
     signInToApp
@@ -51,10 +47,7 @@ export function getParentCoverageSecrets() {
         process.env.PARENT_CENSUS_LIFECYCLE_EMAIL,
         process.env.PARENT_CENSUS_LIFECYCLE_PASSWORD,
         process.env.PARENT_CENSUS_ADMIN_EMAIL,
-        process.env.PARENT_CENSUS_ADMIN_PASSWORD,
-        process.env.PARENT_CENSUS_MAILBOX_CLIENT_ID,
-        process.env.PARENT_CENSUS_MAILBOX_CLIENT_SECRET,
-        process.env.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN
+        process.env.PARENT_CENSUS_ADMIN_PASSWORD
     ].filter(Boolean);
 }
 
@@ -229,7 +222,6 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
     const pendingControlRestorations = new Map();
     const pendingCleanupTargets = new Map();
     const mutationTracker = createParentCoverageMutationTracker();
-    const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
     const secrets = getParentCoverageSecrets();
     if (/\{LIFECYCLE_(?:SIGNUP|TEAM)_INVITE_CODE\}/.test(JSON.stringify(contract))) {
@@ -276,7 +268,12 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             : { width: 1280, height: 720 };
         const context = await browser.newContext({ serviceWorkers: 'block', viewport });
         const page = await context.newPage();
-        const runtime = { context, page, issues: collectAppRuntimeIssues(page, secrets), signedIn: false };
+        const runtime = {
+            context,
+            page,
+            issues: collectAppRuntimeIssues(page, secrets, { includeApiFailures: true }),
+            signedIn: false
+        };
         actors.set(actor, runtime);
         return runtime;
     }
@@ -402,21 +399,34 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${expectedRoute}`);
             return;
         }
-        if (step.action === 'openLatestMailboxLink') {
-            const credentials = actorCredentials(actor);
-            const actionUrl = await findLatestParentMailboxActionLink({
-                action: step.option,
-                recipient: credentials.email,
-                clientId: process.env.PARENT_CENSUS_MAILBOX_CLIENT_ID || '',
-                clientSecret: process.env.PARENT_CENSUS_MAILBOX_CLIENT_SECRET || '',
-                refreshToken: process.env.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN || '',
-                afterEpoch: mailboxAfterEpoch
-            });
-            await page.goto(actionUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-            validateParentMailboxActionUrl(page.url(), step.option, {
-                allowConsumed: true,
-                requireAppRoute: true
-            });
+        if (step.action === 'redeemRunScopedHouseholdInvite') {
+            if (!runtime.signedIn) throw new Error('lifecycle actor must sign in before household invite redemption');
+            const source = await actorRuntime(step.option);
+            await assertAllowedPage(source.page, appBaseUrl, contract.workflowId);
+            const marker = variables.RUN_MARKER;
+            if (!marker) throw new Error('run-scoped household invite marker is unavailable');
+            const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const relation = source.page.getByText(new RegExp(`^${escapedMarker}\\s+for\\s+`, 'i'));
+            await expect(relation).toHaveCount(1, { timeout: 20_000 });
+            const container = relation.locator(
+                'xpath=ancestor-or-self::*[self::article or self::li or @role="listitem" or contains(@class,"rounded-xl")][1]'
+            );
+            await expect(container).toHaveCount(1, { timeout: 20_000 });
+            await expect(container.getByText(actorCredentials('lifecycle').email, { exact: true })).toHaveCount(1);
+            const inviteText = await container.innerText();
+            const inviteCode = inviteText.match(/\bCode\s+([A-HJ-NP-Z2-9]{8})\b/i)?.[1]?.toUpperCase() || '';
+            if (!inviteCode) throw new Error('run-scoped household invite code is unavailable');
+            await page.goto(buildAppSmokeUrl(
+                appBaseUrl,
+                `/accept-invite?code=${encodeURIComponent(inviteCode)}&type=household`
+            ), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            await expect.poll(async () => {
+                const route = new URL(page.url()).hash;
+                if (/^#\/home(?:\?|$)/.test(route)) return true;
+                return page.getByRole('status').filter({ hasText: /invite accepted/i }).isVisible().catch(() => false);
+            }, { timeout: 20_000 }).toBe(true);
+            markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }

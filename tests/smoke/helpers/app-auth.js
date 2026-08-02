@@ -70,8 +70,11 @@ function safePageLabel(pageUrl) {
     }
 }
 
-export function collectAppRuntimeIssues(page, secrets = []) {
+export function collectAppRuntimeIssues(page, secrets = [], { includeApiFailures = false } = {}) {
     const issues = [];
+    const monitoredResourceTypes = new Set(includeApiFailures
+        ? ['document', 'script', 'stylesheet', 'xhr', 'fetch', 'image', 'media', 'font']
+        : ['document', 'script', 'stylesheet']);
     page.on('pageerror', (error) => {
         issues.push(`pageerror:${redactSmokeDiagnostic(error.message, secrets)}`);
     });
@@ -82,11 +85,12 @@ export function collectAppRuntimeIssues(page, secrets = []) {
         issues.push(`console:${redactSmokeDiagnostic(text, secrets)}`);
     });
     page.on('requestfailed', (request) => {
-        if (!['document', 'script', 'stylesheet'].includes(request.resourceType())) return;
-        issues.push(`asset:${request.failure()?.errorText || 'failed'}:${safeRequestLabel(request.url())}`);
+        if (!monitoredResourceTypes.has(request.resourceType())) return;
+        const kind = includeApiFailures ? 'network' : 'asset';
+        issues.push(`${kind}:${request.failure()?.errorText || 'failed'}:${safeRequestLabel(request.url())}`);
     });
     page.on('response', (response) => {
-        if (!['document', 'script', 'stylesheet'].includes(response.request().resourceType())) return;
+        if (!monitoredResourceTypes.has(response.request().resourceType())) return;
         if (response.status() >= 400) {
             issues.push(`response:${response.status()}:${safeRequestLabel(response.url())}`);
         }
