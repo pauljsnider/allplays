@@ -854,6 +854,7 @@ jobs:
             firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."
           fi
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
+          retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
           retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
 
           if ! jq -e '
@@ -1224,7 +1225,8 @@ jobs:
             )
 
             if [[ "$acknowledge_failure_policy" == "true" ]]; then
-              if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
+              if [[ "$deploy_targets" != "$retry_enabled_function_targets" \
+                && "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then
                 echo "Refusing --force outside the reviewed retry-enabled function allowlist." >&2
                 return 1
               fi
@@ -1335,10 +1337,11 @@ jobs:
           # current defaults, then publish the superset consumer before any current
           # or future writer can emit a new certificate-signature tombstone schema.
           retry_firebase_deploy \
-            "functions:indexCertificateLegacySignaturesOnDefaultsWrite" \
+            "$retry_enabled_inventory_producer_target" \
             "certificate-signature-inventory-producer" \
             3 \
-            15
+            15 \
+            true
           node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           retry_firebase_deploy \
             "functions:cleanupCertificateSignature" \
