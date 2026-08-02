@@ -14290,11 +14290,20 @@ exports.cleanupCertificateSignature = functions
     }
 
     const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+    const certificatesQuery = firestore.collection(`teams/${teamId}/certificates`);
+    const certificateBatchesQuery = firestore.collection(`teams/${teamId}/certificateBatches`);
     const shouldDelete = await firestore.runTransaction(async (transaction) => {
       const currentCleanupSnap = await transaction.get(cleanupSnap.ref);
       const defaultsSnap = await transaction.get(defaultsRef);
+      const certificatesSnap = await transaction.get(certificatesQuery);
+      const certificateBatchesSnap = await transaction.get(certificateBatchesQuery);
       if (!currentCleanupSnap.exists || currentCleanupSnap.data()?.status !== 'pending') return false;
-      if (isCertificateSignatureTargetReferenced(defaultsSnap.exists ? defaultsSnap.data() || {} : {}, cleanup)) {
+      const referenceRecords = [
+        defaultsSnap.exists ? defaultsSnap.data() || {} : {},
+        ...certificatesSnap.docs.map((document) => document.data() || {}),
+        ...certificateBatchesSnap.docs.map((document) => document.data() || {})
+      ];
+      if (referenceRecords.some((record) => isCertificateSignatureTargetReferenced(record, cleanup))) {
         transaction.set(cleanupSnap.ref, {
           status: 'blocked-referenced',
           completedAt: admin.firestore.FieldValue.serverTimestamp()

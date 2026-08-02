@@ -42,12 +42,14 @@ describe('certificate defaults Firestore rules', () => {
     it('keeps installed native callers compatible and gates the final denial after updated callers', () => {
         const compatibilityCleanup = deployWorkflow.indexOf('certificate-signature-cleanup-compatibility');
         const compatibilityFunction = deployWorkflow.indexOf('certificate-defaults-writer-compatibility');
+        const firestoreChangeBranch = deployWorkflow.indexOf('if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]');
         const compatibilityRules = deployWorkflow.indexOf('certificate-defaults-rules-compatibility');
         const application = deployWorkflow.indexOf('retry_firebase_deploy "hosting,functions" "application"');
         const finalRules = deployWorkflow.indexOf('certificate-defaults-rules-final');
         const nativeReadinessGate = deployWorkflow.indexOf('[[ "$native_callable_ready" == "true" ]]');
 
         expect(compatibilityCleanup).toBeGreaterThan(-1);
+        expect(compatibilityCleanup).toBeLessThan(firestoreChangeBranch);
         expect(compatibilityFunction).toBeGreaterThan(compatibilityCleanup);
         expect(compatibilityFunction).toBeGreaterThan(-1);
         expect(compatibilityRules).toBeGreaterThan(compatibilityFunction);

@@ -78,8 +78,31 @@ function getLegacyImageSignatureOwnerCandidates(storagePath) {
   return [...new Set(candidates)].slice(0, 100);
 }
 
+function collectCertificateSignerEntries(record = {}) {
+  return [record?.signers, record?.shared?.signers]
+    .flatMap((signers) => Array.isArray(signers) ? signers : []);
+}
+
+function extractFirebaseStoragePathFromUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (url.protocol !== 'https:') return '';
+    if (url.hostname === 'firebasestorage.googleapis.com') {
+      const match = url.pathname.match(/^\/v0\/b\/[^/]+\/o\/(.+)$/);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+    if (url.hostname === 'storage.googleapis.com') {
+      const parts = url.pathname.split('/').filter(Boolean);
+      return parts.length > 1 ? parts.slice(1).join('/') : '';
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
 function collectLegacyImageSignatureUrls(defaults = {}, legacyBucketName) {
-  const signers = Array.isArray(defaults?.signers) ? defaults.signers : [];
+  const signers = collectCertificateSignerEntries(defaults);
   return new Set(signers
     .map((signer) => parseLegacyImageSignatureUrl(signer?.signatureImageUrl, legacyBucketName)?.url || '')
     .filter(Boolean));
@@ -130,7 +153,7 @@ async function authenticateLegacyImageSignatureReferences({
 }
 
 function collectCertificateSignaturePaths(defaults = {}) {
-  const signers = Array.isArray(defaults?.signers) ? defaults.signers : [];
+  const signers = collectCertificateSignerEntries(defaults);
   return new Set(signers
     .map((signer) => String(signer?.signatureImagePath || '').trim())
     .filter(Boolean));
@@ -238,18 +261,22 @@ function isAuthorizedCertificateSignatureCleanupTarget(teamId, target = {}) {
 
 function isCertificateSignatureTargetReferenced(defaults, target = {}) {
   if (target.storageBucket === LEGACY_IMAGE_STORAGE_KIND) {
-    return (Array.isArray(defaults?.signers) ? defaults.signers : [])
+    return collectCertificateSignerEntries(defaults)
       .some((signer) => (
         parseLegacyImageSignatureUrl(signer?.signatureImageUrl, target.legacyBucketName)?.storagePath === target.storagePath
       ));
   }
-  return isCertificateSignaturePathReferenced(defaults, target.storagePath);
+  if (isCertificateSignaturePathReferenced(defaults, target.storagePath)) return true;
+  return collectCertificateSignerEntries(defaults)
+    .some((signer) => extractFirebaseStoragePathFromUrl(signer?.signatureImageUrl) === target.storagePath);
 }
 
 module.exports = {
   authenticateLegacyImageSignatureReferences,
   collectCertificateSignaturePaths,
+  collectCertificateSignerEntries,
   collectLegacyImageSignatureUrls,
+  extractFirebaseStoragePathFromUrl,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
   isAuthorizedCertificateSignatureCleanupPath,

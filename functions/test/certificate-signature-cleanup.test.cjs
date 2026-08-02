@@ -96,6 +96,22 @@ test('cleanup workers retain any signature still referenced by current defaults'
   assert.equal(isCertificateSignaturePathReferenced({ signers: [] }, path), false);
 });
 
+test('retains primary signature images referenced by saved certificates and batch snapshots', () => {
+  const path = 'certificate-signatures/teams/team-1/current.png';
+  const primaryUrl = `https://firebasestorage.googleapis.com/v0/b/all-plays-ai.firebasestorage.app/o/${encodeURIComponent(path)}?alt=media&token=current-token`;
+  const target = { storageBucket: 'primary', storagePath: path, requestedBy: 'admin-1' };
+
+  assert.equal(isCertificateSignatureTargetReferenced({
+    signers: [{ signatureImageUrl: primaryUrl }]
+  }, target), true);
+  assert.equal(isCertificateSignatureTargetReferenced({
+    shared: { signers: [{ signatureImagePath: path, signatureImageUrl: primaryUrl }] }
+  }, target), true);
+  assert.equal(isCertificateSignatureTargetReferenced({
+    shared: { signers: [{ signatureImageUrl: primaryUrl.replace('current.png', 'other.png') }] }
+  }, target), false);
+});
+
 test('parses only exact token-authenticated legacy signature URLs from the configured image bucket', () => {
   assert.deepEqual(parseLegacyImageSignatureUrl(legacyUrl, legacyBucket), {
     downloadToken: 'legacy-token',
@@ -198,6 +214,9 @@ test('queues an authenticated removed URL-only signature in the legacy bucket an
   }), true);
   assert.equal(isCertificateSignatureTargetReferenced(previousDefaults, reference), true);
   assert.equal(isCertificateSignatureTargetReferenced({
+    shared: { signers: [{ signatureImageUrl: legacyUrl }] }
+  }, reference), true);
+  assert.equal(isCertificateSignatureTargetReferenced({
     signers: [{ signatureImageUrl: legacyUrl.replace('token=legacy-token', 'token=other-token') }]
   }, reference), true);
   assert.equal(isCertificateSignatureTargetReferenced({
@@ -232,7 +251,8 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /exports\.cleanupCertificateSignature[\s\S]*\.onWrite/);
   assert.match(functionsSource, /authenticateLegacyImageSignatureReferences[\s\S]*getObjectMetadata[\s\S]*getMetadata/);
   assert.match(functionsSource, /isAuthorizedCertificateSignatureCleanupTarget\(teamId, cleanup\)/);
-  assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);
+  assert.match(functionsSource, /collection\(`teams\/\$\{teamId\}\/certificates`\)[\s\S]*collection\(`teams\/\$\{teamId\}\/certificateBatches`\)/);
+  assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*transaction\.get\(certificatesQuery\)[\s\S]*transaction\.get\(certificateBatchesQuery\)[\s\S]*referenceRecords\.some[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);
   assert.match(functionsSource, /cleanup\.storageBucket === 'legacy-image'[\s\S]*IMAGE_STORAGE_BUCKET[\s\S]*cleanupBucket\.file\(storagePath\)\.delete[\s\S]*status: 'completed'/);
   assert.match(dbSource, /export async function setCertificateDefaults[\s\S]*return commitCertificateDefaults\(teamId, defaults\)/);
   assert.doesNotMatch(dbSource, /setDoc\(doc\(db, 'teams', teamId, 'settings', 'certificateDefaults'\)/);
