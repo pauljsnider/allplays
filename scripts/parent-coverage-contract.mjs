@@ -25,6 +25,7 @@ const actions = new Set([
     'rememberControl',
     'restoreControl',
     'restoreFriendship',
+    'restoreHouseholdAccess',
     'openLatestMailboxLink',
     'openRunScopedShareLink',
     'uploadSyntheticImage',
@@ -33,6 +34,7 @@ const actions = new Set([
     'expectHidden',
     'expectText',
     'expectNoText',
+    'expectUploadDenied',
     'expectRoute',
     'logout'
 ]);
@@ -44,7 +46,7 @@ const allowedRoles = new Set([
 ]);
 const allowedTemplateNames = new Set([
     'TEAM_ID', 'PLAYER_ID', 'GAME_ID', 'EVENT_ID', 'REGISTRATION_FORM_ID',
-    'CONVERSATION_ID', 'RUN_MARKER', 'LIFECYCLE_EMAIL', 'LIFECYCLE_INVITE_CODE'
+    'CONVERSATION_ID', 'RUN_MARKER', 'LIFECYCLE_EMAIL', 'LIFECYCLE_SIGNUP_INVITE_CODE', 'LIFECYCLE_TEAM_INVITE_CODE'
 ]);
 const lifecycleTransitionWorkflowIds = new Set(['P02', 'P03', 'P04', 'P05', 'P08', 'P27', 'P37']);
 const baseWorkflowActions = [
@@ -76,15 +78,15 @@ const workflowCapabilities = new Map(Object.entries({
     P22: { mode: 'reversible', routes: ['/schedule/{TEAM_ID}/{EVENT_ID}'], actions: ['fill', 'click'] },
     P23: { mode: 'reversible', routes: ['/messages', '/messages/{TEAM_ID}'], actions: ['fill', 'check', 'uncheck', 'click'] },
     P24: { mode: 'reversible', routes: ['/messages/{TEAM_ID}'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
-    P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/schedule/*', '/players/*', '/teams/*', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
+    P25: { mode: 'reversible', routes: ['/home', '/messages/*', '/schedule/*', '/players/*', '/teams/*', '/profile/settings'], actions: ['rememberControl', 'fill', 'check', 'uncheck', 'click', 'clickAndExpectRoute', 'restoreControl'] },
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click', 'restoreFriendship'] },
-    P27: { mode: 'reversible', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
+    P27: { mode: 'reversible', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink', 'restoreHouseholdAccess'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
     P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['clickAndExpectDownload'] },
     P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
     P31: { mode: 'readOnly', routes: ['/parent-tools/registrations', '/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}'], actions: ['clickAndExpectStripeCheckout'] },
     P32: { mode: 'readOnly', routes: ['/parent-tools/certificates', '/teams/{TEAM_ID}/certificates'], actions: ['clickAndExpectDownload'] },
-    P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage', 'expectUploadDenied'] },
     P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
     P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage', 'uploadSyntheticDocument'] },
@@ -95,7 +97,7 @@ const stateChangingActions = new Set([
     'select', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const reversibleMutationActions = new Set([
-    'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'restoreFriendship',
+    'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'restoreFriendship', 'restoreHouseholdAccess',
     'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const controlMutationActions = new Set(['fill', 'check', 'uncheck', 'select']);
@@ -105,7 +107,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { actions: ['expectVisible', 'expectText'], actor: 'anonymous', target: /invite|code|sign in/i }
     ],
     P02: [
-        { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_INVITE_CODE\}/ },
+        { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_SIGNUP_INVITE_CODE\}/ },
         { action: 'fillActorEmail', actor: 'lifecycle', target: /email/i },
         { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
         { action: 'click', actor: 'lifecycle', target: /create account|sign up/i },
@@ -147,7 +149,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'expectRoute', actor: 'anonymous', route: /^\/auth/ }
     ],
     P08: [
-        { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_INVITE_CODE\}/ },
+        { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_TEAM_INVITE_CODE\}/ },
         { action: 'click', actor: 'lifecycle', target: /redeem|join|apply code|accept invite/i },
         { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /team|access|joined/i },
         { action: 'expectRoute', actor: 'lifecycle', route: /parent-tools\/access|accept-invite/ }
@@ -273,9 +275,13 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message|remove attachment/i }
     ],
     P25: [
-        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i },
-        { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|schedule|players|teams/ },
-        { actions: ['expectVisible', 'expectText', 'expectNoText'], actor: 'peer', target: /read|seen|no new notifications|unread/i },
+        { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i, value: /\{RUN_MARKER\}/, scope: '{RUN_MARKER}' },
+        { action: 'expectVisible', actor: 'peer', target: /^unread$/i, scope: '{RUN_MARKER}' },
+        { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|schedule|players|teams/, scope: '{RUN_MARKER}' },
+        { action: 'expectHidden', actor: 'peer', target: /^unread$/i, scope: '{RUN_MARKER}' },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /read|seen/i, scope: '{RUN_MARKER}' },
         { action: 'rememberControl', actor: 'primary', target: /email|push|sms|mute/i },
         { actions: ['check', 'uncheck'], actor: 'primary', target: /email|push|sms|mute/i },
         { action: 'click', actor: 'primary', target: /save/i },
@@ -297,7 +303,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
         { action: 'click', actor: 'lifecycle', target: /accept invite/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /\{LIFECYCLE_EMAIL\}|household/i },
-        { action: 'click', phase: 'cleanup', actor: 'primary', target: /revoke.*\{LIFECYCLE_EMAIL\}/i }
+        { action: 'restoreHouseholdAccess', phase: 'cleanup', actor: 'primary' }
     ],
     P28: [
         { action: 'fill', actor: 'primary', target: /share|family|email/i, value: /\{RUN_MARKER\}/ },
@@ -326,6 +332,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     P33: [
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /media|member|album/i },
         { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /manage upload permissions|bulk delete|moderate all media/i },
+        { action: 'expectUploadDenied', actor: 'primary', target: /manager upload|bulk upload/i },
         { action: 'uploadSyntheticImage', actor: 'primary', target: /photo|image|upload/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|uploaded|media/i },
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /remove media|delete media/i }
@@ -377,8 +384,8 @@ const reversibleClickInversePairs = new Map(Object.entries({
     P22: [['request ride', 'cancel'], ['approve', 'cancel'], ['accept', 'cancel']],
     P23: [['send', 'delete message'], ['mute', 'unmute']],
     P24: [['send', 'delete message'], ['upload', 'remove attachment']],
+    P25: [['send', 'delete message']],
     P26: [['add friend', 'remove friend'], ['accept', 'remove friend'], ['send', 'delete message']],
-    P27: [['send invite', 'revoke access for {lifecycle_email}'], ['accept invite', 'revoke access for {lifecycle_email}']],
     P28: [['create share', 'revoke share']],
     P33: [['upload', 'remove media']], P34: [
         ['upload', 'remove image'], ['publish', 'delete post'], ['send', 'delete comment'], ['like', 'unlike'],
@@ -455,7 +462,8 @@ const stepKeysByAction = new Map([
     ['reload', ['action', 'actor']],
     ['click', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
     ['clickAndExpectGoogleAuth', ['action', 'actor', 'target']],
-    ['clickAndExpectRoute', ['action', 'actor', 'target', 'route']],
+    ['clickAndExpectRoute', ['action', 'actor', 'target', 'route', 'scope']],
+    ['expectUploadDenied', ['action', 'actor', 'target']],
     ['clickAndExpectDownload', ['action', 'actor', 'target']],
     ['clickAndExpectStripeCheckout', ['action', 'actor', 'target']],
     ['fill', ['action', 'actor', 'target', 'value', 'mutationId', 'scope', 'commitMutation']],
@@ -467,14 +475,15 @@ const stepKeysByAction = new Map([
     ['rememberControl', ['action', 'actor', 'target', 'option']],
     ['restoreControl', ['action', 'actor', 'target', 'option', 'mutationId', 'scope']],
     ['restoreFriendship', ['action', 'actor', 'mutationId']],
+    ['restoreHouseholdAccess', ['action', 'actor', 'mutationId']],
     ['openLatestMailboxLink', ['action', 'actor', 'option']],
     ['openRunScopedShareLink', ['action', 'actor', 'option']],
     ['uploadSyntheticImage', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
     ['uploadSyntheticDocument', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
-    ['expectVisible', ['action', 'actor', 'target']],
-    ['expectHidden', ['action', 'actor', 'target']],
-    ['expectText', ['action', 'actor', 'target', 'value']],
-    ['expectNoText', ['action', 'actor', 'target', 'value']],
+    ['expectVisible', ['action', 'actor', 'target', 'scope']],
+    ['expectHidden', ['action', 'actor', 'target', 'scope']],
+    ['expectText', ['action', 'actor', 'target', 'value', 'scope']],
+    ['expectNoText', ['action', 'actor', 'target', 'value', 'scope']],
     ['expectRoute', ['action', 'actor', 'route']],
     ['logout', ['action', 'actor']]
 ]);
@@ -607,6 +616,12 @@ function isTrustedClickInverse(workflowId, executionStep, cleanupStep) {
         executionStep.action === 'click' &&
         /^(?:add friend|accept)$/i.test(String(executionStep.target?.name || ''))
     ) return true;
+    if (
+        workflowId === 'P27' &&
+        cleanupStep.action === 'restoreHouseholdAccess' &&
+        executionStep.action === 'click' &&
+        /^(?:send invite|accept invite)$/i.test(String(executionStep.target?.name || ''))
+    ) return true;
     if (!['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(executionStep.action) || cleanupStep.action !== 'click') return false;
     const executionName = executionStep.action.startsWith('uploadSynthetic')
         ? 'upload'
@@ -628,9 +643,11 @@ function isBoundedRelationshipLifecycle(workflowId, executionGroup, cleanupGroup
         .filter((step) => step.action === 'click')
         .map((step) => `${step.actor || defaultActor}:${String(step.target?.name || '').toLowerCase()}`);
     const inverses = cleanupGroup
-        .filter((step) => ['click', 'restoreFriendship'].includes(step.action))
+        .filter((step) => ['click', 'restoreFriendship', 'restoreHouseholdAccess'].includes(step.action))
         .map((step) => step.action === 'restoreFriendship'
             ? `${step.actor || defaultActor}:restore friendship`
+            : step.action === 'restoreHouseholdAccess'
+                ? `${step.actor || defaultActor}:restore household access`
             : `${step.actor || defaultActor}:${String(step.target?.name || '').toLowerCase()}`);
     if (workflowId === 'P26') {
         return forwards.join('\0') === 'primary:add friend\0peer:accept' &&
@@ -642,7 +659,7 @@ function isBoundedRelationshipLifecycle(workflowId, executionGroup, cleanupGroup
     }
     if (workflowId === 'P27') {
         return forwards.join('\0') === 'primary:send invite\0lifecycle:accept invite' &&
-            inverses.join('\0') === 'primary:revoke access for {lifecycle_email}';
+            inverses.join('\0') === 'primary:restore household access';
     }
     return false;
 }
@@ -686,6 +703,18 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         workflowId !== 'P26' || phase !== 'cleanup' || (step.actor || defaultActor) !== 'primary'
     )) {
         throw new Error('restoreFriendship is restricted to P26 primary cleanup');
+    }
+    if (step.action === 'restoreHouseholdAccess' && (
+        workflowId !== 'P27' || phase !== 'cleanup' || (step.actor || defaultActor) !== 'primary'
+    )) {
+        throw new Error('restoreHouseholdAccess is restricted to P27 primary cleanup');
+    }
+    if (step.action === 'expectUploadDenied' && (
+        workflowId !== 'P33' || phase !== 'execution' || (step.actor || defaultActor) !== 'primary' ||
+        !/^(?:manager upload|bulk upload)$/i.test(String(step.target?.name || '')) ||
+        !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
+    )) {
+        throw new Error('expectUploadDenied is restricted to the exact P33 disabled manager upload control');
     }
     if (['rememberControl', 'restoreControl'].includes(step.action) && (
         !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
@@ -734,7 +763,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         if (
             capability.mode === 'lifecycle' &&
             /(?:join|invite|access) code/.test(normalizedTarget) &&
-            (step.action !== 'fill' || step.value !== '{LIFECYCLE_INVITE_CODE}')
+            (step.action !== 'fill' || !['{LIFECYCLE_SIGNUP_INVITE_CODE}', '{LIFECYCLE_TEAM_INVITE_CODE}'].includes(step.value))
         ) {
             throw new Error(`${phase} lifecycle invite inputs must bind to the protected lifecycle invite`);
         }
@@ -816,7 +845,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         }
     }
 
-    if (['click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
+    if (['click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText', 'expectUploadDenied'].includes(step.action)) {
         validateLocator(step.target, `${label} target`);
     }
 
@@ -847,7 +876,9 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
     if (step.commitMutation !== undefined && step.commitMutation !== true) {
         throw new Error(`${label} commitMutation may only be true`);
     }
-    if (step.scope !== undefined && !step.mutationId) {
+    if (step.scope !== undefined && !step.mutationId && ![
+        'clickAndExpectRoute', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'
+    ].includes(step.action)) {
         throw new Error(`${label} scope is valid only for a reversible mutation`);
     }
     if (step.commitMutation !== undefined && (!step.mutationId || phase !== 'execution')) {
@@ -986,7 +1017,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             if (actors.size !== 1 && !boundedRelationshipLifecycle) {
                 throw new Error(`reversible mutation ${mutationId} must keep execution and cleanup on one actor`);
             }
-            if (cleanupGroup.some((step) => !['click', 'restoreControl', 'restoreFriendship'].includes(step.action))) {
+            if (cleanupGroup.some((step) => !['click', 'restoreControl', 'restoreFriendship', 'restoreHouseholdAccess'].includes(step.action))) {
                 throw new Error(`reversible mutation ${mutationId} cleanup must restore remembered state or invoke a bounded inverse action`);
             }
             const commitSteps = executionGroup.filter((step) => step.commitMutation === true);
@@ -1152,6 +1183,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
         if (requirement.value && (
             step.value === undefined || !requirement.value.test(String(step.value))
         )) return false;
+        if (requirement.scope && step.scope !== requirement.scope) return false;
         return true;
     };
     let coverageCursor = 0;

@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import {
     createParentCoverageMutationTracker,
+    clickAndExpectGoogleAuth,
     executeParentCoverageCleanup
 } from '../smoke/helpers/parent-coverage-runner.js';
 
@@ -88,5 +90,38 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toContain('await expect(anchors).toHaveCount(1');
         expect(runnerSource).toContain('await expect(target).toHaveCount(1');
         expect(runnerSource).not.toContain("getByText(scopeText, { exact: true }).first()");
+    });
+
+    it('settles Google handoff listeners for both popup and same-tab flows', async () => {
+        const page = new EventEmitter();
+        page.mainFrame = () => ({ url: () => 'https://accounts.google.com/o/oauth2/auth' });
+        const popup = { id: 'popup' };
+        await expect(clickAndExpectGoogleAuth(page, {
+            click: () => page.emit('popup', popup)
+        }, 50)).resolves.toBe(popup);
+        expect(page.listenerCount('popup')).toBe(0);
+        expect(page.listenerCount('framenavigated')).toBe(0);
+
+        const mainFrame = { url: () => 'https://accounts.google.com/o/oauth2/auth' };
+        page.mainFrame = () => mainFrame;
+        await expect(clickAndExpectGoogleAuth(page, {
+            click: () => page.emit('framenavigated', mainFrame)
+        }, 50)).resolves.toBeNull();
+        expect(page.listenerCount('popup')).toBe(0);
+        expect(page.listenerCount('framenavigated')).toBe(0);
+    });
+
+    it('uses a bounded P27 inverse for either pending or accepted household access', () => {
+        expect(runnerSource).toContain("name: 'Cancel invite', exact: true");
+        expect(runnerSource).toContain("name: 'Revoke access', exact: true");
+        expect(runnerSource).toContain('bounded household restoration target is unavailable or ambiguous');
+    });
+
+    it('resolves distinct schema-valid team parent invites through the protected admin fixture', () => {
+        expect(runnerSource).toContain("email: adminEmail, password: adminPassword");
+        expect(runnerSource).toContain("'type') === 'parent_invite'");
+        expect(runnerSource).toContain('Parent census ${purpose}');
+        expect(runnerSource).toContain("resolveInvite('signup')");
+        expect(runnerSource).toContain("resolveInvite('team-redemption')");
     });
 });

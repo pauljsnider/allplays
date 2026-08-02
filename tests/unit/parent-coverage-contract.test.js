@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildParentCoverageOutcome,
     buildSanitizedParentCoverageFailureError,
+    assertParentCoverageStepCapability,
     classifyParentCoverageError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
@@ -202,7 +203,7 @@ describe('parent coverage contract boundary', () => {
             cleanupRequired: false,
             lifecycleTransition: true,
             steps: [
-                { action: 'fill', actor: 'lifecycle', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_INVITE_CODE}' },
+                { action: 'fill', actor: 'lifecycle', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_SIGNUP_INVITE_CODE}' },
                 { action: 'fillActorEmail', actor: 'lifecycle', target: { kind: 'label', name: 'Email', exact: true } },
                 { action: 'fillActorPassword', actor: 'lifecycle', target: { kind: 'label', name: 'Password', exact: true } },
                 { action: 'click', actor: 'lifecycle', target: { kind: 'role', role: 'button', name: 'Create account', exact: true } },
@@ -588,7 +589,7 @@ describe('parent coverage contract boundary', () => {
             workflowId: 'P02', title: catalog.workflows[1].title, actors: ['lifecycle'],
             mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true,
             steps: [
-                { action: 'fill', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_INVITE_CODE}' },
+                { action: 'fill', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_SIGNUP_INVITE_CODE}' },
                 { action: 'fillActorEmail', target: { kind: 'label', name: 'Email', exact: true } },
                 { action: 'fillActorPassword', target: { kind: 'label', name: 'Password', exact: true } }
             ]
@@ -634,6 +635,19 @@ describe('parent coverage contract boundary', () => {
             }]
         });
         expect(() => validateContract(remembered, catalog, 'P12')).toThrow(/remembered controls must use exact/);
+    });
+
+    it('requires P33 to prove a manager-only upload control is denied', () => {
+        const deniedUpload = {
+            action: 'expectUploadDenied',
+            actor: 'primary',
+            target: { kind: 'testId', name: 'Manager upload', exact: true }
+        };
+        expect(() => assertParentCoverageStepCapability('P33', deniedUpload, 'execution', 'primary')).not.toThrow();
+        expect(() => assertParentCoverageStepCapability('P33', {
+            ...deniedUpload,
+            target: { kind: 'testId', name: 'Upload', exact: true }
+        }, 'execution', 'primary')).toThrow(/exact P33 disabled manager upload control/);
     });
 
     it('does not let a lifecycle declaration transfer another actor mutation authority', () => {
@@ -689,10 +703,7 @@ describe('parent coverage contract boundary', () => {
                     target: { kind: 'role', role: 'button', name: 'Revoke access', exact: true }
                 }
             ],
-            cleanupSteps: [{
-                action: 'click', actor: 'primary', mutationId: 'household', scope: '{LIFECYCLE_EMAIL}',
-                target: { kind: 'role', role: 'button', name: 'Revoke access for {LIFECYCLE_EMAIL}', exact: true }
-            }]
+            cleanupSteps: [{ action: 'restoreHouseholdAccess', actor: 'primary', mutationId: 'household' }]
         });
         expect(() => validateContract(household, catalog, 'P27')).toThrow(/outside the trusted P27\/primary mutation capability/);
         expect(validateContract({

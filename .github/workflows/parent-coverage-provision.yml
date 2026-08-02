@@ -101,9 +101,11 @@ jobs:
         env:
           PARENT_CENSUS_PROVISION_MODE: ${{ inputs.mode }}
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
-          PARENT_CENSUS_PRIMARY_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
-          PARENT_CENSUS_PRIMARY_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          PARENT_CENSUS_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+          PARENT_CENSUS_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
           PARENT_CENSUS_LIFECYCLE_EMAIL: ${{ secrets.PARENT_CENSUS_LIFECYCLE_EMAIL }}
+          PARENT_CENSUS_TEAM_ID: ${{ vars.PARENT_CENSUS_TEAM_ID }}
+          PARENT_CENSUS_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
 
       - name: Audit protected mailbox grant
         run: node scripts/audit-parent-coverage-mailbox.mjs

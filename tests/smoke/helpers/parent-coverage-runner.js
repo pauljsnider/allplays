@@ -37,7 +37,8 @@ export function getParentCoverageVariables() {
         CONVERSATION_ID: process.env.PARENT_CENSUS_CONVERSATION_ID || '',
         RUN_MARKER: process.env.PARENT_CENSUS_RUN_MARKER || '',
         LIFECYCLE_EMAIL: process.env.PARENT_CENSUS_LIFECYCLE_EMAIL || '',
-        LIFECYCLE_INVITE_CODE: process.env.PARENT_CENSUS_LIFECYCLE_INVITE_CODE || ''
+        LIFECYCLE_SIGNUP_INVITE_CODE: '',
+        LIFECYCLE_TEAM_INVITE_CODE: ''
     };
 }
 
@@ -49,7 +50,8 @@ export function getParentCoverageSecrets() {
         process.env.PARENT_CENSUS_PEER_PASSWORD,
         process.env.PARENT_CENSUS_LIFECYCLE_EMAIL,
         process.env.PARENT_CENSUS_LIFECYCLE_PASSWORD,
-        process.env.PARENT_CENSUS_LIFECYCLE_INVITE_CODE,
+        process.env.PARENT_CENSUS_ADMIN_EMAIL,
+        process.env.PARENT_CENSUS_ADMIN_PASSWORD,
         process.env.PARENT_CENSUS_MAILBOX_CLIENT_ID,
         process.env.PARENT_CENSUS_MAILBOX_CLIENT_SECRET,
         process.env.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN
@@ -172,6 +174,30 @@ export function createParentCoverageMutationTracker() {
     };
 }
 
+export async function clickAndExpectGoogleAuth(page, target, timeout = 20_000) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error, popup = null) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            page.off('popup', onPopup);
+            page.off('framenavigated', onFrameNavigated);
+            if (error) reject(error);
+            else resolve(popup);
+        };
+        const onPopup = (popup) => finish(null, popup);
+        const onFrameNavigated = (frame) => {
+            if (frame !== page.mainFrame()) return;
+            if (new URL(frame.url()).hostname === 'accounts.google.com') finish(null);
+        };
+        const timer = setTimeout(() => finish(new Error('Google sign-in handoff timed out')), timeout);
+        page.on('popup', onPopup);
+        page.on('framenavigated', onFrameNavigated);
+        Promise.resolve(target.click()).catch((error) => finish(error));
+    });
+}
+
 export async function createParentCoverageRuntime(browser, contract, appBaseUrl) {
     const actors = new Map();
     const rememberedControls = new Map();
@@ -179,9 +205,11 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
     const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
     const secrets = getParentCoverageSecrets();
-    if (JSON.stringify(contract).includes('{LIFECYCLE_INVITE_CODE}')) {
-        const primary = actorCredentials('primary');
-        const session = await createFirebaseRestSession({ appBaseUrl, ...primary });
+    if (/\{LIFECYCLE_(?:SIGNUP|TEAM)_INVITE_CODE\}/.test(JSON.stringify(contract))) {
+        const adminEmail = String(process.env.PARENT_CENSUS_ADMIN_EMAIL || '');
+        const adminPassword = String(process.env.PARENT_CENSUS_ADMIN_PASSWORD || '');
+        if (!adminEmail || !adminPassword) throw new Error('protected parent census admin credentials are unavailable');
+        const session = await createFirebaseRestSession({ appBaseUrl, email: adminEmail, password: adminPassword });
         const documents = await findFirestoreDocumentsByStringField(
             session,
             'accessCodes',
@@ -189,15 +217,20 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             session.localId
         );
         const recipient = actorCredentials('lifecycle').email.toLowerCase();
-        const invite = documents.find((document) => {
+        const resolveInvite = (purpose) => documents.find((document) => {
             const fields = document?.fields || {};
-            return getFirestoreStringField(document, 'type') === 'friend_invite' &&
+            return getFirestoreStringField(document, 'type') === 'parent_invite' &&
                 getFirestoreStringField(document, 'email').toLowerCase() === recipient &&
+                getFirestoreStringField(document, 'relation') === `Parent census ${purpose}` &&
                 fields.used?.booleanValue !== true &&
                 Date.parse(String(fields.expiresAt?.timestampValue || '')) > Date.now();
         });
-        variables.LIFECYCLE_INVITE_CODE = getFirestoreStringField(invite, 'code');
-        if (!variables.LIFECYCLE_INVITE_CODE) throw new Error('protected lifecycle invite is unavailable');
+        variables.LIFECYCLE_SIGNUP_INVITE_CODE = getFirestoreStringField(resolveInvite('signup'), 'code');
+        variables.LIFECYCLE_TEAM_INVITE_CODE = getFirestoreStringField(resolveInvite('team-redemption'), 'code');
+        if (
+            JSON.stringify(contract).includes('{LIFECYCLE_SIGNUP_INVITE_CODE}') && !variables.LIFECYCLE_SIGNUP_INVITE_CODE ||
+            JSON.stringify(contract).includes('{LIFECYCLE_TEAM_INVITE_CODE}') && !variables.LIFECYCLE_TEAM_INVITE_CODE
+        ) throw new Error('protected purpose-bound lifecycle parent invite is unavailable');
     }
 
     async function actorRuntime(actor) {
@@ -320,13 +353,34 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
+        if (step.action === 'restoreHouseholdAccess') {
+            const lifecycleEmail = actorCredentials('lifecycle').email;
+            const anchors = page.getByText(lifecycleEmail, { exact: true });
+            await expect(anchors).toHaveCount(1, { timeout: 20_000 });
+            const container = anchors.locator(
+                'xpath=ancestor-or-self::*[self::article or self::li or self::tr or @role="row" or @role="listitem" or @data-testid][1]'
+            );
+            await expect(container).toHaveCount(1, { timeout: 20_000 });
+            const candidates = [
+                container.getByRole('button', { name: 'Cancel invite', exact: true }),
+                container.getByRole('button', { name: 'Revoke access', exact: true })
+            ];
+            const visible = [];
+            for (const candidate of candidates) {
+                if (await candidate.count() === 1 && await candidate.isVisible()) visible.push(candidate);
+            }
+            if (visible.length !== 1) throw new Error('bounded household restoration target is unavailable or ambiguous');
+            await visible[0].click();
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            return;
+        }
         const target = await locatorFor(page, step.target, variables, step.scope);
         if ([
             'click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute',
             'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill',
             'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select',
             'rememberControl', 'restoreControl', 'uploadSyntheticImage',
-            'uploadSyntheticDocument'
+            'uploadSyntheticDocument', 'expectUploadDenied'
         ].includes(step.action)) {
             await expect(target).toHaveCount(1, { timeout: 20_000 });
         }
@@ -338,11 +392,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         case 'clickAndExpectGoogleAuth': {
-            const popupPromise = page.waitForEvent('popup', { timeout: 20_000 });
-            const navigationPromise = page.waitForURL((value) => value.hostname === 'accounts.google.com', { timeout: 20_000 })
-                .then(() => null);
-            await target.click();
-            const popup = await Promise.race([popupPromise, navigationPromise]);
+            const popup = await clickAndExpectGoogleAuth(page, target);
             const authPage = popup || page;
             await authPage.waitForLoadState('domcontentloaded', { timeout: 45_000 });
             const destination = new URL(authPage.url());
@@ -468,6 +518,9 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             break;
         case 'expectNoText':
             await expect(target).not.toContainText(interpolateTextTemplate(step.value, variables), { timeout: 20_000 });
+            break;
+        case 'expectUploadDenied':
+            await expect(target).toBeDisabled({ timeout: 20_000 });
             break;
         default:
             throw new Error(`unsupported action ${step.action}`);
