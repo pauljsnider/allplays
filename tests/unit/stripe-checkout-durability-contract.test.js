@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const teamFeeCoreSource = readFileSync(new URL('../../functions/team-fees-core.cjs', import.meta.url), 'utf8');
+const agentGuidance = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
+const pullRequestTemplate = readFileSync(new URL('../../.github/pull_request_template.md', import.meta.url), 'utf8');
 
 function exportBlock(name, nextName) {
     const start = functionsSource.indexOf(`exports.${name} =`);
@@ -41,6 +43,13 @@ describe('Stripe Checkout durability contract', () => {
         expect(functionsSource).toContain('isReusableTeamPassCheckoutCreationRequest');
         expect(teamPass).toContain('isUncertainStripeCheckoutCreationError(error)');
         expect(teamPass).toContain('clearTeamPassCheckoutCreationReservation');
+    });
+
+    it('serializes a shared team-pass entitlement without disclosing one purchaser checkout to another', () => {
+        expect(functionsSource).toContain('reservedPurchaserUid !== purchaserUid');
+        expect(functionsSource).toContain('Another purchaser already has a team-pass checkout in progress.');
+        expect(agentGuidance).toContain('cross-principal retries fail closed');
+        expect(pullRequestTemplate).toContain('same-principal and different-principal concurrency');
     });
 
     it('reserves team-fee creation before Stripe and compensates persistence failure', () => {
