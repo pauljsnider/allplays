@@ -477,11 +477,17 @@ describe('preview deployment workflow trust boundary', () => {
         expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
         expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
+        expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');
+        expect(imageWriteProductionSmoke).toContain('isAbandonedSmokeImageValue');
+        expect(imageWriteProductionSmoke).toContain('must have an empty ${fieldName} baseline');
         expect(imageWriteProductionSmoke).toContain('restoreFirestoreDocumentFields(');
         expect(imageWriteProductionSmoke).toContain('{ updateTime: currentDocument.updateTime }');
         expect(profileImageWorkflow).toContain('deleteFirebaseStorageObject(');
-        expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(')).toBeLessThan(
-            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        expect(profileImageWorkflow.indexOf('patchFirestoreDocumentFields(')).toBeLessThan(
+            profileImageWorkflow.indexOf('uploadFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow).toMatch(
+            /restoreImageFieldsIfUnchanged\(documentState, \['photoUrl'\]\)[\s\S]*deleteFirebaseStorageObject\([\s\S]*restoreImageFieldsIfUnchanged\(documentState, \['photoPath'\]\)/
         );
         expect(profileImageWorkflow).toContain(
             'const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;'
