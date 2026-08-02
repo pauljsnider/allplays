@@ -143,6 +143,28 @@ describe('parent coverage contract boundary', () => {
         expect(validateContract(checkout, catalog, 'P30').steps).toHaveLength(1);
     });
 
+    it('replaces read-only generic clicks with target-bound download assertions', () => {
+        const calendar = validContract({
+            workflowId: 'P29',
+            title: catalog.workflows[28].title,
+            actors: ['primary'],
+            steps: [{
+                action: 'clickAndExpectDownload',
+                actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Download calendar' }
+            }]
+        });
+        expect(validateContract(calendar, catalog, 'P29').steps).toHaveLength(1);
+        expect(() => validateContract({
+            ...calendar,
+            steps: [{
+                action: 'click',
+                actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Delete calendar' }
+            }]
+        }, catalog, 'P29')).toThrow(/action click is not allowed for P29/);
+    });
+
     it('binds mutation policy to the trusted workflow capability', () => {
         expect(() => validateContract({
             ...validContract(),

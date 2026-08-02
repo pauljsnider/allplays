@@ -12,6 +12,7 @@ const actions = new Set([
     'goto',
     'reload',
     'click',
+    'clickAndExpectDownload',
     'clickAndExpectStripeCheckout',
     'fill',
     'fillActorEmail',
@@ -74,10 +75,10 @@ const workflowCapabilities = new Map(Object.entries({
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click'] },
     P27: { mode: 'lifecycle', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click'] },
-    P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['click'] },
+    P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['clickAndExpectDownload'] },
     P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
     P31: { mode: 'readOnly', routes: ['/parent-tools/registrations', '/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}'], actions: ['clickAndExpectStripeCheckout'] },
-    P32: { mode: 'readOnly', routes: ['/parent-tools/certificates', '/teams/{TEAM_ID}/certificates'], actions: ['click'] },
+    P32: { mode: 'readOnly', routes: ['/parent-tools/certificates', '/teams/{TEAM_ID}/certificates'], actions: ['clickAndExpectDownload'] },
     P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
@@ -144,12 +145,19 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|remove attachment|clear chat|new conversation)$/i },
     P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
 }));
+const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
+    P29: { clickAndExpectDownload: /^(?:download calendar|download ics|calendar feed|export calendar)$/i },
+    P30: { clickAndExpectStripeCheckout: /^(?:pay|pay fee|checkout|continue to checkout)$/i },
+    P31: { clickAndExpectStripeCheckout: /^(?:register|start registration|checkout|continue to checkout|pay registration fee)$/i },
+    P32: { clickAndExpectDownload: /^(?:download|download certificate|download award)$/i }
+}));
 const forbiddenText = /(?:https?:\/\/|javascript:|data:text|[\r\n]|\$\{|<script|authorization|cookie)/i;
 const stepKeysByAction = new Map([
     ['login', ['action', 'actor']],
     ['goto', ['action', 'actor', 'route']],
     ['reload', ['action', 'actor']],
     ['click', ['action', 'actor', 'target', 'mutationId']],
+    ['clickAndExpectDownload', ['action', 'actor', 'target']],
     ['clickAndExpectStripeCheckout', ['action', 'actor', 'target']],
     ['fill', ['action', 'actor', 'target', 'value', 'mutationId']],
     ['fillActorEmail', ['action', 'actor', 'target']],
@@ -237,6 +245,11 @@ export function validateCatalog(catalog) {
         if (capability.mode !== 'readOnly' && !mutationTargetCapabilities.has(workflowId)) {
             throw new Error(`trusted workflow capability ${workflowId} has no mutation target boundary`);
         }
+        for (const action of capability.actions.filter((candidate) => candidate.startsWith('clickAndExpect'))) {
+            if (!readOnlyInteractionTargetCapabilities.get(workflowId)?.[action]) {
+                throw new Error(`trusted workflow capability ${workflowId} has no ${action} target boundary`);
+            }
+        }
     }
     return catalog;
 }
@@ -311,6 +324,12 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${actor} mutation capability`);
         }
     }
+    if (capability.mode === 'readOnly' && ['clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
+        const targetCapability = readOnlyInteractionTargetCapabilities.get(workflowId)?.[step.action];
+        if (!targetCapability?.test(String(step.target?.name || ''))) {
+            throw new Error(`${phase} target is outside the trusted ${workflowId}/${step.action} capability`);
+        }
+    }
 }
 
 function validateStep(step, index, declaredActors, workflowId, phase = 'execution') {
@@ -329,6 +348,9 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
             throw new Error(`${label} has unsupported mailbox action`);
         }
     }
+    if (step.action === 'clickAndExpectDownload' && !['P29', 'P32'].includes(workflowId)) {
+        throw new Error(`${label} download assertions are restricted to P29 and P32`);
+    }
     if (step.action === 'clickAndExpectStripeCheckout' && !['P30', 'P31'].includes(workflowId)) {
         throw new Error(`${label} Stripe checkout assertions are restricted to P30 and P31`);
     }
@@ -344,7 +366,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         }
     }
 
-    if (['click', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
+    if (['click', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
         validateLocator(step.target, `${label} target`);
     }
 

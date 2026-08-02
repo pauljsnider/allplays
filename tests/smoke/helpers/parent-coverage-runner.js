@@ -96,6 +96,20 @@ async function assertAllowedPage(page, appBaseUrl, workflowId = '') {
     }
 }
 
+async function assertClickNavigationAllowed(target, page, appBaseUrl, workflowId) {
+    const href = await target.getAttribute('href');
+    if (!href) return;
+    const destination = new URL(href, page.url());
+    const allowed = new URL(appBaseUrl);
+    if (destination.origin !== allowed.origin || !destination.pathname.startsWith(allowed.pathname)) {
+        throw new Error('contract click target leaves the protected AllPlays app origin');
+    }
+    const route = destination.hash.startsWith('#') ? destination.hash.slice(1) : '/';
+    if (!workflowRouteAllowed(workflowId, route || '/', true)) {
+        throw new Error(`contract click target leaves the trusted ${workflowId} route capability`);
+    }
+}
+
 async function makeSyntheticImage() {
     return {
         name: 'allplays-parent-census.png',
@@ -203,18 +217,30 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             return;
         }
         if (step.action === 'logout') {
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             await page.getByRole('button', { name: 'Sign out' }).first().click();
             await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/(?:auth|home)(?:\?|$)/);
             runtime.signedIn = false;
             return;
         }
 
+        await assertAllowedPage(page, appBaseUrl, contract.workflowId);
         const target = locatorFor(page, step.target, variables).first();
         switch (step.action) {
         case 'click':
+            await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
             await target.click();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
+        case 'clickAndExpectDownload': {
+            const downloadPromise = page.waitForEvent('download', { timeout: 20_000 });
+            await target.click();
+            const download = await downloadPromise;
+            expect(download.suggestedFilename()).toMatch(/\.(?:ics|pdf)$/i);
+            await download.cancel().catch(() => {});
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            break;
+        }
         case 'clickAndExpectStripeCheckout': {
             const popupPromise = page.waitForEvent('popup', { timeout: 20_000 });
             await target.click();
