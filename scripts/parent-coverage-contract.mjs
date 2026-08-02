@@ -84,23 +84,83 @@ const workflowCapabilities = new Map(Object.entries({
     P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P37: { mode: 'lifecycle', routes: ['/profile/settings'], actions: ['fill', 'fillActorPassword', 'click'] }
 }));
+const stateChangingActions = new Set([
+    'click', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck',
+    'select', 'restoreControl', 'uploadSyntheticImage'
+]);
+const reversibleMutationActions = new Set([
+    'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'uploadSyntheticImage'
+]);
+const forbiddenMutationTarget = /(?:delete|deactivate|remove)\s+(?:my\s+)?(?:account|profile)|(?:grant|make|promote).*(?:admin|coach|manager|staff)|(?:admin|coach|manager|staff).*(?:access|permission|role)/i;
+const mutationTargetCapabilities = new Map(Object.entries({
+    P02: { lifecycle: /^(?:email|password|confirm password|create account|sign up|continue)$/i },
+    P03: { lifecycle: /^(?:resend(?: verification)?|verify(?: email)?|continue)$/i },
+    P04: { lifecycle: /^(?:email|password|sign in|log in|continue|get started)$/i },
+    P05: { lifecycle: /^(?:email|password|confirm password|new password|send reset link|reset password|continue)$/i },
+    P08: { lifecycle: /^(?:invite code|access code|redeem|join|accept invite|continue)$/i },
+    P09: { primary: /^(?:player search|search|team|player|relationship|request access|send request)$/i },
+    P12: { primary: /^(?:name|phone|save|save changes|update profile)$/i },
+    P13: { primary: /^(?:profile image|profile photo|image|photo|upload|upload image|remove image|remove photo|save|cancel)$/i },
+    P14: { primary: /^(?:child|athlete|player|name|details|image|photo|upload|upload image|remove image|remove photo|save|save changes)$/i },
+    P16: { primary: /^(?:team|filter|calendar|date|schedule|event|apply|reset filters)$/i },
+    P17: { primary: /^(?:rsvp|going|not going|maybe|note|sibling|save|update rsvp)$/i },
+    P19: { primary: /^(?:packet|form|complete|incomplete|checklist|save|submit)$/i },
+    P20: {
+        primary: /^(?:task|assignment|claim|release|volunteer|save|cancel)$/i,
+        peer: /^(?:task|assignment|claim|release|volunteer|save|cancel)$/i
+    },
+    P21: { primary: /^(?:ride|rideshare|seat|address|note|offer ride|create offer|close offer|reopen offer|save|cancel)$/i },
+    P22: {
+        primary: /^(?:ride|request ride|approve|deny|accept|decline|cancel)$/i,
+        peer: /^(?:ride|request ride|approve|deny|accept|decline|cancel)$/i
+    },
+    P23: {
+        primary: /^(?:message|chat|mute|unmute|send|mark read)$/i,
+        peer: /^(?:message|chat|mute|unmute|send|mark read)$/i
+    },
+    P24: {
+        primary: /^(?:message|chat|attachment|image|photo|upload|send|remove attachment)$/i,
+        peer: /^(?:message|chat|attachment|image|photo|upload|send|remove attachment)$/i
+    },
+    P25: {
+        primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i,
+        peer: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i
+    },
+    P26: {
+        primary: /^(?:friend|search|add friend|accept|remove friend|message|chat|send)$/i,
+        peer: /^(?:friend|search|add friend|accept|remove friend|message|chat|send)$/i
+    },
+    P27: {
+        primary: /^(?:household|invite|email|relation|send invite|revoke invite|revoke access)$/i,
+        lifecycle: /^(?:invite code|accept invite|continue)$/i
+    },
+    P28: { primary: /^(?:share|family|privacy|email|create share|revoke share)$/i },
+    P33: { primary: /^(?:media|photo|image|upload|title|caption|share|remove media|delete media)$/i },
+    P34: {
+        primary: /^(?:social|post|image|photo|upload|reaction|like|comment|moderate|hide post|delete post|delete comment|remove image|send|publish)$/i,
+        peer: /^(?:social|post|image|photo|upload|reaction|like|comment|moderate|hide post|delete post|delete comment|remove image|send|publish)$/i
+    },
+    P35: { primary: /^(?:ai|chat|prompt|send|clear chat|new conversation)$/i },
+    P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|remove attachment|clear chat|new conversation)$/i },
+    P37: { lifecycle: /^(?:password|delete account|confirm deletion|confirm|cancel)$/i }
+}));
 const forbiddenText = /(?:https?:\/\/|javascript:|data:text|[\r\n]|\$\{|<script|authorization|cookie)/i;
 const stepKeysByAction = new Map([
     ['login', ['action', 'actor']],
     ['goto', ['action', 'actor', 'route']],
     ['reload', ['action', 'actor']],
-    ['click', ['action', 'actor', 'target']],
+    ['click', ['action', 'actor', 'target', 'mutationId']],
     ['clickAndExpectStripeCheckout', ['action', 'actor', 'target']],
-    ['fill', ['action', 'actor', 'target', 'value']],
+    ['fill', ['action', 'actor', 'target', 'value', 'mutationId']],
     ['fillActorEmail', ['action', 'actor', 'target']],
     ['fillActorPassword', ['action', 'actor', 'target']],
-    ['check', ['action', 'actor', 'target']],
-    ['uncheck', ['action', 'actor', 'target']],
-    ['select', ['action', 'actor', 'target', 'option']],
+    ['check', ['action', 'actor', 'target', 'mutationId']],
+    ['uncheck', ['action', 'actor', 'target', 'mutationId']],
+    ['select', ['action', 'actor', 'target', 'option', 'mutationId']],
     ['rememberControl', ['action', 'actor', 'target', 'option']],
-    ['restoreControl', ['action', 'actor', 'target', 'option']],
+    ['restoreControl', ['action', 'actor', 'target', 'option', 'mutationId']],
     ['openLatestMailboxLink', ['action', 'actor', 'option']],
-    ['uploadSyntheticImage', ['action', 'actor', 'target']],
+    ['uploadSyntheticImage', ['action', 'actor', 'target', 'mutationId']],
     ['expectVisible', ['action', 'actor', 'target']],
     ['expectHidden', ['action', 'actor', 'target']],
     ['expectText', ['action', 'actor', 'target', 'value']],
@@ -174,6 +234,9 @@ export function validateCatalog(catalog) {
         if (!Array.isArray(capability.actions) || capability.actions.some((action) => !actions.has(action))) {
             throw new Error(`trusted workflow capability ${workflowId} has invalid actions`);
         }
+        if (capability.mode !== 'readOnly' && !mutationTargetCapabilities.has(workflowId)) {
+            throw new Error(`trusted workflow capability ${workflowId} has no mutation target boundary`);
+        }
     }
     return catalog;
 }
@@ -220,7 +283,7 @@ export function workflowRouteAllowed(workflowId, route, resolved = false) {
     return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
 }
 
-export function assertParentCoverageStepCapability(workflowId, step, phase = 'execution') {
+export function assertParentCoverageStepCapability(workflowId, step, phase = 'execution', defaultActor = '') {
     const capability = workflowCapabilities.get(workflowId);
     if (!capability) throw new Error(`${phase} has no trusted workflow capability for ${workflowId}`);
     const allowedActions = new Set([...baseWorkflowActions, ...capability.actions]);
@@ -235,6 +298,18 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     }
     if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
         throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
+    }
+    if (capability.mode !== 'readOnly' && stateChangingActions.has(step.action)) {
+        const actor = step.actor || defaultActor;
+        const targetName = String(step.target?.name || '');
+        const actorTargetCapability = mutationTargetCapabilities.get(workflowId)?.[actor];
+        if (
+            !actorTargetCapability ||
+            (forbiddenMutationTarget.test(targetName) && workflowId !== 'P37') ||
+            !actorTargetCapability.test(targetName)
+        ) {
+            throw new Error(`${phase} target is outside the trusted ${workflowId}/${actor} mutation capability`);
+        }
     }
 }
 
@@ -287,7 +362,13 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
             throw new Error(`${label} option must be a stable lowercase state key`);
         }
     }
-    assertParentCoverageStepCapability(workflowId, step, phase);
+    if (step.mutationId !== undefined) {
+        assertSafeText(step.mutationId, `${label} mutationId`, 80);
+        if (!/^[a-z][a-z0-9-]*$/.test(step.mutationId)) {
+            throw new Error(`${label} mutationId must be a stable lowercase mutation key`);
+        }
+    }
+    assertParentCoverageStepCapability(workflowId, step, phase, declaredActors[0]);
 }
 
 export function validateContract(contract, catalog, expectedWorkflowId = '') {
@@ -357,6 +438,32 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
         throw new Error('read-only contracts cannot provide cleanupSteps');
     }
     cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId, 'cleanup'));
+    const executionMutationIds = contract.steps
+        .filter((step) => reversibleMutationActions.has(step.action))
+        .map((step) => step.mutationId || '');
+    const cleanupMutationIds = cleanupSteps
+        .filter((step) => reversibleMutationActions.has(step.action))
+        .map((step) => step.mutationId || '');
+    if (capability.mode === 'reversible') {
+        if (
+            executionMutationIds.length === 0 ||
+            executionMutationIds.some((id) => !id) ||
+            cleanupMutationIds.some((id) => !id)
+        ) {
+            throw new Error('reversible mutations must declare stable mutationId values');
+        }
+        const executionIds = new Set(executionMutationIds);
+        const cleanupIds = new Set(cleanupMutationIds);
+        if (
+            executionIds.size !== cleanupIds.size ||
+            [...executionIds].some((id) => !cleanupIds.has(id)) ||
+            [...cleanupIds].some((id) => !executionIds.has(id))
+        ) {
+            throw new Error('every reversible production mutation must have bounded cleanup with the same mutationId');
+        }
+    } else if ([...executionMutationIds, ...cleanupMutationIds].some(Boolean)) {
+        throw new Error('mutationId is valid only for reversible production workflows');
+    }
     const remembered = new Map();
     for (const step of contract.steps.filter(({ action }) => action === 'rememberControl')) {
         const key = `${step.actor || contract.actors[0]}:${step.option}`;
@@ -403,6 +510,47 @@ export function buildSanitizedParentCoverageFailureError(report) {
         ? String(report.signature)
         : 'unavailable';
     return new Error(`Parent coverage ${workflowId} failed; inspect sanitized report signature ${signature}.`);
+}
+
+export function buildParentCoverageOutcome({
+    workflowId,
+    setupSummary = '',
+    productSummary = '',
+    productAction = '',
+    cleanupFailures = [],
+    cleanupRequired = false
+}) {
+    const setupFailed = Boolean(setupSummary);
+    const productFailed = Boolean(productSummary);
+    const cleanupFailed = cleanupFailures.length > 0;
+    const status = setupFailed || productFailed || cleanupFailed ? 'failed' : 'passed';
+    const failureClass = setupFailed
+        ? 'fixture-setup'
+        : productFailed
+            ? 'product-assertion'
+            : cleanupFailed ? 'cleanup-failure' : 'none';
+    const phase = setupFailed ? 'setup' : productFailed ? 'execution' : cleanupFailed ? 'cleanup' : 'complete';
+    const failureAction = setupFailed
+        ? 'setup'
+        : productFailed
+            ? productAction || 'unknown-action'
+            : cleanupFailed
+                ? cleanupFailures.map(({ action }) => action).join('+').slice(0, 180)
+                : 'complete';
+    const summaries = [];
+    if (setupFailed) summaries.push(`Setup: ${setupSummary}`);
+    if (productFailed) summaries.push(`Product: ${productSummary}`);
+    if (cleanupFailed) {
+        summaries.push(`Cleanup: ${cleanupFailures.map(({ action, summary }) => `${action}: ${summary}`).join('; ')}`);
+    }
+    return {
+        status,
+        phase,
+        failureClass,
+        sourceArea: `contract/${workflowId}/${failureAction}`,
+        summary: status === 'passed' ? 'Contract completed successfully.' : summaries.join(' | ').slice(0, 1200),
+        cleanup: setupFailed ? 'not-started' : cleanupRequired ? (cleanupFailed ? 'failed' : 'completed') : 'not-required'
+    };
 }
 
 export function stableFailureSignature({ workflowId, failureClass, sourceArea }) {

@@ -1,15 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     auditParentCoverageMailboxAccess,
-    findLatestParentMailboxActionLink
+    findLatestParentMailboxActionLink,
+    validateParentMailboxActionUrl
 } from '../../scripts/parent-coverage-mailbox.mjs';
 
 function response(body, status = 200) {
     return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-function encodedMessage(text) {
-    return Buffer.from(text).toString('base64url');
+function mailboxMessage(text, {
+    from = 'ALL PLAYS <noreply@mail.allplays.ai>',
+    authentication = 'mx.google.com; dkim=pass header.i=@mail.allplays.ai header.from=mail.allplays.ai'
+} = {}) {
+    return {
+        headers: [
+            { name: 'From', value: from },
+            { name: 'Authentication-Results', value: authentication }
+        ],
+        mimeType: 'text/html',
+        body: { data: Buffer.from(text).toString('base64url') }
+    };
 }
 
 describe('parent coverage protected mailbox boundary', () => {
@@ -18,15 +29,10 @@ describe('parent coverage protected mailbox boundary', () => {
             .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
             .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }] }))
             .mockResolvedValueOnce(response({
-                payload: {
-                    mimeType: 'text/html',
-                    body: {
-                        data: encodedMessage(
-                            '<a href="https://attacker.example/?oobCode=bad">bad</a>' +
-                            '<a href="https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&amp;oobCode=good">verify</a>'
-                        )
-                    }
-                }
+                payload: mailboxMessage(
+                    '<a href="https://attacker.example/?oobCode=bad">bad</a>' +
+                    '<a href="https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&amp;oobCode=good">verify</a>'
+                )
             }));
         const url = await findLatestParentMailboxActionLink({
             action: 'verifyEmail',
@@ -42,6 +48,49 @@ describe('parent coverage protected mailbox boundary', () => {
         expect(url).toContain('oobCode=good');
         expect(url).not.toContain('attacker');
         expect(String(fetchImpl.mock.calls[1][0])).toContain('to%3Afixture%40example.com');
+        expect(String(fetchImpl.mock.calls[1][0])).toContain('from%3Anoreply%40mail.allplays.ai');
+    });
+
+    it('rejects spoofed senders and wrong paths even when their query parameters look valid', async () => {
+        const validLookingLink = 'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=spoofed';
+        const wrongPath = 'https://allplays.ai/app/#/home?mode=verifyEmail&oobCode=wrong-path';
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
+            .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }, { id: 'mail-2' }] }))
+            .mockResolvedValueOnce(response({
+                payload: mailboxMessage(`<a href="${validLookingLink}">verify</a>`, {
+                    from: 'ALL PLAYS <attacker@example.com>',
+                    authentication: 'mx.google.com; dkim=pass header.i=@example.com header.from=example.com'
+                })
+            }))
+            .mockResolvedValueOnce(response({ payload: mailboxMessage(`<a href="${wrongPath}">verify</a>`) }));
+        await expect(findLatestParentMailboxActionLink({
+            action: 'verifyEmail',
+            recipient: 'fixture@example.com',
+            clientId: 'client',
+            clientSecret: 'secret',
+            refreshToken: 'refresh',
+            afterEpoch: 100,
+            maxAttempts: 1,
+            fetchImpl
+        })).rejects.toThrow(/no recent verifyEmail message/);
+    });
+
+    it('accepts only exact post-navigation routes for each mailbox action', () => {
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/reset-password',
+            'resetPassword',
+            { allowConsumed: true }
+        )).not.toThrow();
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household',
+            'invite'
+        )).not.toThrow();
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/home?mode=resetPassword&oobCode=secret',
+            'resetPassword',
+            { allowConsumed: true }
+        )).toThrow(/expected app route/);
     });
 
     it('fails closed when credentials or a matching message are absent', async () => {

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+    buildParentCoverageOutcome,
     buildSanitizedParentCoverageFailureError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
@@ -94,8 +95,8 @@ describe('parent coverage contract boundary', () => {
             actors: ['primary'],
             mutatesProduction: true,
             cleanupRequired: true,
-            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Edit photo' } }],
-            cleanupSteps: [{ action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image' } }]
+            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Photo' }, mutationId: 'profile-photo' }],
+            cleanupSteps: [{ action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image' }, mutationId: 'profile-photo' }]
         });
         expect(() => validateContract(reversible, catalog, 'P13')).toThrow(/cleanup action uploadSyntheticImage is not allowed/);
     });
@@ -159,10 +160,10 @@ describe('parent coverage contract boundary', () => {
             cleanupRequired: true,
             steps: [
                 { action: 'rememberControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name' },
-                { action: 'fill', target: { kind: 'label', name: 'Name' }, value: '{RUN_MARKER}' }
+                { action: 'fill', target: { kind: 'label', name: 'Name' }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
             ],
             cleanupSteps: [
-                { action: 'restoreControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name' }
+                { action: 'restoreControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name', mutationId: 'profile-name' }
             ]
         });
         expect(validateContract(reversible, catalog, 'P12').cleanupSteps).toHaveLength(1);
@@ -171,7 +172,8 @@ describe('parent coverage contract boundary', () => {
             cleanupSteps: [{
                 action: 'restoreControl',
                 target: { kind: 'label', name: 'Name' },
-                option: 'Bad Key'
+                option: 'Bad Key',
+                mutationId: 'profile-name'
             }]
         }, catalog, 'P12')).toThrow(/stable lowercase state key/);
         expect(() => validateContract({
@@ -183,17 +185,53 @@ describe('parent coverage contract boundary', () => {
             cleanupSteps: [{
                 action: 'restoreControl',
                 target: { kind: 'label', name: 'Name' },
-                option: 'different-key'
+                option: 'different-key',
+                mutationId: 'profile-name'
             }]
         }, catalog, 'P12')).toThrow(/exactly match one remembered control/);
         expect(() => validateContract({
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Different field' },
-                option: 'profile-name'
+                target: { kind: 'label', name: 'Phone' },
+                option: 'profile-name',
+                mutationId: 'profile-name'
             }]
         }, catalog, 'P12')).toThrow(/exactly match one remembered control/);
+    });
+
+    it('binds reversible mutations to actor-specific targets and cleanup mutation ids', () => {
+        const reversible = validContract({
+            workflowId: 'P12',
+            title: catalog.workflows[11].title,
+            actors: ['primary'],
+            mutatesProduction: true,
+            cleanupRequired: true,
+            steps: [{
+                action: 'fill',
+                target: { kind: 'label', name: 'Name' },
+                value: '{RUN_MARKER}',
+                mutationId: 'profile-name'
+            }],
+            cleanupSteps: [{
+                action: 'fill',
+                target: { kind: 'label', name: 'Name' },
+                value: 'Restored parent',
+                mutationId: 'profile-name'
+            }]
+        });
+        expect(validateContract(reversible, catalog, 'P12').steps).toHaveLength(1);
+        expect(() => validateContract({
+            ...reversible,
+            steps: [{
+                ...reversible.steps[0],
+                target: { kind: 'role', role: 'button', name: 'Delete account' }
+            }]
+        }, catalog, 'P12')).toThrow(/outside the trusted P12\/primary mutation capability/);
+        expect(() => validateContract({
+            ...reversible,
+            cleanupSteps: [{ ...reversible.cleanupSteps[0], mutationId: 'other-change' }]
+        }, catalog, 'P12')).toThrow(/same mutationId/);
     });
 
     it('rejects routes and actions outside each trusted workflow capability', () => {
@@ -254,5 +292,24 @@ describe('parent coverage contract boundary', () => {
         expect(error.message).toContain('a'.repeat(64));
         expect(error.message).not.toContain(rawUrl);
         expect(error.message).not.toContain('oobCode');
+    });
+
+    it('retains product and cleanup failures while keeping the product regression primary', () => {
+        const outcome = buildParentCoverageOutcome({
+            workflowId: 'P23',
+            productSummary: 'Message did not appear for the peer parent.',
+            productAction: 'expectText',
+            cleanupFailures: [{ action: 'click', summary: 'Synthetic message could not be removed.' }],
+            cleanupRequired: true
+        });
+        expect(outcome).toMatchObject({
+            status: 'failed',
+            phase: 'execution',
+            failureClass: 'product-assertion',
+            sourceArea: 'contract/P23/expectText',
+            cleanup: 'failed'
+        });
+        expect(outcome.summary).toContain('Product: Message did not appear');
+        expect(outcome.summary).toContain('Cleanup: click: Synthetic message could not be removed');
     });
 });

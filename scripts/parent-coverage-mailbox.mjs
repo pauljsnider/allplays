@@ -1,8 +1,15 @@
-const allowedActionHosts = new Set([
+const allowedAllPlaysHosts = new Set([
     'allplays.ai',
-    'www.allplays.ai',
+    'www.allplays.ai'
+]);
+const allowedFirebaseActionHosts = new Set([
     'game-flow-c6311.firebaseapp.com',
     'game-flow-c6311.web.app'
+]);
+const trustedSenderAddresses = new Set([
+    'noreply@mail.allplays.ai',
+    'noreply@allplays.ai',
+    'noreply@game-flow-c6311.firebaseapp.com'
 ]);
 const modeByAction = {
     verifyEmail: 'verifyEmail',
@@ -19,22 +26,89 @@ function flattenParts(payload) {
     return [payload, ...(payload.parts || []).flatMap(flattenParts)];
 }
 
-function extractSafeUrls(message, action) {
+function messageHeaders(message) {
+    const values = new Map();
+    for (const header of message?.payload?.headers || []) {
+        const name = String(header?.name || '').trim().toLowerCase();
+        if (!name) continue;
+        values.set(name, `${values.get(name) || ''} ${String(header?.value || '')}`.trim());
+    }
+    return values;
+}
+
+function trustedMessageSource(message) {
+    const headers = messageHeaders(message);
+    const from = String(headers.get('from') || '').toLowerCase();
+    const sender = from.match(/<?([a-z0-9._%+-]+@[a-z0-9.-]+)>?/)?.[1] || '';
+    if (!trustedSenderAddresses.has(sender)) return false;
+    const senderDomain = sender.split('@')[1];
+    const authentication = `${headers.get('authentication-results') || ''} ${headers.get('arc-authentication-results') || ''}`.toLowerCase();
+    return /(?:dkim|spf)=pass\b/.test(authentication) && authentication.includes(senderDomain);
+}
+
+function readHashRoute(url) {
+    const [route = '', query = ''] = url.hash.replace(/^#/, '').split('?', 2);
+    return { route, params: new URLSearchParams(query) };
+}
+
+export function validateParentMailboxActionUrl(value, action, { allowConsumed = false } = {}) {
     const expectedMode = modeByAction[action];
+    if (!(action in modeByAction)) throw new Error('unsupported mailbox action');
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || url.port || url.username || url.password) {
+        throw new Error('mailbox action URL is not a secure allowlisted destination');
+    }
+    if (allowedFirebaseActionHosts.has(url.hostname)) {
+        if (
+            action === 'invite' ||
+            url.pathname !== '/__/auth/action' ||
+            url.searchParams.get('mode') !== expectedMode ||
+            !url.searchParams.get('oobCode')
+        ) {
+            throw new Error('mailbox action URL does not match the expected Firebase action');
+        }
+        return url.toString();
+    }
+    if (!allowedAllPlaysHosts.has(url.hostname) || !['/app', '/app/'].includes(url.pathname)) {
+        throw new Error('mailbox action URL is outside the exact AllPlays app path');
+    }
+    const { route, params } = readHashRoute(url);
+    if (action === 'invite') {
+        if (
+            route !== '/accept-invite' ||
+            !/^[A-Z0-9]{8}$/.test(String(params.get('code') || '').toUpperCase()) ||
+            !['friend', 'household', 'parent', 'coparent'].includes(String(params.get('type') || '').toLowerCase())
+        ) {
+            throw new Error('mailbox invite URL does not contain an exact supported invite route');
+        }
+        return url.toString();
+    }
+    const consumedRouteAllowed = action === 'verifyEmail'
+        ? ['/reset-password', '/verify-pending', '/auth'].includes(route)
+        : route === '/reset-password';
+    if (!consumedRouteAllowed) throw new Error('mailbox action URL does not match the expected app route');
+    const mode = params.get('mode') || '';
+    const oobCode = params.get('oobCode') || '';
+    if (!allowConsumed || mode || oobCode) {
+        if (mode !== expectedMode || !oobCode) {
+            throw new Error('mailbox action URL is missing the expected action parameters');
+        }
+    }
+    return url.toString();
+}
+
+function extractSafeUrls(message, action) {
     const text = flattenParts(message.payload)
         .filter((part) => ['text/plain', 'text/html'].includes(part.mimeType))
         .map((part) => decodeBase64Url(part.body?.data))
         .join('\n')
         .replaceAll('&amp;', '&');
     const candidates = text.match(/https:\/\/[^\s<>"']+/g) || [];
-    return candidates.filter((candidate) => {
+    return candidates.flatMap((candidate) => {
         try {
-            const url = new URL(candidate.replace(/[),.;]+$/, ''));
-            if (!allowedActionHosts.has(url.hostname)) return false;
-            if (!expectedMode) return /invite|access|household/i.test(`${url.pathname}${url.search}${url.hash}`);
-            return url.searchParams.get('mode') === expectedMode || url.hash.includes(`mode=${expectedMode}`);
+            return [validateParentMailboxActionUrl(candidate.replace(/[),.;]+$/, ''), action)];
         } catch {
-            return false;
+            return [];
         }
     });
 }
@@ -94,7 +168,8 @@ export async function findLatestParentMailboxActionLink({
         throw new Error('protected parent census mailbox configuration is incomplete');
     }
     const accessToken = await authorizeMailbox({ clientId, clientSecret, refreshToken, fetchImpl });
-    const query = `to:${recipient} after:${Math.max(0, Number(afterEpoch) || 0)}`;
+    const senderQuery = [...trustedSenderAddresses].map((sender) => `from:${sender}`).join(' ');
+    const query = `to:${recipient} after:${Math.max(0, Number(afterEpoch) || 0)} {${senderQuery}}`;
     const headers = { authorization: `Bearer ${accessToken}` };
     const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
     listUrl.searchParams.set('q', query);
@@ -105,6 +180,7 @@ export async function findLatestParentMailboxActionLink({
             const messageUrl = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(row.id)}`);
             messageUrl.searchParams.set('format', 'full');
             const message = await jsonResponse(await fetchImpl(messageUrl, { headers }), 'mailbox message');
+            if (!trustedMessageSource(message)) continue;
             const links = extractSafeUrls(message, action);
             if (links.length > 0) return links[0].replace(/[),.;]+$/, '');
         }

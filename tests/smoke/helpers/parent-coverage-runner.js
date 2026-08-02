@@ -6,7 +6,10 @@ import {
     redactParentCoverageValue,
     workflowRouteAllowed
 } from '../../../scripts/parent-coverage-contract.mjs';
-import { findLatestParentMailboxActionLink } from '../../../scripts/parent-coverage-mailbox.mjs';
+import {
+    findLatestParentMailboxActionLink,
+    validateParentMailboxActionUrl
+} from '../../../scripts/parent-coverage-mailbox.mjs';
 import {
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
@@ -156,7 +159,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
     }
 
     async function executeStep(step, phase = 'execution') {
-        assertParentCoverageStepCapability(contract.workflowId, step, phase);
+        assertParentCoverageStepCapability(contract.workflowId, step, phase, contract.actors[0]);
         const actor = step.actor || contract.actors[0];
         const runtime = await actorRuntime(actor);
         const { page } = runtime;
@@ -196,10 +199,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
                 afterEpoch: mailboxAfterEpoch
             });
             await page.goto(actionUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-            const current = new URL(page.url());
-            if (!allowedMailboxActionHost(current.hostname)) {
-                throw new Error('mailbox action left the allowlisted AllPlays authentication hosts');
-            }
+            validateParentMailboxActionUrl(page.url(), step.option, { allowConsumed: true });
             return;
         }
         if (step.action === 'logout') {
@@ -321,13 +321,4 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             return redactParentCoverageValue(value, secrets);
         }
     };
-}
-
-function allowedMailboxActionHost(hostname) {
-    return [
-        'allplays.ai',
-        'www.allplays.ai',
-        'game-flow-c6311.firebaseapp.com',
-        'game-flow-c6311.web.app'
-    ].includes(hostname);
 }

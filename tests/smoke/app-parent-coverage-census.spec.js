@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import {
+    buildParentCoverageOutcome,
     buildSanitizedParentCoverageFailureError,
     REPORT_SCHEMA_VERSION,
     readValidatedCatalog,
@@ -65,37 +66,21 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         await runtime?.close();
     }
 
-    const cleanupError = cleanupFailures[0]?.error || null;
-    const error = cleanupError || setupError || productError;
-    let failureClass = 'none';
-    if (cleanupError) failureClass = 'cleanup-failure';
-    else if (setupError) failureClass = 'fixture-setup';
-    else if (productError) failureClass = 'product-assertion';
-    const reportPhase = cleanupError ? 'cleanup' : setupError ? 'setup' : productError ? 'execution' : 'complete';
-    const failureAction = cleanupError
-        ? cleanupFailures.map(({ action }) => action).join('+').slice(0, 180)
-        : setupError
-            ? 'setup'
-            : productError
-                ? productAction
-                : 'complete';
-    const sourceArea = `contract/${contract.workflowId}/${failureAction}`;
     const redact = runtime
         ? (value) => runtime.redact(value)
         : (value) => redactParentCoverageValue(value, getParentCoverageSecrets());
-    const cleanup = setupError
-        ? 'not-started'
-        : contract.cleanupRequired
-            ? (cleanupError ? 'failed' : 'completed')
-            : 'not-required';
-    const failureSummary = cleanupError
-        ? cleanupFailures
-            .map(({ action, error: cleanupFailure }) => `${action}: ${redact(cleanupFailure?.message || cleanupFailure)}`)
-            .join('; ')
-            .slice(0, 1200)
-        : error
-            ? redact(error?.message || error)
-            : 'Contract completed successfully.';
+    const sanitizedCleanupFailures = cleanupFailures.map(({ action, error: cleanupFailure }) => ({
+        action,
+        summary: redact(cleanupFailure?.message || cleanupFailure)
+    }));
+    const outcome = buildParentCoverageOutcome({
+        workflowId: contract.workflowId,
+        setupSummary: setupError ? redact(setupError?.message || setupError) : '',
+        productSummary: productError ? redact(productError?.message || productError) : '',
+        productAction,
+        cleanupFailures: sanitizedCleanupFailures,
+        cleanupRequired: contract.cleanupRequired
+    });
     const report = {
         schemaVersion: REPORT_SCHEMA_VERSION,
         runId: String(process.env.GITHUB_RUN_ID || process.env.PARENT_CENSUS_RUN_MARKER || 'local'),
@@ -106,17 +91,15 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         deployedSha: String(process.env.PARENT_CENSUS_DEPLOYED_SHA || ''),
         startedAt,
         completedAt: new Date().toISOString(),
-        status: error ? 'failed' : 'passed',
-        phase: reportPhase,
-        failureClass,
-        sourceArea,
-        signature: error ? stableFailureSignature({ workflowId: contract.workflowId, failureClass, sourceArea }) : '',
-        summary: failureSummary,
-        cleanup,
-        cleanupFailures: cleanupFailures.map(({ action, error: cleanupFailure }) => ({
-            action,
-            summary: redact(cleanupFailure?.message || cleanupFailure)
-        }))
+        ...outcome,
+        signature: outcome.status === 'failed'
+            ? stableFailureSignature({
+                workflowId: contract.workflowId,
+                failureClass: outcome.failureClass,
+                sourceArea: outcome.sourceArea
+            })
+            : '',
+        cleanupFailures: sanitizedCleanupFailures
     };
     await mkdir(path.dirname(reportPath), { recursive: true });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
@@ -124,5 +107,5 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         body: Buffer.from(JSON.stringify(report)),
         contentType: 'application/json'
     });
-    if (error) throw buildSanitizedParentCoverageFailureError(report);
+    if (outcome.status === 'failed') throw buildSanitizedParentCoverageFailureError(report);
 });
