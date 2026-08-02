@@ -236,14 +236,14 @@ test('staff smoke writes are deterministic and removed after validation', async 
             });
 
             const messageRow = page.locator('.message-row-measure').filter({ hasText: chatText });
-            await messageRow.getByRole('button', { name: /^Open actions for / }).click();
+            await messageRow.getByRole('button', { name: /^Open message actions for / }).click();
             await messageRow.getByRole('button', { name: 'Edit' }).click();
             const editDialog = page.getByRole('dialog', { name: 'Edit message' });
             await editDialog.locator('textarea').fill(editedChatText);
             await editDialog.getByRole('button', { name: 'Save' }).click();
             await expect(page.getByText(editedChatText, { exact: true })).toBeVisible({ timeout: 20_000 });
             const editedRow = page.locator('.message-row-measure').filter({ hasText: editedChatText });
-            await editedRow.getByRole('button', { name: /^Open actions for / }).click();
+            await editedRow.getByRole('button', { name: /^Open message actions for / }).click();
             page.once('dialog', (dialog) => dialog.accept());
             await editedRow.getByRole('button', { name: 'Delete' }).click();
             await expect(editedRow.getByText('Message removed')).toBeVisible({ timeout: 20_000 });

@@ -1072,7 +1072,17 @@ test('team chat scopes subscription, last-read, send, and reaction operations to
         text: 'Staff follow-up'
     });
 
-    await page.locator('#messages-container button').filter({ hasText: '👍' }).click();
+    const staffMessage = page.locator('[data-message-id="staff-message"]');
+    await expect(staffMessage.getByRole('button')).toHaveCount(2);
+    await expect.poll(() => staffMessage.locator('[data-message-actions-footer="true"]').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
+    await staffMessage.getByRole('button', { name: /Open message actions for/i }).click();
+    await expect(staffMessage.getByRole('group', { name: /Message actions for/i })).toBeVisible();
+    await expect.poll(() => staffMessage.getByRole('group', { name: /Message actions for/i }).evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const containerBounds = document.getElementById('messages-container').getBoundingClientRect();
+        return bounds.left >= containerBounds.left && bounds.right <= containerBounds.right;
+    })).toBe(true);
+    await staffMessage.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.reactions.at(-1))).toEqual({
         teamId: 'team-1',
         messageId: 'staff-message',
