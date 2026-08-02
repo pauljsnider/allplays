@@ -863,6 +863,14 @@ jobs:
           retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
           retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
           retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+          # The Rules API compiled this exact compatibility source after the
+          # f87957ae2 deployment verified the immutable create response. The
+          # service later returned compiler-canonicalized source (including
+          # renamed helper functions), so preserve this one exact recovery
+          # proof while all newly created rulesets carry their source digest.
+          certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
+          certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
+          certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
 
           if ! jq -e '
             .firestore.rules == "firestore.rules"
@@ -880,9 +888,70 @@ jobs:
             exit 1
           fi
 
+          firestore_source_sha256() {
+            sha256sum "$1" | awk '{print $1}'
+          }
+
+          firestore_source_fingerprint() {
+            openssl dgst -sha256 -binary "$1" | base64 | tr -d '\n'
+          }
+
+          firestore_rules_api_error() {
+            local operation="$1"
+            local curl_status="$2"
+            local http_status="$3"
+            local response_file="$4"
+            local api_status api_message
+            api_status="$(jq -r '.error.status // "unknown"' "$response_file" 2>/dev/null || true)"
+            api_message="$(jq -r '.error.message // "no structured error response"' "$response_file" 2>/dev/null || true)"
+            echo "${operation} failed (curl=${curl_status}, HTTP=${http_status}, status=${api_status}): ${api_message}" >&2
+          }
+
+          firestore_ruleset_source_matches() {
+            local ruleset_json="$1"
+            local ruleset_name="$2"
+            local expected_rules_source="$3"
+            local remote_rules_b64 remote_fingerprint local_rules_b64 local_fingerprint
+            local remote_rules_sha256 local_rules_sha256
+            remote_rules_b64="$(
+              jq -er '
+                (.source.files // [])
+                | if length == 1 and .[0].name == "firestore.rules"
+                  then (.[0].content | @base64)
+                  else error("expected exactly one firestore.rules source file")
+                  end
+              ' "$ruleset_json" 2>/dev/null || true
+            )"
+            remote_fingerprint="$(
+              jq -er '
+                (.source.files // [])
+                | if length == 1 and .[0].name == "firestore.rules"
+                  then (.[0].fingerprint // "")
+                  else error("expected exactly one firestore.rules source file")
+                  end
+              ' "$ruleset_json" 2>/dev/null || true
+            )"
+            [[ -n "$remote_rules_b64" ]] || return 2
+            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
+            local_fingerprint="$(firestore_source_fingerprint "$expected_rules_source")"
+            if [[ "$remote_rules_b64" == "$local_rules_b64" ]] \
+              || [[ -n "$remote_fingerprint" && "$remote_fingerprint" == "$local_fingerprint" ]]; then
+              return 0
+            fi
+
+            # One immutable ruleset predates source fingerprints. Accept it
+            # only when both the expected repository source and the complete
+            # compiler-canonicalized remote source match their pinned digests.
+            [[ "$ruleset_name" == "$certificate_compatibility_recovery_ruleset" ]] || return 1
+            local_rules_sha256="$(firestore_source_sha256 "$expected_rules_source")"
+            [[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]] || return 1
+            remote_rules_sha256="$(printf '%s' "$remote_rules_b64" | base64 --decode | sha256sum | awk '{print $1}')"
+            [[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]
+          }
+
           verify_active_firestore_rules() {
             local expected_rules_source="${1:-$final_firestore_rules}"
-            local release_json ruleset_json ruleset_name local_rules_b64 active_rules_b64
+            local release_json ruleset_json ruleset_name
             release_json="$(mktemp "$RUNNER_TEMP/firestore-release.XXXXXX.json")"
             ruleset_json="$(mktemp "$RUNNER_TEMP/firestore-ruleset.XXXXXX.json")"
 
@@ -912,30 +981,23 @@ jobs:
               return 2
             fi
 
-            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
-            active_rules_b64="$(
-              jq -er '
-                (.source.files // [])
-                | if length == 1 and .[0].name == "firestore.rules"
-                  then (.[0].content | @base64)
-                  else error("expected exactly one firestore.rules source file")
-                  end
-              ' "$ruleset_json" 2>/dev/null || true
-            )"
-            rm -f "$release_json" "$ruleset_json"
-            if [[ -z "$active_rules_b64" ]]; then
-              return 2
+            local source_match_status
+            if firestore_ruleset_source_matches "$ruleset_json" "$ruleset_name" "$expected_rules_source"; then
+              rm -f "$release_json" "$ruleset_json"
+              return 0
+            else
+              source_match_status="$?"
             fi
-            [[ "$active_rules_b64" == "$local_rules_b64" ]]
+            rm -f "$release_json" "$ruleset_json"
+            return "$source_match_status"
           }
 
           find_recent_matching_firestore_ruleset() {
             local expected_rules_source="${1:-$final_firestore_rules}"
-            local list_file ruleset_file ruleset_name local_rules_b64 candidate_rules_b64
+            local list_file ruleset_file ruleset_name
             local attempt curl_status http_status list_succeeded
             list_file="$(mktemp "$RUNNER_TEMP/firestore-rulesets.XXXXXX.json")"
             ruleset_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-candidate.XXXXXX.json")"
-            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
             list_succeeded="false"
 
             for attempt in 1 2 3; do
@@ -996,16 +1058,7 @@ jobs:
               if (( curl_status != 0 )) || [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
                 continue
               fi
-              candidate_rules_b64="$(
-                jq -er '
-                  (.source.files // [])
-                  | if length == 1 and .[0].name == "firestore.rules"
-                    then (.[0].content | @base64)
-                    else error("expected exactly one firestore.rules source file")
-                    end
-                ' "$ruleset_file" 2>/dev/null || true
-              )"
-              if [[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]; then
+              if firestore_ruleset_source_matches "$ruleset_file" "$ruleset_name" "$expected_rules_source"; then
                 rm -f "$list_file" "$ruleset_file"
                 printf '%s\n' "$ruleset_name"
                 return 0
@@ -1026,18 +1079,22 @@ jobs:
           create_firestore_ruleset_with_retry() {
             local expected_rules_source="${1:-$final_firestore_rules}"
             local payload_file response_file ruleset_name local_rules_b64 created_rules_b64
+            local local_fingerprint created_fingerprint
             local attempt curl_status http_status retry_delay_seconds
             payload_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create.XXXXXX.json")"
             response_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create-response.XXXXXX.json")"
             local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
+            local_fingerprint="$(firestore_source_fingerprint "$expected_rules_source")"
             jq -n \
               --rawfile rules_source "$expected_rules_source" \
+              --arg rules_fingerprint "$local_fingerprint" \
               '{
                 source:{
                   files:[
                     {
                       name:"firestore.rules",
-                      content:$rules_source
+                      content:$rules_source,
+                      fingerprint:$rules_fingerprint
                     }
                   ]
                 }
@@ -1071,8 +1128,18 @@ jobs:
                       end
                   ' "$response_file" 2>/dev/null || true
                 )"
+                created_fingerprint="$(
+                  jq -er '
+                    (.source.files // [])
+                    | if length == 1 and .[0].name == "firestore.rules"
+                      then (.[0].fingerprint // "")
+                      else error("expected exactly one firestore.rules source file")
+                      end
+                  ' "$response_file" 2>/dev/null || true
+                )"
                 if [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] \
-                  && [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]; then
+                  && [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]] \
+                  && [[ "$created_fingerprint" == "$local_fingerprint" ]]; then
                   rm -f "$payload_file" "$response_file"
                   printf '%s\n' "$ruleset_name"
                   return 0
@@ -1081,6 +1148,7 @@ jobs:
                 break
               fi
 
+              firestore_rules_api_error "Firestore ruleset creation" "$curl_status" "$http_status" "$response_file"
               if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|429|500|502|503|504)$ ]]; then
                 echo "Firestore ruleset creation failed with non-transient HTTP ${http_status}; not retrying." >&2
                 break
@@ -1111,6 +1179,27 @@ jobs:
             # Recheck exact source before failing; never create or activate by name alone.
             ruleset_name="$(find_recent_matching_firestore_ruleset "$expected_rules_source")" || return 1
             printf '%s\n' "$ruleset_name"
+          }
+
+          verify_active_firestore_release_name() {
+            local expected_ruleset_name="$1"
+            local release_file
+            release_file="$(mktemp "$RUNNER_TEMP/firestore-release-verification.XXXXXX.json")"
+            if ! curl --silent --show-error --fail \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header "Authorization: Bearer ${GOOGLE_OAUTH_ACCESS_TOKEN}" \
+              "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore" \
+              > "$release_file"; then
+              rm -f "$release_file"
+              return 1
+            fi
+            if [[ "$(jq -r '.rulesetName // ""' "$release_file")" == "$expected_ruleset_name" ]]; then
+              rm -f "$release_file"
+              return 0
+            fi
+            rm -f "$release_file"
+            return 1
           }
 
           activate_firestore_ruleset_with_retry() {
@@ -1152,7 +1241,7 @@ jobs:
                 && [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
                 && [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]; then
                 for verify_attempt in 1 2 3 4 5; do
-                  if verify_active_firestore_rules "$expected_rules_source"; then
+                  if verify_active_firestore_release_name "$ruleset_name"; then
                     rm -f "$payload_file" "$response_file"
                     return 0
                   fi
@@ -1163,6 +1252,7 @@ jobs:
                 break
               fi
 
+              firestore_rules_api_error "Firestore release update" "$curl_status" "$http_status" "$response_file"
               if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|409|429|500|502|503|504)$ ]]; then
                 break
               fi
