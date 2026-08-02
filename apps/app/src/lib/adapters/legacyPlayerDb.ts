@@ -167,8 +167,8 @@ export async function deleteLegacyImageUpload(path: string) {
     return await Promise.resolve(legacyDeleteLegacyImageUpload(path));
 }
 
-export async function uploadPlayerPhoto(file: File, options: { returnUpload?: boolean; teamId?: string; playerId?: string } = {}): Promise<string | { url: string; path: string }> {
-    return await Promise.resolve(legacyUploadPlayerPhoto(file, options));
+export async function uploadPlayerPhoto(file: File, options: { returnUpload?: true; teamId?: string; playerId?: string } = {}): Promise<{ url: string; path: string }> {
+    return await Promise.resolve(legacyUploadPlayerPhoto(file, { ...options, returnUpload: true })) as { url: string; path: string };
 }
 
 export async function inviteCoParentToAthlete(teamId: string, playerId: string, email: string): Promise<LegacyCoParentInviteResult> {

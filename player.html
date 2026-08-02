@@ -1335,8 +1335,8 @@
                         teamId: currentTeamId,
                         playerId: currentPlayer.id
                     });
-                    photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
-                    newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
+                    photoUrl = uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = uploadedPhoto.path;
                     photoPath = newlyUploadedPlayerPhotoPath || null;
                 }
 

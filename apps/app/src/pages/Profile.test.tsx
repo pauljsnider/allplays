@@ -42,8 +42,12 @@ const profileServiceMocks = vi.hoisted(() => ({
 
 const profilePhotoServiceMocks = vi.hoisted(() => ({
   acquireProfilePhoto: vi.fn(),
+  deleteProfilePhoto: vi.fn(async () => undefined),
   normalizeProfilePhoto: vi.fn(async (file: File) => file),
-  uploadProfilePhoto: vi.fn(async () => 'https://example.test/profile-photo.jpg')
+  uploadProfilePhoto: vi.fn(async () => ({
+    url: 'https://example.test/profile-photo.jpg',
+    path: 'profile-photos/users/user-1/new.jpg'
+  }))
 }));
 
 const pushServiceMocks = vi.hoisted(() => ({
@@ -195,6 +199,21 @@ describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     shellLayoutMocks.isNative = false;
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      fullName: 'Pat Parent',
+      phone: '555-0100',
+      photoUrl: '',
+      signInMethod: 'emailLink',
+      hasPassword: false,
+      updatedAt: { seconds: 1717200000 }
+    });
+    profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
+    profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
+    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue({
+      url: 'https://example.test/profile-photo.jpg',
+      path: 'profile-photos/users/user-1/new.jpg'
+    });
+    profilePhotoServiceMocks.deleteProfilePhoto.mockResolvedValue(undefined);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
@@ -449,7 +468,7 @@ describe('Profile', () => {
     expect(await screen.findByText('Profile saved.')).toBeTruthy();
   });
 
-  it('reuses an uploaded profile photo when the document save is retried', async () => {
+  it('deletes an unreferenced upload before retrying a rejected profile document save', async () => {
     profileServiceMocks.saveProfileDocument
       .mockRejectedValueOnce(new Error('permission-denied'))
       .mockResolvedValueOnce(undefined);
@@ -472,12 +491,65 @@ describe('Profile', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     expect(await screen.findByText('Upload reached Firebase, but this account does not have permission to save the image.')).toBeTruthy();
     expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).toHaveBeenCalledWith('profile-photos/users/user-1/new.jpg');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     expect(await screen.findByText('Profile saved.')).toBeTruthy();
-    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(2);
     expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists cleanup paths and removes only the previous committed profile image', async () => {
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: {
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/old.jpg',
+        photoPath: 'profile-photos/users/user-1/old.jpg'
+      },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: { files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })] }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      photoUrl: 'https://example.test/profile-photo.jpg',
+      photoPath: 'profile-photos/users/user-1/new.jpg'
+    })));
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).toHaveBeenCalledWith('profile-photos/users/user-1/old.jpg');
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalledWith('profile-photos/users/user-1/new.jpg');
+  });
+
+  it('preserves both profile image objects when the document commit cannot be determined', async () => {
+    profileServiceMocks.saveProfileDocument.mockRejectedValueOnce(new Error('deadline-exceeded'));
+    profileServiceMocks.loadProfileDocument.mockRejectedValueOnce(new Error('offline'));
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: {
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/old.jpg',
+        photoPath: 'profile-photos/users/user-1/old.jpg'
+      },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: { files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })] }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('The profile save status is unknown. The new photo was preserved; refresh before retrying.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalled();
   });
 
   it('reports an upload permission failure as Storage failure before profile persistence', async () => {

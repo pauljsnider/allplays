@@ -897,8 +897,8 @@ export async function updateParentPlayerEditableProfile({
       nativePhotoPath = uploaded.path;
     } else {
       const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true, teamId, playerId });
-      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
-      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+      photoUrl = uploaded.url;
+      webPhotoPath = uploaded.path;
     }
   }
 
@@ -1046,8 +1046,8 @@ export async function saveStaffPlayerRosterDetails({
       payload.photoPath = uploaded.path;
     } else {
       const uploaded = await uploadPlayerPhoto(photoFile, { returnUpload: true, teamId, playerId });
-      payload.photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
-      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+      payload.photoUrl = uploaded.url;
+      webPhotoPath = uploaded.path;
       payload.photoPath = webPhotoPath || null;
     }
   } else if (removePhoto && (currentPhotoUrl || currentPhotoPath)) {

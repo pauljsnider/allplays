@@ -13,8 +13,15 @@ describe('legacy profile photo save contract', () => {
         expect(handler).not.toContain('email: currentUser.email');
     });
 
-    it('retains the completed upload for a metadata-save retry instead of uploading it twice', () => {
+    it('persists cleanup paths and reconciles ambiguous profile saves before deleting either object', () => {
         expect(source).toContain("uploadUserPhoto(fileInput.files[0], currentUser.uid, { returnUpload: true })");
+        expect(source).toContain('currentPhotoPath = uploadedPhoto.path;');
+        expect(source).toMatch(/currentPhotoUrl = null;\s*currentPhotoPath = '';/);
+        expect(source).toContain('photoPath: currentPhotoPath || null');
+        expect(source).toContain('const authoritativeProfile = await getUserProfile(currentUser.uid).catch(() => null);');
+        expect(source).toContain('await deleteLegacyImageUpload(newlyUploadedPhotoPath).catch(() => undefined);');
+        expect(source).toContain('await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);');
+        expect(source).toContain('Save status unknown. The uploaded photo was preserved; refresh before retrying.');
         expect(source).toContain('photoChanged = false;');
         expect(source).toContain("fileInput.value = '';");
     });

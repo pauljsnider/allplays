@@ -2,6 +2,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const guidance = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
+const pathAwareUploadConsumers = [
+    '../../player.html',
+    '../../edit-roster.html',
+    '../../apps/app/src/lib/statsheetImportService.ts',
+    '../../apps/app/src/lib/playerService.ts',
+    '../../apps/app/src/lib/teamDetailService.ts',
+    '../../apps/app/src/lib/nativeStorageUpload.ts'
+].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'));
 
 describe('agent regression guidance', () => {
     it('binds sensitive-state migrations to every reader sanitizer container', () => {
@@ -20,5 +28,11 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('search all file inputs, native camera acquisition, direct `uploadBytes`/resumable calls, and `imageStorage` imports');
         expect(guidance).toContain('including certificate assets and signatures');
         expect(guidance).toContain('no production upload may hard-require its anonymous auth');
+        expect(guidance).toContain('Every upload helper must return both the display URL and exact cleanup path');
+        expect(guidance).toContain('every adapter, native wrapper, normalizer, persisted nested object, and test mock must preserve that object');
+        expect(guidance).toContain('never narrow it back to a URL string or retain a compatibility branch that accepts a string-only success');
+        pathAwareUploadConsumers.forEach((source) => {
+            expect(source).not.toMatch(/typeof\s+uploaded(?:Photo)?\s*===\s*['"]string['"]/);
+        });
     });
 });

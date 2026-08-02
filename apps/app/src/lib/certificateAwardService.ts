@@ -254,7 +254,7 @@ export function buildCertificateAwardPayloadForApp({
     footerUrl: shared.footerUrl || '',
     framePurchaseLink: String(shared.framePurchaseLink || '').trim(),
     fonts: shared.fonts || null,
-    signers: normalizeSigners(shared.signers),
+    signers: normalizeSigners(shared.signers).map(({ signatureImagePath: _signatureImagePath, ...signer }: Record<string, any>) => signer),
     foregroundImageRef: shared.foregroundImageRef || null,
     backgroundImageRef: shared.backgroundImageRef || null,
     backgroundOpacity: shared.backgroundOpacity,

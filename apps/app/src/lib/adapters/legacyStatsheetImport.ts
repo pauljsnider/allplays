@@ -14,7 +14,13 @@ export const getConfigs = legacyGetConfigs as (...args: any[]) => Promise<any>
 export const getGame = legacyGetGame as (...args: any[]) => Promise<any>
 export const getPlayers = legacyGetPlayers as (...args: any[]) => Promise<any>
 export const getTeam = legacyGetTeam as (...args: any[]) => Promise<any>
-export const uploadStatSheetPhoto = legacyUploadStatSheetPhoto as (...args: any[]) => Promise<any>
+export function uploadStatSheetPhoto(
+  teamId: string,
+  file: File,
+  options: { returnUpload?: true } = {}
+): Promise<{ url: string; path: string; storage?: 'image' | 'primary' }> {
+  return Promise.resolve(legacyUploadStatSheetPhoto(teamId, file, { ...options, returnUpload: true })) as Promise<{ url: string; path: string; storage?: 'image' | 'primary' }>
+}
 export const deleteUploadedMediaObjects = legacyDeleteUploadedMediaObjects as (...args: any[]) => Promise<any>
 export const collection = legacyCollection as (...args: any[]) => any
 export const db: unknown = legacyDb

@@ -244,11 +244,18 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=24');
+        expect(html).toContain('./js/certificates/studio.js?v=25');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
+        expect(studio).toContain("from './signers.js?v=2'");
         expect(studio).toContain("from '../db.js?v=146'");
+        expect(studio).toContain("import('./assets.js?v=5')");
+        expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
+        expect(studio).toContain(".map(({ signatureImagePath, ...signer }) => signer)");
+        expect(studio).toContain('await persistCertificateDefaults();');
+        expect(studio).toContain('await cleanupUnreferencedSignatureImages();');
+        expect(studio).toContain('Both images were preserved; refresh before retrying.');
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
@@ -297,7 +304,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain("import('./assets.js?v=4')");
+        expect(studio).toContain("import('./assets.js?v=5')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');

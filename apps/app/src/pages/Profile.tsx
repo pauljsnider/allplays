@@ -170,6 +170,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoSelectionIdRef = useRef(0);
   const photoFileRef = useRef<File | null>(null);
   const photoUrlRef = useRef('');
+  const photoPathRef = useRef('');
   const photoChangedRef = useRef(false);
   const selectedTeamIdRef = useRef('');
   const notificationPreferenceDraftsByTeamIdRef = useRef<Record<string, NotificationPreferences>>({});
@@ -401,6 +402,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         setFullName(loadedProfile.fullName || user.displayName || '');
         setPhone(loadedProfile.phone || '');
         photoUrlRef.current = loadedProfile.photoUrl || '';
+        photoPathRef.current = loadedProfile.photoPath || '';
         photoFileRef.current = null;
         photoChangedRef.current = false;
         setPhotoUrl(loadedProfile.photoUrl || '');
@@ -791,24 +793,65 @@ export function Profile({ auth }: { auth: AuthState }) {
       const selectedPhotoFile = photoFileRef.current;
       const selectedPhotoChanged = photoChangedRef.current;
       let nextPhotoUrl = photoUrlRef.current || '';
+      const previousPhotoPath = photoPathRef.current || '';
+      let nextPhotoPath = previousPhotoPath;
+      let newlyUploadedPhotoPath = '';
       if (selectedPhotoChanged && selectedPhotoFile) {
         saveStage = 'upload';
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
         const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
-        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile, user.uid);
+        const upload = await uploadProfilePhoto(selectedPhotoFile, user.uid);
+        nextPhotoUrl = upload.url;
+        nextPhotoPath = upload.path;
+        newlyUploadedPhotoPath = nextPhotoPath;
         // Keep the completed upload available if the profile document save fails.
         // A retry should attach this object instead of uploading a duplicate.
         photoUrlRef.current = nextPhotoUrl;
+        photoPathRef.current = nextPhotoPath;
         photoFileRef.current = null;
         setPhotoFile(null);
       }
 
+      if (selectedPhotoChanged && !selectedPhotoFile) {
+        nextPhotoPath = '';
+      }
+
       saveStage = 'document';
-      await saveProfileDocument(user.uid, {
+      const nextProfileWrite = {
         fullName: trimmedFullName,
         phone: trimmedPhone,
-        photoUrl: nextPhotoUrl || null
-      });
+        photoUrl: nextPhotoUrl || null,
+        ...((selectedPhotoChanged || nextPhotoPath) ? { photoPath: nextPhotoPath || null } : {})
+      };
+      try {
+        await saveProfileDocument(user.uid, nextProfileWrite);
+      } catch (documentError) {
+        const authoritativeProfile = await loadProfileDocument(user.uid).catch(() => null);
+        if (!authoritativeProfile) {
+          setProfileStatus({
+            message: 'The profile save status is unknown. The new photo was preserved; refresh before retrying.',
+            tone: 'error'
+          });
+          return;
+        }
+        const committed = String(authoritativeProfile.photoUrl || '') === nextPhotoUrl
+          && String(authoritativeProfile.photoPath || '') === nextPhotoPath;
+        if (!committed) {
+          if (newlyUploadedPhotoPath) {
+            const { deleteProfilePhoto } = await import('../lib/profilePhotoService');
+            await deleteProfilePhoto(newlyUploadedPhotoPath).catch(() => undefined);
+          }
+          photoUrlRef.current = authoritativeProfile.photoUrl || '';
+          photoPathRef.current = authoritativeProfile.photoPath || '';
+          photoFileRef.current = selectedPhotoFile;
+          throw documentError;
+        }
+      }
+
+      if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {
+        const { deleteProfilePhoto } = await import('../lib/profilePhotoService');
+        await deleteProfilePhoto(previousPhotoPath).catch(() => undefined);
+      }
 
       const nextProfile: ProfileDocument = {
         ...profile,
@@ -817,11 +860,13 @@ export function Profile({ auth }: { auth: AuthState }) {
         displayName: trimmedFullName,
         phone: trimmedPhone,
         photoUrl: nextPhotoUrl || '',
+        photoPath: nextPhotoPath || null,
         updatedAt: new Date()
       };
       revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
       photoUrlRef.current = nextProfile.photoUrl || nextPhotoUrl || '';
+      photoPathRef.current = nextProfile.photoPath || nextPhotoPath || '';
       photoFileRef.current = null;
       photoChangedRef.current = false;
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');

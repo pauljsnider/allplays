@@ -26,6 +26,7 @@ const profileServiceMocks = vi.hoisted(() => ({
 
 const profilePhotoServiceMocks = vi.hoisted(() => ({
   acquireProfilePhoto: vi.fn(),
+  deleteProfilePhoto: vi.fn(),
   normalizeProfilePhoto: vi.fn(),
   uploadProfilePhoto: vi.fn()
 }));
@@ -183,7 +184,10 @@ describe('Profile invites', () => {
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
     profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
-    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue({
+      url: 'https://example.test/avatar.png',
+      path: 'profile-photos/users/user-1/avatar.png'
+    });
     profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.createProfileAccessCode.mockResolvedValue('NEWMVP42');
     profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([

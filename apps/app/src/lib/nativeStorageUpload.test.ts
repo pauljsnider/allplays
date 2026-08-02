@@ -58,7 +58,7 @@ describe('native primary Storage profile uploads', () => {
   it('uploads the signed-in user photo to primary Storage with native auth and App Check', async () => {
     const file = new File(['photo'], 'My photo.jpg', { type: 'image/jpeg' });
 
-    const url = await uploadNativeUserProfilePhoto(file, 'user-1');
+    const upload = await uploadNativeUserProfilePhoto(file, 'user-1');
 
     const expectedPath = 'profile-photos/users/user-1/12345_profile-photo.jpg';
     const expectedRequestUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o?uploadType=media&name=${encodeURIComponent(expectedPath)}`;
@@ -76,7 +76,13 @@ describe('native primary Storage profile uploads', () => {
       }),
       signal: expect.any(AbortSignal)
     }));
-    expect(url).toContain('/b/primary-bucket.example/o/stored-path?alt=media&token=download-token');
+    expect(upload).toMatchObject({
+      path: 'stored-path',
+      userId: 'user-1',
+      mimeType: 'image/jpeg',
+      sizeBytes: file.size
+    });
+    expect(upload.url).toContain('/b/primary-bucket.example/o/stored-path?alt=media&token=download-token');
   });
 
   it('rejects an own-profile upload when the requested user differs from native auth', async () => {
@@ -88,16 +94,41 @@ describe('native primary Storage profile uploads', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('attempts cleanup at the reserved profile path when a native upload response fails', async () => {
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: 'backend unavailable' } })
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: async () => ({})
+      } as Response);
+
+    await expect(uploadNativeUserProfilePhoto(file, 'user-1')).rejects.toThrow('backend unavailable');
+
+    const expectedPath = 'profile-photos/users/user-1/12345_profile-photo.jpg';
+    const cleanupUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(expectedPath)}`;
+    expect(fetch).toHaveBeenNthCalledWith(2, cleanupUrl, expect.objectContaining({
+      method: 'DELETE',
+      signal: expect.any(AbortSignal)
+    }));
+  });
+
   it('scopes a player photo to its team and player without exposing the uploader ID', async () => {
     const file = new File(['photo'], 'kid photo.png', { type: 'image/png' });
 
-    await uploadNativePlayerPhoto(file, 'team-1', 'player-7');
+    const upload = await uploadNativePlayerPhoto(file, 'team-1', 'player-7');
 
     const expectedPath = 'profile-photos/teams/team-1/players/player-7/12345_profile-photo.png';
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
     );
+    expect(upload).toMatchObject({ url: expect.any(String), path: 'stored-path' });
   });
 
   it('scopes a team photo to its team without exposing the manager ID', async () => {

@@ -1451,8 +1451,8 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
           teamId: normalizedTeamId,
           playerId
         });
-        player = { ...player, photoUrl: typeof uploaded === 'string' ? uploaded : uploaded.url };
-        webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+        player = { ...player, photoUrl: uploaded.url };
+        webPhotoPath = uploaded.path;
       }
     } catch (error) {
       invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
@@ -1755,8 +1755,8 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       photoPath = uploaded.path;
     } else {
       const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true, teamId: normalizedTeamId });
-      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
-      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+      photoUrl = uploaded.url;
+      webPhotoPath = uploaded.path;
       photoPath = webPhotoPath || null;
     }
   }

@@ -120,18 +120,26 @@ export async function uploadNativePrimaryStorageFile({
 
 export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
   const privateFileName = buildNativeProfilePhotoFileName(file.name);
-  const uploaded = await uploadNativePrimaryStorageFile({
-    file,
-    label: 'Profile photo',
-    timeoutMs: 20000,
-    buildPath: (userId) => {
-      if (uid && uid !== userId) {
-        throw new Error('The signed-in account does not match this profile photo upload.');
+  let reservedPath = '';
+  try {
+    return await uploadNativePrimaryStorageFile({
+      file,
+      label: 'Profile photo',
+      timeoutMs: 20000,
+      buildPath: (userId) => {
+        if (uid && uid !== userId) {
+          throw new Error('The signed-in account does not match this profile photo upload.');
+        }
+        reservedPath = `profile-photos/users/${userId}/${privateFileName}`;
+        return reservedPath;
       }
-      return `profile-photos/users/${userId}/${privateFileName}`;
+    });
+  } catch (error) {
+    if (reservedPath) {
+      await deleteNativePrimaryStorageFile(reservedPath).catch(() => undefined);
     }
-  });
-  return uploaded.url;
+    throw error;
+  }
 }
 
 export async function uploadNativePlayerPhotoFile(file: File, teamId: string, playerId: string) {
@@ -152,7 +160,7 @@ export async function uploadNativePlayerPhotoFile(file: File, teamId: string, pl
 }
 
 export async function uploadNativePlayerPhoto(file: File, teamId: string, playerId: string) {
-  return (await uploadNativePlayerPhotoFile(file, teamId, playerId)).url;
+  return uploadNativePlayerPhotoFile(file, teamId, playerId);
 }
 
 export async function uploadNativeTeamPhotoFile(file: File, teamId: string) {

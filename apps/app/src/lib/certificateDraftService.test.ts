@@ -161,7 +161,16 @@ describe('certificateDraftService', () => {
     const result = await saveCertificateDraftsForApp({
       teamId: 'team-1',
       user,
-      shared,
+      shared: {
+        ...shared,
+        signers: [{
+          name: 'Coach One',
+          role: 'Head Coach',
+          signatureStyle: 'image',
+          signatureImageUrl: 'https://example.test/signature.png',
+          signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+        }]
+      },
       selectedPlayers: [
         {
           id: 'player-1',
@@ -197,6 +206,11 @@ describe('certificateDraftService', () => {
       playerId: 'player-2',
       recipientName: 'Alex Ace'
     }));
+    expect(dbMocks.createCertificate.mock.calls[0]?.[1]?.signers?.[0]).not.toHaveProperty('signatureImagePath');
+    expect(dbMocks.setCertificateDefaults.mock.calls[0]?.[1]?.signers?.[0]).toHaveProperty(
+      'signatureImagePath',
+      'certificate-signatures/users/coach-1/private.png'
+    );
     expect(dbMocks.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', expect.objectContaining({
       generatedCertificateIds: ['cert-1', 'cert-2'],
       status: 'draft'
@@ -219,6 +233,16 @@ describe('certificateDraftService', () => {
   });
 
   it('builds a draft payload that matches the saved web studio shape', () => {
+    const sharedWithPrivateSignaturePath = {
+      ...shared,
+      signers: [{
+        name: 'Coach One',
+        role: 'Head Coach',
+        signatureStyle: 'image',
+        signatureImageUrl: 'https://example.test/signature.png',
+        signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+      }]
+    };
     const payload = buildCertificatePayloadForApp({
       batchId: 'batch-1',
       player: {
@@ -228,11 +252,12 @@ describe('certificateDraftService', () => {
         photoUrl: 'https://img/player-1.png',
         active: true
       },
-      shared,
+      shared: sharedWithPrivateSignaturePath,
       team
     });
 
-    expect(rendererMocks.resolveColors).toHaveBeenCalledWith(shared, team);
+    expect(rendererMocks.resolveColors).toHaveBeenCalledWith(sharedWithPrivateSignaturePath, team);
+    expect(payload.signers[0]).not.toHaveProperty('signatureImagePath');
     expect(payload).toMatchObject({
       batchId: 'batch-1',
       templateId: 'banner',

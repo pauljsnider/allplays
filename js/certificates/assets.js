@@ -98,11 +98,19 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
     const safeName = sanitizeCertificateFilename(file.name);
     const storagePath = buildCertificateAssetStoragePath(safeTeamId, file);
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
-    const url = await getCertificateAssetUrlOrDelete(snapshot.ref);
+    let snapshot;
+    let url;
+    try {
+        snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
+        url = await getCertificateAssetUrlOrDelete(snapshot.ref);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
 
     const assetDoc = {
         url,
+        path: storagePath,
         storagePath,
         originalFilename: file.name || safeName,
         contentType: file.type || null,
@@ -133,13 +141,34 @@ export async function uploadSignatureImage(userId, file) {
     const safeName = sanitizeCertificateFilename(file.name);
     const storagePath = buildCertificateSignatureStoragePath(safeUserId, file);
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
-    return {
-        url: await getCertificateAssetUrlOrDelete(snapshot.ref),
-        storagePath,
-        originalFilename: file.name || safeName,
-        contentType: file.type || null,
-        sizeBytes: Number.isFinite(file.size) ? file.size : null,
-        storage: 'primary'
-    };
+    try {
+        const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
+        return {
+            url: await getCertificateAssetUrlOrDelete(snapshot.ref),
+            path: storagePath,
+            storagePath,
+            originalFilename: file.name || safeName,
+            contentType: file.type || null,
+            sizeBytes: Number.isFinite(file.size) ? file.size : null,
+            storage: 'primary'
+        };
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+export async function deleteSignatureImage(userId, storagePath) {
+    const safeUserId = validateCertificateStorageId(userId, 'user ID');
+    const signedInUserId = String(auth.currentUser?.uid || '').trim();
+    if (!signedInUserId || signedInUserId !== safeUserId) {
+        throw new Error('The signed-in account does not match this signature cleanup.');
+    }
+    const normalizedPath = String(storagePath || '').trim();
+    const prefix = `certificate-signatures/users/${safeUserId}/`;
+    const objectName = normalizedPath.slice(prefix.length);
+    if (!normalizedPath.startsWith(prefix) || !objectName || objectName.includes('/')) {
+        throw new Error('Invalid certificate signature cleanup path.');
+    }
+    await deleteObject(ref(storage, normalizedPath));
 }

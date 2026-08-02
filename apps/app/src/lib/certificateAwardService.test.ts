@@ -118,7 +118,16 @@ describe('certificateAwardService', () => {
     const generated = await generateCertificateAwardNarrativesForApp({
       teamId: 'team-1',
       user,
-      shared,
+      shared: {
+        ...shared,
+        signers: [{
+          name: 'Coach One',
+          role: 'Head Coach',
+          signatureStyle: 'image',
+          signatureImageUrl: 'https://example.test/signature.png',
+          signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+        }]
+      },
       drafts: [draft],
       generator
     });
@@ -304,6 +313,16 @@ describe('certificateAwardService', () => {
   });
 
   it('builds publish payloads with normalized signers, colors, and truncated descriptions', () => {
+    const sharedWithPrivateSignaturePath = {
+      ...shared,
+      signers: [{
+        name: 'Coach One',
+        role: 'Head Coach',
+        signatureStyle: 'image',
+        signatureImageUrl: 'https://example.test/signature.png',
+        signatureImagePath: 'certificate-signatures/users/coach-1/private.png'
+      }]
+    };
     const payload = buildCertificateAwardPayloadForApp({
       draft: {
         ...draft,
@@ -311,18 +330,19 @@ describe('certificateAwardService', () => {
         descriptionSource: 'manual',
         descriptionStatus: 'ready'
       },
-      shared,
+      shared: sharedWithPrivateSignaturePath,
       team,
       status: 'published'
     });
 
-    expect(legacyDraftMocks.resolveColors).toHaveBeenCalledWith(shared, team);
-    expect(legacyDraftMocks.normalizeSigners).toHaveBeenCalledWith(shared.signers);
+    expect(legacyDraftMocks.resolveColors).toHaveBeenCalledWith(sharedWithPrivateSignaturePath, team);
+    expect(legacyDraftMocks.normalizeSigners).toHaveBeenCalledWith(sharedWithPrivateSignaturePath.signers);
     expect(payload.description.length).toBeLessThanOrEqual(350);
+    expect(payload.signers[0]).not.toHaveProperty('signatureImagePath');
     expect(payload).toMatchObject({
       playerId: 'player-1',
       framePurchaseLink: 'https://frames.example.test/team-store',
-      signers: shared.signers,
+      signers: [expect.objectContaining({ signatureImageUrl: 'https://example.test/signature.png' })],
       status: 'published'
     });
   });

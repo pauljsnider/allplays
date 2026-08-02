@@ -443,7 +443,8 @@
             getParentTeams,
             getNotificationPreferencesForTeam,
             saveNotificationPreferencesForTeam,
-            upsertNotificationDeviceToken
+            upsertNotificationDeviceToken,
+            deleteLegacyImageUpload
         } from './js/db.js?v=146';
         import { normalizeTeamNotificationPreferences, NOTIFICATION_PREFERENCE_GROUPS } from './js/notification-preferences.js?v=2';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
@@ -453,6 +454,7 @@
 
         let currentUser = null;
         let currentPhotoUrl = null;
+        let currentPhotoPath = '';
         let photoChanged = false;
         let notificationTeams = [];
         let notificationPreferencesLoadedTeamId = '';
@@ -460,6 +462,8 @@
         async function loadProfile() {
             try {
                 const profile = await getUserProfile(currentUser.uid);
+                currentPhotoUrl = null;
+                currentPhotoPath = '';
                 if (profile) {
                     document.getElementById('fullName').value = profile.fullName || '';
                     document.getElementById('phone').value = profile.phone || '';
@@ -468,6 +472,7 @@
                     // Load existing photo
                     if (profile.photoUrl) {
                         currentPhotoUrl = profile.photoUrl;
+                        currentPhotoPath = String(profile.photoPath || '').trim();
                         displayPhoto(profile.photoUrl);
                         document.getElementById('remove-photo-btn').classList.remove('hidden');
                     }
@@ -744,6 +749,7 @@
         // Handle remove photo
         document.getElementById('remove-photo-btn').addEventListener('click', () => {
             currentPhotoUrl = null;
+            currentPhotoPath = '';
             photoChanged = true;
             document.getElementById('photo-upload').value = '';
             displayDefaultAvatar();
@@ -850,6 +856,9 @@
             status.textContent = '';
             const fullName = document.getElementById('fullName').value.trim();
             const phone = document.getElementById('phone').value.trim();
+            const previousPhotoPath = currentPhotoPath;
+            let newlyUploadedPhotoPath = '';
+            let profileWriteAttempted = false;
 
             try {
                 btn.disabled = true;
@@ -861,9 +870,9 @@
                     status.textContent = 'Uploading photo...';
                     try {
                         const uploadedPhoto = await uploadUserPhoto(fileInput.files[0], currentUser.uid, { returnUpload: true });
-                        currentPhotoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
-                        photoChanged = false;
-                        fileInput.value = '';
+                        currentPhotoUrl = uploadedPhoto.url;
+                        currentPhotoPath = uploadedPhoto.path;
+                        newlyUploadedPhotoPath = currentPhotoPath;
                     } catch (uploadError) {
                         console.error('Photo upload failed:', uploadError);
                         alert('Failed to upload photo. Please try again.\n\nError: ' + uploadError.message);
@@ -874,18 +883,50 @@
                     }
                 }
 
+                profileWriteAttempted = true;
                 await updateUserProfile(currentUser.uid, {
                     fullName,
                     phone,
-                    photoUrl: currentPhotoUrl
+                    photoUrl: currentPhotoUrl,
+                    photoPath: currentPhotoPath || null
                 });
 
+                if (previousPhotoPath && previousPhotoPath !== currentPhotoPath) {
+                    await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                }
+
                 photoChanged = false;
+                fileInput.value = '';
                 status.textContent = 'Saved';
                 status.className = 'text-sm text-green-600';
                 await loadProfile();
             } catch (e) {
                 console.error('Error saving profile', e);
+                if (profileWriteAttempted) {
+                    const authoritativeProfile = await getUserProfile(currentUser.uid).catch(() => null);
+                    if (!authoritativeProfile) {
+                        status.textContent = 'Save status unknown. The uploaded photo was preserved; refresh before retrying.';
+                        status.className = 'text-sm text-red-600';
+                        return;
+                    }
+                    const committed = String(authoritativeProfile.photoUrl || '') === String(currentPhotoUrl || '')
+                        && String(authoritativeProfile.photoPath || '') === String(currentPhotoPath || '');
+                    if (committed) {
+                        if (previousPhotoPath && previousPhotoPath !== currentPhotoPath) {
+                            await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                        }
+                        photoChanged = false;
+                        status.textContent = 'Saved';
+                        status.className = 'text-sm text-green-600';
+                        await loadProfile();
+                        return;
+                    }
+                    if (newlyUploadedPhotoPath) {
+                        await deleteLegacyImageUpload(newlyUploadedPhotoPath).catch(() => undefined);
+                    }
+                    currentPhotoUrl = authoritativeProfile.photoUrl || null;
+                    currentPhotoPath = String(authoritativeProfile.photoPath || '').trim();
+                }
                 status.textContent = 'Save failed';
                 status.className = 'text-sm text-red-600';
             } finally {

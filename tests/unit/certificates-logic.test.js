@@ -229,7 +229,13 @@ describe('certificate rendering helpers', () => {
     it('normalizes signers to four editable public fields', () => {
         const signers = normalizeSigners([
             { name: 'Brian Karpuk', role: 'Head Coach', signatureStyle: 'script' },
-            { name: 'Paul Snider', role: 'Assistant Coach', signatureStyle: 'image', signatureImageUrl: 'sig.png' },
+            {
+                name: 'Paul Snider',
+                role: 'Assistant Coach',
+                signatureStyle: 'image',
+                signatureImageUrl: 'sig.png',
+                signatureImagePath: 'certificate-signatures/users/user-1/sig.png'
+            },
             { name: 'Three' },
             { name: 'Four' },
             { name: 'Five' }
@@ -237,7 +243,11 @@ describe('certificate rendering helpers', () => {
 
         expect(signers).toHaveLength(4);
         expect(signers[0]).toMatchObject({ name: 'Brian Karpuk', role: 'Head Coach', signatureStyle: 'script' });
-        expect(signers[1]).toMatchObject({ signatureStyle: 'image', signatureImageUrl: 'sig.png' });
+        expect(signers[1]).toMatchObject({
+            signatureStyle: 'image',
+            signatureImageUrl: 'sig.png',
+            signatureImagePath: 'certificate-signatures/users/user-1/sig.png'
+        });
     });
 
     it('renders all four supported signers in templates', () => {
