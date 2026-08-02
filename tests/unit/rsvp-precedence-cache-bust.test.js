@@ -10,17 +10,17 @@ describe('RSVP precedence cache delivery', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
         const runtimeSources = {
-            'accept-invite.html': 'db.js?v=142',
-            'calendar.html': 'db.js?v=142',
-            'edit-schedule.html': 'db.js?v=142',
-            'game-day.html': 'db.js?v=142',
-            'login.html': 'db.js?v=142',
-            'parent-dashboard.html': 'db.js?v=142',
-            'team.html': 'db.js?v=142',
-            'team-chat.html': 'db.js?v=142',
-            'js/auth.js': 'db.js?v=142',
-            'profile.html': 'db.js?v=142',
-            'js/team-media.js': 'db.js?v=142'
+            'accept-invite.html': 'db.js?v=143',
+            'calendar.html': 'db.js?v=143',
+            'edit-schedule.html': 'db.js?v=143',
+            'game-day.html': 'db.js?v=143',
+            'login.html': 'db.js?v=143',
+            'parent-dashboard.html': 'db.js?v=143',
+            'team.html': 'db.js?v=143',
+            'team-chat.html': 'db.js?v=143',
+            'js/auth.js': 'db.js?v=143',
+            'profile.html': 'db.js?v=143',
+            'js/team-media.js': 'db.js?v=143'
         };
 
         for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
@@ -33,17 +33,17 @@ describe('RSVP precedence cache delivery', () => {
 
     it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
         const authConsumers = {
-            'accept-invite.html': 'auth.js?v=147',
-            'dashboard.html': 'auth.js?v=147',
-            'edit-team.html': 'auth.js?v=147',
-            'login.html': 'auth.js?v=147',
-            'profile.html': 'auth.js?v=147',
-            'parent-dashboard.html': 'auth.js?v=147',
-            'js/admin.js': 'auth.js?v=147',
-            'js/live-game.js': 'auth.js?v=147',
-            'js/live-tracker.js': 'auth.js?v=147',
-            'js/team-media.js': 'auth.js?v=147',
-            'js/utils.js': 'auth.js?v=147'
+            'accept-invite.html': 'auth.js?v=148',
+            'dashboard.html': 'auth.js?v=148',
+            'edit-team.html': 'auth.js?v=148',
+            'login.html': 'auth.js?v=148',
+            'profile.html': 'auth.js?v=148',
+            'parent-dashboard.html': 'auth.js?v=148',
+            'js/admin.js': 'auth.js?v=148',
+            'js/live-game.js': 'auth.js?v=148',
+            'js/live-tracker.js': 'auth.js?v=148',
+            'js/team-media.js': 'auth.js?v=148',
+            'js/utils.js': 'auth.js?v=148'
         };
 
         for (const [path, expectedVersion] of Object.entries(authConsumers)) {
@@ -70,8 +70,19 @@ describe('RSVP precedence cache delivery', () => {
         }
 
         expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=17')");
-        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=22';");
-        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=22');
+        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=23';");
+        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=23');
         expect(readRepoFile('js/live-game.js')).toContain("from './live-game-state.js?v=7';");
+    });
+
+    it('guards the shared utils cache key and all of its production consumers', () => {
+        const guard = readRepoFile('scripts/check-critical-cache-bust.mjs');
+
+        expect(guard).toContain("changedFile: 'js/utils.js'");
+        expect(guard).toContain('js/utils.js changed but production consumers do not share one cache version.');
+        expect(guard).toContain('js/utils.js changed without increasing the shared production utils.js cache version.');
+        expect(guard).toContain("execGit(['show', `${ref}:${file}`])");
+        expect(guard).toContain("execGit(['merge-base', diffBase.split('...')[0], 'HEAD'])");
+        expect(guard).not.toContain("diffText.matchAll(/^\\+(?!\\+\\+\\+).*\\/utils\\.js");
     });
 });

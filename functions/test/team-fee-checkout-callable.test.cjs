@@ -133,6 +133,7 @@ function makeFunctionsStub() {
         config: () => ({
             stripe: {
                 secret_key: 'sk_test_123',
+                webhook_secret: 'whsec_test_123',
                 app_url: 'https://allplays.test',
                 team_pass_price_id: 'price_team_pass'
             },
@@ -190,7 +191,7 @@ function makeSession(overrides = {}) {
     };
 }
 
-function loadCallable({ seed, retrieve, create, expire, firestoreOptions } = {}) {
+function loadCallable({ seed, retrieve, create, expire, firestoreOptions, webhookEvent } = {}) {
     delete require.cache[repoIndexPath];
     const metrics = { retrieveCalls: [], createCalls: [], expireCalls: [] };
     const firestore = makeFirestore(seed || baseSeed(), metrics, firestoreOptions);
@@ -236,7 +237,12 @@ function loadCallable({ seed, retrieve, create, expire, firestoreOptions } = {})
                     }
                 },
                 refunds: { create: async () => ({}) },
-                webhooks: { constructEvent: () => { throw new Error('Not implemented in test.'); } }
+                webhooks: {
+                    constructEvent: () => {
+                        if (webhookEvent) return clone(webhookEvent);
+                        throw new Error('Not implemented in test.');
+                    }
+                }
             };
         }
     };
@@ -245,8 +251,33 @@ function loadCallable({ seed, retrieve, create, expire, firestoreOptions } = {})
     return {
         callable: exports.createStripeTeamFeeCheckout,
         teamPassCallable: exports.createStripeTeamPassCheckout,
+        teamPassWebhook: exports.stripeTeamPassWebhook,
         firestore,
         metrics
+    };
+}
+
+function makeWebhookResponse() {
+    return {
+        statusCode: 200,
+        body: null,
+        headers: {},
+        set(name, value) {
+            this.headers[name] = value;
+            return this;
+        },
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        send(body) {
+            this.body = body;
+            return this;
+        },
+        json(body) {
+            this.body = body;
+            return this;
+        }
     };
 }
 
@@ -617,6 +648,211 @@ test('uses a stable idempotency key for repeated team-pass checkout creation', a
     assert.equal(idempotencyKeys.length, 2);
     assert.match(idempotencyKeys[0], /^team_pass_checkout_[a-f0-9]{64}$/);
     assert.equal(idempotencyKeys[0], idempotencyKeys[1]);
+    assert.deepEqual(loaded.metrics.createCalls[1], loaded.metrics.createCalls[0]);
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt?.status, 'open');
+    assert.equal(attempt?.stripeCheckoutSessionId, 'cs_team_pass');
+    assert.deepEqual(attempt?.checkoutCreationRequest?.stripeParams, loaded.metrics.createCalls[0].params);
+});
+
+test('does not create another checkout for an already active team pass', async () => {
+    const seed = baseSeed();
+    seed['teams/team-1/entitlements/2026_team-pass'] = {
+        teamId: 'team-1',
+        seasonId: '2026',
+        tier: 'team-pass',
+        status: 'active'
+    };
+    const loaded = loadCallable({ seed });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'This team already has an active team pass.'
+    );
+    assert.equal(loaded.metrics.createCalls.length, 0);
+    assert.equal(
+        [...loaded.firestore._state.keys()].some((path) => path.includes('/teamPassCheckoutAttempts/')),
+        false
+    );
+});
+
+test('persists and replays the exact team-pass request after an uncertain Stripe response', async () => {
+    const originalPriceId = process.env.STRIPE_TEAM_PASS_PRICE_ID;
+    const originalAppUrl = process.env.ALLPLAYS_APP_URL;
+    process.env.STRIPE_TEAM_PASS_PRICE_ID = 'price_original_team_pass';
+    process.env.ALLPLAYS_APP_URL = 'https://original.allplays.test';
+    let createCount = 0;
+    try {
+        const loaded = loadCallable({
+            create: async (params) => {
+                createCount += 1;
+                if (createCount === 1) {
+                    throw Object.assign(new Error('provider response lost'), { type: 'StripeConnectionError' });
+                }
+                return {
+                    id: 'cs_team_pass_recovered',
+                    url: 'https://checkout.stripe.com/c/pay/cs_team_pass_recovered',
+                    status: 'open',
+                    payment_status: 'unpaid',
+                    metadata: clone(params.metadata)
+                };
+            }
+        });
+        const teamPassInput = { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' };
+
+        await assert.rejects(loaded.teamPassCallable(teamPassInput, context), /provider response lost/);
+        const reservedAttempt = [...loaded.firestore._state.entries()]
+            .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+        assert.match(reservedAttempt?.checkoutCreationRequest?.idempotencyKey || '', /^team_pass_checkout_[a-f0-9]{64}$/);
+        assert.equal(reservedAttempt?.checkoutCreationRequest?.stripeParams.customer_email, 'owner@example.com');
+
+        process.env.STRIPE_TEAM_PASS_PRICE_ID = 'price_changed_team_pass';
+        process.env.ALLPLAYS_APP_URL = 'https://changed.allplays.test';
+        const result = await loaded.teamPassCallable(teamPassInput, {
+            auth: {
+                uid: 'owner-1',
+                token: { email: 'changed-owner@example.com', email_verified: true }
+            }
+        });
+
+        assert.equal(result.sessionId, 'cs_team_pass_recovered');
+        assert.equal(loaded.metrics.createCalls.length, 2);
+        assert.deepEqual(loaded.metrics.createCalls[1], loaded.metrics.createCalls[0]);
+        assert.equal(loaded.metrics.createCalls[1].params.line_items[0].price, 'price_original_team_pass');
+        assert.match(loaded.metrics.createCalls[1].params.success_url, /^https:\/\/original\.allplays\.test\//);
+        assert.equal(loaded.metrics.createCalls[1].params.customer_email, 'owner@example.com');
+    } finally {
+        if (originalPriceId === undefined) delete process.env.STRIPE_TEAM_PASS_PRICE_ID;
+        else process.env.STRIPE_TEAM_PASS_PRICE_ID = originalPriceId;
+        if (originalAppUrl === undefined) delete process.env.ALLPLAYS_APP_URL;
+        else process.env.ALLPLAYS_APP_URL = originalAppUrl;
+    }
+});
+
+test('clears a team-pass request after a definitive Stripe rejection and rotates the next key', async () => {
+    let createCount = 0;
+    const loaded = loadCallable({
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                throw Object.assign(new Error('invalid provider request'), {
+                    type: 'StripeInvalidRequestError',
+                    statusCode: 400
+                });
+            }
+            return {
+                id: 'cs_team_pass_after_rejection',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_after_rejection',
+                status: 'open',
+                payment_status: 'unpaid',
+                metadata: clone(params.metadata)
+            };
+        }
+    });
+    const teamPassInput = { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' };
+
+    await assert.rejects(loaded.teamPassCallable(teamPassInput, context), /invalid provider request/);
+    const attemptAfterFailure = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(Object.prototype.hasOwnProperty.call(attemptAfterFailure, 'checkoutCreationRequest'), false);
+
+    const result = await loaded.teamPassCallable(teamPassInput, context);
+    assert.equal(result.sessionId, 'cs_team_pass_after_rejection');
+    assert.notEqual(
+        loaded.metrics.createCalls[0].options.idempotencyKey,
+        loaded.metrics.createCalls[1].options.idempotencyKey
+    );
+});
+
+test('activates the team pass and removes the private exact request after paid webhook completion', async () => {
+    const webhookEvent = {
+        id: 'evt_team_pass_paid',
+        type: 'checkout.session.completed',
+        data: { object: {} }
+    };
+    const loaded = loadCallable({
+        webhookEvent,
+        create: async (params) => {
+            const session = {
+                id: 'cs_team_pass_paid',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_paid',
+                status: 'open',
+                payment_status: 'unpaid',
+                metadata: clone(params.metadata)
+            };
+            webhookEvent.data.object = {
+                ...clone(session),
+                status: 'complete',
+                payment_status: 'paid',
+                payment_intent: 'pi_team_pass_paid'
+            };
+            return session;
+        }
+    });
+
+    await loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context);
+    const response = makeWebhookResponse();
+    await loaded.teamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' },
+        ip: '127.0.0.1'
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true, unlocked: true });
+    const entitlement = loaded.firestore._state.get('teams/team-1/entitlements/2026_team-pass');
+    assert.equal(entitlement.status, 'active');
+    assert.equal(entitlement.stripeCheckoutSessionId, 'cs_team_pass_paid');
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt.status, 'completed');
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationRequest'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationReservationId'), false);
+});
+
+test('releases the durable team-pass attempt after Stripe confirms session expiration', async () => {
+    const webhookEvent = {
+        id: 'evt_team_pass_expired',
+        type: 'checkout.session.expired',
+        data: { object: {} }
+    };
+    const loaded = loadCallable({
+        webhookEvent,
+        create: async (params) => {
+            const session = {
+                id: 'cs_team_pass_expired',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_pass_expired',
+                status: 'open',
+                payment_status: 'unpaid',
+                metadata: clone(params.metadata)
+            };
+            webhookEvent.data.object = {
+                ...clone(session),
+                status: 'expired'
+            };
+            return session;
+        }
+    });
+
+    await loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context);
+    const response = makeWebhookResponse();
+    await loaded.teamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' },
+        ip: '127.0.0.2'
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true, unlocked: false });
+    const attempt = [...loaded.firestore._state.entries()]
+        .find(([path]) => path.includes('/teamPassCheckoutAttempts/'))?.[1];
+    assert.equal(attempt.status, 'expired');
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationRequest'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(attempt, 'checkoutCreationReservationId'), false);
 });
 
 test('expires and rejects an untrusted team-pass checkout destination', async () => {

@@ -14,7 +14,7 @@
 - [ ] Not applicable, or tests cover concurrent calls, uncertain provider responses, provider success with pre-commit failure, and provider success with post-commit response failure.
 - [ ] Not applicable, or stored and fresh navigation/payment destinations use the same fail-closed validation policy.
 - [ ] Not applicable, or every production caller of a changed upload helper was inventoried; each legacy/React/native persistence surface atomically saves URL + cleanup path, preserves ambiguous writes, survives account deletion, and has path-builder plus Storage rules-engine coverage for another authorized admin's replacement.
-- [ ] Not applicable, or every production consumer of a changed `js/db.js` uses the same incremented cache version and the cache-bust guard passes.
+- [ ] Not applicable, or every production consumer in the full `db.js` → `auth.js` → `utils.js` dependency chain uses the same incremented cache version for each changed shared module and the cache-bust guard passes.
 - [ ] Not applicable, or multi-stage UI errors identify whether upload, provider work, or local persistence failed.
 
 ## Production handoff

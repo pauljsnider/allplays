@@ -3480,6 +3480,12 @@ service cloud.firestore {
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Exact Stripe request snapshots can contain billing email and private
+      // provider idempotency data. Only trusted Admin SDK code may access them.
+      match /teamPassCheckoutAttempts/{attemptId} {
+        allow read, write: if false;
+      }
+
       match /membershipRequests/{requestId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);

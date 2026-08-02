@@ -23,6 +23,11 @@ const CRITICAL_RULES = [
         failure: 'js/db.js changed without a matching db.js version bump in imports.'
     },
     {
+        changedFile: 'js/utils.js',
+        requiredPattern: /\/utils\.js\?v=\d+/g,
+        failure: 'js/utils.js changed without a matching utils.js version bump in imports.'
+    },
+    {
         changedFile: 'js/firebase-runtime-config.js',
         requiredPattern: /(firebase-runtime-config\.js\?v=\d+|firebase\.js\?v=\d+|firebase-images\.js\?v=\d+)/g,
         failure: 'js/firebase-runtime-config.js changed without busting the runtime-config import chain.'
@@ -31,6 +36,14 @@ const CRITICAL_RULES = [
 
 function execGit(args) {
     return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 200 * 1024 * 1024 }).trim();
+}
+
+function readFileAtRef(ref, file) {
+    try {
+        return execGit(['show', `${ref}:${file}`]);
+    } catch {
+        return '';
+    }
 }
 
 function hasCommitRef(ref) {
@@ -83,6 +96,7 @@ function getDiffBase() {
 }
 
 const diffBase = getDiffBase();
+const comparisonBase = execGit(['merge-base', diffBase.split('...')[0], 'HEAD']);
 const changedFiles = new Set(
     execGit(['diff', '--name-only', diffBase])
         .split('\n')
@@ -123,14 +137,50 @@ if (changedFiles.has('js/db.js')) {
         failures.push(`js/db.js changed but production consumers do not share one cache version.\n${details}`);
     }
 
-    const addedVersions = Array.from(diffText.matchAll(/^\+(?!\+\+\+).*db\.js\?v=(\d+)/gm), (match) => Number(match[1]));
-    const removedVersions = Array.from(diffText.matchAll(/^-(?!---).*db\.js\?v=(\d+)/gm), (match) => Number(match[1]));
+    const previousVersions = productionSources.flatMap((file) =>
+        Array.from(readFileAtRef(comparisonBase, file).matchAll(dbImportPattern), (match) => Number(match[1]))
+    );
+    const currentVersions = Array.from(distinctVersions);
     if (
-        addedVersions.length === 0
-        || removedVersions.length === 0
-        || Math.max(...addedVersions) <= Math.max(...removedVersions)
+        currentVersions.length === 0
+        || previousVersions.length === 0
+        || Math.max(...currentVersions) <= Math.max(...previousVersions)
     ) {
         failures.push('js/db.js changed without increasing the shared production db.js cache version.');
+    }
+}
+
+if (changedFiles.has('js/utils.js')) {
+    const productionSources = execGit(['ls-files', '*.html', 'js/*.js', 'js/**/*.js', 'scripts/*.mjs'])
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const utilsImportVersions = new Map();
+    const utilsImportPattern = /(?:\.\.\/|\.\/)+(?:js\/)?utils\.js\?v=(\d+)/g;
+    for (const file of productionSources) {
+        const source = readFileSync(file, 'utf8');
+        const versions = Array.from(source.matchAll(utilsImportPattern), (match) => Number(match[1]));
+        if (versions.length > 0) utilsImportVersions.set(file, versions);
+    }
+    const distinctVersions = new Set(Array.from(utilsImportVersions.values()).flat());
+    if (distinctVersions.size !== 1) {
+        const details = Array.from(utilsImportVersions.entries())
+            .filter(([, versions]) => versions.some((version) => !distinctVersions.has(version) || distinctVersions.size > 1))
+            .map(([file, versions]) => `${file}: ${Array.from(new Set(versions)).join(', ')}`)
+            .join('\n');
+        failures.push(`js/utils.js changed but production consumers do not share one cache version.\n${details}`);
+    }
+
+    const previousVersions = productionSources.flatMap((file) =>
+        Array.from(readFileAtRef(comparisonBase, file).matchAll(utilsImportPattern), (match) => Number(match[1]))
+    );
+    const currentVersions = Array.from(distinctVersions);
+    if (
+        currentVersions.length === 0
+        || previousVersions.length === 0
+        || Math.max(...currentVersions) <= Math.max(...previousVersions)
+    ) {
+        failures.push('js/utils.js changed without increasing the shared production utils.js cache version.');
     }
 }
 

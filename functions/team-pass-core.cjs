@@ -53,7 +53,7 @@ function isEligibleTeamPassPurchaser({ team = {}, user = {}, uid = '', email = '
   return false;
 }
 
-function buildTeamPassCheckoutIdempotencyKey({ teamId, seasonId, tier, uid, email = '' } = {}) {
+function buildTeamPassCheckoutAttemptId({ teamId, seasonId, tier, uid } = {}) {
   const normalized = normalizeTeamPassCheckoutInput({ teamId, seasonId, tier });
   const purchaserUid = asTrimmedString(uid);
   if (!purchaserUid) throw new Error('Missing purchaser uid');
@@ -62,9 +62,24 @@ function buildTeamPassCheckoutIdempotencyKey({ teamId, seasonId, tier, uid, emai
       normalized.teamId,
       normalized.seasonId,
       normalized.tier,
-      purchaserUid,
-      normalizeEmail(email)
+      purchaserUid
     ].join('|'))
+    .digest('hex');
+  return `team_pass_attempt_${digest}`;
+}
+
+function buildTeamPassCheckoutIdempotencyKey({
+  teamId,
+  seasonId,
+  tier,
+  uid,
+  checkoutCreationReservationId
+} = {}) {
+  const attemptId = buildTeamPassCheckoutAttemptId({ teamId, seasonId, tier, uid });
+  const reservationId = asTrimmedString(checkoutCreationReservationId);
+  if (!reservationId) throw new Error('Missing checkout creation reservation id');
+  const digest = crypto.createHash('sha256')
+    .update([attemptId, reservationId].join('|'))
     .digest('hex');
   return `team_pass_checkout_${digest}`;
 }
@@ -122,6 +137,7 @@ module.exports = {
   TEAM_PASS_TIER,
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutAttemptId,
   buildTeamPassCheckoutIdempotencyKey,
   isPaidCheckoutSession,
   hasTeamPassMetadata,

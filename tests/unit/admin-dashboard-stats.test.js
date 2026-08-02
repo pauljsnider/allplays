@@ -22,7 +22,7 @@ describe('admin dashboard statistics scope', () => {
 
         const adminHtml = fs.readFileSync('admin.html', 'utf8');
 
-        expect(adminJs).toContain("import { checkAuth } from './auth.js?v=147';");
+        expect(adminJs).toContain("import { checkAuth } from './auth.js?v=148';");
         expect(adminJs).not.toContain("import { checkAuth } from './auth.js?v=54';");
         expect(adminJs).toContain('loadInitialAdminBootstrap({');
         expect(adminJs).toContain('getTeamsPage: getAdminTeamsPage');

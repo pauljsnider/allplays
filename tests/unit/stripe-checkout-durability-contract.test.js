@@ -18,8 +18,8 @@ describe('Stripe Checkout durability contract', () => {
         const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
         const registration = exportBlock('createStripeRegistrationCheckout', 'cancelStripeRegistrationCheckout');
 
-        expect(teamPass).toContain('stripe.checkout.sessions.create({');
-        expect(teamPass).toContain('idempotencyKey:');
+        expect(teamPass).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
+        expect(teamPass).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(teamFee).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
         expect(teamFee).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(registration).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
@@ -29,6 +29,18 @@ describe('Stripe Checkout durability contract', () => {
         expect(teamFeeCoreSource).toContain('function getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('isCanonicalStripeCheckoutUrl(session.url)');
         expect(registration).toContain('isCanonicalStripeCheckoutUrl');
+    });
+
+    it('persists and reuses the exact team-pass Stripe request across uncertain retries', () => {
+        const teamPass = exportBlock('createStripeTeamPassCheckout', 'createStripeTeamFeeCheckout');
+
+        expect(teamPass.indexOf('reserveTeamPassCheckoutCreation')).toBeLessThan(
+            teamPass.indexOf('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams')
+        );
+        expect(functionsSource).toContain('checkoutCreationRequest: attempt.checkoutCreationRequest');
+        expect(functionsSource).toContain('isReusableTeamPassCheckoutCreationRequest');
+        expect(teamPass).toContain('isUncertainStripeCheckoutCreationError(error)');
+        expect(teamPass).toContain('clearTeamPassCheckoutCreationReservation');
     });
 
     it('reserves team-fee creation before Stripe and compensates persistence failure', () => {

@@ -455,7 +455,7 @@ test('checkout reserves the registration before Stripe creation so concurrent re
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
 });
 
-test('checkout replaces an abandoned creation reservation after its timeout', async () => {
+test('checkout fails closed for an incomplete prior creation reservation regardless of age', async () => {
     let stripeCreateCalls = 0;
     const staleStartedAtSeconds = Math.floor((Date.now() - (16 * 60 * 1000)) / 1000);
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
@@ -474,20 +474,19 @@ test('checkout replaces an abandoned creation reservation after its timeout', as
         }
     });
 
-    const result = await createStripeRegistrationCheckout({
-        ...checkoutInput,
-        retryPayment: false
-    });
+    await assert.rejects(
+        createStripeRegistrationCheckout({
+            ...checkoutInput,
+            retryPayment: false
+        }),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Registration checkout creation is already in progress.'
+    );
 
-    assert.equal(stripeCreateCalls, 1);
-    assert.deepEqual(result, {
-        checkoutUrl: 'https://checkout.stripe.com/c/recovered_reservation',
-        sessionId: 'cs_recovered_reservation'
-    });
+    assert.equal(stripeCreateCalls, 0);
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
-    assert.equal(registration.stripeCheckoutSessionId, 'cs_recovered_reservation');
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationReservationId'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationStartedAt'), false);
+    assert.equal(registration.checkoutCreationReservationId, 'abandoned-reservation');
+    assert.deepEqual(registration.checkoutCreationStartedAt, { seconds: staleStartedAtSeconds });
 });
 
 test('does not reuse an untrusted stored registration checkout destination', async () => {
@@ -752,6 +751,8 @@ test('returns a committed registration checkout without expiring or releasing it
 });
 
 test('retries an uncertain Stripe creation with the exact persisted request and idempotency key', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const formPath = 'teams/team-1/registrationForms/form-1';
     const stripeCalls = [];
     let createCount = 0;
     const { firestore, stripeExpireCalls, createStripeRegistrationCheckout } = loadCheckoutHandler({
@@ -779,10 +780,16 @@ test('retries an uncertain Stripe creation with the exact persisted request and 
         /Stripe response timed out after request transmission/
     );
 
-    const reservedRegistration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    const reservedRegistration = firestore.snapshot(registrationPath);
     assert.match(reservedRegistration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
     assert.match(reservedRegistration.checkoutCreationRequest?.idempotencyKey || '', /^registration_checkout_[a-f0-9]{64}$/);
     assert.equal(reservedRegistration.registrationCapacityReleased, false);
+    reservedRegistration.checkoutCreationStartedAt = Date.now() - (24 * 60 * 60 * 1000);
+    reservedRegistration.guardian.email = 'changed-parent@example.com';
+    firestore._state.set(registrationPath, clone(reservedRegistration));
+    const changedForm = firestore.snapshot(formPath);
+    changedForm.title = 'Changed program title';
+    firestore._state.set(formPath, clone(changedForm));
 
     const result = await createStripeRegistrationCheckout(checkoutInput);
 

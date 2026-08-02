@@ -44,7 +44,9 @@ const { isAllPlaysFirebaseHostingOrigin } = require('./hosting-origin-policy.cjs
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutAttemptId,
   buildTeamPassCheckoutIdempotencyKey,
+  hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
@@ -540,6 +542,183 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
     successUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=success`,
     cancelUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=cancelled`
   };
+}
+
+function buildTeamPassCheckoutAttemptRef(input, purchaserUid) {
+  const attemptId = buildTeamPassCheckoutAttemptId({
+    ...input,
+    uid: purchaserUid
+  });
+  return firestore.doc(`teams/${input.teamId}/teamPassCheckoutAttempts/${attemptId}`);
+}
+
+function buildTeamPassCheckoutCreationRequest({
+  input,
+  purchaserUid,
+  email,
+  teamPassPriceId,
+  appUrl,
+  checkoutCreationReservationId
+}) {
+  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, input.teamId);
+  const customerEmail = String(email || '').trim();
+  return {
+    version: 1,
+    checkoutCreationReservationId,
+    idempotencyKey: buildTeamPassCheckoutIdempotencyKey({
+      ...input,
+      uid: purchaserUid,
+      checkoutCreationReservationId
+    }),
+    stripeParams: {
+      mode: 'payment',
+      line_items: [{ price: teamPassPriceId, quantity: 1 }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
+      client_reference_id: `${input.teamId}:${input.seasonId}:${purchaserUid}`,
+      metadata: {
+        teamId: input.teamId,
+        seasonId: input.seasonId,
+        tier: input.tier,
+        purchaserUid,
+        checkoutCreationReservationId
+      }
+    }
+  };
+}
+
+function isReusableTeamPassCheckoutCreationRequest(request, { input, purchaserUid, reservationId }) {
+  const params = request?.stripeParams;
+  const metadata = params?.metadata;
+  const lineItem = params?.line_items?.[0];
+  return Boolean(
+    request
+    && request.version === 1
+    && request.checkoutCreationReservationId === reservationId
+    && request.idempotencyKey === buildTeamPassCheckoutIdempotencyKey({
+      ...input,
+      uid: purchaserUid,
+      checkoutCreationReservationId: reservationId
+    })
+    && params?.mode === 'payment'
+    && typeof params.success_url === 'string'
+    && typeof params.cancel_url === 'string'
+    && params.client_reference_id === `${input.teamId}:${input.seasonId}:${purchaserUid}`
+    && Array.isArray(params.line_items)
+    && params.line_items.length === 1
+    && typeof lineItem?.price === 'string'
+    && lineItem.price.length > 0
+    && lineItem.quantity === 1
+    && metadata?.teamId === input.teamId
+    && metadata?.seasonId === input.seasonId
+    && metadata?.tier === input.tier
+    && metadata?.purchaserUid === purchaserUid
+    && metadata?.checkoutCreationReservationId === reservationId
+  );
+}
+
+async function reserveTeamPassCheckoutCreation({
+  input,
+  purchaserUid,
+  email,
+  teamPassPriceId,
+  appUrl,
+  proposedReservationId
+}) {
+  const attemptRef = buildTeamPassCheckoutAttemptRef(input, purchaserUid);
+  const entitlementRef = firestore.doc(`teams/${input.teamId}/entitlements/${input.seasonId}_${input.tier}`);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [attemptSnap, entitlementSnap] = await Promise.all([
+      transaction.get(attemptRef),
+      transaction.get(entitlementRef)
+    ]);
+    if (entitlementSnap.exists && entitlementSnap.data()?.status === 'active') {
+      throw new functions.https.HttpsError('failed-precondition', 'This team already has an active team pass.');
+    }
+    const attempt = attemptSnap.exists ? attemptSnap.data() || {} : {};
+    const existingReservationId = String(attempt.checkoutCreationReservationId || '').trim();
+    if (existingReservationId) {
+      if (!isReusableTeamPassCheckoutCreationRequest(attempt.checkoutCreationRequest, {
+        input,
+        purchaserUid,
+        reservationId: existingReservationId
+      })) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This team-pass checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      return {
+        attemptRef,
+        reservationId: existingReservationId,
+        checkoutCreationRequest: attempt.checkoutCreationRequest
+      };
+    }
+
+    const checkoutCreationRequest = buildTeamPassCheckoutCreationRequest({
+      input,
+      purchaserUid,
+      email,
+      teamPassPriceId,
+      appUrl,
+      checkoutCreationReservationId: proposedReservationId
+    });
+    transaction.set(attemptRef, {
+      version: 1,
+      teamId: input.teamId,
+      seasonId: input.seasonId,
+      tier: input.tier,
+      purchaserUid,
+      status: 'creating',
+      checkoutCreationReservationId: proposedReservationId,
+      checkoutCreationRequest,
+      createdAt: attempt.createdAt || now,
+      updatedAt: now
+    }, { merge: true });
+    return {
+      attemptRef,
+      reservationId: proposedReservationId,
+      checkoutCreationRequest
+    };
+  });
+}
+
+async function clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, status = 'failed') {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!attemptSnap.exists) return false;
+    const attempt = attemptSnap.data() || {};
+    if (String(attempt.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    transaction.set(attemptRef, {
+      status,
+      checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function recordTeamPassCheckoutSession(attemptRef, reservationId, session) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const attemptSnap = await transaction.get(attemptRef);
+    if (!attemptSnap.exists) return false;
+    const attempt = attemptSnap.data() || {};
+    if (String(attempt.checkoutCreationReservationId || '').trim() !== reservationId) return false;
+    transaction.set(attemptRef, {
+      status: 'open',
+      stripeCheckoutSessionId: session.id,
+      checkoutUrl: session.url,
+      updatedAt: now
+    }, { merge: true });
+    return true;
+  });
 }
 
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
@@ -2140,7 +2319,6 @@ function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' 
 const REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
 const REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
 const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
-const REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
 
 async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
   const registrationRef = docSnap.ref;
@@ -2377,11 +2555,7 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       };
     }
     const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
-    const existingReservationStartedAtMillis = firestoreTimestampToMillis(registration.checkoutCreationStartedAt);
-    const existingReservationIsActive = existingReservationId
-      && Number.isFinite(existingReservationStartedAtMillis)
-      && Date.now() - existingReservationStartedAtMillis < REGISTRATION_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS;
-    if (existingReservationIsActive) {
+    if (existingReservationId) {
       if (isReusableRegistrationCheckoutCreationRequest(registration.checkoutCreationRequest, checkoutCreationRequest)) {
         return {
           reserved: true,
@@ -5179,10 +5353,18 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
   await assertSensitiveEmailVerified(context, 'create-team-pass-checkout');
 
-  const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
-  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const input = normalizeTeamPassCheckoutInput(data || {});
+  const { teamId, seasonId, tier } = input;
+  const entitlementRef = firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`);
+  const [teamSnap, entitlementSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    entitlementRef.get()
+  ]);
   if (!teamSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (entitlementSnap.exists && entitlementSnap.data()?.status === 'active') {
+    throw new functions.https.HttpsError('failed-precondition', 'This team already has an active team pass.');
   }
 
   const team = { id: teamId, ...(teamSnap.data() || {}) };
@@ -5198,34 +5380,59 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   }
 
   const stripe = createStripeClient();
-  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{ price: teamPassPriceId, quantity: 1 }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: email || undefined,
-    client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
-    metadata: {
-      teamId,
-      seasonId,
-      tier,
-      purchaserUid: context.auth.uid
-    }
-  }, {
-    idempotencyKey: buildTeamPassCheckoutIdempotencyKey({
-      teamId,
-      seasonId,
-      tier,
-      uid: context.auth.uid,
-      email
-    })
+  const checkoutCreationReservation = await reserveTeamPassCheckoutCreation({
+    input,
+    purchaserUid: context.auth.uid,
+    email,
+    teamPassPriceId,
+    appUrl,
+    proposedReservationId: crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')
   });
+  const {
+    attemptRef,
+    reservationId,
+    checkoutCreationRequest
+  } = checkoutCreationReservation;
+
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams, {
+      idempotencyKey: checkoutCreationRequest.idempotencyKey
+    });
+  } catch (error) {
+    if (!isUncertainStripeCheckoutCreationError(error)) {
+      await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId).catch((clearError) => {
+        functions.logger.error('Failed to clear team-pass checkout creation reservation.', {
+          teamId,
+          seasonId,
+          clearError: clearError?.message || clearError
+        });
+      });
+    }
+    throw error;
+  }
 
   if (!String(session?.id || '').trim() || !isCanonicalStripeCheckoutUrl(session?.url)) {
-    await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-validation');
+    const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-pass-validation');
+    if (expired) {
+      await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, 'invalid').catch(() => {});
+    }
     throw new functions.https.HttpsError('internal', 'Stripe returned an invalid team pass checkout session.');
   }
+
+  if (session.status === 'expired') {
+    await clearTeamPassCheckoutCreationReservation(attemptRef, reservationId, 'expired').catch(() => {});
+    throw new functions.https.HttpsError('aborted', 'The prior team-pass checkout expired. Retry to create a new checkout.');
+  }
+
+  await recordTeamPassCheckoutSession(attemptRef, reservationId, session).catch((error) => {
+    functions.logger.warn('Could not record the recoverable team-pass Stripe session.', {
+      teamId,
+      seasonId,
+      providerSessionId: String(session?.id || ''),
+      error: error?.message || error
+    });
+  });
 
   return { checkoutUrl: session.url, sessionId: session.id };
 });
@@ -6310,35 +6517,65 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     }
   }
 
-  if (!shouldUnlockTeamPassFromEvent(event)) {
+  const shouldUnlockTeamPass = shouldUnlockTeamPassFromEvent(event);
+  const shouldReleaseTeamPassAttempt = event?.type === 'checkout.session.expired'
+    && hasTeamPassMetadata(event?.data?.object || {});
+  if (!shouldUnlockTeamPass && !shouldReleaseTeamPassAttempt) {
     res.status(200).json({ received: true, unlocked: false });
     return;
   }
 
   try {
     const receivedAt = admin.firestore.FieldValue.serverTimestamp();
-    const entitlement = buildTeamPassEntitlement({
-      session: event.data.object,
-      eventId: event.id,
-      receivedAt
-    });
+    const session = event.data.object;
+    const entitlement = shouldUnlockTeamPass
+      ? buildTeamPassEntitlement({ session, eventId: event.id, receivedAt })
+      : null;
     const eventRef = firestore.doc(`stripeEvents/${event.id}`);
-    const entitlementRef = firestore.doc(entitlement.refPath);
+    const entitlementRef = entitlement ? firestore.doc(entitlement.refPath) : null;
+    const teamPassInput = normalizeTeamPassCheckoutInput(session.metadata || {});
+    const attemptRef = buildTeamPassCheckoutAttemptRef(teamPassInput, session.metadata?.purchaserUid);
 
     await firestore.runTransaction(async (transaction) => {
-      const eventSnap = await transaction.get(eventRef);
+      const [eventSnap, attemptSnap] = await Promise.all([
+        transaction.get(eventRef),
+        transaction.get(attemptRef)
+      ]);
       if (eventSnap.exists) return;
-      transaction.set(entitlementRef, entitlement.data, { merge: true });
+      if (entitlementRef) {
+        transaction.set(entitlementRef, entitlement.data, { merge: true });
+      }
+      if (attemptSnap.exists) {
+        const attempt = attemptSnap.data() || {};
+        const storedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
+        const storedReservationId = String(attempt.checkoutCreationReservationId || '').trim();
+        const eventReservationId = String(session.metadata?.checkoutCreationReservationId || '').trim();
+        if (
+          (storedSessionId && storedSessionId === String(session.id || '').trim())
+          || (storedReservationId && storedReservationId === eventReservationId)
+        ) {
+          transaction.set(attemptRef, {
+            status: shouldUnlockTeamPass ? 'completed' : 'expired',
+            stripeCheckoutSessionId: session.id || storedSessionId || null,
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            updatedAt: receivedAt
+          }, { merge: true });
+        }
+      }
       transaction.set(eventRef, {
         provider: 'stripe',
+        product: 'team_pass',
         type: event.type,
-        checkoutSessionId: event.data.object.id || null,
-        entitlementPath: entitlement.refPath,
+        checkoutSessionId: session.id || null,
+        entitlementPath: entitlement?.refPath || null,
+        checkoutAttemptPath: attemptRef.path,
         receivedAt
       });
     });
 
-    res.status(200).json({ received: true, unlocked: true });
+    res.status(200).json({ received: true, unlocked: shouldUnlockTeamPass });
   } catch (error) {
     console.error('Failed to process Stripe team pass webhook:', error);
     res.status(500).send('Webhook processing failed');
