@@ -109,7 +109,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     void insightsTabRetryVersion;
     return lazy(loadInsightsTab);
   }, [insightsTabRetryVersion]);
-  const LazyMoreTab = useMemo(() => lazy(loadMoreTab), []);
+  const [moreTabRetryVersion, setMoreTabRetryVersion] = useState(0);
+  const LazyMoreTab = useMemo(() => {
+    void moreTabRetryVersion;
+    return lazy(loadMoreTab);
+  }, [moreTabRetryVersion]);
   const activeTab = getTeamTabFromSearch(location.search);
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
@@ -605,9 +609,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setDetailCollectionsError('');
           setDetailCollectionsReloadVersion((current) => current + 1);
         }} /> : (
-          <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading more" aria-live="polite">Loading more…</div>}>
-            <LazyMoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} />
-          </Suspense>
+          <ErrorBoundary name="team-detail-more" onRetry={() => setMoreTabRetryVersion((current) => current + 1)}>
+            <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading more" aria-live="polite">Loading more…</div>}>
+              <LazyMoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} />
+            </Suspense>
+          </ErrorBoundary>
         )
       ) : null}
     </div>

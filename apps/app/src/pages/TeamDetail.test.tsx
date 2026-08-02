@@ -466,6 +466,33 @@ describe('TeamDetail', () => {
     expect(moreTabLoaderMocks.loadMoreTab).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a rejected More import local and retries it with a fresh lazy component', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    moreTabLoaderMocks.loadMoreTab
+      .mockRejectedValueOnce(new Error('More chunk unavailable.'))
+      .mockResolvedValueOnce({
+        default: () => <div>Recovered More controls</div>
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    expect(moreTabLoaderMocks.loadMoreTab).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Recovered More controls')).toBeTruthy();
+    expect(screen.queryByRole('alert', { name: 'Screen error' })).toBeNull();
+    expect(moreTabLoaderMocks.loadMoreTab).toHaveBeenCalledTimes(2);
+  });
+
   it('shows a retryable team detail error state and reloads on retry', async () => {
     teamDetailServiceMocks.loadParentTeamDetail
       .mockRejectedValueOnce(new Error('Team detail unavailable.'))
