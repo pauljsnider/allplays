@@ -47,6 +47,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
 import { requestAccountDeletion } from '../lib/accountDeletionService';
+import { getFriendInviteTargetError } from '../lib/friendInviteCapabilities';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';
@@ -1255,8 +1256,9 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       const nextInviteEmail = inviteEmail.trim();
       const nextInvitePhone = invitePhone.trim();
-      if (!nextInviteEmail && !nextInvitePhone) {
-        setInviteStatus({ message: 'Enter an email or phone number for the invite.', tone: 'error' });
+      const targetError = getFriendInviteTargetError(nextInviteEmail, nextInvitePhone);
+      if (targetError) {
+        setInviteStatus({ message: targetError, tone: 'error' });
         return;
       }
 
@@ -1881,7 +1883,7 @@ export function Profile({ auth }: { auth: AuthState }) {
               <input className="auth-input mt-1" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" aria-label="Recipient phone" />
             </label>
           </div>
-          <p className="text-xs font-semibold leading-5 text-gray-500">Add an email or phone number to label and target the invite; this invite is shared by link or code.</p>
+          <p className="text-xs font-semibold leading-5 text-gray-500">Phone-only invites aren't available. Enter the recipient's email to target the invite.</p>
           <div className="flex flex-wrap items-center gap-2">
             <button type="submit" className="primary-button" disabled={busy === 'invite'}>
               {busy === 'invite' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
