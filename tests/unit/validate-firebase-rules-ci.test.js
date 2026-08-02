@@ -107,6 +107,8 @@ concurrency:
         deployments: write
       outputs:
         certificate_defaults_lockdown_needed: \${{ steps.firestore_config.outputs.certificate_defaults_lockdown_needed }}
+        firestore_baseline_sha: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
+        firestore_baseline_mode: \${{ steps.firestore_config.outputs.firestore_baseline_mode }}
         storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
       - name: Detect Firebase rules changes
         id: firestore_config
@@ -129,19 +131,33 @@ concurrency:
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "The successful production deploy lookup failed; forcing authorization rules-first ordering."
             echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+            echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          if [[ "$deployment_description" == *"compatibility rules"* ]]; then firestore_success_mode="compatibility"; fi
           firestore_success_sha="$deployment_sha"
           git show "\${firestore_success_sha}:firestore.rules" | grep -Fq 'allow create, update, delete: if false;'
           echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
+          echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
+          echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
+      - name: Stage exact Firestore baseline variants
+        env:
+          FIRESTORE_BASELINE_MODE: \${{ steps.firestore_config.outputs.firestore_baseline_mode }}
+          FIRESTORE_BASELINE_SHA: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
+        run: |
+          git show "\${FIRESTORE_BASELINE_SHA}:firestore.rules" > "$baseline_source"
+          node scripts/compact-firestore-rules.mjs "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
+          node scripts/build-certificate-defaults-compat-rules.mjs "$baseline_source" "$baseline_compatibility_source"
+          node scripts/compact-firestore-rules.mjs "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+          printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -152,6 +168,7 @@ concurrency:
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
             firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
+            firestore_component_description="Firestore compatibility rules and indexes are current at \${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."
             jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
             jq -e 'and (.firestore | has("rules") | not)' "$firestore_indexes_config"
             deploy_config="$firebase_config"
@@ -171,6 +188,7 @@ concurrency:
             deploy_args+=(--force)
             node "$firebase_cli" deploy "\${deploy_args[@]}"
           env:
+            CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: \${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}
             CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: \${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
           retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
@@ -182,6 +200,7 @@ concurrency:
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
             curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            return 2
           }
           find_recent_matching_firestore_ruleset() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
@@ -221,9 +240,18 @@ concurrency:
             echo "No client outage was introduced."
           }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
+            if [[ "$native_callable_ready" == "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
+              FIRESTORE_CONFIG_CHANGED="true"
+            fi
             if verify_active_firestore_rules "$final_firestore_rules"; then
               echo "The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
-            elif [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
+            else
+              active_rules_variant="baseline-\${baseline_firestore_mode}"
+              active_rules_variant="baseline-compatibility"
+              if (( active_rules_status == 2 )); then exit 2; fi
+              if [[ "$active_rules_variant" == *-final ]]; then
+                ensure_exact_firestore_ruleset "$final_firestore_rules"
+              fi
               retry_firebase_deploy "functions:commitCertificateDefaults" "certificate-defaults-writer-compatibility" 3 15
               node scripts/build-certificate-defaults-compat-rules.mjs
               test -f "$bundle/firestore-certificate-defaults-compat.rules"
@@ -231,8 +259,11 @@ concurrency:
               activate_firestore_ruleset_with_retry "$compatibility_ruleset_name" "$compatibility_firestore_rules"
               echo "certificate-defaults-rules-compatibility"
               ensure_exact_firestore_ruleset "$final_firestore_rules"
-              finalize_firestore_rules="true"
-            else
+              if [[ "$native_callable_ready" == "true" ]]; then
+                finalize_firestore_rules="true"
+              else
+                echo "Keeping certificate-defaults compatibility rules until supported installed native versions use the callable."
+              fi
               echo "currently unavailable projects:test request"
               ensure_exact_firestore_ruleset "$final_firestore_rules"
               activate_firestore_ruleset_with_retry "$final_ruleset_name" "$final_firestore_rules"

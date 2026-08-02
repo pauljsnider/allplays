@@ -39,16 +39,41 @@ describe('certificate defaults Firestore rules', () => {
         );
     });
 
-    it('deploys the writer and compatibility rules before callers, then activates the denial', () => {
+    it('keeps installed native callers compatible and gates the final denial after updated callers', () => {
         const compatibilityFunction = deployWorkflow.indexOf('certificate-defaults-writer-compatibility');
         const compatibilityRules = deployWorkflow.indexOf('certificate-defaults-rules-compatibility');
         const application = deployWorkflow.indexOf('retry_firebase_deploy "hosting,functions" "application"');
         const finalRules = deployWorkflow.indexOf('certificate-defaults-rules-final');
+        const nativeReadinessGate = deployWorkflow.indexOf('[[ "$native_callable_ready" == "true" ]]');
 
         expect(compatibilityFunction).toBeGreaterThan(-1);
         expect(compatibilityRules).toBeGreaterThan(compatibilityFunction);
         expect(application).toBeGreaterThan(compatibilityRules);
         expect(finalRules).toBeGreaterThan(application);
+        expect(nativeReadinessGate).toBeGreaterThan(compatibilityRules);
+        expect(nativeReadinessGate).toBeLessThan(application);
+        expect(deployWorkflow).toContain('native_callable_ready="${CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY:-false}"');
+        expect(deployWorkflow).toContain(
+            'Keeping certificate-defaults compatibility rules until supported installed native versions use the callable.'
+        );
+        expect(deployWorkflow).toMatch(
+            /baseline_firestore_mode" == "compatibility"[\s\S]*firestore_component_description="Firestore compatibility rules and indexes/
+        );
+        expect(deployWorkflow).toMatch(
+            /native_callable_ready" == "true"[\s\\]*&& "\$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true"[\s\S]*FIRESTORE_CONFIG_CHANGED="true"/
+        );
+    });
+
+    it('blocks unreadable or unrecognized active rules instead of reopening compatibility', () => {
+        expect(deployWorkflow).toMatch(
+            /verify_active_firestore_rules\(\)[\s\S]*release_json[\s\S]*return 2[\s\S]*ruleset_json[\s\S]*return 2/
+        );
+        expect(deployWorkflow).toContain('active_rules_variant="baseline-${baseline_firestore_mode}"');
+        expect(deployWorkflow).toContain(
+            'active Firestore rules did not match a trusted final or compatibility baseline'
+        );
+        expect(deployWorkflow).toContain('[[ "$active_rules_variant" == *-final ]]');
+        expect(deployWorkflow).toContain('firestore-baseline-compat.rules');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('transitional emulator coverage', () => {

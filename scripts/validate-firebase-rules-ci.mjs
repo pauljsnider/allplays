@@ -482,6 +482,43 @@ export function validateProductionDeployCommand(deployProd) {
         'firestore-certificate-defaults-compat.rules',
         'Production certificate defaults compacted compatibility rules handoff'
     );
+    assertIncludes(deployProd, 'firestore-baseline.rules', 'Production Firestore exact baseline handoff');
+    assertIncludes(deployProd, 'firestore-baseline-compat.rules', 'Production Firestore compatibility baseline handoff');
+    assertIncludes(
+        deployProd,
+        'firestore_baseline_mode: ${{ steps.firestore_config.outputs.firestore_baseline_mode }}',
+        'Production Firestore baseline release-mode output'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_description" == *"compatibility rules"*',
+        'Production Firestore compatibility marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_component_description="Firestore compatibility rules and indexes are current at ${GITHUB_SHA}; installed native callers still require direct certificate-defaults writes."',
+        'Production Firestore compatibility marker preservation'
+    );
+    assertIncludes(
+        deployProd,
+        'CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: ${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}',
+        'Production installed-native callable readiness gate'
+    );
+    assertIncludes(
+        deployProd,
+        'Keeping certificate-defaults compatibility rules until supported installed native versions use the callable.',
+        'Production installed-native compatibility hold'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true"',
+        'Production installed-native readiness forces finalization without source drift'
+    );
+    assertIncludes(
+        deployProd,
+        'return 2',
+        'Production active Firestore rules unknown-state classification'
+    );
     const certificateWriterDeploy = deployProd.indexOf('certificate-defaults-writer-compatibility');
     const certificateCompatibilityRules = deployProd.indexOf('certificate-defaults-rules-compatibility');
     const certificateApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
@@ -570,7 +607,11 @@ export function validateProductionDeployCommand(deployProd) {
         'Production Firestore exact ruleset creation or reuse'
     );
     assertIncludes(changedBranch, 'verify_active_firestore_rules "$final_firestore_rules"', 'Production Firestore exact-source short circuit');
-    assertIncludes(changedBranch, 'elif [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]', 'Production certificate defaults one-time compatibility condition');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-${baseline_firestore_mode}"', 'Production Firestore trusted baseline classification');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-compatibility"', 'Production Firestore compatibility baseline classification');
+    assertIncludes(changedBranch, 'active_rules_status == 2', 'Production Firestore unreadable active-source block');
+    assertIncludes(changedBranch, '[[ "$active_rules_variant" == *-final ]]', 'Production Firestore final boundary preservation');
+    assertIncludes(changedBranch, '[[ "$native_callable_ready" == "true" ]]', 'Production certificate defaults native readiness finalization gate');
     assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$compatibility_firestore_rules"', 'Production Firestore compatibility ruleset verification');
     assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$final_firestore_rules"', 'Production Firestore final ruleset verification');
     assertIncludes(changedBranch, 'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15', 'Production Firestore index ordering');
