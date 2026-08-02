@@ -616,6 +616,26 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'Preserving the durable Firestore component baseline despite empty successful workflow history.',
+        'Production Firestore retained component baseline after workflow history expiry'
+    );
+    assertIncludes(
+        deployProd,
+        'conservatively enabling every non-Firestore migration',
+        'Production non-Firestore migration fallback after workflow history expiry'
+    );
+    assertIncludes(
+        deployProd,
+        'FIRESTORE_BASELINE_MODE="compatibility"',
+        'Production legacy writable baseline compatibility classification'
+    );
+    assertIncludes(
+        deployProd,
+        'A trusted final component marker cannot reference legacy client-writable certificate defaults rules.',
+        'Production contradictory legacy final marker rejection'
+    );
+    assertIncludes(
+        deployProd,
         'The Firestore component deployment lookup failed; the active release mode is unknown.',
         'Production Firestore component lookup unknown-state handling'
     );

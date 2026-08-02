@@ -381,15 +381,43 @@ jobs:
           fi
 
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
+            echo "::warning::No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
-            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
-            echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
-            echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            if [[ "$component_lookup_succeeded" == "true" ]] \
+              && [[ "$component_marker_found" == "true" ]] \
+              && [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+              && git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null; then
+              # Actions retention can remove every successful workflow run while
+              # the durable component marker still identifies an exact Firestore
+              # source. Keep that component baseline so the deploy job can resolve
+              # an ambiguous mode against the live Rules API.
+              if [[ -z "$firestore_success_mode" ]]; then
+                if git show "${firestore_success_sha}:firestore.rules" \
+                  | sed -n '/match \/settings\/{settingId}/,/^      }/p' \
+                  | grep -Fq 'allow create, update, delete: if false;'; then
+                  firestore_success_mode="final"
+                else
+                  firestore_success_mode="compatibility"
+                fi
+              fi
+              echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
+              echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
+              if [[ "$firestore_success_mode" == "final" ]]; then
+                echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "certificate_defaults_lockdown_needed=true" >> "$GITHUB_OUTPUT"
+              fi
+              echo "::notice::Preserving the durable Firestore component baseline despite empty successful workflow history."
+            else
+              echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+              echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
+              echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
           elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
             echo "::warning::The last successful production deploy commit is unavailable locally; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
@@ -502,8 +530,6 @@ jobs:
             echo "The trusted Firestore baseline does not have a recognized release mode." >&2
             exit 1
           fi
-          printf '%s\n' "$FIRESTORE_BASELINE_MODE" > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
-
           if node scripts/build-certificate-defaults-compat-rules.mjs \
             "$baseline_source" \
             "$baseline_compatibility_source"; then
@@ -515,7 +541,16 @@ jobs:
             # block and cannot be transformed from the newer server-only form.
             cp "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules" \
               "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+            if [[ "$FIRESTORE_BASELINE_MODE" == "final" ]]; then
+              echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules." >&2
+              exit 1
+            fi
+            # The two exact artifacts are identical for a legacy writable
+            # source. Label that source compatibility so the active classifier
+            # never mistakes the first matching candidate for final denial.
+            FIRESTORE_BASELINE_MODE="compatibility"
           fi
+          printf '%s\n' "$FIRESTORE_BASELINE_MODE" > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
 
       - name: Archive installed Functions runtime into trusted handoff
         run: |

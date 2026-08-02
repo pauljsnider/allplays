@@ -149,6 +149,11 @@ concurrency:
             || [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]]; then
             firestore_success_mode="ambiguous"
           fi
+          echo "No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
+          if [[ "$component_marker_found" == "true" ]]; then
+            echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
+            echo "Preserving the durable Firestore component baseline despite empty successful workflow history."
+          fi
           echo "The Firestore component deployment lookup failed; the active release mode is unknown."
           firestore_success_mode="unmarked"
           firestore_success_mode="ambiguous"
@@ -179,6 +184,8 @@ concurrency:
           node scripts/compact-firestore-rules.mjs "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
           node scripts/build-certificate-defaults-compat-rules.mjs "$baseline_source" "$baseline_compatibility_source"
           node scripts/compact-firestore-rules.mjs "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+          echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules."
+          FIRESTORE_BASELINE_MODE="compatibility"
           printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
       - name: Deploy Firebase Storage rules when available
         env:
