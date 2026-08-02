@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=138';
+} from './db.js?v=139';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,

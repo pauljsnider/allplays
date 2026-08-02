@@ -626,11 +626,14 @@ export async function deleteUploadedMediaObjects(attachments = []) {
     const deletions = attachments
         .filter((attachment) => attachment?.path)
         .map(async (attachment) => {
-            const usesImageStorage = attachment.path.startsWith('team-photos/')
-                || attachment.path.startsWith('team-videos/')
-                || attachment.path.startsWith('drill-diagrams/')
-                || attachment.path.startsWith('player-photos/')
-                || attachment.path.startsWith('user-photos/');
+            const usesImageStorage = attachment.storage === 'image'
+                || (attachment.storage !== 'primary' && (
+                    attachment.path.startsWith('team-photos/')
+                    || attachment.path.startsWith('team-videos/')
+                    || attachment.path.startsWith('drill-diagrams/')
+                    || attachment.path.startsWith('player-photos/')
+                    || attachment.path.startsWith('user-photos/')
+                ));
             const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
             await deleteObject(storageRef);
         });

@@ -308,12 +308,15 @@ describe('applyTrackStatsheetImportForApp', () => {
     expect(result).toMatchObject({ requiresReplaceConfirmation: false, uploadedPhotoUrl: 'https://img.test/statsheet.png' })
   })
 
-  it('deletes a newly uploaded statsheet when the atomic game save fails', async () => {
+  it.each([
+    ['image', 'team-photos/new-statsheet.png'],
+    ['primary', 'stat-sheets/team-games/team-1/user-1/new-statsheet.png']
+  ] as const)('deletes a newly uploaded %s-storage statsheet when the atomic game save fails', async (storage, path) => {
     firebaseMocks.getDocs.mockResolvedValue({ size: 0, docs: [] })
     dbMocks.uploadStatSheetPhoto.mockResolvedValueOnce({
       url: 'https://img.test/new-statsheet.png',
-      path: 'stat-sheets/team-games/team-1/user-1/new-statsheet.png',
-      storage: 'primary'
+      path,
+      storage
     } as any)
     firebaseMocks.batch.commit.mockRejectedValueOnce(new Error('game save denied'))
     const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' })
@@ -331,7 +334,9 @@ describe('applyTrackStatsheetImportForApp', () => {
     })).rejects.toThrow('game save denied')
 
     expect(dbMocks.deleteUploadedMediaObjects).toHaveBeenCalledWith([{
-      path: 'stat-sheets/team-games/team-1/user-1/new-statsheet.png'
+      url: 'https://img.test/new-statsheet.png',
+      path,
+      storage
     }])
   })
 
