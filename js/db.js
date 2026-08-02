@@ -9073,7 +9073,7 @@ export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
         const storageRef = ref(imageStorage, imagePath);
         const snapshot = await uploadBytes(storageRef, file);
         const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        return options?.returnUpload === true ? { url, path: imagePath } : url;
+        return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
     } catch (error) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
@@ -9084,7 +9084,7 @@ export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
             const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
             const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            return options?.returnUpload === true ? { url, path: fallbackPath } : url;
+            return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
         }
         throw error;
     }

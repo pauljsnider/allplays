@@ -3088,7 +3088,7 @@ ${text}
                             const upload = await uploadDrillDiagram(state.teamId, drillId, file, { returnUpload: true });
                             const url = typeof upload === 'string' ? upload : upload.url;
                             if (typeof upload !== 'string' && upload.path) {
-                                newlyUploadedDiagrams.push({ path: upload.path });
+                                newlyUploadedDiagrams.push({ path: upload.path, storage: upload.storage });
                             }
                             uploaded.push(url);
                         }

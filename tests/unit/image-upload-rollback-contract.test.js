@@ -59,4 +59,12 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain('if (newlyUploadedStatSheet && !statSheetPersisted');
         expect(source).toContain('await deleteUploadedMediaObjects([newlyUploadedStatSheet])');
     });
+
+    it('preserves the drill diagram storage target through rollback', () => {
+        const source = read('drills.html');
+
+        expect(source).toContain("uploadDrillDiagram(state.teamId, drillId, file, { returnUpload: true })");
+        expect(source).toContain('{ path: upload.path, storage: upload.storage }');
+        expect(source).toContain('await deleteUploadedMediaObjects(newlyUploadedDiagrams)');
+    });
 });

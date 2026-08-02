@@ -266,17 +266,57 @@ describe('scoped fallback uploads', () => {
         ]);
     });
 
-    it('falls back to a team-scoped drill path when image storage rejects the upload', async () => {
-        const { uploadDrillDiagram } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
+    it('falls back to a team-scoped drill path and deletes it from primary storage on rollback', async () => {
+        const { deleteUploadedMediaObjects, uploadDrillDiagram } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
 
-        const url = await uploadDrillDiagram('team/alpha', 'drill 7', {
+        const uploaded = await uploadDrillDiagram('team/alpha', 'drill 7', {
             name: 'diagram #1.png',
             size: 456,
             type: 'image/png'
-        });
+        }, { returnUpload: true });
 
         expect(uploadState.calls).toHaveLength(2);
         expect(uploadState.calls[1].fullPath).toBe('stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png');
-        expect(url).toBe('https://cdn.example.test/stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png');
+        expect(uploaded).toEqual({
+            url: 'https://cdn.example.test/stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png',
+            path: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png',
+            storage: 'primary'
+        });
+
+        await deleteUploadedMediaObjects([uploaded]);
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({
+                targetStorage: 'main-storage',
+                fullPath: uploaded.path
+            })
+        ]);
+    });
+
+    it('deletes a drill diagram from image storage when that upload must be rolled back', async () => {
+        firebaseMocks.uploadBytes.mockImplementationOnce(async (storageRef, file) => {
+            uploadState.calls.push({ targetStorage: storageRef.targetStorage, fullPath: storageRef.fullPath, file });
+            return { ref: storageRef };
+        });
+        const { deleteUploadedMediaObjects, uploadDrillDiagram } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
+
+        const uploaded = await uploadDrillDiagram('team/alpha', 'drill 7', {
+            name: 'diagram.png',
+            size: 456,
+            type: 'image/png'
+        }, { returnUpload: true });
+
+        expect(uploaded).toEqual({
+            url: 'https://cdn.example.test/drill-diagrams/drill_7/1700000000000_diagram.png',
+            path: 'drill-diagrams/drill_7/1700000000000_diagram.png',
+            storage: 'image'
+        });
+
+        await deleteUploadedMediaObjects([uploaded]);
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({
+                targetStorage: 'image-storage',
+                fullPath: uploaded.path
+            })
+        ]);
     });
 });
