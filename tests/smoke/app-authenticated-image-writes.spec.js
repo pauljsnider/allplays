@@ -9,6 +9,7 @@ import {
     redactSmokeDiagnostic
 } from './helpers/app-auth.js';
 import {
+    createFirestoreDocument,
     createFirebaseRestSession,
     deleteFirebaseStorageObject,
     deleteSmokeMediaByTitle,
@@ -131,6 +132,7 @@ async function reconcileDedicatedImageFixture(target) {
 
     for (const documentTarget of target.documents) {
         const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
+        if (!document && documentTarget.allowMissing) continue;
         expect(document, `${target.recordType} fixture document must exist`).toBeTruthy();
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             const fieldValue = getFirestoreStringField(document, fieldName);
@@ -162,6 +164,7 @@ async function reconcileDedicatedImageFixture(target) {
 
     for (const documentTarget of target.documents) {
         const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
+        if (!document && documentTarget.allowMissing) continue;
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
@@ -240,6 +243,7 @@ test('profile image paths accept authenticated storage and document writes', asy
             documents: [
                 {
                     documentPath: `teams/${config.teamId}/players/${config.playerId}/private/profile`,
+                    allowMissing: true,
                     expectedFields: { photoPath: { stringValue: linkedPlayerPath } }
                 },
                 {
@@ -257,7 +261,9 @@ test('profile image paths accept authenticated storage and document writes', asy
             const documentStates = [];
             for (const documentTarget of target.documents) {
                 const originalDocument = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
-                expect(originalDocument, `${target.recordType} fixture document must exist`).toBeTruthy();
+                if (!documentTarget.allowMissing) {
+                    expect(originalDocument, `${target.recordType} fixture document must exist`).toBeTruthy();
+                }
                 documentStates.push({ ...documentTarget, originalDocument, restSession: target.restSession });
             }
             cleanupTasks.push({
@@ -271,12 +277,20 @@ test('profile image paths accept authenticated storage and document writes', asy
             });
 
             for (const documentState of documentStates) {
-                await patchFirestoreDocumentFields(
-                    target.restSession,
-                    documentState.documentPath,
-                    documentState.expectedFields,
-                    { updateTime: documentState.originalDocument.updateTime }
-                );
+                if (documentState.originalDocument) {
+                    await patchFirestoreDocumentFields(
+                        target.restSession,
+                        documentState.documentPath,
+                        documentState.expectedFields,
+                        { updateTime: documentState.originalDocument.updateTime }
+                    );
+                } else {
+                    await createFirestoreDocument(
+                        target.restSession,
+                        documentState.documentPath,
+                        documentState.expectedFields
+                    );
+                }
                 const savedDocument = await getFirestoreDocument(target.restSession, documentState.documentPath);
                 for (const [fieldName, fieldValue] of Object.entries(documentState.expectedFields)) {
                     expect(getFirestoreStringField(savedDocument, fieldName)).toBe(fieldValue.stringValue);

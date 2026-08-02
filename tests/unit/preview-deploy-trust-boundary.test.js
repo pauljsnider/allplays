@@ -474,10 +474,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(imageWriteProductionSmoke).toContain("import { randomUUID } from 'node:crypto';");
         expect(imageWriteProductionSmoke).toContain("const attemptNonce = randomUUID().replace(/-/g, '');");
         expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
+        expect(profileImageWorkflow).toContain('allowMissing: true');
         expect(profileImageWorkflow).toContain('restSession: parentRestSession');
         expect(imageWriteProductionSmoke).toContain('SMOKE_PARENT_EMAIL: config.parentEmail');
         expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
+        expect(profileImageWorkflow).toContain('createFirestoreDocument(');
         expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
         expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');
         expect(imageWriteProductionSmoke).toContain('isAbandonedSmokeImageValue');
