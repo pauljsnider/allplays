@@ -74,6 +74,7 @@ const chatUploadTimeoutMs = 25000;
 const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
+const chatUnreadCountTimeoutMs = 3000;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -1009,16 +1010,18 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       latestMessageAtByConversationByTeam[team.id]
     ))
     .map((team) => team.id);
+  const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
       latestMessageAtByTeam,
       latestMessageAtByConversationByTeam,
       conversationIdsByTeam,
       conversationLookupByTeam,
-      defaultConversationOnly: !includeLastMessages
+      defaultConversationOnly: !includeLastMessages,
+      deadlineAt: unreadDeadlineAt
     })),
     'Chat unread counts',
-    3000
+    chatUnreadCountTimeoutMs
   ).catch(() => ({} as Record<string, number>));
 
   const previews = includeLastMessages
