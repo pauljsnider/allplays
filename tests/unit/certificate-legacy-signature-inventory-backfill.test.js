@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { backfillCertificateLegacySignatureInventory } from '../../_migration/backfill-certificate-legacy-signature-inventory.js';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import {
     getMigrationAdminAppOptions,
-    getMigrationFirestore
+    getMigrationFirestore,
+    getMigrationStorageBucket
 } from '../../_migration/firebase-admin-credential.mjs';
 
 describe('certificate legacy signature inventory backfill', () => {
@@ -31,6 +34,7 @@ describe('certificate legacy signature inventory backfill', () => {
 
         const app = initializeApp(options, `migration-credential-${Date.now()}`);
         try {
+            expect(() => getAuth(app)).not.toThrow();
             expect(() => getFirestore(app)).toThrow(/Failed to initialize Google Cloud Firestore/i);
             const db = getMigrationFirestore({
                 projectId: 'game-flow-c6311',
@@ -38,6 +42,16 @@ describe('certificate legacy signature inventory backfill', () => {
             });
             expect(db).toBeInstanceOf((await import('firebase-admin/firestore')).Firestore);
             expect(db._settings.auth.cachedCredential.credentials.access_token)
+                .toBe('oidc-access-token');
+
+            expect(() => getStorage(app)).toThrow(/Failed to initialize Google Cloud Storage/i);
+            const bucket = getMigrationStorageBucket({
+                projectId: 'game-flow-c6311',
+                bucketName: 'game-flow-img.firebasestorage.app',
+                env: { GOOGLE_OAUTH_ACCESS_TOKEN: 'oidc-access-token' }
+            });
+            expect(bucket.name).toBe('game-flow-img.firebasestorage.app');
+            expect(bucket.storage.authClient.cachedCredential.credentials.access_token)
                 .toBe('oidc-access-token');
         } finally {
             await deleteApp(app);
