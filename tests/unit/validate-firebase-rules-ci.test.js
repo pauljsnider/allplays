@@ -140,7 +140,12 @@ concurrency:
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          component_page=1
+          gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore -F per_page=100 -F page="$component_page"
+          deployment_page_count=100
+          jq '[.[] | select(.state == "success")][0] // empty'
+          if (( deployment_page_count < 100 )); then break; fi
+          component_page=$((component_page + 1))
           component_marker_found="true"
           deployment_log_url="$deployment_log_url"
           echo "The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification."

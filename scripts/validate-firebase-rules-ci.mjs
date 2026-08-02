@@ -568,6 +568,23 @@ export function validateProductionDeployCommand(deployProd) {
     }
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
+    assertIncludes(deployProd, 'component_page=1', 'Production Firestore component pagination start');
+    assertIncludes(deployProd, '-F page="$component_page"', 'Production Firestore component pagination request');
+    assertIncludes(
+        deployProd,
+        'component_page=$((component_page + 1))',
+        'Production Firestore component pagination advance'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_page_count < 100',
+        'Production Firestore component pagination completion'
+    );
+    assertIncludes(
+        deployProd,
+        '[.[] | select(.state == "success")][0] // empty',
+        'Production Firestore successful status lookup across inactive markers'
+    );
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
     assertIncludes(
         deployProd,

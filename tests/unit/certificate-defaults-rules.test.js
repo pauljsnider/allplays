@@ -91,6 +91,10 @@ describe('certificate defaults Firestore rules', () => {
             /last successful production deploy commit is unavailable locally[\s\S]*conservatively enabling every non-Firestore migration/
         );
         expect(deployWorkflow).toMatch(
+            /component_page=1[\s\S]*per_page=100[\s\S]*page="\$component_page"[\s\S]*deployment_page_count < 100[\s\S]*component_page=\$\(\(component_page \+ 1\)\)/
+        );
+        expect(deployWorkflow).toContain('[.[] | select(.state == "success")][0] // empty');
+        expect(deployWorkflow).toMatch(
             /Pre-migration baselines already contain the legacy direct-write[\s\S]*FIRESTORE_BASELINE_MODE="compatibility"[\s\S]*firestore-baseline\.mode/
         );
         expect(deployWorkflow).toContain(
