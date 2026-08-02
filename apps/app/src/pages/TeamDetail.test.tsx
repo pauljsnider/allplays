@@ -1430,7 +1430,7 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(screen.getByText('Bulk roster import')).toBeTruthy();
+    expect(await screen.findByText('Bulk roster import')).toBeTruthy();
     expect(screen.queryByLabelText('Roster text or AI instructions')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Confirm roster import' })).toBeNull();
 
