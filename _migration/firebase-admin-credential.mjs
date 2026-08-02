@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { applicationDefault, cert } from 'firebase-admin/app';
+import { Firestore, getFirestore } from 'firebase-admin/firestore';
+import { GoogleAuth, OAuth2Client } from 'google-auth-library';
 
 const ACCESS_TOKEN_CACHE_SECONDS = 300;
 
@@ -16,6 +18,26 @@ export function createAccessTokenCredential(accessToken) {
             };
         }
     };
+}
+
+export function getMigrationFirestore({
+    projectId,
+    env = process.env,
+    FirestoreClass = Firestore,
+    GoogleAuthClass = GoogleAuth,
+    OAuth2ClientClass = OAuth2Client,
+    getFirestoreFn = getFirestore
+}) {
+    const accessToken = String(env.GOOGLE_OAUTH_ACCESS_TOKEN || '').trim();
+    if (!accessToken) return getFirestoreFn();
+
+    // Firebase Admin 12.7 rejects custom Credential implementations before
+    // constructing Firestore. Pass the short-lived OIDC token through the
+    // officially supported Google Auth hook on the underlying Firestore client.
+    const authClient = new OAuth2ClientClass();
+    authClient.setCredentials({ access_token: accessToken });
+    const auth = new GoogleAuthClass({ authClient, projectId });
+    return new FirestoreClass({ projectId, auth });
 }
 
 export function getMigrationAdminAppOptions({

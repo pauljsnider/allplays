@@ -4,9 +4,12 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
-import { getMigrationAdminAppOptions } from './firebase-admin-credential.mjs';
+import {
+    getMigrationAdminAppOptions,
+    getMigrationFirestore
+} from './firebase-admin-credential.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -143,7 +146,7 @@ export async function backfillCertificateLegacySignatureInventory({
 async function main() {
     if (!getApps().length) initializeApp(getAdminAppOptions());
     await backfillCertificateLegacySignatureInventory({
-        db: getFirestore(),
+        db: getMigrationFirestore({ projectId: FIREBASE_PROJECT_ID }),
         auth: getAuth(),
         legacyBucket: getStorage().bucket(LEGACY_IMAGE_BUCKET)
     });

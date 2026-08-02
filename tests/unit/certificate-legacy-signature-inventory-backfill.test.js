@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { backfillCertificateLegacySignatureInventory } from '../../_migration/backfill-certificate-legacy-signature-inventory.js';
-import { getMigrationAdminAppOptions } from '../../_migration/firebase-admin-credential.mjs';
+import { deleteApp, initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import {
+    getMigrationAdminAppOptions,
+    getMigrationFirestore
+} from '../../_migration/firebase-admin-credential.mjs';
 
 describe('certificate legacy signature inventory backfill', () => {
     it('uses the workload-identity access token instead of parsing its external-account file', async () => {
@@ -23,6 +28,20 @@ describe('certificate legacy signature inventory backfill', () => {
             projectId: 'game-flow-c6311',
             storageBucket: 'game-flow-img.firebasestorage.app'
         });
+
+        const app = initializeApp(options, `migration-credential-${Date.now()}`);
+        try {
+            expect(() => getFirestore(app)).toThrow(/Failed to initialize Google Cloud Firestore/i);
+            const db = getMigrationFirestore({
+                projectId: 'game-flow-c6311',
+                env: { GOOGLE_OAUTH_ACCESS_TOKEN: 'oidc-access-token' }
+            });
+            expect(db).toBeInstanceOf((await import('firebase-admin/firestore')).Firestore);
+            expect(db._settings.auth.cachedCredential.credentials.access_token)
+                .toBe('oidc-access-token');
+        } finally {
+            await deleteApp(app);
+        }
     });
 
     it('routes every automatically deployed Admin SDK backfill through the workload-identity helper', () => {

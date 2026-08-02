@@ -3,8 +3,11 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { getApps, initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { getMigrationAdminAppOptions } from './firebase-admin-credential.mjs';
+import { FieldValue } from 'firebase-admin/firestore';
+import {
+    getMigrationAdminAppOptions,
+    getMigrationFirestore
+} from './firebase-admin-credential.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -125,7 +128,9 @@ export async function backfillLegacyTeamFeeCheckoutAttempts({
 
 async function main() {
     if (!getApps().length) initializeApp(getAdminAppOptions());
-    await backfillLegacyTeamFeeCheckoutAttempts({ db: getFirestore() });
+    await backfillLegacyTeamFeeCheckoutAttempts({
+        db: getMigrationFirestore({ projectId: FIREBASE_PROJECT_ID })
+    });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
