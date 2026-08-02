@@ -93,11 +93,11 @@ const reversibleMutationActions = new Set([
 ]);
 const forbiddenMutationTarget = /(?:delete|deactivate|remove)\s+(?:my\s+)?(?:account|profile)|(?:grant|make|promote).*(?:admin|coach|manager|staff)|(?:admin|coach|manager|staff).*(?:access|permission|role)/i;
 const mutationTargetCapabilities = new Map(Object.entries({
-    P02: { lifecycle: /^(?:email|password|confirm password|create account|sign up|continue)$/i },
-    P03: { lifecycle: /^(?:resend(?: verification)?|verify(?: email)?|continue)$/i },
+    P02: { lifecycle: /^(?:email|password|confirm password|join code|create account|sign up|continue)$/i },
+    P03: { lifecycle: /^(?:resend verification email|verify email|i've verified, continue|need another option\?|continue to dashboard|continue without verifying|sign out)$/i },
     P04: { lifecycle: /^(?:email|password|sign in|log in|continue|get started)$/i },
-    P05: { lifecycle: /^(?:email|password|confirm password|new password|send reset link|reset password|continue)$/i },
-    P08: { lifecycle: /^(?:invite code|access code|redeem|join|accept invite|continue)$/i },
+    P05: { lifecycle: /^(?:email|password|password reset email|forgot password\?|new password|confirm password|send reset email|reset password|continue to login)$/i },
+    P08: { lifecycle: /^(?:join code|invite code|access code|redeem|join|apply code|continue with code|sign in to accept|create account with code|accept invite|continue)$/i },
     P09: { primary: /^(?:player search|search|team|player|relationship|request access|send request)$/i },
     P12: { primary: /^(?:name|phone|save|save changes|update profile)$/i },
     P13: { primary: /^(?:profile image|profile photo|image|photo|upload|upload image|remove image|remove photo|save|cancel)$/i },
@@ -142,7 +142,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     },
     P35: { primary: /^(?:ai|chat|prompt|send|clear chat|new conversation)$/i },
     P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|remove attachment|clear chat|new conversation)$/i },
-    P37: { lifecycle: /^(?:password|delete account|confirm deletion|confirm|cancel)$/i }
+    P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
 }));
 const forbiddenText = /(?:https?:\/\/|javascript:|data:text|[\r\n]|\$\{|<script|authorization|cookie)/i;
 const stepKeysByAction = new Map([

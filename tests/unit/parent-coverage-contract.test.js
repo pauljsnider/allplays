@@ -234,6 +234,26 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P12')).toThrow(/same mutationId/);
     });
 
+    it('does not let a lifecycle declaration transfer another actor mutation authority', () => {
+        const household = validContract({
+            workflowId: 'P27',
+            title: catalog.workflows[26].title,
+            actors: ['primary', 'lifecycle'],
+            mutatesProduction: true,
+            cleanupRequired: false,
+            lifecycleTransition: true,
+            steps: [{
+                action: 'click',
+                actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Accept invite' }
+            }],
+            cleanupSteps: []
+        });
+        expect(() => validateContract(household, catalog, 'P27')).toThrow(
+            /outside the trusted P27\/primary mutation capability/
+        );
+    });
+
     it('rejects routes and actions outside each trusted workflow capability', () => {
         expect(() => validateContract({
             ...validContract(),
