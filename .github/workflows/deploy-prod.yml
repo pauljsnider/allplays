@@ -492,6 +492,7 @@ jobs:
             fi
             if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- \
               _migration/backfill-team-fee-checkout-attempts.js \
+              _migration/firebase-admin-credential.mjs \
               functions/team-fees-core.cjs; then
               echo "team_fee_checkout_backfill_needed=false" >> "$GITHUB_OUTPUT"
             else
@@ -499,6 +500,7 @@ jobs:
             fi
             if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- \
               _migration/backfill-registration-checkout-attempts.js \
+              _migration/firebase-admin-credential.mjs \
               functions/registration-payment-webhook-core.cjs; then
               echo "registration_checkout_backfill_needed=false" >> "$GITHUB_OUTPUT"
             else
@@ -608,6 +610,8 @@ jobs:
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-registration-checkout-attempts.mjs"
           cp _migration/backfill-certificate-legacy-signature-inventory.js \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs"
+          cp _migration/firebase-admin-credential.mjs \
+            "$FIREBASE_PRODUCTION_BUNDLE/_migration/firebase-admin-credential.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
@@ -723,6 +727,8 @@ jobs:
           test ! -L "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
           test -f "$bundle/_migration/backfill-certificate-legacy-signature-inventory.mjs"
           test ! -L "$bundle/_migration/backfill-certificate-legacy-signature-inventory.mjs"
+          test -f "$bundle/_migration/firebase-admin-credential.mjs"
+          test ! -L "$bundle/_migration/firebase-admin-credential.mjs"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore-certificate-defaults-compat.rules"
           test ! -L "$bundle/firestore-certificate-defaults-compat.rules"

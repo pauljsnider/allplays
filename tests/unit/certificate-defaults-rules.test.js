@@ -73,6 +73,10 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toMatch(
             /retry_firebase_deploy\s+\\\s+"\$retry_enabled_inventory_producer_target"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
         );
+        expect(deployWorkflow).toContain('cp _migration/firebase-admin-credential.mjs \\');
+        expect(deployWorkflow).toContain(
+            'test -f "$bundle/_migration/firebase-admin-credential.mjs"'
+        );
         expect(inventoryProducer).toBeLessThan(inventoryBackfill);
         expect(inventoryBackfill).toBeLessThan(compatibilityCleanup);
         expect(compatibilityCleanup).toBeGreaterThan(-1);

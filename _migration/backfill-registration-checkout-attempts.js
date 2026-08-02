@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getMigrationAdminAppOptions } from './firebase-admin-credential.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -17,20 +17,9 @@ const APPLY = process.argv.includes('--apply');
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
 
 function getAdminAppOptions() {
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        return {
-            credential: applicationDefault(),
-            projectId: FIREBASE_PROJECT_ID
-        };
-    }
-
-    const serviceAccount = JSON.parse(
-        readFileSync(new URL('./serviceAccountKey.json', import.meta.url), 'utf8')
-    );
-    return {
-        credential: cert(serviceAccount),
+    return getMigrationAdminAppOptions({
         projectId: FIREBASE_PROJECT_ID
-    };
+    });
 }
 
 export async function backfillLegacyRegistrationCheckoutAttempts({
