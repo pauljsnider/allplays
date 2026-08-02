@@ -455,6 +455,10 @@ describe('preview deployment workflow trust boundary', () => {
         const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, parentWorkflowStart);
         const imageWorkflow = imageWriteProductionSmoke.slice(imageWorkflowStart, profileImageWorkflowStart);
         const profileImageWorkflow = imageWriteProductionSmoke.slice(profileImageWorkflowStart);
+        const reconciliationWorkflow = imageWriteProductionSmoke.slice(
+            imageWriteProductionSmoke.indexOf('async function reconcileDedicatedImageFixture'),
+            imageWorkflowStart
+        );
 
         expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
         expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
@@ -475,11 +479,16 @@ describe('preview deployment workflow trust boundary', () => {
         expect(imageWriteProductionSmoke).toContain("const attemptNonce = randomUUID().replace(/-/g, '');");
         expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
         expect(profileImageWorkflow).toContain('allowMissing: true');
+        expect(profileImageWorkflow).toContain('removeIfCreated: true');
+        expect(profileImageWorkflow).toContain('cleanupRestSession: staffRestSession');
         expect(profileImageWorkflow).toContain('restSession: parentRestSession');
         expect(imageWriteProductionSmoke).toContain('SMOKE_PARENT_EMAIL: config.parentEmail');
         expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
         expect(profileImageWorkflow).toContain('createFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('deleteFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('Object.keys(createdDocument.fields || {})');
+        expect(reconciliationWorkflow).not.toContain('deleteFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
         expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');
         expect(imageWriteProductionSmoke).toContain('isAbandonedSmokeImageValue');

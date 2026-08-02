@@ -12,6 +12,7 @@ import {
     createFirestoreDocument,
     createFirebaseRestSession,
     deleteFirebaseStorageObject,
+    deleteFirestoreDocument,
     deleteSmokeMediaByTitle,
     getFirestoreDocument,
     getFirestoreStringField,
@@ -105,6 +106,16 @@ async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.
         const restoredDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
         expect(getFirestoreStringField(restoredDocument, fieldName)).not.toBe(fieldValue.stringValue);
     }
+    if (!documentState.originalDocument && documentState.removeIfCreated) {
+        const cleanupSession = documentState.cleanupRestSession || documentState.restSession;
+        const createdDocument = await getFirestoreDocument(cleanupSession, documentState.documentPath);
+        if (!createdDocument) return;
+        expect(Object.keys(createdDocument.fields || {})).toEqual([]);
+        await deleteFirestoreDocument(cleanupSession, documentState.documentPath, {
+            updateTime: createdDocument.updateTime
+        });
+        expect(await getFirestoreDocument(cleanupSession, documentState.documentPath)).toBeNull();
+    }
 }
 
 function isAbandonedSmokeImageValue(value) {
@@ -128,8 +139,6 @@ async function clearAbandonedField(restSession, documentPath, fieldName, expecte
 }
 
 async function reconcileDedicatedImageFixture(target) {
-    const abandonedPaths = [];
-
     for (const documentTarget of target.documents) {
         const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
         if (!document && documentTarget.allowMissing) continue;
@@ -141,7 +150,6 @@ async function reconcileDedicatedImageFixture(target) {
                 isAbandonedSmokeImageValue(fieldValue),
                 `${target.recordType} is a dedicated smoke fixture and must have an empty ${fieldName} baseline`
             ).toBe(true);
-            if (fieldName === 'photoPath') abandonedPaths.push(fieldValue);
         }
     }
 
@@ -169,9 +177,8 @@ async function reconcileDedicatedImageFixture(target) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
     }
-    for (const abandonedPath of [...new Set(abandonedPaths)]) {
-        await deleteFirebaseStorageObject(target.restSession, abandonedPath);
-    }
+    // Path-only abandoned uploads are retained because their historical Storage
+    // generation was not persisted and cannot be proven from current metadata.
 }
 
 test('staff image upload is persisted and removed after validation', async () => {
@@ -244,6 +251,8 @@ test('profile image paths accept authenticated storage and document writes', asy
                 {
                     documentPath: `teams/${config.teamId}/players/${config.playerId}/private/profile`,
                     allowMissing: true,
+                    removeIfCreated: true,
+                    cleanupRestSession: staffRestSession,
                     expectedFields: { photoPath: { stringValue: linkedPlayerPath } }
                 },
                 {

@@ -9,6 +9,7 @@ import {
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
 import {
     createFirebaseRestSession,
+    deleteFirestoreDocument,
     patchFirestoreDocumentFields,
     restoreFirestoreDocumentFields
 } from '../smoke/helpers/firebase-rest.js';
@@ -225,6 +226,31 @@ describe('production officials smoke fixture maintenance', () => {
             fields: {
                 photoUrl: { stringValue: 'https://example.test/original.png' }
             }
+        });
+    });
+
+    it('deletes a smoke-created document only at the verified update time', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200
+        });
+
+        await deleteFirestoreDocument(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'teams/allplays-smoke-team-v1/players/allplays-smoke-player-v1/private/profile',
+            { updateTime: '2026-08-02T22:00:00.000Z' }
+        );
+
+        const [requestUrl, request] = fetchMock.mock.calls[0];
+        expect(new URL(requestUrl).searchParams.get('currentDocument.updateTime')).toBe(
+            '2026-08-02T22:00:00.000Z'
+        );
+        expect(request).toMatchObject({
+            method: 'DELETE',
+            headers: { authorization: 'Bearer redacted-token' }
         });
     });
 

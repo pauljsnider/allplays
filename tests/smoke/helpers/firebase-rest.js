@@ -157,8 +157,13 @@ export function getFirestoreDocumentPath(document) {
     return name.slice(index + marker.length);
 }
 
-export async function deleteFirestoreDocument(session, documentPath) {
-    const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`;
+export async function deleteFirestoreDocument(session, documentPath, { updateTime = '' } = {}) {
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
     const response = await fetch(url, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${session.idToken}` }
