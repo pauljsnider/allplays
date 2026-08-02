@@ -12,7 +12,10 @@ describe('Messages decomposition contract', () => {
         const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
         const chatWindow = readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx');
 
-        expect(messages).toContain("import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';");
+        expect(messages).toContain("import { TeamAvatar } from './messages/components/TeamAvatar';");
+        expect(messages).toContain("await import('./messages/components/ChatWindow')");
+        expect(messages).not.toMatch(/import\s+\{[^}]*ChatWindow[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
+        expect(messages).not.toMatch(/export\s+\{[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
         expect(chatWindow).toContain("import { useChatSheets } from '../hooks/useChatSheets';");
         expect(chatWindow).toContain("import { useChatTeam } from '../hooks/useChatTeam';");
         expect(chatWindow).toContain("import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';");

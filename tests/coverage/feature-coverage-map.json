@@ -466,6 +466,7 @@
             "appSupportFiles": [
                 "apps/app/src/pages/messages/components/ChatComposer.tsx",
                 "apps/app/src/pages/messages/components/ChatWindow.tsx",
+                "apps/app/src/pages/messages/components/TeamAvatar.tsx",
                 "apps/app/src/pages/messages/components/TeamEmailSheet.tsx",
                 "apps/app/src/pages/messages/hooks/useChatMessages.ts",
                 "apps/app/src/pages/messages/hooks/useChatSheets.ts",

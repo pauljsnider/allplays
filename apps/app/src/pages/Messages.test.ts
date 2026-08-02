@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getComposeRecipientFromSearch, getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, getOpportunityInquiryIdFromSearch, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
+import { getComposeRecipientFromSearch, getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, getOpportunityInquiryIdFromSearch, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
+import { isSelectedConversation, mergeVisibleChatMessages, normalizeConversationId } from './messages/components/ChatWindow';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function resolveAppSourcePath(relativePath: string) {
@@ -225,6 +226,15 @@ describe('direct thread mount telemetry', () => {
     expect(source).toContain('schedulePreviewFlush();');
     expect(source).toContain('setTeams((current) => mergeInboxTeams(current, updates));');
     expect(source).not.toContain('mergeInboxPreview');
+  });
+
+  it('keeps the team thread behind a dynamic import boundary', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
+
+    expect(source).toContain("await import('./messages/components/ChatWindow')");
+    expect(source).toContain('<Suspense fallback={<MessagesPageSkeleton');
+    expect(source).not.toMatch(/import\s+\{[^}]*ChatWindow[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
+    expect(source).not.toMatch(/export\s+\{[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
   });
 
   it('keeps Team Email composer dispatches on the shared action creators', () => {

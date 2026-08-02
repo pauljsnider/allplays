@@ -226,6 +226,12 @@ async function renderMessages(initialEntry, authState = auth) {
 
         await flush();
         await flush();
+        await waitForMatch(
+            () => !container.querySelector('[role="status"][aria-label^="Loading team chat"]'),
+            'Messages content to finish loading'
+        );
+        await flush();
+        await flush();
     };
 
     await renderWithAuth(authState);
@@ -587,6 +593,7 @@ describe('React app messages integration', () => {
             inboxLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
         });
         await flush();
+        await waitForText(container, 'Staff only');
 
         expect(container.textContent).toContain('Staff only');
         expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
