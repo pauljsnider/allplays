@@ -149,12 +149,24 @@ async function makeSyntheticDocument(runMarker) {
 
 export async function executeParentCoverageCleanup(runtime, cleanupSteps) {
     const failures = [];
+    const issueCountBeforeCleanup = typeof runtime.runtimeIssues === 'function'
+        ? runtime.runtimeIssues().length
+        : 0;
     for (const step of cleanupSteps) {
         if (step.mutationId && !runtime.shouldExecuteCleanup(step)) continue;
         try {
             await runtime.executeStep(step, 'cleanup');
         } catch (error) {
             failures.push({ action: step.action, error });
+        }
+    }
+    if (typeof runtime.runtimeIssues === 'function') {
+        const newRuntimeIssues = runtime.runtimeIssues().slice(issueCountBeforeCleanup);
+        if (newRuntimeIssues.length) {
+            failures.push({
+                action: 'cleanup-runtime',
+                error: new Error('application runtime issue occurred during cleanup')
+            });
         }
     }
     return failures;
@@ -201,6 +213,8 @@ export async function clickAndExpectGoogleAuth(page, target, timeout = 20_000) {
 export async function createParentCoverageRuntime(browser, contract, appBaseUrl) {
     const actors = new Map();
     const rememberedControls = new Map();
+    const pendingControlRestorations = new Map();
+    const pendingCleanupTargets = new Map();
     const mutationTracker = createParentCoverageMutationTracker();
     const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
@@ -243,6 +257,94 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         const runtime = { context, page, issues: collectAppRuntimeIssues(page, secrets), signedIn: false };
         actors.set(actor, runtime);
         return runtime;
+    }
+
+    async function readControlState(target) {
+        return target.evaluate((element) => {
+            const input = /** @type {HTMLInputElement} */ (element);
+            if (input.type === 'checkbox') return { kind: 'checked', value: input.checked };
+            if (input.type === 'radio') throw new Error('radio controls cannot be restored safely');
+            if (element.tagName === 'SELECT') return { kind: 'select', value: input.value };
+            return { kind: 'value', value: input.value };
+        });
+    }
+
+    async function clickCleanupTarget(page, target) {
+        const acceptDialog = (dialog) => dialog.accept().catch(() => {});
+        page.once('dialog', acceptDialog);
+        try {
+            await target.click();
+        } finally {
+            page.off('dialog', acceptDialog);
+        }
+    }
+
+    async function assertCleanupClickPersisted(page, target, workflowId) {
+        await expect(target).toBeHidden({ timeout: 20_000 });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await assertAllowedPage(page, appBaseUrl, workflowId);
+        await expect(target).toBeHidden({ timeout: 20_000 });
+    }
+
+    async function countVisibleRestorationTargets(page, email, names) {
+        const anchors = page.getByText(email, { exact: true });
+        const count = await anchors.count();
+        if (count === 0) return 0;
+        if (count !== 1) throw new Error('bounded restoration subject is ambiguous');
+        const container = anchors.locator(
+            'xpath=ancestor-or-self::*[self::article or self::li or self::tr or @role="row" or @role="listitem" or @data-testid][1]'
+        );
+        await expect(container).toHaveCount(1, { timeout: 20_000 });
+        let visible = 0;
+        for (const name of names) {
+            const candidate = container.getByRole('button', { name, exact: true });
+            if (await candidate.count() === 1 && await candidate.isVisible()) visible += 1;
+        }
+        return visible;
+    }
+
+    async function assertRelationshipRestored(page, email, names, workflowId) {
+        await expect.poll(
+            () => countVisibleRestorationTargets(page, email, names),
+            { timeout: 20_000 }
+        ).toBe(0);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await assertAllowedPage(page, appBaseUrl, workflowId);
+        await expect.poll(
+            () => countVisibleRestorationTargets(page, email, names),
+            { timeout: 20_000 }
+        ).toBe(0);
+    }
+
+    function cleanupGroupHasStateCommit(step) {
+        return contract.cleanupSteps.some((candidate) =>
+            candidate.mutationId === step.mutationId &&
+            candidate.action === 'click' &&
+            /^(?:save|save changes|update profile|update rsvp|submit)$/i.test(String(candidate.target?.name || ''))
+        );
+    }
+
+    async function assertCleanupGroupPersisted(page, actor, mutationId, workflowId) {
+        const key = `${actor}:${mutationId}`;
+        const pendingControls = pendingControlRestorations.get(key) || [];
+        const pendingTargets = pendingCleanupTargets.get(key) || [];
+        if (!pendingControls.length && !pendingTargets.length) return false;
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await assertAllowedPage(page, appBaseUrl, workflowId);
+        for (const restoration of pendingControls) {
+            const restoredTarget = await locatorFor(page, restoration.target, variables, restoration.scope);
+            await expect(restoredTarget).toHaveCount(1, { timeout: 20_000 });
+            await expect.poll(
+                () => readControlState(restoredTarget),
+                { timeout: 20_000 }
+            ).toEqual(restoration.state);
+        }
+        for (const restoredTarget of pendingTargets) {
+            await expect(restoredTarget).toBeHidden({ timeout: 20_000 });
+        }
+        pendingControlRestorations.delete(key);
+        pendingCleanupTargets.delete(key);
+        return true;
     }
 
     async function executeStep(step, phase = 'execution') {
@@ -332,6 +434,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         await assertAllowedPage(page, appBaseUrl, contract.workflowId);
         if (step.action === 'restoreFriendship') {
             const peerEmail = actorCredentials('peer').email;
+            const restorationNames = ['Cancel request', 'Remove friend'];
             const anchors = page.getByText(peerEmail, { exact: true });
             await expect(anchors).toHaveCount(1, { timeout: 20_000 });
             const container = anchors.locator(
@@ -349,12 +452,14 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             if (visible.length !== 1) {
                 throw new Error('bounded friendship restoration target is unavailable or ambiguous');
             }
-            await visible[0].click();
+            await clickCleanupTarget(page, visible[0]);
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            await assertRelationshipRestored(page, peerEmail, restorationNames, contract.workflowId);
             return;
         }
         if (step.action === 'restoreHouseholdAccess') {
             const lifecycleEmail = actorCredentials('lifecycle').email;
+            const restorationNames = ['Cancel invite', 'Revoke access'];
             const anchors = page.getByText(lifecycleEmail, { exact: true });
             await expect(anchors).toHaveCount(1, { timeout: 20_000 });
             const container = anchors.locator(
@@ -370,8 +475,9 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
                 if (await candidate.count() === 1 && await candidate.isVisible()) visible.push(candidate);
             }
             if (visible.length !== 1) throw new Error('bounded household restoration target is unavailable or ambiguous');
-            await visible[0].click();
+            await clickCleanupTarget(page, visible[0]);
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            await assertRelationshipRestored(page, lifecycleEmail, restorationNames, contract.workflowId);
             return;
         }
         const target = await locatorFor(page, step.target, variables, step.scope);
@@ -387,9 +493,30 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         switch (step.action) {
         case 'click':
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
-            await target.click();
+            if (phase === 'cleanup') await clickCleanupTarget(page, target);
+            else await target.click();
             markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            if (phase === 'cleanup') {
+                const isStateCommit = /^(?:save|save changes|update profile|update rsvp|submit)$/i
+                    .test(String(step.target?.name || ''));
+                if (!isStateCommit && cleanupGroupHasStateCommit(step)) {
+                    const pendingKey = `${actor}:${step.mutationId}`;
+                    const pending = pendingCleanupTargets.get(pendingKey) || [];
+                    pending.push(target);
+                    pendingCleanupTargets.set(pendingKey, pending);
+                } else {
+                    const cleanupGroupPersisted = await assertCleanupGroupPersisted(
+                        page,
+                        actor,
+                        step.mutationId,
+                        contract.workflowId
+                    );
+                    if (!cleanupGroupPersisted) {
+                        await assertCleanupClickPersisted(page, target, contract.workflowId);
+                    }
+                }
+            }
             break;
         case 'clickAndExpectGoogleAuth': {
             const popup = await clickAndExpectGoogleAuth(page, target);
@@ -472,15 +599,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             markMutationCompleted();
             break;
         case 'rememberControl': {
-            const state = await target.evaluate((element) => {
-                const input = /** @type {HTMLInputElement} */ (element);
-                if (input.type === 'checkbox') {
-                    return { kind: 'checked', value: input.checked };
-                }
-                if (input.type === 'radio') throw new Error('radio controls cannot be restored safely');
-                if (element.tagName === 'SELECT') return { kind: 'select', value: input.value };
-                return { kind: 'value', value: input.value };
-            });
+            const state = await readControlState(target);
             rememberedControls.set(`${actor}:${step.option}`, state);
             break;
         }
@@ -496,6 +615,10 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             } else {
                 await target.fill(state.value);
             }
+            const pendingKey = `${actor}:${step.mutationId}`;
+            const pending = pendingControlRestorations.get(pendingKey) || [];
+            pending.push({ target: step.target, scope: step.scope || '', state });
+            pendingControlRestorations.set(pendingKey, pending);
             markMutationCompleted();
             break;
         }

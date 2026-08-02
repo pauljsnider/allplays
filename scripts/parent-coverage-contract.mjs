@@ -425,7 +425,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:message|chat|attachment|image|photo|upload|send|delete message|remove attachment)$/i
     },
     P25: {
-        primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i,
+        primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read|message|chat|send|delete message)$/i,
         peer: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i
     },
     P26: {

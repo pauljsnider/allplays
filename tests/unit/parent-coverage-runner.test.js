@@ -46,6 +46,20 @@ describe('parent coverage cleanup execution', () => {
         expect(executeStep).toHaveBeenCalledWith(steps[0], 'cleanup');
     });
 
+    it('fails cleanup on runtime issues raised after restoration begins without retaining raw details', async () => {
+        const issues = [];
+        const failures = await executeParentCoverageCleanup({
+            executeStep: async () => issues.push('private production value'),
+            shouldExecuteCleanup: () => true,
+            runtimeIssues: () => [...issues]
+        }, [{ action: 'click', mutationId: 'cleanup' }]);
+
+        expect(failures).toHaveLength(1);
+        expect(failures[0].action).toBe('cleanup-runtime');
+        expect(failures[0].error.message).toBe('application runtime issue occurred during cleanup');
+        expect(failures[0].error.message).not.toContain('private production value');
+    });
+
     it('does not arm destructive cleanup until the declared forward operation completes', () => {
         const tracker = createParentCoverageMutationTracker();
         const cleanup = { action: 'click', mutationId: 'new-message' };
@@ -115,6 +129,16 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toContain("name: 'Cancel invite', exact: true");
         expect(runnerSource).toContain("name: 'Revoke access', exact: true");
         expect(runnerSource).toContain('bounded household restoration target is unavailable or ambiguous');
+        expect(runnerSource).toContain('assertRelationshipRestored(page, lifecycleEmail');
+    });
+
+    it('reloads and verifies every generic or control cleanup postcondition', () => {
+        expect(runnerSource).toContain('assertCleanupClickPersisted(page, target');
+        expect(runnerSource).toContain('assertCleanupGroupPersisted(');
+        expect(runnerSource).toContain('cleanupGroupHasStateCommit(step)');
+        expect(runnerSource).toContain('pendingCleanupTargets.set(pendingKey, pending)');
+        expect(runnerSource).toContain("page.once('dialog', acceptDialog)");
+        expect(runnerSource).toMatch(/await page\.reload[\s\S]+toEqual\(restoration\.state\)/);
     });
 
     it('resolves distinct schema-valid team parent invites through the protected admin fixture', () => {

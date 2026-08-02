@@ -650,6 +650,34 @@ describe('parent coverage contract boundary', () => {
         }, 'execution', 'primary')).toThrow(/exact P33 disabled manager upload control/);
     });
 
+    it('keeps the run-scoped P25 notification lifecycle constructible', () => {
+        const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+        const emailPreference = { kind: 'label', name: 'Email', exact: true };
+        const notification = validContract({
+            workflowId: 'P25', title: catalog.workflows[24].title, actors: ['primary', 'peer'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Message', exact: true }, value: '{RUN_MARKER}', mutationId: 'notification-message' },
+                { action: 'click', actor: 'primary', target: button('Send'), mutationId: 'notification-message', commitMutation: true },
+                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Notification', exact: true }, value: '{RUN_MARKER}', scope: '{RUN_MARKER}' },
+                { action: 'expectVisible', actor: 'peer', target: { kind: 'text', name: 'Unread', exact: true }, scope: '{RUN_MARKER}' },
+                { action: 'clickAndExpectRoute', actor: 'peer', target: button('Open notification'), route: '/messages/{TEAM_ID}', scope: '{RUN_MARKER}' },
+                { action: 'expectHidden', actor: 'peer', target: { kind: 'text', name: 'Unread', exact: true }, scope: '{RUN_MARKER}' },
+                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Read', exact: true }, value: 'Read', scope: '{RUN_MARKER}' },
+                { action: 'rememberControl', actor: 'primary', target: emailPreference, option: 'notification-email' },
+                { action: 'uncheck', actor: 'primary', target: emailPreference, mutationId: 'notification-preference' },
+                { action: 'click', actor: 'primary', target: button('Save'), mutationId: 'notification-preference', commitMutation: true }
+            ],
+            cleanupSteps: [
+                { action: 'restoreControl', actor: 'primary', target: emailPreference, option: 'notification-email', mutationId: 'notification-preference' },
+                { action: 'click', actor: 'primary', target: button('Save'), mutationId: 'notification-preference' },
+                { action: 'click', actor: 'primary', target: button('Delete message'), mutationId: 'notification-message', scope: '{RUN_MARKER}' }
+            ]
+        });
+
+        expect(validateContract(notification, catalog, 'P25').workflowId).toBe('P25');
+    });
+
     it('does not let a lifecycle declaration transfer another actor mutation authority', () => {
         const household = validContract({
             workflowId: 'P27',
