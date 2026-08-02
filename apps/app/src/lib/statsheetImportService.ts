@@ -441,7 +441,10 @@ export async function applyTrackStatsheetImportForApp({
     }
   } catch (error) {
     if (newlyUploadedPhoto && !photoReferencedByGame) {
-      await deleteUploadedMediaObjects([newlyUploadedPhoto]).catch(() => undefined)
+      await deleteUploadedMediaObjects([{
+        path: newlyUploadedPhoto.path,
+        storage: newlyUploadedPhoto.storage
+      }]).catch(() => undefined)
     }
     throw error
   }

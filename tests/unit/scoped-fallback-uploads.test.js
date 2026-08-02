@@ -213,42 +213,56 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
-        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
+        const { deleteUploadedMediaObjects, uploadStatSheetPhoto } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
 
-        const url = await uploadStatSheetPhoto('team/alpha', {
+        const uploaded = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score (1).png',
             size: 123,
             type: 'image/png'
-        });
+        }, { returnUpload: true });
 
         expect(uploadState.calls).toHaveLength(2);
         expect(uploadState.calls[1].fullPath).toBe('stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png');
-        expect(url).toBe('https://cdn.example.test/stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png');
+        expect(uploaded).toEqual({
+            url: 'https://cdn.example.test/stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png',
+            path: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png',
+            storage: 'primary'
+        });
+
+        await deleteUploadedMediaObjects([uploaded]);
+        expect(uploadState.deletions).toEqual([
+            expect.objectContaining({
+                targetStorage: 'main-storage',
+                fullPath: uploaded.path
+            })
+        ]);
     });
 
-    it('deletes statsheet rollbacks from the bucket recorded by the upload result', async () => {
+    it('deletes a statsheet from image storage when that upload must be rolled back', async () => {
         firebaseMocks.uploadBytes.mockImplementationOnce(async (storageRef, file) => {
             uploadState.calls.push({ targetStorage: storageRef.targetStorage, fullPath: storageRef.fullPath, file });
             return { ref: storageRef };
         });
         const { deleteUploadedMediaObjects, uploadStatSheetPhoto } = await import('../../js/db.js?v=139-scoped-fallback-uploads');
-        const file = {
+
+        const uploaded = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score.png',
             size: 123,
             type: 'image/png'
-        };
+        }, { returnUpload: true });
 
-        const imageUpload = await uploadStatSheetPhoto('team-1', file, { returnUpload: true });
-        await deleteUploadedMediaObjects([imageUpload]);
+        expect(uploaded).toEqual({
+            url: 'https://cdn.example.test/team-photos/1700000000000_stat-sheet_box score.png',
+            path: 'team-photos/1700000000000_stat-sheet_box score.png',
+            storage: 'image'
+        });
 
-        const primaryUpload = await uploadStatSheetPhoto('team-1', file, { returnUpload: true });
-        await deleteUploadedMediaObjects([primaryUpload]);
-
-        expect(imageUpload.storage).toBe('image');
-        expect(primaryUpload.storage).toBe('primary');
+        await deleteUploadedMediaObjects([uploaded]);
         expect(uploadState.deletions).toEqual([
-            expect.objectContaining({ targetStorage: 'image-storage', fullPath: imageUpload.path }),
-            expect.objectContaining({ targetStorage: 'main-storage', fullPath: primaryUpload.path })
+            expect.objectContaining({
+                targetStorage: 'image-storage',
+                fullPath: uploaded.path
+            })
         ]);
     });
 

@@ -55,6 +55,7 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain('{ commitStateUnknown: true }');
         expect(source).toContain("error?.commitStateUnknown !== true");
         expect(source).toContain("storage: lateUpload.storage");
+        expect(source).toContain('{ path: upload.path, storage: upload.storage }');
         expect(source).toContain('if (newlyUploadedStatSheet && !statSheetPersisted');
         expect(source).toContain('await deleteUploadedMediaObjects([newlyUploadedStatSheet])');
     });

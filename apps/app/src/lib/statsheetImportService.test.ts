@@ -334,7 +334,6 @@ describe('applyTrackStatsheetImportForApp', () => {
     })).rejects.toThrow('game save denied')
 
     expect(dbMocks.deleteUploadedMediaObjects).toHaveBeenCalledWith([{
-      url: 'https://img.test/new-statsheet.png',
       path,
       storage
     }])
