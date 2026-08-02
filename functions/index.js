@@ -2264,10 +2264,26 @@ function buildRegistrationCheckoutCreationRequest({
   };
 }
 
+function getRegistrationCheckoutCreationRequestCapability(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return '';
+  try {
+    const capability = normalizePublicCheckoutCapability(
+      request.stripeParams?.metadata?.publicCheckoutCapability
+    );
+    if (!capability) return '';
+    return hashPublicCheckoutCapability(capability) === String(request.issuedPublicCheckoutCapabilityHash || '').trim()
+      ? capability
+      : '';
+  } catch {
+    return '';
+  }
+}
+
 function isReusableRegistrationCheckoutCreationRequest(request, expectedRequest) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) return false;
   if (request.version !== 1 || request.idempotencyKey !== expectedRequest.idempotencyKey) return false;
-  if (request.issuedPublicCheckoutCapabilityHash !== expectedRequest.issuedPublicCheckoutCapabilityHash) return false;
+  const storedCapability = getRegistrationCheckoutCreationRequestCapability(request);
+  if (!storedCapability) return false;
   const params = request.stripeParams;
   return Boolean(
     params
@@ -2278,7 +2294,7 @@ function isReusableRegistrationCheckoutCreationRequest(request, expectedRequest)
     && params.metadata?.teamId === expectedRequest.stripeParams.metadata.teamId
     && params.metadata?.formId === expectedRequest.stripeParams.metadata.formId
     && params.metadata?.registrationId === expectedRequest.stripeParams.metadata.registrationId
-    && params.metadata?.publicCheckoutCapability === expectedRequest.stripeParams.metadata.publicCheckoutCapability
+    && params.metadata?.publicCheckoutCapability === storedCapability
     && Number(params.line_items?.[0]?.price_data?.unit_amount || 0)
       === Number(expectedRequest.stripeParams.line_items?.[0]?.price_data?.unit_amount || 0)
     && params.line_items?.[0]?.price_data?.currency
@@ -6367,8 +6383,11 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     };
   }
 
-  const issuedPublicCheckoutCapability = createRegistrationCheckoutCapability(checkoutCreationRequest.idempotencyKey);
-  if (hashPublicCheckoutCapability(issuedPublicCheckoutCapability) !== checkoutCreationRequest.issuedPublicCheckoutCapabilityHash) {
+  // The exact provider request owns the issued capability. Re-deriving it
+  // from the current secret would strand an uncertain request after a normal
+  // secret rotation, so validate and replay the stored private value instead.
+  const issuedPublicCheckoutCapability = getRegistrationCheckoutCreationRequestCapability(checkoutCreationRequest);
+  if (!issuedPublicCheckoutCapability) {
     throw new functions.https.HttpsError('failed-precondition', 'Stored registration checkout request is invalid.');
   }
   let session;

@@ -804,7 +804,16 @@ test('returns a committed registration checkout without expiring or releasing it
     assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current').checkoutUrl, 'https://checkout.stripe.com/c/registration_committed');
 });
 
-test('retries an uncertain Stripe creation with the exact persisted request and idempotency key', async () => {
+test('retries an uncertain Stripe creation with the exact persisted request and idempotency key', async (t) => {
+    const originalCapabilitySecret = process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET;
+    t.after(() => {
+        if (originalCapabilitySecret === undefined) {
+            delete process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET;
+        } else {
+            process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET = originalCapabilitySecret;
+        }
+    });
+    process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET = 'capability-secret-before-rotation';
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     const checkoutAttemptPath = `${registrationPath}/checkoutAttempts/current`;
     const formPath = 'teams/team-1/registrationForms/form-1';
@@ -849,6 +858,7 @@ test('retries an uncertain Stripe creation with the exact persisted request and 
     changedForm.title = 'Changed program title';
     firestore._state.set(formPath, clone(changedForm));
 
+    process.env.PUBLIC_CHECKOUT_CAPABILITY_SECRET = 'capability-secret-after-rotation';
     const result = await createStripeRegistrationCheckout(checkoutInput);
 
     assert.equal(result.sessionId, 'cs_registration_idempotent_retry');
