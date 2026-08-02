@@ -33,6 +33,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadParentScheduleEventDetail: vi.fn(),
   hydrateParentScheduleEventOptionalDetails: vi.fn<(...args: any[]) => Promise<any>>((result) => Promise.resolve(result)),
   resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
+  resolveParentGameRoute: vi.fn(),
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
@@ -250,6 +251,8 @@ import {
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
 } from './ScheduleEventDetail';
+import { GameDetail } from './GameDetail';
+import { clearScheduleEventDetailHandoffForTest } from '../lib/scheduleEventDetailHandoff';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
@@ -542,6 +545,7 @@ describe('ScheduleEventDetail live chat scroll helpers', () => {
 describe('ScheduleEventDetail loading states', () => {
   afterEach(() => {
     cleanup();
+    clearScheduleEventDetailHandoffForTest();
     vi.clearAllMocks();
     scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
     scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockImplementation((result) => Promise.resolve(result));
@@ -561,6 +565,42 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     expect(screen.queryByText('This event is not available for your account.')).toBeNull();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the game deep-link detail load without a destination skeleton', async () => {
+    const handedOffEvent = buildEvent({
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [{ id: 'assignment-1', role: 'Snacks', claimable: true }],
+      openAssignmentCount: 1
+    });
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-1',
+      eventId: 'game-1',
+      childId: 'player-1'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [handedOffEvent],
+      children: []
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/games/game-1']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
+    });
+    expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
+    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
   });
 
   it('warm-starts from cached schedule events without a full-page skeleton (#2649)', () => {
