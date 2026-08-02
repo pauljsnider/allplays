@@ -143,6 +143,36 @@ describe('native primary Storage profile uploads', () => {
     );
   });
 
+  it.each([
+    [
+      'player',
+      (file: File) => uploadNativePlayerPhoto(file, 'team-1', 'player-7'),
+      'profile-photos/teams/team-1/players/player-7/12345_profile-photo.png'
+    ],
+    [
+      'team',
+      (file: File) => uploadNativeTeamPhotoFile(file, 'team-1'),
+      'profile-photos/teams/team-1/team/12345_profile-photo.png'
+    ]
+  ])('cleans the reserved %s path when the upload response is unsuccessful', async (_kind, upload, expectedPath) => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: 'backend unavailable' } })
+      } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+
+    await expect(upload(new File(['photo'], 'photo.png', { type: 'image/png' })))
+      .rejects.toThrow('backend unavailable');
+
+    const cleanupUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(expectedPath)}`;
+    expect(fetch).toHaveBeenNthCalledWith(2, cleanupUrl, expect.objectContaining({
+      method: 'DELETE',
+      signal: expect.any(AbortSignal)
+    }));
+  });
+
   it('deletes a failed native upload with the same auth and App Check boundary', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 204 } as Response);
     const path = 'profile-photos/teams/team-1/players/player-1/photo.jpg';
@@ -180,6 +210,35 @@ describe('native primary Storage profile uploads', () => {
     });
 
     await expectTimeout(upload, 'Photo upload timed out');
+  });
+
+  it('cleans the reserved path when response parsing times out after the upload request', async () => {
+    vi.useFakeTimers();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => neverResolves()
+      } as Response)
+      .mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+    const expectedPath = 'profile-photos/teams/team-1/team/photo.jpg';
+
+    const upload = uploadNativePrimaryStorageFile({
+      file,
+      label: 'Team photo',
+      timeoutMs: 10,
+      buildPath: () => expectedPath
+    });
+    const assertion = expect(upload).rejects.toThrow('Team photo upload timed out');
+    await vi.advanceTimersByTimeAsync(10);
+    await assertion;
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(expectedPath)}`,
+      expect.objectContaining({ method: 'DELETE' })
+    );
   });
 
   it.each([

@@ -121,6 +121,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
+  const [profilePhotoOwnershipLoaded, setProfilePhotoOwnershipLoaded] = useState(useAuthProfile);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
@@ -172,6 +173,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoUrlRef = useRef('');
   const photoPathRef = useRef('');
   const photoChangedRef = useRef(false);
+  const profilePhotoOwnershipLoadedRef = useRef(useAuthProfile);
   const selectedTeamIdRef = useRef('');
   const notificationPreferenceDraftsByTeamIdRef = useRef<Record<string, NotificationPreferences>>({});
 
@@ -334,6 +336,9 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       photoSelectionIdRef.current += 1;
+      profilePhotoOwnershipLoadedRef.current = false;
+      setProfilePhotoOwnershipLoaded(false);
+      setPhotoChooserOpen(false);
       setLoading(!useAuthProfile);
       setProfileStatus(null);
       setNotificationStatus(null);
@@ -369,10 +374,15 @@ export function Profile({ auth }: { auth: AuthState }) {
         });
         let initialLoadTelemetryRecorded = false;
         let loadedProfile: ProfileDocument;
+        let loadedPhotoOwnership = false;
         if (useAuthProfile) {
           loadedProfile = seededProfile as ProfileDocument;
+          loadedPhotoOwnership = true;
         } else {
-          loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
+          try {
+            loadedProfile = await loadProfileDocument(user.uid);
+            loadedPhotoOwnership = true;
+          } catch (error) {
             logger.warn('Unable to load profile.', { error });
             if (!cancelled) {
               setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
@@ -381,8 +391,8 @@ export function Profile({ auth }: { auth: AuthState }) {
               });
               initialLoadTelemetryRecorded = true;
             }
-            return {} as ProfileDocument;
-          });
+            loadedProfile = {} as ProfileDocument;
+          }
         }
 
         if (cancelled) {
@@ -405,6 +415,8 @@ export function Profile({ auth }: { auth: AuthState }) {
         photoPathRef.current = loadedProfile.photoPath || '';
         photoFileRef.current = null;
         photoChangedRef.current = false;
+        profilePhotoOwnershipLoadedRef.current = loadedPhotoOwnership;
+        setProfilePhotoOwnershipLoaded(loadedPhotoOwnership);
         setPhotoUrl(loadedProfile.photoUrl || '');
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
@@ -678,6 +690,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   }, [activeProfileSection, auth.isParent, parentLinkedTeamsLoaded, user]);
 
   const applySelectedPhoto = (file: File) => {
+    if (!profilePhotoOwnershipLoadedRef.current) {
+      setProfileStatus({ message: 'Profile photo details could not be loaded. Refresh before changing the photo.', tone: 'error' });
+      return;
+    }
     if (!file) {
       return;
     }
@@ -699,6 +715,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   };
 
   const prepareSelectedPhoto = async (file: File, options: { normalize?: boolean } = {}) => {
+    if (!profilePhotoOwnershipLoadedRef.current) {
+      setProfileStatus({ message: 'Profile photo details could not be loaded. Refresh before changing the photo.', tone: 'error' });
+      return;
+    }
     if (!file) {
       return;
     }
@@ -734,6 +754,11 @@ export function Profile({ auth }: { auth: AuthState }) {
   };
 
   const handleNativePhotoChoice = async (source: ProfilePhotoSource) => {
+    if (!profilePhotoOwnershipLoadedRef.current) {
+      setProfileStatus({ message: 'Profile photo details could not be loaded. Refresh before changing the photo.', tone: 'error' });
+      setPhotoChooserOpen(false);
+      return;
+    }
     setBusy('photo-acquire');
     setProfileStatus(null);
 
@@ -765,6 +790,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   };
 
   const removePhoto = () => {
+    if (!profilePhotoOwnershipLoadedRef.current) {
+      setProfileStatus({ message: 'Profile photo details could not be loaded. Refresh before changing the photo.', tone: 'error' });
+      return;
+    }
     photoSelectionIdRef.current += 1;
     revokeOwnedPhotoPreviewUrl();
     photoFileRef.current = null;
@@ -792,6 +821,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       const trimmedPhone = phone.trim();
       const selectedPhotoFile = photoFileRef.current;
       const selectedPhotoChanged = photoChangedRef.current;
+      const photoOwnershipLoaded = profilePhotoOwnershipLoadedRef.current;
+      if (selectedPhotoChanged && !photoOwnershipLoaded) {
+        throw new Error('Profile photo details could not be loaded. Refresh before changing the photo.');
+      }
       let nextPhotoUrl = photoUrlRef.current || '';
       const previousPhotoPath = photoPathRef.current || '';
       let nextPhotoPath = previousPhotoPath;
@@ -820,8 +853,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       const nextProfileWrite = {
         fullName: trimmedFullName,
         phone: trimmedPhone,
-        photoUrl: nextPhotoUrl || null,
-        ...((selectedPhotoChanged || nextPhotoPath) ? { photoPath: nextPhotoPath || null } : {})
+        ...(photoOwnershipLoaded ? {
+          photoUrl: nextPhotoUrl || null,
+          ...((selectedPhotoChanged || nextPhotoPath) ? { photoPath: nextPhotoPath || null } : {})
+        } : {})
       };
       try {
         await saveProfileDocument(user.uid, nextProfileWrite);
@@ -859,18 +894,24 @@ export function Profile({ auth }: { auth: AuthState }) {
         fullName: trimmedFullName,
         displayName: trimmedFullName,
         phone: trimmedPhone,
-        photoUrl: nextPhotoUrl || '',
-        photoPath: nextPhotoPath || null,
+        ...(photoOwnershipLoaded ? {
+          photoUrl: nextPhotoUrl || '',
+          photoPath: nextPhotoPath || null
+        } : {}),
         updatedAt: new Date()
       };
       revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
-      photoUrlRef.current = nextProfile.photoUrl || nextPhotoUrl || '';
-      photoPathRef.current = nextProfile.photoPath || nextPhotoPath || '';
+      if (photoOwnershipLoaded) {
+        photoUrlRef.current = nextProfile.photoUrl || nextPhotoUrl || '';
+        photoPathRef.current = nextProfile.photoPath || nextPhotoPath || '';
+      }
       photoFileRef.current = null;
       photoChangedRef.current = false;
-      setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
-      setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
+      if (photoOwnershipLoaded) {
+        setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
+        setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
+      }
       setPhotoFile(null);
       setPhotoChanged(false);
       setProfileStatus({ message: 'Profile saved.', tone: 'success' });
@@ -1424,21 +1465,21 @@ export function Profile({ auth }: { auth: AuthState }) {
           <div className="flex flex-wrap items-center gap-3">
             {isNative ? (
               <>
-                <button type="button" className="secondary-button" onClick={() => setPhotoChooserOpen(true)} disabled={busy === 'photo-acquire'}>
+                <button type="button" className="secondary-button" onClick={() => setPhotoChooserOpen(true)} disabled={busy === 'photo-acquire' || !profilePhotoOwnershipLoaded}>
                   {busy === 'photo-acquire' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ImagePlus className="h-4 w-4" aria-hidden="true" />}
                   Choose photo
                 </button>
-                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} tabIndex={-1} aria-hidden="true" />
+                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} tabIndex={-1} aria-hidden="true" disabled={!profilePhotoOwnershipLoaded} />
               </>
             ) : (
-              <label className="secondary-button cursor-pointer">
+              <label className={`secondary-button ${profilePhotoOwnershipLoaded ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`} aria-disabled={!profilePhotoOwnershipLoaded}>
                 <ImagePlus className="h-4 w-4" aria-hidden="true" />
                 Choose photo
-                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} />
+                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} disabled={!profilePhotoOwnershipLoaded} />
               </label>
             )}
             {photoPreview ? (
-              <button type="button" className="ghost-button" onClick={removePhoto}>
+              <button type="button" className="ghost-button" onClick={removePhoto} disabled={!profilePhotoOwnershipLoaded}>
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
                 Remove
               </button>

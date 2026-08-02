@@ -66,7 +66,7 @@
                             </svg>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <input type="file" id="photo-upload" accept="image/*"
+                            <input type="file" id="photo-upload" accept="image/*" disabled
                                 class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                             <button type="button" id="remove-photo-btn"
                                 class="hidden text-sm text-red-600 hover:text-red-700 font-medium text-left">
@@ -456,12 +456,19 @@
         let currentPhotoUrl = null;
         let currentPhotoPath = '';
         let photoChanged = false;
+        let profilePhotoOwnershipLoaded = false;
         let notificationTeams = [];
         let notificationPreferencesLoadedTeamId = '';
 
         async function loadProfile() {
+            profilePhotoOwnershipLoaded = false;
+            document.getElementById('photo-upload').disabled = true;
+            document.getElementById('remove-photo-btn').disabled = true;
             try {
                 const profile = await getUserProfile(currentUser.uid);
+                profilePhotoOwnershipLoaded = true;
+                document.getElementById('photo-upload').disabled = false;
+                document.getElementById('remove-photo-btn').disabled = false;
                 currentPhotoUrl = null;
                 currentPhotoPath = '';
                 if (profile) {
@@ -481,7 +488,7 @@
                 }
             } catch (e) {
                 console.error('Error loading profile', e);
-                document.getElementById('profile-status').textContent = 'Error loading profile';
+                document.getElementById('profile-status').textContent = 'Profile photo details could not be loaded. Refresh before changing the photo.';
                 document.getElementById('profile-status').className = 'text-sm text-red-600';
             }
         }
@@ -729,6 +736,12 @@
 
         // Handle photo preview when file is selected
         document.getElementById('photo-upload').addEventListener('change', (e) => {
+            if (!profilePhotoOwnershipLoaded) {
+                e.target.value = '';
+                document.getElementById('profile-status').textContent = 'Profile photo details could not be loaded. Refresh before changing the photo.';
+                document.getElementById('profile-status').className = 'text-sm text-red-600';
+                return;
+            }
             const file = e.target.files[0];
             if (file) {
                 if (!file.type.startsWith('image/')) {
@@ -748,6 +761,11 @@
 
         // Handle remove photo
         document.getElementById('remove-photo-btn').addEventListener('click', () => {
+            if (!profilePhotoOwnershipLoaded) {
+                document.getElementById('profile-status').textContent = 'Profile photo details could not be loaded. Refresh before changing the photo.';
+                document.getElementById('profile-status').className = 'text-sm text-red-600';
+                return;
+            }
             currentPhotoUrl = null;
             currentPhotoPath = '';
             photoChanged = true;
@@ -866,6 +884,9 @@
 
                 // Handle photo upload if changed
                 const fileInput = document.getElementById('photo-upload');
+                if (photoChanged && !profilePhotoOwnershipLoaded) {
+                    throw new Error('Profile photo details could not be loaded. Refresh before changing the photo.');
+                }
                 if (photoChanged && fileInput.files[0]) {
                     status.textContent = 'Uploading photo...';
                     try {
@@ -884,12 +905,15 @@
                 }
 
                 profileWriteAttempted = true;
-                await updateUserProfile(currentUser.uid, {
+                const profileUpdate = {
                     fullName,
-                    phone,
-                    photoUrl: currentPhotoUrl,
-                    photoPath: currentPhotoPath || null
-                });
+                    phone
+                };
+                if (profilePhotoOwnershipLoaded) {
+                    profileUpdate.photoUrl = currentPhotoUrl;
+                    profileUpdate.photoPath = currentPhotoPath || null;
+                }
+                await updateUserProfile(currentUser.uid, profileUpdate);
 
                 if (previousPhotoPath && previousPhotoPath !== currentPhotoPath) {
                     await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);

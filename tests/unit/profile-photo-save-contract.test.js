@@ -9,15 +9,25 @@ describe('legacy profile photo save contract', () => {
         const handlerEnd = source.indexOf('renderNotificationPreferenceGroups();', handlerStart);
         const handler = source.slice(handlerStart, handlerEnd);
 
-        expect(handler).toContain('await updateUserProfile(currentUser.uid, {');
+        expect(handler).toContain('await updateUserProfile(currentUser.uid, profileUpdate);');
         expect(handler).not.toContain('email: currentUser.email');
+    });
+
+    it('fails closed when initial photo ownership cannot be loaded', () => {
+        expect(source).toContain('let profilePhotoOwnershipLoaded = false;');
+        expect(source).toContain("document.getElementById('photo-upload').disabled = true;");
+        expect(source).toContain('profilePhotoOwnershipLoaded = true;');
+        expect(source).toContain('if (photoChanged && !profilePhotoOwnershipLoaded)');
+        expect(source).toContain('if (profilePhotoOwnershipLoaded) {');
+        expect(source).toContain('profileUpdate.photoUrl = currentPhotoUrl;');
+        expect(source).toContain('Profile photo details could not be loaded. Refresh before changing the photo.');
     });
 
     it('persists cleanup paths and reconciles ambiguous profile saves before deleting either object', () => {
         expect(source).toContain("uploadUserPhoto(fileInput.files[0], currentUser.uid, { returnUpload: true })");
         expect(source).toContain('currentPhotoPath = uploadedPhoto.path;');
         expect(source).toMatch(/currentPhotoUrl = null;\s*currentPhotoPath = '';/);
-        expect(source).toContain('photoPath: currentPhotoPath || null');
+        expect(source).toContain('profileUpdate.photoPath = currentPhotoPath || null;');
         expect(source).toContain('const authoritativeProfile = await getUserProfile(currentUser.uid).catch(() => null);');
         expect(source).toContain('await deleteLegacyImageUpload(newlyUploadedPhotoPath).catch(() => undefined);');
         expect(source).toContain('await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);');

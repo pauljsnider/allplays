@@ -573,6 +573,29 @@ describe('Profile', () => {
     expect(profileServiceMocks.saveProfileDocument).not.toHaveBeenCalled();
   });
 
+  it('fails closed for photo changes when the initial ownership read fails', async () => {
+    profileServiceMocks.loadProfileDocument.mockRejectedValueOnce(new Error('offline'));
+    renderProfile('/profile/settings', false, false, {
+      ...auth,
+      profile: { email: 'parent@example.com' },
+      profileHydration: 'fallback'
+    });
+
+    expect(await screen.findByText('Profile details could not be loaded yet.')).toBeTruthy();
+    const photoInput = screen.getByLabelText('Choose photo') as HTMLInputElement;
+    expect(photoInput.disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Pat Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
+      fullName: 'Pat Updated',
+      phone: ''
+    }));
+    expect(profilePhotoServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
+  });
+
   it('disables account merge while parent team eligibility is loading', async () => {
     const parentTeamsRequest = createDeferredPromise<Array<{ id: string; name: string }>>();
     profileServiceMocks.loadParentTeams.mockImplementation(() => parentTeamsRequest.promise);

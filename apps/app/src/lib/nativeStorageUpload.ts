@@ -70,68 +70,55 @@ export async function uploadNativePrimaryStorageFile({
   if (!userId) {
     throw new Error(`Sign in before uploading ${label.toLowerCase()}.`);
   }
-  return runNativeStorageOperation({
-    timeoutMs,
-    timeoutMessage: `${label} upload timed out. Check your connection and try again.`,
-    operation: async (signal) => {
-      const idToken = await getNativeAuthIdToken(true);
-      if (!idToken) {
-        throw new Error('Native auth token is unavailable.');
-      }
-
-      const safeFileName = sanitizeNativeStorageSegment(file.name, 'media');
-      const path = buildPath(sanitizeNativeStorageSegment(userId, 'unknown-user'), safeFileName);
-      if (!path || path.startsWith('/') || path.includes('..')) {
-        throw new Error(`${label} upload path is invalid.`);
-      }
-
-      const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
-      const headers = await getPrimaryAppCheckHeaders({
-        Authorization: `Bearer ${idToken}`,
-        'Content-Type': file.type || 'application/octet-stream'
-      }, requestUrl);
-      const response = await fetch(requestUrl, {
-        method: 'POST',
-        headers,
-        body: file,
-        signal
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.error?.message || `${label} upload failed (${response.status}).`);
-      }
-
-      const storedPath = String(payload.name || path);
-      const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-      const url = token
-        ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
-        : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media`;
-
-      return {
-        url,
-        path: storedPath,
-        userId,
-        mimeType: file.type || 'application/octet-stream',
-        sizeBytes: Number.isFinite(file.size) ? file.size : null
-      };
-    }
-  });
-}
-
-export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
-  const privateFileName = buildNativeProfilePhotoFileName(file.name);
   let reservedPath = '';
   try {
-    return await uploadNativePrimaryStorageFile({
-      file,
-      label: 'Profile photo',
-      timeoutMs: 20000,
-      buildPath: (userId) => {
-        if (uid && uid !== userId) {
-          throw new Error('The signed-in account does not match this profile photo upload.');
+    return await runNativeStorageOperation({
+      timeoutMs,
+      timeoutMessage: `${label} upload timed out. Check your connection and try again.`,
+      operation: async (signal) => {
+        const idToken = await getNativeAuthIdToken(true);
+        if (!idToken) {
+          throw new Error('Native auth token is unavailable.');
         }
-        reservedPath = `profile-photos/users/${userId}/${privateFileName}`;
-        return reservedPath;
+
+        const safeFileName = sanitizeNativeStorageSegment(file.name, 'media');
+        const path = buildPath(sanitizeNativeStorageSegment(userId, 'unknown-user'), safeFileName);
+        if (!path || path.startsWith('/') || path.includes('..')) {
+          throw new Error(`${label} upload path is invalid.`);
+        }
+        // Keep the exact candidate path outside the timed operation. A POST may
+        // have committed even when its response fails or arrives after timeout.
+        reservedPath = path;
+
+        const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
+        const headers = await getPrimaryAppCheckHeaders({
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': file.type || 'application/octet-stream'
+        }, requestUrl);
+        const response = await fetch(requestUrl, {
+          method: 'POST',
+          headers,
+          body: file,
+          signal
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error?.message || `${label} upload failed (${response.status}).`);
+        }
+
+        const storedPath = String(payload.name || path);
+        const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+        const url = token
+          ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+          : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(storedPath)}?alt=media`;
+
+        return {
+          url,
+          path: storedPath,
+          userId,
+          mimeType: file.type || 'application/octet-stream',
+          sizeBytes: Number.isFinite(file.size) ? file.size : null
+        };
       }
     });
   } catch (error) {
@@ -140,6 +127,21 @@ export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
     }
     throw error;
   }
+}
+
+export async function uploadNativeUserProfilePhoto(file: File, uid = '') {
+  const privateFileName = buildNativeProfilePhotoFileName(file.name);
+  return uploadNativePrimaryStorageFile({
+    file,
+    label: 'Profile photo',
+    timeoutMs: 20000,
+    buildPath: (userId) => {
+      if (uid && uid !== userId) {
+        throw new Error('The signed-in account does not match this profile photo upload.');
+      }
+      return `profile-photos/users/${userId}/${privateFileName}`;
+    }
+  });
 }
 
 export async function uploadNativePlayerPhotoFile(file: File, teamId: string, playerId: string) {
