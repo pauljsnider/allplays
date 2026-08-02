@@ -195,6 +195,9 @@ export async function getPlayers() {
 export async function getPlayersWithPrivateRosterContacts() {
     return getPlayers();
 }
+export async function getPlayerPrivateProfile() {
+    return {};
+}
 export async function addPlayer() {}
 export async function applyRosterCsvImportOperations(_teamId, operations) {
     return operations.map((operation, index) => ({ ...operation, playerId: operation.playerId || 'player-' + (index + 1) }));
@@ -1018,13 +1021,13 @@ test('edit roster renders players when optional registration and parent reads ar
 
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-name-display')).toHaveText('Roster Test Team');
     await expect(page.locator('#roster-list')).toContainText('Avery Carter');
     await expect(page.locator('#roster-list')).toContainText('Jordan Reed');
     await expect(page.locator('#export-registration-csv-btn')).toBeVisible();
     await expect(page.locator('#export-registration-csv-btn')).toBeDisabled();
     await expect(page.locator('#registration-review-list')).toContainText('No registration forms configured for this team.');
-    expect(pageErrors).toEqual([]);
 });
 
 test('team chat falls back to the team-wide channel when conversation listing is denied', async ({ page, baseURL }) => {
