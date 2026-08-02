@@ -809,6 +809,7 @@ export function validateFirebaseRulesCi() {
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const deployProd = readText('.github/workflows/deploy-prod.yml');
+    const migrationCredential = readText('_migration/firebase-admin-credential.mjs');
     const deployPreviewBuild = readText('.github/workflows/deploy-preview.yml');
     const deployPreviewTrusted = readText('.github/workflows/deploy-preview-trusted.yml');
     const prIntegration = readText('.github/workflows/pr-integration.yml');
@@ -888,6 +889,26 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
     validateProductionDeployCommand(deployProd);
+    assertIncludes(
+        deployProd,
+        'cp _migration/firebase-admin-credential.mjs',
+        'Production migration access-token credential handoff'
+    );
+    assertIncludes(
+        deployProd,
+        'test -f "$bundle/_migration/firebase-admin-credential.mjs"',
+        'Production migration credential handoff validation'
+    );
+    assertIncludes(
+        migrationCredential,
+        'if (env.GOOGLE_OAUTH_ACCESS_TOKEN)',
+        'Production migration workload-identity access-token preference'
+    );
+    assertIncludes(
+        migrationCredential,
+        'credential: applicationDefault()',
+        'Production migration local application-default fallback'
+    );
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 

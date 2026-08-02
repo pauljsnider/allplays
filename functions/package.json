@@ -13,8 +13,10 @@
     "test:notifications": "node ../node_modules/vitest/vitest.mjs run test/send-category-notification.test.js test/send-category-notification-load.test.js test/notification-triggers.test.js --environment node"
   },
   "dependencies": {
+    "@google-cloud/storage": "7.21.0",
     "firebase-admin": "12.7.0",
     "firebase-functions": "5.1.1",
+    "google-auth-library": "9.15.1",
     "resend": "^6.17.2",
     "stripe": "^16.12.0"
   }

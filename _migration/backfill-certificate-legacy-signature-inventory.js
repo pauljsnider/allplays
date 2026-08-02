@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { getStorage } from 'firebase-admin/storage';
+import { FieldValue } from 'firebase-admin/firestore';
+import {
+    getMigrationAdminAppOptions,
+    getMigrationFirestore,
+    getMigrationStorageBucket
+} from './firebase-admin-credential.mjs';
 
 const require = createRequire(import.meta.url);
 const {
@@ -21,21 +24,10 @@ const LEGACY_IMAGE_BUCKET = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.f
 const MIGRATION_MARKER_PATH = 'systemMigrations/certificateLegacySignatureInventoryV1';
 
 function getAdminAppOptions() {
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        return {
-            credential: applicationDefault(),
-            projectId: FIREBASE_PROJECT_ID,
-            storageBucket: LEGACY_IMAGE_BUCKET
-        };
-    }
-    const serviceAccount = JSON.parse(
-        readFileSync(new URL('./serviceAccountKey.json', import.meta.url), 'utf8')
-    );
-    return {
-        credential: cert(serviceAccount),
+    return getMigrationAdminAppOptions({
         projectId: FIREBASE_PROJECT_ID,
         storageBucket: LEGACY_IMAGE_BUCKET
-    };
+    });
 }
 
 async function getAuthorizedUploaderIds(auth, team = {}) {
@@ -154,9 +146,12 @@ export async function backfillCertificateLegacySignatureInventory({
 async function main() {
     if (!getApps().length) initializeApp(getAdminAppOptions());
     await backfillCertificateLegacySignatureInventory({
-        db: getFirestore(),
+        db: getMigrationFirestore({ projectId: FIREBASE_PROJECT_ID }),
         auth: getAuth(),
-        legacyBucket: getStorage().bucket(LEGACY_IMAGE_BUCKET)
+        legacyBucket: getMigrationStorageBucket({
+            projectId: FIREBASE_PROJECT_ID,
+            bucketName: LEGACY_IMAGE_BUCKET
+        })
     });
 }
 
