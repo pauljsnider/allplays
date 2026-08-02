@@ -21,10 +21,11 @@ const legacyUrl = `https://firebasestorage.googleapis.com/v0/b/${legacyBucket}/o
 
 test('queues removed legacy user-scoped signatures only for their original uploader', () => {
   const legacyPath = 'certificate-signatures/users/original-admin/legacy.png';
+  const legacyDisplayUrl = 'https://firebasestorage.googleapis.com/v0/b/all-plays-ai.appspot.com/o/certificate-signatures%2Fusers%2Foriginal-admin%2Flegacy.png?alt=media&token=old-token';
   const nextPath = 'certificate-signatures/teams/team-1/new.png';
   const ownedPlan = planCertificateSignatureCleanup({
     teamId: 'team-1',
-    previousDefaults: { signers: [{ signatureImagePath: legacyPath }] },
+    previousDefaults: { signers: [{ signatureImagePath: legacyPath, signatureImageUrl: legacyDisplayUrl }] },
     nextDefaults: { signers: [{ signatureImagePath: nextPath }] },
     requestedBy: 'original-admin'
   });
@@ -36,6 +37,7 @@ test('queues removed legacy user-scoped signatures only for their original uploa
   });
 
   assert.deepEqual(ownedPlan.cleanupPaths, [legacyPath]);
+  assert.deepEqual(ownedPlan.retiredSourceUrls, [legacyDisplayUrl]);
   assert.deepEqual(foreignPlan.cleanupPaths, []);
   assert.equal(getLegacySignatureOwnerId(legacyPath), 'original-admin');
 });
@@ -207,7 +209,8 @@ test('queues an authenticated removed URL-only signature in the legacy bucket an
 
   assert.deepEqual(retainedPlan.cleanupTargets, []);
   assert.deepEqual(reorderedRetainedPlan.cleanupTargets, []);
-  assert.deepEqual(removalPlan.cleanupTargets, [reference]);
+  assert.deepEqual(removalPlan.cleanupTargets, [{ ...reference, sourceUrls: [legacyUrl] }]);
+  assert.deepEqual(removalPlan.retiredSourceUrls, [legacyUrl]);
   assert.equal(isAuthorizedCertificateSignatureCleanupTarget('team-1', {
     ...reference,
     requestedBy: 'different-current-admin'
@@ -246,6 +249,7 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /exports\.commitCertificateDefaults\s*=\s*functions\.https\.onCall/);
   assert.match(functionsSource, /firestore\.runTransaction[\s\S]*planCertificateSignatureCleanup/);
   assert.match(functionsSource, /transaction\.get\(cleanupRef\)[\s\S]*removed signature image cannot be restored/i);
+  assert.match(functionsSource, /retiredSignatureImageUrls[\s\S]*cleanupPlan\.retiredSourceUrls/);
   assert.match(functionsSource, /certificateSignatureCleanup\/\$\{cleanupId\}/);
   assert.match(functionsSource, /status: 'pending'/);
   assert.match(functionsSource, /exports\.cleanupCertificateSignature[\s\S]*\.onWrite/);
@@ -257,4 +261,7 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(dbSource, /export async function setCertificateDefaults[\s\S]*return commitCertificateDefaults\(teamId, defaults\)/);
   assert.doesNotMatch(dbSource, /setDoc\(doc\(db, 'teams', teamId, 'settings', 'certificateDefaults'\)/);
   assert.match(rulesSource, /match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults[\s\S]*allow create, update, delete: if false;/);
+  assert.match(rulesSource, /retiredSignatureImageUrls[\s\S]*hasNoRetiredCertificateSignatureUrls/);
+  assert.match(rulesSource, /match \/certificateBatches\/\{batchId\}[\s\S]*isCertificateBatchCreateSafe[\s\S]*isCertificateBatchUpdateSafe/);
+  assert.match(rulesSource, /match \/certificates\/\{certificateId\}[\s\S]*isCertificateOutputCreateSafe[\s\S]*isCertificateOutputUpdateSafe/);
 });

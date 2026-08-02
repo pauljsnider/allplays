@@ -14178,6 +14178,7 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
     id: _ignoredId,
     updatedAt: _ignoredUpdatedAt,
     updatedBy: _ignoredUpdatedBy,
+    retiredSignatureImageUrls: _ignoredRetiredSignatureImageUrls,
     ...clientDefaults
   } = requestedDefaults;
   const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
@@ -14221,6 +14222,24 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
       throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
     }
 
+    const priorRetiredSignatureImageUrls = previousSnap.exists &&
+      Array.isArray(previousSnap.data()?.retiredSignatureImageUrls)
+      ? previousSnap.data().retiredSignatureImageUrls
+      : [];
+    const retiredSignatureImageUrls = [...new Set([
+      ...priorRetiredSignatureImageUrls,
+      ...cleanupPlan.retiredSourceUrls
+    ].map((value) => String(value || '').trim()).filter(Boolean))];
+    if (
+      retiredSignatureImageUrls.length > 1000 ||
+      JSON.stringify(retiredSignatureImageUrls).length > 500_000
+    ) {
+      throw new functions.https.HttpsError(
+        'resource-exhausted',
+        'Certificate signature retirement history requires maintenance before another image can be removed.'
+      );
+    }
+
     for (const target of cleanupPlan.nextTargets.values()) {
       const storagePath = target.storagePath;
       const cleanupId = getCertificateSignatureCleanupId(teamId, target);
@@ -14254,6 +14273,7 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
     });
     transaction.set(defaultsRef, {
       ...clientDefaults,
+      retiredSignatureImageUrls,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: context.auth.uid
     }, { merge: true });

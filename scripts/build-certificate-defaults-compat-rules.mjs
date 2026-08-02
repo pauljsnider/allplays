@@ -12,8 +12,18 @@ const serverOnlyDefaultsBlock = `      match /settings/{settingId} {
 const compatibilityDefaultsBlock = `      match /settings/{settingId} {
         // Transitional compatibility only: the server writer and updated clients
         // deploy before the final ruleset removes these direct writes.
-        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
-                                            isTeamOwnerOrAdmin(teamId);
+        // Legacy callers may keep saving ordinary defaults, but cannot change
+        // signer images or forge, erase, or alter the server-owned retirement
+        // deny-list. Updated callers use the server writer for those mutations.
+        allow read: if settingId == 'certificateDefaults' &&
+                       isTeamOwnerOrAdmin(teamId);
+        allow create: if settingId == 'certificateDefaults' &&
+                         isTeamOwnerOrAdmin(teamId) &&
+                         isLegacyCertificateDefaultsCreateSafe(request.resource.data);
+        allow update: if settingId == 'certificateDefaults' &&
+                         isTeamOwnerOrAdmin(teamId) &&
+                         isLegacyCertificateDefaultsUpdateSafe();
+        allow delete: if false;
       }`;
 
 export function buildCertificateDefaultsCompatibilityRules(finalRules) {

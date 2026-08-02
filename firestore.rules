@@ -774,6 +774,82 @@ service cloud.firestore {
              isParentForPlayer(teamId, playerId);
     }
 
+    function certificateSignerImageUrls(data) {
+      let signers = data.get('signers', []);
+      return signers is list && signers.size() <= 4
+        ? [
+            (signers.size() > 0 && signers[0] is map) ? signers[0].get('signatureImageUrl', null) : null,
+            (signers.size() > 1 && signers[1] is map) ? signers[1].get('signatureImageUrl', null) : null,
+            (signers.size() > 2 && signers[2] is map) ? signers[2].get('signatureImageUrl', null) : null,
+            (signers.size() > 3 && signers[3] is map) ? signers[3].get('signatureImageUrl', null) : null
+          ]
+        : ['invalid-certificate-signers'];
+    }
+
+    function certificateSignerImagePaths(data) {
+      let signers = data.get('signers', []);
+      return signers is list && signers.size() <= 4
+        ? [
+            (signers.size() > 0 && signers[0] is map) ? signers[0].get('signatureImagePath', null) : null,
+            (signers.size() > 1 && signers[1] is map) ? signers[1].get('signatureImagePath', null) : null,
+            (signers.size() > 2 && signers[2] is map) ? signers[2].get('signatureImagePath', null) : null,
+            (signers.size() > 3 && signers[3] is map) ? signers[3].get('signatureImagePath', null) : null
+          ]
+        : ['invalid-certificate-signers'];
+    }
+
+    function certificateBatchSignerImageUrls(data) {
+      let shared = data.get('shared', {});
+      return shared is map
+        ? certificateSignerImageUrls(shared)
+        : ['invalid-certificate-batch-shared-state'];
+    }
+
+    function hasNoRetiredCertificateSignatureUrls(teamId, signerImageUrls) {
+      let defaultsPath = /databases/$(database)/documents/teams/$(teamId)/settings/certificateDefaults;
+      let retiredUrls = exists(defaultsPath)
+        ? get(defaultsPath).data.get('retiredSignatureImageUrls', [])
+        : [];
+      return retiredUrls is list &&
+             retiredUrls.size() <= 1000 &&
+             !retiredUrls.hasAny(signerImageUrls);
+    }
+
+    function isLegacyCertificateDefaultsCreateSafe(data) {
+      return !data.keys().hasAny(['retiredSignatureImageUrls']) &&
+             certificateSignerImageUrls(data) == [null, null, null, null] &&
+             certificateSignerImagePaths(data) == [null, null, null, null];
+    }
+
+    function isLegacyCertificateDefaultsUpdateSafe() {
+      return request.resource.data.get('retiredSignatureImageUrls', []) ==
+               resource.data.get('retiredSignatureImageUrls', []) &&
+             certificateSignerImageUrls(request.resource.data) ==
+               certificateSignerImageUrls(resource.data) &&
+             certificateSignerImagePaths(request.resource.data) ==
+               certificateSignerImagePaths(resource.data);
+    }
+
+    function isCertificateOutputCreateSafe(teamId, data) {
+      return hasNoRetiredCertificateSignatureUrls(teamId, certificateSignerImageUrls(data));
+    }
+
+    function isCertificateOutputUpdateSafe(teamId) {
+      let nextUrls = certificateSignerImageUrls(request.resource.data);
+      return nextUrls == certificateSignerImageUrls(resource.data) ||
+             hasNoRetiredCertificateSignatureUrls(teamId, nextUrls);
+    }
+
+    function isCertificateBatchCreateSafe(teamId, data) {
+      return hasNoRetiredCertificateSignatureUrls(teamId, certificateBatchSignerImageUrls(data));
+    }
+
+    function isCertificateBatchUpdateSafe(teamId) {
+      let nextUrls = certificateBatchSignerImageUrls(request.resource.data);
+      return nextUrls == certificateBatchSignerImageUrls(resource.data) ||
+             hasNoRetiredCertificateSignatureUrls(teamId, nextUrls);
+    }
+
     function isPlayerSelf(teamId, playerId) {
       let playerPath = /databases/$(database)/documents/teams/$(teamId)/players/$(playerId);
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
@@ -3392,7 +3468,11 @@ service cloud.firestore {
       }
 
       match /certificateBatches/{batchId} {
-        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow read, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateBatchCreateSafe(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateBatchUpdateSafe(teamId);
 
         match /audit/{eventId} {
           allow read: if isTeamOwnerOrAdmin(teamId);
@@ -3404,7 +3484,10 @@ service cloud.firestore {
       match /certificates/{certificateId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        isPublishedLinkedCertificate(teamId, resource.data);
-        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateOutputCreateSafe(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateOutputUpdateSafe(teamId);
         allow delete: if isGlobalAdmin();
 
         match /audit/{eventId} {

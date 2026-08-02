@@ -161,8 +161,13 @@ function collectCertificateSignaturePaths(defaults = {}) {
 
 function collectCertificateSignatureTargets(defaults = {}, authenticatedLegacyReferences = []) {
   const targets = [];
+  const signerEntries = collectCertificateSignerEntries(defaults);
   collectCertificateSignaturePaths(defaults).forEach((storagePath) => {
-    targets.push({ storageBucket: PRIMARY_STORAGE_KIND, storagePath });
+    const sourceUrls = signerEntries
+      .filter((signer) => String(signer?.signatureImagePath || '').trim() === storagePath)
+      .map((signer) => String(signer?.signatureImageUrl || '').trim())
+      .filter(Boolean);
+    targets.push({ storageBucket: PRIMARY_STORAGE_KIND, storagePath, sourceUrls: [...new Set(sourceUrls)] });
   });
   const signerUrls = new Set((Array.isArray(defaults?.signers) ? defaults.signers : [])
     .map((signer) => String(signer?.signatureImageUrl || '').trim())
@@ -171,7 +176,10 @@ function collectCertificateSignatureTargets(defaults = {}, authenticatedLegacyRe
     const remainsReferenced = [...signerUrls].some((signerUrl) => (
       parseLegacyImageSignatureUrl(signerUrl, reference?.legacyBucketName)?.sourceUrlHash === reference?.sourceUrlHash
     ));
-    if (remainsReferenced) targets.push(reference);
+    if (remainsReferenced) targets.push({
+      ...reference,
+      sourceUrls: [String(reference?.url || '').trim()].filter(Boolean)
+    });
   });
   return new Map(targets.map((target) => [
     `${target.storageBucket || PRIMARY_STORAGE_KIND}\n${String(target.storagePath || '').trim()}`,
@@ -234,6 +242,7 @@ function planCertificateSignatureCleanup({
     nextPaths,
     cleanupPaths: cleanupTargets.map((target) => target.storagePath),
     cleanupTargets,
+    retiredSourceUrls: [...new Set(cleanupTargets.flatMap((target) => target.sourceUrls || []))],
     previousTargets,
     nextTargets
   };

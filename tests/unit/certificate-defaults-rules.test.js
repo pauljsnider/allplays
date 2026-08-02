@@ -18,6 +18,7 @@ import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const compatibilityRules = compactFirestoreRules(buildCertificateDefaultsCompatibilityRules(rules));
 const deployWorkflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
+const repositoryInstructions = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
 
 describe('certificate defaults Firestore rules', () => {
     it('keeps shared defaults readable to team admins but server-writable only', () => {
@@ -25,12 +26,21 @@ describe('certificate defaults Firestore rules', () => {
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow create, update, delete: if false;/);
     });
 
+    it('requires saved-output writers to serialize with signature retirement', () => {
+        expect(repositoryInstructions).toMatch(
+            /durable retired-reference deny-list[\s\S]*reject creates or changed snapshots[\s\S]*signature reference remains byte-for-byte unchanged[\s\S]*real Firestore Rules race regression/
+        );
+        expect(rules).toContain('retiredSignatureImageUrls');
+        expect(rules).toContain('isCertificateOutputUpdateSafe');
+        expect(rules).toContain('isCertificateBatchUpdateSafe');
+    });
+
     it('builds a narrowly scoped transitional ruleset', () => {
         const sourceCompatibilityRules = buildCertificateDefaultsCompatibilityRules(rules);
 
-        expect(sourceCompatibilityRules).toContain(
-            "allow read, create, update, delete: if settingId == 'certificateDefaults'"
-        );
+        expect(sourceCompatibilityRules).toContain('isLegacyCertificateDefaultsCreateSafe(request.resource.data)');
+        expect(sourceCompatibilityRules).toContain('isLegacyCertificateDefaultsUpdateSafe()');
+        expect(sourceCompatibilityRules).toContain('allow delete: if false;');
         expect(sourceCompatibilityRules).not.toContain(
             '// All writes must cross the callable\'s trusted provenance/tombstone checks.'
         );
@@ -141,6 +151,28 @@ describe('certificate defaults Firestore rules', () => {
             await assertSucceeds(setDoc(doc(ownerDb, defaultsPath), { signers: [] }));
             await assertFails(setDoc(doc(outsiderDb, defaultsPath), { signers: [] }));
         });
+
+        it('keeps the server retirement deny-list immutable for legacy callers', async () => {
+            await compatibilityEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
+                    signers: [],
+                    retiredSignatureImageUrls: ['https://images.example.test/retired-signature.png']
+                });
+            });
+            const ownerDb = compatibilityEnv.authenticatedContext('owner-a').firestore();
+            const defaultsRef = doc(ownerDb, 'teams/team-a/settings/certificateDefaults');
+
+            await assertSucceeds(updateDoc(defaultsRef, { signers: [{ name: 'Coach' }] }));
+            await assertFails(updateDoc(defaultsRef, { retiredSignatureImageUrls: [] }));
+            await assertFails(updateDoc(defaultsRef, {
+                signers: [{
+                    name: 'Coach',
+                    signatureImageUrl: 'https://images.example.test/new-signature.png',
+                    signatureImagePath: 'certificate-signatures/teams/team-a/new-signature.png'
+                }]
+            }));
+            await assertFails(deleteDoc(defaultsRef));
+        });
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
@@ -162,7 +194,9 @@ describe('certificate defaults Firestore rules', () => {
                     adminEmails: ['admin-a@example.com']
                 });
                 await setDoc(doc(firestore, 'teams/team-a/settings/certificateDefaults'), {
+                    retiredSignatureImageUrls: ['https://images.example.test/retired-signature.png'],
                     signers: [{
+                        signatureImageUrl: 'https://images.example.test/current-signature.png',
                         signatureImagePath: 'certificate-signatures/teams/team-a/current.png'
                     }]
                 });
@@ -170,6 +204,26 @@ describe('certificate defaults Firestore rules', () => {
                     teamId: 'team-a',
                     storagePath: 'certificate-signatures/teams/team-a/retired.png',
                     status: 'completed'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/certificates/historical'), {
+                    signers: [{ signatureImageUrl: 'https://images.example.test/retired-signature.png' }],
+                    status: 'published'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/certificates/clean'), {
+                    signers: [{ signatureImageUrl: 'https://images.example.test/current-signature.png' }],
+                    status: 'draft'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/certificateBatches/historical'), {
+                    shared: {
+                        signers: [{ signatureImageUrl: 'https://images.example.test/retired-signature.png' }]
+                    },
+                    status: 'published'
+                });
+                await setDoc(doc(firestore, 'teams/team-a/certificateBatches/clean'), {
+                    shared: {
+                        signers: [{ signatureImageUrl: 'https://images.example.test/current-signature.png' }]
+                    },
+                    status: 'draft'
                 });
             });
         });
@@ -201,6 +255,47 @@ describe('certificate defaults Firestore rules', () => {
                 storagePath: 'certificate-signatures/users/victim/known.png',
                 requestedBy: 'owner-a',
                 status: 'pending'
+            }));
+        });
+
+        it('rejects stale certificate and batch references after signature retirement', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const retiredSigner = [{ signatureImageUrl: 'https://images.example.test/retired-signature.png' }];
+            const currentSigner = [{ signatureImageUrl: 'https://images.example.test/current-signature.png' }];
+
+            await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificates/stale-create'), {
+                signers: retiredSigner,
+                status: 'draft'
+            }));
+            await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificateBatches/stale-create'), {
+                shared: { signers: retiredSigner },
+                status: 'draft'
+            }));
+            await assertFails(updateDoc(doc(ownerDb, 'teams/team-a/certificates/clean'), {
+                signers: retiredSigner
+            }));
+            await assertFails(updateDoc(doc(ownerDb, 'teams/team-a/certificateBatches/clean'), {
+                shared: { signers: retiredSigner }
+            }));
+
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificates/current-create'), {
+                signers: currentSigner,
+                status: 'draft'
+            }));
+            await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificateBatches/current-create'), {
+                shared: { signers: currentSigner },
+                status: 'draft'
+            }));
+        });
+
+        it('allows unrelated edits to historical outputs without reintroducing their signature', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+
+            await assertSucceeds(updateDoc(doc(ownerDb, 'teams/team-a/certificates/historical'), {
+                status: 'archived'
+            }));
+            await assertSucceeds(updateDoc(doc(ownerDb, 'teams/team-a/certificateBatches/historical'), {
+                status: 'archived'
             }));
         });
     });
