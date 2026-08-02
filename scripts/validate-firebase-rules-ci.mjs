@@ -601,8 +601,18 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'component_marker_found="true"', 'Production Firestore component marker presence');
     assertIncludes(
         deployProd,
-        'The latest prior production run did not produce the active component marker; forcing live mode classification.',
+        'The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification.',
         'Production Firestore failed/incomplete retry ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing prior-run identity ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing component-marker run identity ambiguity handling'
     );
     assertIncludes(
         deployProd,

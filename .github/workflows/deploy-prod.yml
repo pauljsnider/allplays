@@ -371,11 +371,13 @@ jobs:
           fi
           if [[ "$component_lookup_succeeded" == "true" ]] \
             && [[ "$component_marker_found" == "true" ]] \
-            && [[ "$latest_prior_run_id" =~ ^[0-9]+$ ]] \
-            && [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]] \
             && [[ "$firestore_success_mode" != "final" ]]; then
-            echo "::notice::The latest prior production run did not produce the active component marker; forcing live mode classification."
-            firestore_success_mode="ambiguous"
+            if [[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]] \
+              || [[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]] \
+              || [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]]; then
+              echo "::notice::The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification."
+              firestore_success_mode="ambiguous"
+            fi
           fi
 
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then

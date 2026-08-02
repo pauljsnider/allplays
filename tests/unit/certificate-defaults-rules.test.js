@@ -77,10 +77,13 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toContain('advancing its SHA and forcing live mode classification');
         expect(deployWorkflow).toContain('The protected native-readiness gate can finalize the same');
         expect(deployWorkflow).toContain(
-            'The latest prior production run did not produce the active component marker; forcing live mode classification.'
+            'The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification.'
         );
         expect(deployWorkflow).toContain('deployment_log_url=');
         expect(deployWorkflow).toContain('select((.id | tostring) != $current)');
+        expect(deployWorkflow).toMatch(
+            /! "\$latest_prior_run_id" =~ \^\[0-9\]\+\$[\s\S]*! "\$firestore_success_run_id" =~ \^\[0-9\]\+\$[\s\S]*"\$firestore_success_run_id" != "\$latest_prior_run_id"/
+        );
         expect(deployWorkflow).toContain(
             'The Firestore component deployment lookup failed; the active release mode is unknown.'
         );

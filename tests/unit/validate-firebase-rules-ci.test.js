@@ -143,7 +143,12 @@ concurrency:
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
           component_marker_found="true"
           deployment_log_url="$deployment_log_url"
-          echo "The latest prior production run did not produce the active component marker; forcing live mode classification."
+          echo "The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification."
+          if [[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]] \
+            || [[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]] \
+            || [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]]; then
+            firestore_success_mode="ambiguous"
+          fi
           echo "The Firestore component deployment lookup failed; the active release mode is unknown."
           firestore_success_mode="unmarked"
           firestore_success_mode="ambiguous"
