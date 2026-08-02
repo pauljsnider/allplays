@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+    assertUnprivilegedParentFixture,
     buildActivePlayerPatch,
     buildActiveTeamPatch,
     buildParentMembershipPatch,
@@ -71,6 +72,31 @@ const teamId = 'allplays-smoke-team-v1';
 const playerId = 'allplays-smoke-player-v1';
 
 describe('production parent smoke fixture maintenance', () => {
+    it('rejects global and team-level privileges for parent-only coverage', () => {
+        const teamDocument = buildTeamDocument();
+        teamDocument.fields.ownerId = { stringValue: 'owner-1' };
+        teamDocument.fields.adminEmails = stringArray(['team-admin@example.com']);
+
+        expect(assertUnprivilegedParentFixture(
+            buildParentDocument(),
+            teamDocument,
+            { uid: 'parent-1', email: 'parent@example.com' }
+        )).toBe(true);
+        expect(() => assertUnprivilegedParentFixture(
+            {
+                ...buildParentDocument(),
+                fields: { ...buildParentDocument().fields, isAdmin: { booleanValue: true } }
+            },
+            teamDocument,
+            { uid: 'parent-1', email: 'parent@example.com' }
+        )).toThrow(/privileged access/);
+        expect(() => assertUnprivilegedParentFixture(
+            buildParentDocument(),
+            teamDocument,
+            { uid: 'parent-1', email: 'team-admin@example.com' }
+        )).toThrow(/privileged access/);
+    });
+
     it('requires the complete parent membership chain and an active player', () => {
         const parentDocument = buildParentDocument({
             parentOf: [

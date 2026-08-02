@@ -97,6 +97,22 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P02')).toThrow(/unsupported key value/);
     });
 
+    it('restricts the checkout popup primitive to the two checkout workflows', () => {
+        const target = { kind: 'role', role: 'button', name: 'Pay fee' };
+        expect(() => validateContract({
+            ...validContract(),
+            steps: [{ action: 'clickAndExpectStripeCheckout', target }]
+        }, catalog, 'P01')).toThrow(/restricted to P30 and P31/);
+
+        const checkout = validContract({
+            workflowId: 'P30',
+            title: catalog.workflows[29].title,
+            actors: ['primary'],
+            steps: [{ action: 'clickAndExpectStripeCheckout', actor: 'primary', target }]
+        });
+        expect(validateContract(checkout, catalog, 'P30').steps).toHaveLength(1);
+    });
+
     it('restricts non-cleaned lifecycle transitions to the locked fixture sequence', () => {
         expect(() => validateContract({
             ...validContract(),

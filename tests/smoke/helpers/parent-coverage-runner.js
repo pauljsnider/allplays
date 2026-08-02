@@ -194,6 +194,34 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await target.click();
             await assertAllowedPage(page, appBaseUrl);
             break;
+        case 'clickAndExpectStripeCheckout': {
+            const popupPromise = page.waitForEvent('popup', { timeout: 20_000 });
+            await target.click();
+            const popup = await popupPromise;
+            try {
+                await popup.waitForLoadState('domcontentloaded', { timeout: 45_000 });
+                const destination = new URL(popup.url());
+                if (
+                    destination.protocol !== 'https:' ||
+                    destination.hostname !== 'checkout.stripe.com' ||
+                    destination.port ||
+                    destination.username ||
+                    destination.password ||
+                    !destination.pathname.startsWith('/c/pay/')
+                ) {
+                    throw new Error('checkout popup did not reach the allowlisted Stripe destination');
+                }
+                await expect(popup).not.toHaveTitle(/(?:page not found|something went wrong|error)/i, { timeout: 10_000 });
+                await expect(popup.locator('body')).not.toContainText(
+                    /(?:page not found|something went wrong|unable to load checkout)/i,
+                    { timeout: 10_000 }
+                );
+            } finally {
+                await popup.close().catch(() => {});
+            }
+            await assertAllowedPage(page, appBaseUrl);
+            break;
+        }
         case 'fill':
             await target.fill(interpolateTextTemplate(step.value, variables));
             break;

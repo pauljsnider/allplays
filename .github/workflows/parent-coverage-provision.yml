@@ -63,6 +63,7 @@ jobs:
           admin="$(printf '%s' "$ADMIN_EMAIL" | tr '[:upper:]' '[:lower:]')"
           staff="$(printf '%s' "$STAFF_EMAIL" | tr '[:upper:]' '[:lower:]')"
           [[ "$primary" != "$peer" && "$primary" != "$lifecycle" && "$peer" != "$lifecycle" ]]
+          [[ "$primary" != "$admin" && "$primary" != "$staff" ]]
           [[ "$peer" != "$admin" && "$peer" != "$staff" && "$lifecycle" != "$admin" && "$lifecycle" != "$staff" ]]
 
       - name: Audit or repair primary parent fixture
@@ -78,6 +79,7 @@ jobs:
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PRIMARY_EMAIL || secrets.SMOKE_PARENT_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PRIMARY_PASSWORD || secrets.SMOKE_PARENT_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
 
       - name: Audit or repair peer parent fixture
         run: node scripts/maintain-production-smoke-parent-fixture.mjs
@@ -92,6 +94,7 @@ jobs:
           SMOKE_STAFF_PASSWORD: ${{ secrets.SMOKE_STAFF_PASSWORD }}
           SMOKE_PARENT_EMAIL: ${{ secrets.PARENT_CENSUS_PEER_EMAIL || secrets.SMOKE_AUTH_EMAIL }}
           SMOKE_PARENT_PASSWORD: ${{ secrets.PARENT_CENSUS_PEER_PASSWORD || secrets.SMOKE_AUTH_PASSWORD }}
+          SMOKE_REQUIRE_UNPRIVILEGED_PARENT: 'true'
 
       - name: Audit or repair lifecycle invite
         run: node scripts/maintain-parent-coverage-invite.mjs

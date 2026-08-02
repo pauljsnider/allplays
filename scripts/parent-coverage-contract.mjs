@@ -12,6 +12,7 @@ const actions = new Set([
     'goto',
     'reload',
     'click',
+    'clickAndExpectStripeCheckout',
     'fill',
     'fillActorEmail',
     'fillActorPassword',
@@ -46,6 +47,7 @@ const stepKeysByAction = new Map([
     ['goto', ['action', 'actor', 'route']],
     ['reload', ['action', 'actor']],
     ['click', ['action', 'actor', 'target']],
+    ['clickAndExpectStripeCheckout', ['action', 'actor', 'target']],
     ['fill', ['action', 'actor', 'target', 'value']],
     ['fillActorEmail', ['action', 'actor', 'target']],
     ['fillActorPassword', ['action', 'actor', 'target']],
@@ -135,7 +137,7 @@ function validateLocator(locator, label) {
     }
 }
 
-function validateStep(step, index, declaredActors) {
+function validateStep(step, index, declaredActors, workflowId) {
     const label = `step ${index + 1}`;
     assertPlainObject(step, label);
     if (!actions.has(step.action)) throw new Error(`${label} has unsupported action`);
@@ -151,6 +153,9 @@ function validateStep(step, index, declaredActors) {
             throw new Error(`${label} has unsupported mailbox action`);
         }
     }
+    if (step.action === 'clickAndExpectStripeCheckout' && !['P30', 'P31'].includes(workflowId)) {
+        throw new Error(`${label} Stripe checkout assertions are restricted to P30 and P31`);
+    }
 
     if (step.action === 'goto' || step.action === 'expectRoute') {
         assertSafeText(step.route, `${label} route`, 300);
@@ -160,7 +165,7 @@ function validateStep(step, index, declaredActors) {
         }
     }
 
-    if (['click', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
+    if (['click', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
         validateLocator(step.target, `${label} target`);
     }
 
@@ -226,7 +231,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     if (!Array.isArray(contract.steps) || contract.steps.length === 0 || contract.steps.length > 50) {
         throw new Error('contract steps must contain one to fifty steps');
     }
-    contract.steps.forEach((step, index) => validateStep(step, index, contract.actors));
+    contract.steps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId));
     const cleanupSteps = contract.cleanupSteps || [];
     if (!Array.isArray(cleanupSteps) || cleanupSteps.length > 30) {
         throw new Error('contract cleanupSteps must contain no more than thirty steps');
@@ -237,7 +242,7 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     if ((!contract.mutatesProduction || contract.lifecycleTransition) && cleanupSteps.length > 0) {
         throw new Error('read-only contracts cannot provide cleanupSteps');
     }
-    cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors));
+    cleanupSteps.forEach((step, index) => validateStep(step, index, contract.actors, contract.workflowId));
     return contract;
 }
 

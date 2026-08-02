@@ -66,4 +66,16 @@ describe('parent coverage provisioning workflow trust boundary', () => {
             expect(step.run).not.toMatch(/\$\{\{\s*inputs\./);
         }
     });
+
+    it('rejects primary and peer fixtures that carry privileged identities or access', () => {
+        const identityStep = provisionWorkflow.jobs.provision.steps.find(
+            (step) => step.name === 'Validate protected fixture identities'
+        );
+        expect(identityStep.run).toContain('[[ "$primary" != "$admin" && "$primary" != "$staff" ]]');
+        const fixtureSteps = provisionWorkflow.jobs.provision.steps.filter(
+            (step) => /parent fixture$/.test(step.name)
+        );
+        expect(fixtureSteps).toHaveLength(2);
+        expect(fixtureSteps.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
+    });
 });

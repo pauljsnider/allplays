@@ -6,9 +6,13 @@ import {
     REPORT_SCHEMA_VERSION,
     readValidatedCatalog,
     readValidatedContract,
+    redactParentCoverageValue,
     stableFailureSignature
 } from '../../scripts/parent-coverage-contract.mjs';
-import { createParentCoverageRuntime } from './helpers/parent-coverage-runner.js';
+import {
+    createParentCoverageRuntime,
+    getParentCoverageSecrets
+} from './helpers/parent-coverage-runner.js';
 
 const enabled = process.env.SMOKE_SUITE === 'parent-coverage-census';
 const appBaseUrl = String(process.env.SMOKE_APP_BASE_URL || '');
@@ -30,14 +34,16 @@ test('executes one validated parent workflow contract', async ({ browser }, test
     const contract = await readValidatedContract(contractPath, catalog, expectedWorkflowId);
     const contractDigest = createHash('sha256').update(await readFile(contractPath)).digest('hex');
     const startedAt = new Date().toISOString();
-    const runtime = await createParentCoverageRuntime(browser, contract, appBaseUrl);
+    let runtime = null;
     let currentAction = 'setup';
     let productAction = '';
     let cleanupAction = '';
+    let setupError = null;
     let productError = null;
     let cleanupError = null;
 
     try {
+        runtime = await createParentCoverageRuntime(browser, contract, appBaseUrl);
         for (const step of contract.steps) {
             currentAction = step.action;
             await runtime.executeStep(step);
@@ -45,10 +51,14 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         const runtimeIssues = runtime.runtimeIssues();
         expect(runtimeIssues.map((issue) => runtime.redact(issue))).toEqual([]);
     } catch (error) {
-        productError = error;
-        productAction = currentAction;
+        if (!runtime) {
+            setupError = error;
+        } else {
+            productError = error;
+            productAction = currentAction;
+        }
     } finally {
-        if (contract.cleanupSteps?.length) {
+        if (runtime && contract.cleanupSteps?.length) {
             for (const step of contract.cleanupSteps) {
                 currentAction = step.action;
                 try {
@@ -60,18 +70,25 @@ test('executes one validated parent workflow contract', async ({ browser }, test
                 }
             }
         }
-        await runtime.close();
+        await runtime?.close();
     }
 
-    const error = cleanupError || productError;
-    const failureClass = cleanupError
-        ? 'cleanup-failure'
-        : productError
-            ? 'product-assertion'
-            : 'none';
-    const reportPhase = cleanupError ? 'cleanup' : productError ? 'execution' : 'complete';
-    const failureAction = cleanupError ? cleanupAction : productError ? productAction : 'complete';
+    const error = cleanupError || setupError || productError;
+    let failureClass = 'none';
+    if (cleanupError) failureClass = 'cleanup-failure';
+    else if (setupError) failureClass = 'fixture-setup';
+    else if (productError) failureClass = 'product-assertion';
+    const reportPhase = cleanupError ? 'cleanup' : setupError ? 'setup' : productError ? 'execution' : 'complete';
+    const failureAction = cleanupError ? cleanupAction : setupError ? 'setup' : productError ? productAction : 'complete';
     const sourceArea = `contract/${contract.workflowId}/${failureAction}`;
+    const redact = runtime
+        ? (value) => runtime.redact(value)
+        : (value) => redactParentCoverageValue(value, getParentCoverageSecrets());
+    const cleanup = setupError
+        ? 'not-started'
+        : contract.cleanupRequired
+            ? (cleanupError ? 'failed' : 'completed')
+            : 'not-required';
     const report = {
         schemaVersion: REPORT_SCHEMA_VERSION,
         runId: String(process.env.GITHUB_RUN_ID || process.env.PARENT_CENSUS_RUN_MARKER || 'local'),
@@ -87,10 +104,8 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         failureClass,
         sourceArea,
         signature: error ? stableFailureSignature({ workflowId: contract.workflowId, failureClass, sourceArea }) : '',
-        summary: error ? runtime.redact(error?.message || error) : 'Contract completed successfully.',
-        cleanup: contract.cleanupRequired
-            ? (cleanupError ? 'failed' : 'completed')
-            : 'not-required'
+        summary: error ? redact(error?.message || error) : 'Contract completed successfully.',
+        cleanup
     };
     await mkdir(path.dirname(reportPath), { recursive: true });
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });

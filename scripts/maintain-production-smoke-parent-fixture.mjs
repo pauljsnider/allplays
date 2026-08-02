@@ -22,6 +22,12 @@ function getBooleanField(fields, fieldName) {
     return fields?.[fieldName]?.booleanValue;
 }
 
+function getStringArray(field) {
+    return getArrayValues(field)
+        .map((value) => String(value?.stringValue || '').trim().toLowerCase())
+        .filter(Boolean);
+}
+
 function hasStringValue(field, expected) {
     return getArrayValues(field).some((value) => String(value?.stringValue || '') === expected);
 }
@@ -74,6 +80,26 @@ export function inspectParentFixture(
         playerExists,
         playerActive
     };
+}
+
+export function assertUnprivilegedParentFixture(userDocument, teamDocument, { uid, email }) {
+    const userFields = userDocument?.fields || {};
+    const teamFields = teamDocument?.fields || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const privilegedRoles = new Set(['admin', 'platformadmin', 'staff', 'coach', 'manager', 'owner']);
+    const hasPrivilegedRole = getStringArray(userFields.roles).some((role) => privilegedRoles.has(role));
+    const ownsTeam = Boolean(uid) && getStringField(teamFields, 'ownerId') === uid;
+    const administersTeam = Boolean(normalizedEmail) && getStringArray(teamFields.adminEmails).includes(normalizedEmail);
+    if (
+        getBooleanField(userFields, 'isAdmin') === true ||
+        getBooleanField(userFields, 'isPlatformAdmin') === true ||
+        hasPrivilegedRole ||
+        ownsTeam ||
+        administersTeam
+    ) {
+        throw new Error('The parent smoke account has privileged access and cannot be used for parent-only coverage');
+    }
+    return true;
 }
 
 function buildStringArray(values) {
@@ -234,6 +260,12 @@ async function main() {
     }
     if (!parentDocument) {
         throw new Error('The parent smoke user profile does not exist');
+    }
+    if (String(process.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT || '').trim().toLowerCase() === 'true') {
+        assertUnprivilegedParentFixture(parentDocument, teamDocument, {
+            uid: parentSession.localId,
+            email: parentEmail
+        });
     }
 
     let inspection = inspectParentFixture(
