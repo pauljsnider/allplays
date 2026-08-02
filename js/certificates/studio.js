@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=143';
+import { checkAuth } from '../auth.js?v=144';
 import {
     getTeam,
     getUserProfile,
