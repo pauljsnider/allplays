@@ -39,9 +39,11 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
         throw new Error('Missing required fields for team fee checkout.');
     }
 
-    const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
+    const checkoutUrl = getTrustedStripeCheckoutUrl(
+        await initiateTeamFeeCheckout({ teamId, batchId, recipientId })
+    );
     if (!checkoutUrl) {
-        throw new Error('Failed to get checkout URL.');
+        throw new Error('Unable to get a trusted Stripe checkout link. Try again.');
     }
 
     return { success: true, checkoutUrl };
@@ -72,17 +74,22 @@ export function canInitiateParentTeamFeeCheckout(fee: any) {
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
     const normalized = normalizeParentFeeRecord(fee);
     const collectionMode = compactString(normalized.collectionMode);
-    const checkoutUrl = compactString(normalized.checkoutUrl);
+    const storedCheckoutUrl = compactString(normalized.checkoutUrl);
+    const checkoutUrl = getTrustedStripeCheckoutUrl(storedCheckoutUrl);
     const checkoutStatus = compactString(normalized.checkoutStatus);
-    const parentFee = {
+    const storedParentFee = {
         ...normalized,
         collectionMode,
-        checkoutUrl,
+        checkoutUrl: storedCheckoutUrl,
         checkoutStatus
     };
+    const parentFee = {
+        ...omitParentFeeCheckoutDestinationFields(storedParentFee),
+        checkoutUrl
+    };
     const meta = getParentFeeStatusMeta(normalized.status);
-    const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
-    const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
+    const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(storedParentFee) && hasReusableParentTeamFeeCheckoutUrl(storedParentFee);
+    const checkoutInitiatable = canInitiateParentTeamFeeCheckout(storedParentFee);
     return {
         ...parentFee,
         amountLabel: formatParentFeeAmount(parentFee),
@@ -107,10 +114,38 @@ function isOnlineParentTeamFeeCollection(fee: any) {
 }
 
 function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
-    if (!compactString(fee?.checkoutUrl)) return false;
+    if (!getTrustedStripeCheckoutUrl(fee?.checkoutUrl)) return false;
 
     const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
     return !checkoutStatus || checkoutStatus === 'open';
+}
+
+function getTrustedStripeCheckoutUrl(value: unknown) {
+    const checkoutUrl = compactString(value);
+    try {
+        const parsed = new URL(checkoutUrl);
+        if (
+            parsed.protocol === 'https:'
+            && parsed.hostname === 'checkout.stripe.com'
+            && !parsed.username
+            && !parsed.password
+            && !parsed.port
+        ) {
+            return checkoutUrl;
+        }
+    } catch {
+        // Invalid destinations use the same fail-closed path as untrusted URLs.
+    }
+
+    return '';
+}
+
+function omitParentFeeCheckoutDestinationFields(fee: Record<string, any>) {
+    const safeFee = { ...fee };
+    ['checkoutUrl', 'checkoutURL', 'paymentLink', 'paymentLinkUrl', 'paymentUrl'].forEach((field) => {
+        delete safeFee[field];
+    });
+    return safeFee;
 }
 
 function getArrayField(source: any, keys: string[]) {
