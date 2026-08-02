@@ -68,10 +68,19 @@ describe('certificate defaults Firestore rules', () => {
             'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
         );
         expect(deployWorkflow).toContain(
-            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then'
+            'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"'
+        );
+        expect(deployWorkflow).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
+        );
+        expect(deployWorkflow).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
         );
         expect(deployWorkflow).toMatch(
             /retry_firebase_deploy\s+\\\s+"\$retry_enabled_inventory_producer_target"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
+        );
+        expect(deployWorkflow).toMatch(
+            /retry_firebase_deploy\s+\\\s+"\$retry_enabled_cleanup_compatibility_target"\s+\\\s+"certificate-signature-cleanup-compatibility"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
         );
         expect(deployWorkflow).toContain('cp _migration/firebase-admin-credential.mjs \\');
         expect(deployWorkflow).toContain(
