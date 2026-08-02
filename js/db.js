@@ -8245,6 +8245,50 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
 // ceiling low enough to protect large inboxes while still filling normal ones.
 export const UNREAD_CHAT_COUNT_CONCURRENCY = 6;
 
+const unreadChatCountJobQueue = [];
+let activeUnreadChatCountJobs = 0;
+
+function drainUnreadChatCountJobQueue() {
+    while (activeUnreadChatCountJobs < UNREAD_CHAT_COUNT_CONCURRENCY && unreadChatCountJobQueue.length > 0) {
+        const entry = unreadChatCountJobQueue.shift();
+        if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
+        if (entry.deadlineAt !== null && Date.now() >= entry.deadlineAt) {
+            entry.resolve();
+            continue;
+        }
+
+        activeUnreadChatCountJobs += 1;
+        void Promise.resolve()
+            .then(entry.run)
+            .then(entry.resolve, entry.reject)
+            .finally(() => {
+                activeUnreadChatCountJobs -= 1;
+                drainUnreadChatCountJobQueue();
+            });
+    }
+}
+
+function enqueueUnreadChatCountJob(run, deadlineAt) {
+    return new Promise((resolve, reject) => {
+        const entry = { run, deadlineAt, resolve, reject, deadlineTimer: null };
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                resolve();
+                return;
+            }
+            entry.deadlineTimer = setTimeout(() => {
+                const queueIndex = unreadChatCountJobQueue.indexOf(entry);
+                if (queueIndex === -1) return;
+                unreadChatCountJobQueue.splice(queueIndex, 1);
+                resolve();
+            }, remainingMs);
+        }
+        unreadChatCountJobQueue.push(entry);
+        drainUnreadChatCountJobQueue();
+    });
+}
+
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const uniqueTeamIds = Array.from(new Set(teamIds));
     const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0]));
@@ -8365,7 +8409,7 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
             }
             nextJobIndex += 1;
             activeJobs += 1;
-            void runJob(job).finally(() => {
+            void enqueueUnreadChatCountJob(() => runJob(job), deadlineAt).finally(() => {
                 activeJobs -= 1;
                 scheduleNext();
             });

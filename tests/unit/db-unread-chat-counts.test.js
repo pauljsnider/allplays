@@ -54,7 +54,13 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
     );
 }
 
-function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChatConversations, console, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team', UNREAD_CHAT_COUNT_CONCURRENCY = 6 }) {
+function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChatConversations, console, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team' }) {
+    const schedulerStart = dbSource.indexOf('export const UNREAD_CHAT_COUNT_CONCURRENCY');
+    const schedulerEnd = dbSource.indexOf('export async function getUnreadChatCounts');
+    expect(schedulerStart).toBeGreaterThanOrEqual(0);
+    expect(schedulerEnd).toBeGreaterThan(schedulerStart);
+    const schedulerSource = dbSource.slice(schedulerStart, schedulerEnd)
+        .replace('export const UNREAD_CHAT_COUNT_CONCURRENCY', 'const UNREAD_CHAT_COUNT_CONCURRENCY');
     const functionSource = getFunctionSource('getUnreadChatCounts')
         .replace('export async function getUnreadChatCounts', 'return async function getUnreadChatCounts');
 
@@ -67,8 +73,7 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         'console',
         'DEFAULT_TEAM_CONVERSATION_ID',
         'isDefaultTeamConversation',
-        'UNREAD_CHAT_COUNT_CONCURRENCY',
-        functionSource
+        `${schedulerSource}\n${functionSource}`
     )(
         db,
         getDoc,
@@ -77,8 +82,7 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChat
         getChatConversations,
         console,
         DEFAULT_TEAM_CONVERSATION_ID,
-        isDefaultTeamConversation,
-        UNREAD_CHAT_COUNT_CONCURRENCY
+        isDefaultTeamConversation
     );
 }
 
@@ -510,8 +514,8 @@ describe('chat unread count helpers', () => {
         );
     });
 
-    it('limits unread count work to six concurrent conversations and drains the queue', async () => {
-        const pending = Array.from({ length: 8 }, () => deferred());
+    it('shares the six-job ceiling across overlapping unread count calls', async () => {
+        const pending = Array.from({ length: 16 }, () => deferred());
         let active = 0;
         let peak = 0;
         const getUnreadChatCount = vi.fn().mockImplementation((...args) => {
@@ -531,22 +535,29 @@ describe('chat unread count helpers', () => {
             console: { warn: vi.fn() }
         });
 
-        const countsPromise = getUnreadChatCounts('user-6', ['team-a', 'team-b'], {
+        const firstCountsPromise = getUnreadChatCounts('user-6', ['team-a', 'team-b'], {
             conversationIdsByTeam: {
                 'team-a': ['team', 'a-1', 'a-2', 'a-3'],
                 'team-b': ['team', 'b-1', 'b-2', 'b-3']
             }
         });
+        const secondCountsPromise = getUnreadChatCounts('user-7', ['team-c', 'team-d'], {
+            conversationIdsByTeam: {
+                'team-c': ['team', 'c-1', 'c-2', 'c-3'],
+                'team-d': ['team', 'd-1', 'd-2', 'd-3']
+            }
+        });
         await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(6));
         expect(peak).toBe(6);
 
-        pending[0].resolve(1);
-        await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(7));
-        pending[1].resolve(2);
-        await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(8));
-        pending.slice(2).forEach((entry) => entry.resolve(1));
+        for (let index = 0; index < 10; index += 1) {
+            pending[index].resolve(1);
+            await vi.waitFor(() => expect(getUnreadChatCount).toHaveBeenCalledTimes(index + 7));
+        }
+        pending.slice(10).forEach((entry) => entry.resolve(1));
 
-        await expect(countsPromise).resolves.toEqual({ 'team-a': 5, 'team-b': 4 });
+        await expect(firstCountsPromise).resolves.toEqual({ 'team-a': 4, 'team-b': 4 });
+        await expect(secondCountsPromise).resolves.toEqual({ 'team-c': 4, 'team-d': 4 });
         expect(peak).toBe(6);
     });
 
