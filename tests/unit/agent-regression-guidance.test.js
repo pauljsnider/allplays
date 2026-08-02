@@ -31,6 +31,8 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('Every upload helper must return both the display URL and exact cleanup path');
         expect(guidance).toContain('every adapter, native wrapper, normalizer, persisted nested object, and test mock must preserve that object');
         expect(guidance).toContain('never narrow it back to a URL string or retain a compatibility branch that accepts a string-only success');
+        expect(guidance).toContain('A failed read of the previous cleanup path is `unknown`');
+        expect(guidance).toContain('Reconcile a removal after an ambiguous write even though it has no new upload path');
         pathAwareUploadConsumers.forEach((source) => {
             expect(source).not.toMatch(/typeof\s+uploaded(?:Photo)?\s*===\s*['"]string['"]/);
         });

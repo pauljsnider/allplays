@@ -885,12 +885,10 @@ export async function updateParentPlayerEditableProfile({
   let previousPhotoPath = '';
   if (photoFile) {
     validateImageFile(photoFile);
-    try {
-      const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
-      previousPhotoPath = String(privateProfile?.photoPath || '').trim();
-    } catch {
-      previousPhotoPath = '';
-    }
+    const privateProfile = await getPlayerPrivateProfile(teamId, playerId).catch(() => {
+      throw new Error('The existing player photo state could not be loaded. Refresh before replacing the photo.');
+    });
+    previousPhotoPath = String(privateProfile?.photoPath || '').trim();
     if (nativeRuntime) {
       const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(photoFile, teamId, playerId));
       photoUrl = uploaded.url;
@@ -1019,10 +1017,15 @@ export async function saveStaffPlayerRosterDetails({
   const currentNumber = String(currentPlayer?.number || '').trim();
   const currentPhotoUrl = String(currentPlayer?.photoUrl || '').trim();
   let currentPrivateProfile: Record<string, any> | null = null;
+  let currentPrivateProfileLoadError: unknown = null;
   try {
     currentPrivateProfile = await getPlayerPrivateProfile(teamId, playerId);
-  } catch {
+  } catch (error) {
     currentPrivateProfile = null;
+    currentPrivateProfileLoadError = error;
+  }
+  if (currentPrivateProfileLoadError && (photoFile || removePhoto)) {
+    throw new Error('The existing player photo state could not be loaded. Refresh before changing the photo.');
   }
   const currentPhotoPath = String(currentPrivateProfile?.photoPath || currentPlayer?.photoPath || '').trim();
   const nativeRuntime = isNativeRuntime();
@@ -1077,8 +1080,12 @@ export async function saveStaffPlayerRosterDetails({
       }
       await import('./nativeFirestoreMutation').then((module) => module.commitNativeFirestoreWrites(writes));
     } catch (error) {
-      const persistenceState = nativePhotoPath && !isDefinitiveFirestoreWriteFailure(error)
-        ? await getPlayerPhotoPersistenceState(teamId, playerId, nativePhotoPath)
+      const persistenceState = !isDefinitiveFirestoreWriteFailure(error)
+        ? nativePhotoPath
+          ? await getPlayerPhotoPersistenceState(teamId, playerId, nativePhotoPath)
+          : removePhoto && currentPhotoPath
+            ? await getPlayerPhotoRemovalPersistenceState(teamId, playerId, currentPhotoPath)
+            : 'unknown'
         : 'not-committed';
       if (persistenceState !== 'committed') {
         if (nativePhotoPath && persistenceState === 'not-committed') {
@@ -1091,8 +1098,12 @@ export async function saveStaffPlayerRosterDetails({
     try {
       await updatePlayer(teamId, playerId, payload);
     } catch (error) {
-      const persistenceState = webPhotoPath && !isDefinitiveFirestoreWriteFailure(error)
-        ? await getPlayerPhotoPersistenceState(teamId, playerId, webPhotoPath)
+      const persistenceState = !isDefinitiveFirestoreWriteFailure(error)
+        ? webPhotoPath
+          ? await getPlayerPhotoPersistenceState(teamId, playerId, webPhotoPath)
+          : removePhoto && currentPhotoPath
+            ? await getPlayerPhotoRemovalPersistenceState(teamId, playerId, currentPhotoPath)
+            : 'unknown'
         : 'not-committed';
       if (persistenceState !== 'committed') {
         if (webPhotoPath && persistenceState === 'not-committed') {
@@ -1531,6 +1542,19 @@ async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, 
     return String(privateProfile?.photoPath || '').trim() === expectedPhotoPath
       ? 'committed' as const
       : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
+}
+
+async function getPlayerPhotoRemovalPersistenceState(teamId: string, playerId: string, previousPhotoPath: string) {
+  try {
+    const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
+    const authoritativePath = String(privateProfile?.photoPath || '').trim();
+    if (!authoritativePath) return 'committed' as const;
+    return authoritativePath === previousPhotoPath
+      ? 'not-committed' as const
+      : 'unknown' as const;
   } catch {
     return 'unknown' as const;
   }

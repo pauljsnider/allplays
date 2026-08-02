@@ -1316,6 +1316,9 @@
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
+                if (photoFile && privateProfileLoadFailed) {
+                    throw new Error('The existing player photo state could not be loaded. Refresh before replacing the photo.');
+                }
                 let photoUrl;
                 let photoPath;
                 const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];

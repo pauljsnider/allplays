@@ -2590,8 +2590,10 @@
                 resetForm();
                 loadRoster();
             } catch (error) {
-                if (newlyUploadedPlayerPhotoPath && playerPhotoWriteAttempted && !isDefinitiveFirestoreWriteFailure(error)) {
-                    const persistenceState = await getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath);
+                if ((selectedPhotoFile || removePhoto) && playerPhotoWriteAttempted && !isDefinitiveFirestoreWriteFailure(error)) {
+                    const persistenceState = removePhoto && !previousPhotoPath
+                        ? 'unknown'
+                        : await getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath);
                     if (persistenceState === 'committed') {
                         playerPhotoPersisted = true;
                         if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {

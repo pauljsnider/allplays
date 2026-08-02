@@ -54,6 +54,8 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain('payload: playerData,');
         expect(source).toContain('photoPath: nextPhotoPath || null');
         expect(source).toContain("getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath)");
+        expect(source).toContain("(selectedPhotoFile || removePhoto) && playerPhotoWriteAttempted");
+        expect(source).toContain("removePhoto && !previousPhotoPath");
         expect(source).not.toContain('const savedPlayerId = await addPlayer(currentTeamId, playerData);');
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
         expect(source).toContain('Player was added, but the photo could not be saved. Edit the player to try the photo again.');
@@ -67,6 +69,8 @@ describe('legacy image upload rollback contracts', () => {
         expect(validationIndex).toBeGreaterThan(0);
         expect(uploadIndex).toBeGreaterThan(validationIndex);
         expect(source).toContain('photoPath = newlyUploadedPlayerPhotoPath || null;');
+        expect(source).toContain('photoFile && privateProfileLoadFailed');
+        expect(source).toContain('Refresh before replacing the photo.');
         expect(source).toContain('await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)');
         expect(source).toContain("if (persistenceState === 'unknown')");
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');

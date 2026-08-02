@@ -802,6 +802,85 @@ describe('saveStaffPlayerRosterDetails', () => {
     expect(legacyPlayerDbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
   });
 
+  it('fails closed before a replacement upload when the existing private photo path cannot load', async () => {
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockRejectedValueOnce(new Error('private profile unavailable'));
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', photoUrl: 'https://cdn.example.com/old.jpg' },
+      name: 'Sam Player',
+      photoFile: file
+    })).rejects.toThrow('existing player photo state could not be loaded');
+
+    expect(legacyPlayerDbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ambiguous browser photo removal only after the private path confirms it committed', async () => {
+    const oldPath = 'profile-photos/teams/team-1/players/player-1/old.jpg';
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce({ photoPath: oldPath })
+      .mockResolvedValueOnce({ photoPath: null });
+    legacyPlayerDbMocks.updatePlayer.mockRejectedValueOnce(
+      Object.assign(new Error('response unavailable'), { code: 'unavailable' })
+    );
+
+    const result = await saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', photoUrl: 'https://cdn.example.com/old.jpg' },
+      name: 'Sam Player',
+      removePhoto: true
+    });
+
+    expect(result.payload).toMatchObject({ photoUrl: null, photoPath: null });
+    expect(legacyPlayerDbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith(oldPath);
+  });
+
+  it('preserves the prior photo when an ambiguous browser removal is not committed', async () => {
+    const oldPath = 'profile-photos/teams/team-1/players/player-1/old.jpg';
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue({ photoPath: oldPath });
+    legacyPlayerDbMocks.updatePlayer.mockRejectedValueOnce(
+      Object.assign(new Error('response unavailable'), { code: 'unavailable' })
+    );
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', photoUrl: 'https://cdn.example.com/old.jpg' },
+      name: 'Sam Player',
+      removePhoto: true
+    })).rejects.toThrow('response unavailable');
+
+    expect(legacyPlayerDbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(oldPath);
+  });
+
+  it('preserves the prior photo when an ambiguous browser removal cannot be confirmed', async () => {
+    const oldPath = 'profile-photos/teams/team-1/players/player-1/old.jpg';
+    legacyPlayerDbMocks.getPlayerPrivateProfile
+      .mockResolvedValueOnce({ photoPath: oldPath })
+      .mockRejectedValueOnce(new Error('read unavailable'));
+    legacyPlayerDbMocks.updatePlayer.mockRejectedValueOnce(
+      Object.assign(new Error('response unavailable'), { code: 'unavailable' })
+    );
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', photoUrl: 'https://cdn.example.com/old.jpg' },
+      name: 'Sam Player',
+      removePhoto: true
+    })).rejects.toThrow('response unavailable');
+
+    expect(legacyPlayerDbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(oldPath);
+  });
+
   it('deletes the prior permanent player photo only after a replacement is confirmed', async () => {
     const oldPath = 'profile-photos/teams/team-1/players/player-1/old.jpg';
     const newPath = 'profile-photos/teams/team-1/players/player-1/new.jpg';
@@ -1005,6 +1084,20 @@ describe('updateParentPlayerEditableProfile browser photo durability', () => {
     expect(result).toMatchObject({ photoPath: newPath });
     expect(legacyPlayerDbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith(oldPath);
     expect(legacyPlayerDbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('fails closed before parent upload when the existing private photo path cannot load', async () => {
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockRejectedValueOnce(new Error('private profile unavailable'));
+
+    await expect(updateParentPlayerEditableProfile({
+      user: { uid: 'parent-1', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      photoFile: new File(['photo'], 'new.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('existing player photo state could not be loaded');
+
+    expect(legacyPlayerDbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayerProfile).not.toHaveBeenCalled();
   });
 });
 
