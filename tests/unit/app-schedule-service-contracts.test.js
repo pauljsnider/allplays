@@ -814,14 +814,17 @@ describe('React app schedule service contract integration', () => {
             myRsvpNote: 'Late arrival'
         });
 
-        await hydrateParentScheduleEventOptionalDetails(result);
+        const hydratedResult = await hydrateParentScheduleEventOptionalDetails(result);
 
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
-        expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+        expect(hydratedResult.events.find((event) => event.childId === 'player-1')).toMatchObject({
             rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+        });
+        expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            rideshareSummary: null
         });
     });
 
