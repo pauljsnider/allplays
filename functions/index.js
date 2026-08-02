@@ -352,6 +352,7 @@ const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-ident
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   isAuthorizedCertificateSignatureCleanupPath,
+  isCertificateSignaturePathReferenced,
   normalizeCertificateTeamId,
   planCertificateSignatureCleanup
 } = require('./certificate-signature-cleanup-core.cjs');
@@ -14078,25 +14079,40 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
   const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
   await firestore.runTransaction(async (transaction) => {
     const previousSnap = await transaction.get(defaultsRef);
-    let cleanupPaths;
+    let cleanupPlan;
     try {
-      ({ cleanupPaths } = planCertificateSignatureCleanup({
+      cleanupPlan = planCertificateSignatureCleanup({
         teamId,
         previousDefaults: previousSnap.exists ? previousSnap.data() || {} : {},
-        nextDefaults: clientDefaults
-      }));
+        nextDefaults: clientDefaults,
+        requestedBy: context.auth.uid
+      });
     } catch (error) {
       throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
     }
 
-    cleanupPaths.forEach((storagePath) => {
+    for (const storagePath of cleanupPlan.nextPaths) {
+      const cleanupId = crypto.createHash('sha256').update(`${teamId}\n${storagePath}`).digest('hex');
+      const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
+      const cleanupSnap = await transaction.get(cleanupRef);
+      if (cleanupSnap.exists && !cleanupPlan.previousPaths.has(storagePath)) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'A removed signature image cannot be restored. Upload it again before saving.'
+        );
+      }
+    }
+
+    cleanupPlan.cleanupPaths.forEach((storagePath) => {
       const cleanupId = crypto.createHash('sha256').update(`${teamId}\n${storagePath}`).digest('hex');
       const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
       transaction.set(cleanupRef, {
         teamId,
         storagePath,
         requestedBy: context.auth.uid,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        status: 'pending',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
     });
     transaction.set(defaultsRef, {
@@ -14113,20 +14129,49 @@ exports.cleanupCertificateSignature = functions
   .runWith({ failurePolicy: true })
   .firestore
   .document('teams/{teamId}/certificateSignatureCleanup/{cleanupId}')
-  .onCreate(async (cleanupSnap, triggerContext) => {
+  .onWrite(async (change, triggerContext) => {
+    const cleanupSnap = change.after;
+    if (!cleanupSnap.exists) return null;
     const teamId = String(triggerContext.params.teamId || '').trim();
     const cleanup = cleanupSnap.data() || {};
     const storagePath = String(cleanup.storagePath || '').trim();
-    if (cleanup.teamId !== teamId || !isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath)) {
+    if (cleanup.status !== 'pending') return null;
+    if (
+      cleanup.teamId !== teamId ||
+      !isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath, cleanup.requestedBy)
+    ) {
       console.error('Discarding invalid certificate signature cleanup job.', {
         teamId,
         cleanupId: triggerContext.params.cleanupId
       });
-      await cleanupSnap.ref.delete();
+      await cleanupSnap.ref.set({
+        status: 'rejected',
+        completedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
       return null;
     }
+
+    const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+    const shouldDelete = await firestore.runTransaction(async (transaction) => {
+      const currentCleanupSnap = await transaction.get(cleanupSnap.ref);
+      const defaultsSnap = await transaction.get(defaultsRef);
+      if (!currentCleanupSnap.exists || currentCleanupSnap.data()?.status !== 'pending') return false;
+      if (isCertificateSignaturePathReferenced(defaultsSnap.exists ? defaultsSnap.data() || {} : {}, storagePath)) {
+        transaction.set(cleanupSnap.ref, {
+          status: 'blocked-referenced',
+          completedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return false;
+      }
+      return true;
+    });
+    if (!shouldDelete) return null;
+
     await admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true });
-    await cleanupSnap.ref.delete();
+    await cleanupSnap.ref.set({
+      status: 'completed',
+      completedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
     return null;
   });
 

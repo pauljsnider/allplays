@@ -24,6 +24,12 @@ function isLegacyUserSignaturePath(storagePath) {
   return LEGACY_SIGNATURE_PATH_PATTERN.test(String(storagePath || '').trim());
 }
 
+function getLegacySignatureOwnerId(storagePath) {
+  const path = String(storagePath || '').trim();
+  if (!isLegacyUserSignaturePath(path)) return null;
+  return path.split('/')[2] || null;
+}
+
 function collectCertificateSignaturePaths(defaults = {}) {
   const signers = Array.isArray(defaults?.signers) ? defaults.signers : [];
   return new Set(signers
@@ -31,7 +37,12 @@ function collectCertificateSignaturePaths(defaults = {}) {
     .filter(Boolean));
 }
 
-function planCertificateSignatureCleanup({ teamId, previousDefaults = {}, nextDefaults = {} }) {
+function planCertificateSignatureCleanup({
+  teamId,
+  previousDefaults = {},
+  nextDefaults = {},
+  requestedBy = null
+}) {
   const normalizedTeamId = normalizeCertificateTeamId(teamId);
   const previousPaths = collectCertificateSignaturePaths(previousDefaults);
   const nextPaths = collectCertificateSignaturePaths(nextDefaults);
@@ -42,20 +53,28 @@ function planCertificateSignatureCleanup({ teamId, previousDefaults = {}, nextDe
     throw new Error('Certificate defaults contain an invalid signature path.');
   }
 
-  const cleanupPaths = [...previousPaths].filter((path) => (
-    !nextPaths.has(path) &&
-    (isTeamSignaturePath(normalizedTeamId, path) || isLegacyUserSignaturePath(path))
-  ));
+  const cleanupPaths = [...previousPaths].filter((path) => {
+    if (nextPaths.has(path)) return false;
+    if (isTeamSignaturePath(normalizedTeamId, path)) return true;
+    return getLegacySignatureOwnerId(path) === String(requestedBy || '').trim();
+  });
   return { previousPaths, nextPaths, cleanupPaths };
 }
 
-function isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath) {
-  return isTeamSignaturePath(teamId, storagePath) || isLegacyUserSignaturePath(storagePath);
+function isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath, requestedBy = null) {
+  return isTeamSignaturePath(teamId, storagePath) ||
+    getLegacySignatureOwnerId(storagePath) === String(requestedBy || '').trim();
+}
+
+function isCertificateSignaturePathReferenced(defaults, storagePath) {
+  return collectCertificateSignaturePaths(defaults).has(String(storagePath || '').trim());
 }
 
 module.exports = {
   collectCertificateSignaturePaths,
+  getLegacySignatureOwnerId,
   isAuthorizedCertificateSignatureCleanupPath,
+  isCertificateSignaturePathReferenced,
   isLegacyUserSignaturePath,
   isTeamSignaturePath,
   normalizeCertificateTeamId,

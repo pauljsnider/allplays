@@ -3380,8 +3380,11 @@ service cloud.firestore {
       }
 
       match /settings/{settingId} {
-        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
-                                            isTeamOwnerOrAdmin(teamId);
+        allow read: if settingId == 'certificateDefaults' &&
+                       isTeamOwnerOrAdmin(teamId);
+        // Certificate defaults can retire legacy uploader-owned Storage paths.
+        // All writes must cross the callable's trusted provenance/tombstone checks.
+        allow create, update, delete: if false;
       }
 
       match /certificateAssets/{assetId} {
