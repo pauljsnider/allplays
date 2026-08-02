@@ -884,6 +884,10 @@ function buildNotificationTestEnv({
         }
     };
 
+    const resendStub = {
+        Resend: class ResendStub {}
+    };
+
     return {
         counts,
         dedupWrites,
@@ -909,6 +913,7 @@ function buildNotificationTestEnv({
         adminStub,
         firestoreState,
         functionsStub: makeFunctionsStub(),
+        resendStub,
         stripeStub
     };
 }
@@ -925,6 +930,9 @@ function loadNotificationInternals(options = {}) {
         }
         if (request === 'stripe') {
             return env.stripeStub;
+        }
+        if (request === 'resend') {
+            return env.resendStub;
         }
         return originalModuleLoad(request, parent, isMain);
     };

@@ -21,7 +21,7 @@ import { createLogger } from '../lib/logger';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
-import { openPublicUrl } from '../lib/publicActions';
+import { exportCalendarIcsFile, openPublicUrl } from '../lib/publicActions';
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildPrivateAiLaunchPath } from '../lib/privateAiLaunch';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
@@ -223,6 +223,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     run: runPastHistoryRead
   } = useAsyncOperation();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportPending, setExportPending] = useState(false);
   const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
@@ -253,6 +255,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
+  const exportPendingRef = useRef(false);
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
     eventsRef.current = nextEvents;
@@ -944,7 +947,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     if (!isDesktopWeb || !hasManageableScheduleTeams) setDesktopStaffToolsOpen(false);
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (exportPendingRef.current) return;
+    setStatusMessage(null);
+    setExportError(null);
     const exportEvents = filterParentScheduleEvents(scopedEvents, {
       filter: 'upcoming-all',
       playerId: activeSelectedPlayerId,
@@ -956,20 +962,25 @@ export function Schedule({ auth }: { auth: AuthState }) {
       return;
     }
 
-    const ics = buildScheduleIcs(exportEvents);
-    const blob = new Blob([ics], { type: 'text/calendar' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
     const selectedChild = scopeChildren.find((child) => child.playerId === activeSelectedPlayerId);
-    link.download = selectedChild
-      ? `${selectedChild.playerName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+    const playerSlug = String(selectedChild?.playerName || 'player')
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase() || 'player';
+    const filename = selectedChild
+      ? `${playerSlug}-schedule.ics`
       : scheduleScope === 'staff' ? 'team-schedule.ics' : 'family-schedule.ics';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    setStatusMessage('Calendar export started.');
+    exportPendingRef.current = true;
+    setExportPending(true);
+    try {
+      const result = await exportCalendarIcsFile(filename, buildScheduleIcs(exportEvents));
+      setStatusMessage(result === 'shared' ? 'Calendar file ready to share.' : 'Calendar download started.');
+    } catch (calendarError: any) {
+      setExportError(calendarError?.message || 'Unable to export the calendar file. Try again or use another calendar option.');
+    } finally {
+      exportPendingRef.current = false;
+      setExportPending(false);
+    }
   };
 
   const handleCopyAgenda = async () => {
@@ -1063,7 +1074,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading} aria-label="Refresh schedule">
               <RefreshCw className={`h-4 w-4 ${scheduleReadLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
-            <button type="button" className="secondary-button !h-11 !min-h-11 !w-11 !p-0" onClick={handleExport} aria-label="Export calendar">
+            <button type="button" className="secondary-button !h-11 !min-h-11 !w-11 !p-0" onClick={handleExport} disabled={exportPending} aria-label="Export calendar">
               <Download className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
@@ -1099,7 +1110,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               </button>
               {!isDesktopWeb ? (
                 <>
-                  <button type="button" className="secondary-button !min-h-11 !px-3 !py-2 !text-xs sm:!text-sm" onClick={handleExport}>
+                  <button type="button" className="secondary-button !min-h-11 !px-3 !py-2 !text-xs sm:!text-sm" onClick={handleExport} disabled={exportPending}>
                     <Download className="h-4 w-4" aria-hidden="true" />
                     .ics
                   </button>
@@ -1204,6 +1215,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               players={scopeChildren}
               teamOptions={teamOptions}
               loading={scheduleReadLoading}
+              exportPending={exportPending}
               insights={webInsights}
               onFilterChange={setFilter}
               onViewChange={setView}
@@ -1241,6 +1253,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
+          {exportError ? <Status tone="error" message={exportError} /> : null}
           {bulkRsvpResult ? <Status tone={bulkRsvpResult.tone} message={bulkRsvpResult.message} /> : null}
           {!rsvpHydrationPending && unavailableBulkRsvpCount > 0 ? (
             <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
@@ -1754,7 +1767,7 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
   );
 }
 
-function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, players, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
+function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTeamId, timeRange, players, teamOptions, loading, exportPending, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
   scope: 'staff' | 'family';
   filter: ParentScheduleFilter;
   view: ScheduleViewMode;
@@ -1764,6 +1777,7 @@ function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTe
   players: ParentScheduleChild[];
   teamOptions: ParentScheduleTeamOption[];
   loading: boolean;
+  exportPending: boolean;
   insights: ScheduleWebInsights;
   advancedControlsOpen: boolean;
   onFilterChange: (filter: ParentScheduleFilter) => void;
@@ -1856,7 +1870,7 @@ function ScheduleWebControls({ scope, filter, view, selectedPlayerId, selectedTe
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" className="secondary-button w-full" onClick={onExport}>
+        <button type="button" className="secondary-button w-full" onClick={onExport} disabled={exportPending}>
           <Download className="h-4 w-4" aria-hidden="true" />
           .ics
         </button>
