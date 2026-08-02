@@ -722,6 +722,7 @@ export async function updateGame(_teamId, _gameId, updates) {
 export async function uploadGameClip() {
     return { url: '' };
 }
+export async function deleteUploadedMediaObjects() {}
 `;
 
 const LIVE_GAME_STREAM_UTILS_STUB = `
