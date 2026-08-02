@@ -1476,15 +1476,11 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Bring both jerseys.');
         expect(container.textContent).toContain('We can bring snacks.');
 
-        const reactionButtons = Array.from(container.querySelectorAll('button[aria-label="Add reaction"]'));
-        await act(async () => {
-            reactionButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-        await flush();
+        await click(container, 'Open message actions for Coach Jamie');
         await click(container, 'Like');
         expect(chatMocks.toggleTeamChatReaction).toHaveBeenCalledWith('team-1', 'msg-1', 'thumbs_up', 'user-1', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Edit');
         const dialog = container.querySelector('[role="dialog"][aria-label="Edit message"]');
         const editTextarea = dialog.querySelector('textarea');
@@ -1492,7 +1488,7 @@ describe('React app messages integration', () => {
         await click(container, 'Save');
         expect(chatMocks.editTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'We can bring snacks and waters.', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Delete');
         expect(chatMocks.deleteTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'team');
     });
