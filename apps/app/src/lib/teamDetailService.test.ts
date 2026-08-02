@@ -858,6 +858,44 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
+  it('includes later-page players when the native roster fallback is paginated', async () => {
+    const previousFetch = globalThis.fetch;
+    nativeRuntimeState.isNative = true;
+    dbMocks.getPlayers.mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    authServiceMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/test-project/databases/(default)/documents/teams/team-1/players/player-1',
+            fields: { name: { stringValue: 'First Player' }, active: { booleanValue: true } }
+          }],
+          nextPageToken: 'next page+/='
+        })
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/test-project/databases/(default)/documents/teams/team-1/players/player-2',
+            fields: { name: { stringValue: 'Later Player' }, active: { booleanValue: true } }
+          }]
+        })
+      } as Response);
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+      expect(model.players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(String(vi.mocked(globalThis.fetch).mock.calls[1][0]))
+        .toContain('pageToken=next+page%2B%2F%3D');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('loads games and stat configs once a deferred detail surface requests them', async () => {
     await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
     await loadParentTeamDetail('team-1', { uid: 'parent-1' } as any, { includeDeferredData: false });
