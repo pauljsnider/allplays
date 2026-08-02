@@ -362,6 +362,10 @@ function extractEditTeamModule() {
             'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
+            "import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';",
+            'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
+        )
+        .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
@@ -370,7 +374,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=27';",
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=28';",
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -554,6 +558,7 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
+        profilePhotoPaths: await import('../../js/profile-photo-paths.js'),
         editTeamAdminInvites: {
             ...(await import('../../js/edit-team-admin-invites.js')),
             async processPendingAdminInvites() {
@@ -1015,6 +1020,32 @@ describe('edit team admin access persistence', () => {
                     photoPath: 'profile-photos/teams/team-created/team/team.jpg'
                 }
             });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it.each([
+        [{ name: 'empty.jpg', type: 'image/jpeg', size: 0 }, 'non-empty image file'],
+        [{ name: 'notes.txt', type: 'text/plain', size: 123 }, 'image file'],
+        [{ name: 'huge.jpg', type: 'image/jpeg', size: 6 * 1024 * 1024 }, '5 MB or smaller']
+    ])('rejects an invalid new-team photo before creating its owner', async (file, expectedMessage) => {
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [file];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toEqual([]);
+            expect(env.state.updateCalls).toEqual([]);
+            expect(env.alerts.at(-1)).toContain(expectedMessage);
+            expect(env.elements.get('save-btn').disabled).toBe(false);
         } finally {
             env.cleanup();
         }

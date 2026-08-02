@@ -16,11 +16,15 @@ describe('legacy image upload rollback contracts', () => {
 
     it('creates a team before uploading its photo and persists the final team-owned path', () => {
         const source = read('edit-team.html');
+        const submitIndex = source.indexOf("document.getElementById('team-form').addEventListener('submit'");
+        const validationIndex = source.indexOf('validateProfilePhotoFile(pendingTeamPhotoFile, { maxBytes: 5 * 1024 * 1024 })', submitIndex);
         const createIndex = source.indexOf('const newTeamId = await createTeam(teamData);');
         const newTeamUploadIndex = source.indexOf('teamId: newTeamId', createIndex);
 
         expect(source).toContain('const uploadedPhoto = await uploadTeamPhoto(pendingTeamPhotoFile, {');
+        expect(validationIndex).toBeGreaterThan(submitIndex);
         expect(createIndex).toBeGreaterThan(0);
+        expect(createIndex).toBeGreaterThan(validationIndex);
         expect(newTeamUploadIndex).toBeGreaterThan(createIndex);
         expect(source).not.toContain("teamId: currentTeamId || ''");
         expect(source).toContain('photoPath: uploadedPhoto.path');

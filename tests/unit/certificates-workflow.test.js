@@ -250,7 +250,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
         expect(studio).toContain("from './signers.js?v=2'");
-        expect(studio).toContain("from '../db.js?v=149'");
+        expect(studio).toContain("from '../db.js?v=150'");
         expect(db).toContain("from './certificates/persistence.js?v=1'");
         expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
         expect(studio).toContain("import('./assets.js?v=6')");

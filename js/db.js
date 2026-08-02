@@ -41,8 +41,9 @@ import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSh
 import {
     buildPlayerProfilePhotoPath,
     buildTeamProfilePhotoPath,
-    buildUserProfilePhotoPath
-} from './profile-photo-paths.js?v=2';
+    buildUserProfilePhotoPath,
+    validateProfilePhotoFile
+} from './profile-photo-paths.js?v=3';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -493,6 +494,17 @@ async function getDownloadUrlOrDeleteUpload(storageRef) {
     }
 }
 
+async function uploadProfilePhotoOrDeleteCandidate(storageRef, file) {
+    try {
+        return await uploadBytes(storageRef, file, {
+            contentType: file.type || 'application/octet-stream'
+        });
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
 export async function deleteLegacyImageUpload(path) {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath) return;
@@ -514,6 +526,7 @@ export async function uploadTeamPhoto(file, options = {}) {
         fileType: file.type
     });
 
+    validateProfilePhotoFile(file);
     getRequiredSignedInUserId();
     const path = buildTeamProfilePhotoPath(options?.teamId, file.name);
     console.log('Upload path:', path);
@@ -521,9 +534,7 @@ export async function uploadTeamPhoto(file, options = {}) {
     const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    });
+    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
     console.log('Upload complete, getting download URL...');
 
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
@@ -539,13 +550,12 @@ export async function uploadPlayerPhoto(file, options = {}) {
         fileType: file.type
     });
 
+    validateProfilePhotoFile(file);
     getRequiredSignedInUserId();
     const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
     const storageRef = ref(storage, path);
 
-    const snapshot = await uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    });
+    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
@@ -559,6 +569,7 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
         fileType: file.type
     });
 
+    validateProfilePhotoFile(file);
     const userId = getRequiredSignedInUserId();
     if (uid && String(uid).trim() !== userId) {
         throw new Error('The signed-in account does not match this profile photo upload.');
@@ -566,9 +577,7 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
     const path = buildUserProfilePhotoPath(userId, file.name);
     const storageRef = ref(storage, path);
 
-    const snapshot = await uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    });
+    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
@@ -748,7 +757,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=27'; // Import resolveZip
+import { resolveZip } from './utils.js?v=28'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
