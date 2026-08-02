@@ -213,7 +213,11 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
                 afterEpoch: mailboxAfterEpoch
             });
             await page.goto(actionUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-            validateParentMailboxActionUrl(page.url(), step.option, { allowConsumed: true });
+            validateParentMailboxActionUrl(page.url(), step.option, {
+                allowConsumed: true,
+                requireAppRoute: true
+            });
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
         if (step.action === 'logout') {

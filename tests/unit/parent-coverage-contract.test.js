@@ -95,8 +95,8 @@ describe('parent coverage contract boundary', () => {
             actors: ['primary'],
             mutatesProduction: true,
             cleanupRequired: true,
-            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Photo' }, mutationId: 'profile-photo' }],
-            cleanupSteps: [{ action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image' }, mutationId: 'profile-photo' }]
+            steps: [{ action: 'click', target: { kind: 'role', role: 'button', name: 'Photo', exact: true }, mutationId: 'profile-photo' }],
+            cleanupSteps: [{ action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image', exact: true }, mutationId: 'profile-photo' }]
         });
         expect(() => validateContract(reversible, catalog, 'P13')).toThrow(/cleanup action uploadSyntheticImage is not allowed/);
     });
@@ -110,8 +110,8 @@ describe('parent coverage contract boundary', () => {
             cleanupRequired: false,
             lifecycleTransition: true,
             steps: [
-                { action: 'fillActorEmail', actor: 'lifecycle', target: { kind: 'label', name: 'Email' } },
-                { action: 'fillActorPassword', actor: 'lifecycle', target: { kind: 'label', name: 'Password' } }
+                { action: 'fillActorEmail', actor: 'lifecycle', target: { kind: 'label', name: 'Email', exact: true } },
+                { action: 'fillActorPassword', actor: 'lifecycle', target: { kind: 'label', name: 'Password', exact: true } }
             ],
             cleanupSteps: []
         });
@@ -121,14 +121,14 @@ describe('parent coverage contract boundary', () => {
             steps: [{
                 action: 'fillActorPassword',
                 actor: 'lifecycle',
-                target: { kind: 'label', name: 'Password' },
+                target: { kind: 'label', name: 'Password', exact: true },
                 value: 'embedded-password'
             }]
         }, catalog, 'P02')).toThrow(/unsupported key value/);
     });
 
     it('restricts the checkout popup primitive to the two checkout workflows', () => {
-        const target = { kind: 'role', role: 'button', name: 'Pay fee' };
+        const target = { kind: 'role', role: 'button', name: 'Pay fee', exact: true };
         expect(() => validateContract({
             ...validContract(),
             steps: [{ action: 'clickAndExpectStripeCheckout', target }]
@@ -151,7 +151,7 @@ describe('parent coverage contract boundary', () => {
             steps: [{
                 action: 'clickAndExpectDownload',
                 actor: 'primary',
-                target: { kind: 'role', role: 'button', name: 'Download calendar' }
+                target: { kind: 'role', role: 'button', name: 'Download calendar', exact: true }
             }]
         });
         expect(validateContract(calendar, catalog, 'P29').steps).toHaveLength(1);
@@ -181,11 +181,11 @@ describe('parent coverage contract boundary', () => {
             mutatesProduction: true,
             cleanupRequired: true,
             steps: [
-                { action: 'rememberControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name' },
-                { action: 'fill', target: { kind: 'label', name: 'Name' }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
+                { action: 'rememberControl', target: { kind: 'label', name: 'Name', exact: true }, option: 'profile-name' },
+                { action: 'fill', target: { kind: 'label', name: 'Name', exact: true }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
             ],
             cleanupSteps: [
-                { action: 'restoreControl', target: { kind: 'label', name: 'Name' }, option: 'profile-name', mutationId: 'profile-name' }
+                { action: 'restoreControl', target: { kind: 'label', name: 'Name', exact: true }, option: 'profile-name', mutationId: 'profile-name' }
             ]
         });
         expect(validateContract(reversible, catalog, 'P12').cleanupSteps).toHaveLength(1);
@@ -193,7 +193,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Name' },
+                target: { kind: 'label', name: 'Name', exact: true },
                 option: 'Bad Key',
                 mutationId: 'profile-name'
             }]
@@ -206,7 +206,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Name' },
+                target: { kind: 'label', name: 'Name', exact: true },
                 option: 'different-key',
                 mutationId: 'profile-name'
             }]
@@ -215,7 +215,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Phone' },
+                target: { kind: 'label', name: 'Phone', exact: true },
                 option: 'profile-name',
                 mutationId: 'profile-name'
             }]
@@ -229,24 +229,27 @@ describe('parent coverage contract boundary', () => {
             actors: ['primary'],
             mutatesProduction: true,
             cleanupRequired: true,
-            steps: [{
-                action: 'fill',
-                target: { kind: 'label', name: 'Name' },
-                value: '{RUN_MARKER}',
-                mutationId: 'profile-name'
-            }],
+            steps: [
+                { action: 'rememberControl', target: { kind: 'label', name: 'Name', exact: true }, option: 'profile-name' },
+                {
+                    action: 'fill',
+                    target: { kind: 'label', name: 'Name', exact: true },
+                    value: '{RUN_MARKER}',
+                    mutationId: 'profile-name'
+                }
+            ],
             cleanupSteps: [{
-                action: 'fill',
-                target: { kind: 'label', name: 'Name' },
-                value: 'Restored parent',
+                action: 'restoreControl',
+                target: { kind: 'label', name: 'Name', exact: true },
+                option: 'profile-name',
                 mutationId: 'profile-name'
             }]
         });
-        expect(validateContract(reversible, catalog, 'P12').steps).toHaveLength(1);
+        expect(validateContract(reversible, catalog, 'P12').steps).toHaveLength(2);
         expect(() => validateContract({
             ...reversible,
-            steps: [{
-                ...reversible.steps[0],
+            steps: [reversible.steps[0], {
+                ...reversible.steps[1],
                 target: { kind: 'role', role: 'button', name: 'Delete account' }
             }]
         }, catalog, 'P12')).toThrow(/outside the trusted P12\/primary mutation capability/);
@@ -254,6 +257,69 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{ ...reversible.cleanupSteps[0], mutationId: 'other-change' }]
         }, catalog, 'P12')).toThrow(/same mutationId/);
+        const crossActorCleanup = validContract({
+            workflowId: 'P20',
+            title: catalog.workflows[19].title,
+            actors: ['primary', 'peer'],
+            mutatesProduction: true,
+            cleanupRequired: true,
+            steps: [{
+                action: 'click',
+                actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Claim', exact: true },
+                mutationId: 'task-claim'
+            }],
+            cleanupSteps: [{
+                action: 'click',
+                actor: 'peer',
+                target: { kind: 'role', role: 'button', name: 'Release', exact: true },
+                mutationId: 'task-claim'
+            }]
+        });
+        expect(() => validateContract(crossActorCleanup, catalog, 'P20')).toThrow(/one actor/);
+        expect(() => validateContract({
+            ...reversible,
+            cleanupSteps: [{
+                action: 'fill',
+                target: { kind: 'label', name: 'Name', exact: true },
+                value: 'Unverified replacement value',
+                mutationId: 'profile-name'
+            }]
+        }, catalog, 'P12')).toThrow(/restore remembered state or invoke a bounded inverse action/);
+    });
+
+    it('requires exact semantic targets for every untrusted production interaction', () => {
+        const signup = validContract({
+            workflowId: 'P02',
+            title: catalog.workflows[1].title,
+            actors: ['lifecycle'],
+            mutatesProduction: true,
+            cleanupRequired: false,
+            lifecycleTransition: true,
+            steps: [{
+                action: 'click',
+                target: { kind: 'text', name: 'Create account' }
+            }]
+        });
+        expect(() => validateContract(signup, catalog, 'P02')).toThrow(/exact semantic buttons or links/);
+        const remembered = validContract({
+            workflowId: 'P12',
+            title: catalog.workflows[11].title,
+            actors: ['primary'],
+            mutatesProduction: true,
+            cleanupRequired: true,
+            steps: [
+                { action: 'rememberControl', target: { kind: 'text', name: 'Name' }, option: 'profile-name' },
+                { action: 'fill', target: { kind: 'label', name: 'Name', exact: true }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
+            ],
+            cleanupSteps: [{
+                action: 'restoreControl',
+                target: { kind: 'text', name: 'Name' },
+                option: 'profile-name',
+                mutationId: 'profile-name'
+            }]
+        });
+        expect(() => validateContract(remembered, catalog, 'P12')).toThrow(/remembered controls must use exact/);
     });
 
     it('does not let a lifecycle declaration transfer another actor mutation authority', () => {
@@ -274,6 +340,50 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract(household, catalog, 'P27')).toThrow(
             /outside the trusted P27\/primary mutation capability/
         );
+    });
+
+    it('binds lifecycle inputs and cleanup targets to the disposable fixture', () => {
+        const signup = validContract({
+            workflowId: 'P02',
+            title: catalog.workflows[1].title,
+            actors: ['lifecycle'],
+            mutatesProduction: true,
+            cleanupRequired: false,
+            lifecycleTransition: true,
+            steps: [{
+                action: 'fill',
+                target: { kind: 'label', name: 'Email', exact: true },
+                value: 'someone-else@example.com'
+            }]
+        });
+        expect(() => validateContract(signup, catalog, 'P02')).toThrow(/protected lifecycle actor/);
+
+        const household = validContract({
+            workflowId: 'P27',
+            title: catalog.workflows[26].title,
+            actors: ['primary', 'lifecycle'],
+            mutatesProduction: true,
+            cleanupRequired: false,
+            lifecycleTransition: true,
+            steps: [{
+                action: 'click',
+                actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Revoke access', exact: true }
+            }]
+        });
+        expect(() => validateContract(household, catalog, 'P27')).toThrow(/outside the trusted P27\/primary mutation capability/);
+        expect(validateContract({
+            ...household,
+            steps: [{
+                ...household.steps[0],
+                target: {
+                    kind: 'role',
+                    role: 'button',
+                    name: 'Revoke access for {LIFECYCLE_EMAIL}',
+                    exact: true
+                }
+            }]
+        }, catalog, 'P27').steps).toHaveLength(1);
     });
 
     it('rejects routes and actions outside each trusted workflow capability', () => {

@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { executeParentCoverageCleanup } from '../smoke/helpers/parent-coverage-runner.js';
+
+const runnerSource = readFileSync('tests/smoke/helpers/parent-coverage-runner.js', 'utf8');
 
 describe('parent coverage cleanup execution', () => {
     it('attempts every restoration and retains every cleanup failure', async () => {
@@ -21,5 +24,10 @@ describe('parent coverage cleanup execution', () => {
             'restoreControl: first secret failure',
             'restoreControl: last secret failure'
         ]);
+    });
+
+    it('requires mailbox actions to finish on the workflow-scoped app route', () => {
+        expect(runnerSource).toContain('requireAppRoute: true');
+        expect(runnerSource).toMatch(/requireAppRoute: true[\s\S]+assertAllowedPage\(page, appBaseUrl, contract\.workflowId\)/);
     });
 });

@@ -49,7 +49,7 @@ const baseWorkflowActions = [
 const workflowCapabilities = new Map(Object.entries({
     P01: { mode: 'readOnly', routes: ['/accept-invite'], actions: [] },
     P02: { mode: 'lifecycle', routes: ['/auth', '/verify-pending'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click'] },
-    P03: { mode: 'lifecycle', routes: ['/verify-pending', '/auth'], actions: ['click', 'openLatestMailboxLink'] },
+    P03: { mode: 'lifecycle', routes: ['/verify-pending', '/reset-password', '/auth'], actions: ['click', 'openLatestMailboxLink'] },
     P04: { mode: 'lifecycle', routes: ['/auth', '/home'], actions: ['click'] },
     P05: { mode: 'lifecycle', routes: ['/auth', '/reset-password'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click', 'openLatestMailboxLink'] },
     P06: { mode: 'readOnly', routes: ['/auth', '/home'], actions: [] },
@@ -132,7 +132,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:friend|search|add friend|accept|remove friend|message|chat|send)$/i
     },
     P27: {
-        primary: /^(?:household|invite|email|relation|send invite|revoke invite|revoke access)$/i,
+        primary: /^(?:household|invite|email|relation|send invite|revoke (?:invite|access) for \{LIFECYCLE_EMAIL\})$/i,
         lifecycle: /^(?:invite code|accept invite|continue)$/i
     },
     P28: { primary: /^(?:share|family|privacy|email|create share|revoke share)$/i },
@@ -312,6 +312,11 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
         throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
     }
+    if (['rememberControl', 'restoreControl'].includes(step.action) && (
+        !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
+    )) {
+        throw new Error(`${phase} remembered controls must use exact label or testId targets`);
+    }
     if (capability.mode !== 'readOnly' && stateChangingActions.has(step.action)) {
         const actor = step.actor || defaultActor;
         const targetName = String(step.target?.name || '');
@@ -323,11 +328,56 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         ) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${actor} mutation capability`);
         }
+        if (['click'].includes(step.action) && (
+            step.target?.kind !== 'role' ||
+            !['button', 'link'].includes(step.target?.role) ||
+            step.target?.exact !== true
+        )) {
+            throw new Error(`${phase} click targets must be exact semantic buttons or links`);
+        }
+        if (['fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'uploadSyntheticImage'].includes(step.action) && (
+            !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
+        )) {
+            throw new Error(`${phase} control mutations must use exact label or testId targets`);
+        }
+        const normalizedTarget = targetName.toLowerCase();
+        const isCredentialInput = ['fill', 'fillActorEmail', 'fillActorPassword'].includes(step.action);
+        const lifecycleEmailInput = step.action === 'fill' && step.value === '{LIFECYCLE_EMAIL}' ||
+            step.action === 'fillActorEmail' && actor === 'lifecycle';
+        if (capability.mode === 'lifecycle' && isCredentialInput && /email/.test(normalizedTarget) && !lifecycleEmailInput) {
+            throw new Error(`${phase} lifecycle email inputs must bind to the protected lifecycle actor`);
+        }
+        if (
+            capability.mode === 'lifecycle' &&
+            isCredentialInput &&
+            !/email/.test(normalizedTarget) &&
+            /password/.test(normalizedTarget) &&
+            step.action !== 'fillActorPassword'
+        ) {
+            throw new Error(`${phase} lifecycle password inputs must bind to the protected lifecycle actor`);
+        }
+        if (
+            capability.mode === 'lifecycle' &&
+            /(?:join|invite|access) code/.test(normalizedTarget) &&
+            (step.action !== 'fill' || step.value !== '{LIFECYCLE_INVITE_CODE}')
+        ) {
+            throw new Error(`${phase} lifecycle invite inputs must bind to the protected lifecycle invite`);
+        }
+        if (
+            workflowId === 'P37' &&
+            /type delete to confirm/.test(normalizedTarget) &&
+            (step.action !== 'fill' || step.value !== 'DELETE')
+        ) {
+            throw new Error(`${phase} lifecycle deletion confirmation must use the fixed disposable-fixture value`);
+        }
     }
     if (capability.mode === 'readOnly' && ['clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
         const targetCapability = readOnlyInteractionTargetCapabilities.get(workflowId)?.[step.action];
         if (!targetCapability?.test(String(step.target?.name || ''))) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${step.action} capability`);
+        }
+        if (step.target?.kind !== 'role' || !['button', 'link'].includes(step.target?.role) || step.target?.exact !== true) {
+            throw new Error(`${phase} read-only interactions must use exact semantic buttons or links`);
         }
     }
 }
@@ -482,6 +532,24 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             [...cleanupIds].some((id) => !executionIds.has(id))
         ) {
             throw new Error('every reversible production mutation must have bounded cleanup with the same mutationId');
+        }
+        for (const mutationId of executionIds) {
+            const executionGroup = contract.steps.filter((step) => step.mutationId === mutationId);
+            const cleanupGroup = cleanupSteps.filter((step) => step.mutationId === mutationId);
+            const actors = new Set([...executionGroup, ...cleanupGroup].map((step) => step.actor || contract.actors[0]));
+            if (actors.size !== 1) {
+                throw new Error(`reversible mutation ${mutationId} must keep execution and cleanup on one actor`);
+            }
+            if (cleanupGroup.some((step) => !['click', 'restoreControl'].includes(step.action))) {
+                throw new Error(`reversible mutation ${mutationId} cleanup must restore remembered state or invoke a bounded inverse action`);
+            }
+            if (executionGroup.some((step) => ['fill', 'check', 'uncheck', 'select'].includes(step.action))) {
+                const hasRestore = cleanupGroup.some((step) => step.action === 'restoreControl');
+                const hasBoundedInverse = cleanupGroup.some((step) => step.action === 'click');
+                if (!hasRestore && !hasBoundedInverse) {
+                    throw new Error(`reversible mutation ${mutationId} has no state restoration or bounded inverse action`);
+                }
+            }
         }
     } else if ([...executionMutationIds, ...cleanupMutationIds].some(Boolean)) {
         throw new Error('mutationId is valid only for reversible production workflows');

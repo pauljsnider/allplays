@@ -11,15 +11,21 @@ function response(body, status = 200) {
 
 function mailboxMessage(text, {
     from = 'ALL PLAYS <noreply@mail.allplays.ai>',
-    authentication = 'mx.google.com; dkim=pass header.i=@mail.allplays.ai header.from=mail.allplays.ai'
+    authentication = 'mx.google.com; dkim=pass header.i=@mail.allplays.ai header.from=mail.allplays.ai',
+    to = 'fixture@example.com',
+    internalDate = '101000'
 } = {}) {
     return {
-        headers: [
-            { name: 'From', value: from },
-            { name: 'Authentication-Results', value: authentication }
-        ],
-        mimeType: 'text/html',
-        body: { data: Buffer.from(text).toString('base64url') }
+        internalDate,
+        payload: {
+            headers: [
+                { name: 'From', value: from },
+                { name: 'To', value: to },
+                { name: 'Authentication-Results', value: authentication }
+            ],
+            mimeType: 'text/html',
+            body: { data: Buffer.from(text).toString('base64url') }
+        }
     };
 }
 
@@ -28,12 +34,12 @@ describe('parent coverage protected mailbox boundary', () => {
         const fetchImpl = vi.fn()
             .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
             .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }] }))
-            .mockResolvedValueOnce(response({
-                payload: mailboxMessage(
+            .mockResolvedValueOnce(response(
+                mailboxMessage(
                     '<a href="https://attacker.example/?oobCode=bad">bad</a>' +
                     '<a href="https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&amp;oobCode=good">verify</a>'
                 )
-            }));
+            ));
         const url = await findLatestParentMailboxActionLink({
             action: 'verifyEmail',
             recipient: 'fixture@example.com',
@@ -57,13 +63,42 @@ describe('parent coverage protected mailbox boundary', () => {
         const fetchImpl = vi.fn()
             .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
             .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }, { id: 'mail-2' }] }))
-            .mockResolvedValueOnce(response({
-                payload: mailboxMessage(`<a href="${validLookingLink}">verify</a>`, {
+            .mockResolvedValueOnce(response(
+                mailboxMessage(`<a href="${validLookingLink}">verify</a>`, {
                     from: 'ALL PLAYS <attacker@example.com>',
                     authentication: 'mx.google.com; dkim=pass header.i=@example.com header.from=example.com'
                 })
-            }))
-            .mockResolvedValueOnce(response({ payload: mailboxMessage(`<a href="${wrongPath}">verify</a>`) }));
+            ))
+            .mockResolvedValueOnce(response(mailboxMessage(`<a href="${wrongPath}">verify</a>`)));
+        await expect(findLatestParentMailboxActionLink({
+            action: 'verifyEmail',
+            recipient: 'fixture@example.com',
+            clientId: 'client',
+            clientSecret: 'secret',
+            refreshToken: 'refresh',
+            afterEpoch: 100,
+            maxAttempts: 1,
+            fetchImpl
+        })).rejects.toThrow(/no recent verifyEmail message/);
+    });
+
+    it('requires aligned authentication, the exact recipient, and a fresh internal date', async () => {
+        const link = 'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=spoofed';
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
+            .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }, { id: 'mail-2' }, { id: 'mail-3' }] }))
+            .mockResolvedValueOnce(response(
+                mailboxMessage(`<a href="${link}">verify</a>`, {
+                    authentication: 'mx.google.com; dkim=pass header.i=@attacker.example (mail.allplays.ai)'
+                })
+            ))
+            .mockResolvedValueOnce(response(
+                mailboxMessage(`<a href="${link}">verify</a>`, { to: 'someone-else@example.com' })
+            ))
+            .mockResolvedValueOnce(response(
+                mailboxMessage(`<a href="${link}">verify</a>`, { internalDate: '99000' })
+            ));
+
         await expect(findLatestParentMailboxActionLink({
             action: 'verifyEmail',
             recipient: 'fixture@example.com',
@@ -91,6 +126,28 @@ describe('parent coverage protected mailbox boundary', () => {
             'resetPassword',
             { allowConsumed: true }
         )).toThrow(/expected app route/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/auth',
+            'verifyEmail',
+            { allowConsumed: true }
+        )).toThrow(/expected app route/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=secret',
+            'verifyEmail',
+            { allowConsumed: true, requireAppRoute: true }
+        )).toThrow(/expected Firebase action/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=secret&continueUrl=https%3A%2F%2Fattacker.example%2F',
+            'verifyEmail'
+        )).toThrow(/continue URL/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/accept-invite?code=HOME5678&type=household&next=https%3A%2F%2Fattacker.example',
+            'invite'
+        )).toThrow(/exact supported invite route/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&mode=resetPassword&oobCode=secret',
+            'verifyEmail'
+        )).toThrow(/expected Firebase action/);
     });
 
     it('fails closed when credentials or a matching message are absent', async () => {
@@ -144,5 +201,31 @@ describe('parent coverage protected mailbox boundary', () => {
         expect(message).not.toContain(clientId);
         expect(message).not.toContain(clientSecret);
         expect(message).not.toContain(refreshToken);
+    });
+
+    it('replaces credential-bearing transport and response errors with sanitized failures', async () => {
+        const clientId = 'sensitive-client-id';
+        const clientSecret = 'sensitive-client-secret';
+        const refreshToken = 'sensitive-refresh-token';
+        const rawFailure = `${clientId}:${clientSecret}:${refreshToken}`;
+        const rejectedFetch = vi.fn().mockRejectedValue(new Error(rawFailure));
+        const invalidResponse = vi.fn().mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => { throw new Error(rawFailure); }
+        });
+
+        await expect(auditParentCoverageMailboxAccess({
+            clientId,
+            clientSecret,
+            refreshToken,
+            fetchImpl: rejectedFetch
+        })).rejects.toThrow(/^mailbox authorization request failed$/);
+        await expect(auditParentCoverageMailboxAccess({
+            clientId,
+            clientSecret,
+            refreshToken,
+            fetchImpl: invalidResponse
+        })).rejects.toThrow(/^mailbox authorization returned an invalid response$/);
     });
 });
