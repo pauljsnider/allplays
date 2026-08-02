@@ -1379,6 +1379,13 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
   const position = cleanString(publicValues.position);
 
+  // Reject an invalid photo before creating the durable roster owner. Once the
+  // owner exists, every later photo failure is reported as partial success so a
+  // retry cannot create a duplicate player.
+  if (input?.photoFile) {
+    validateLegacyRosterPhotoFile(input.photoFile);
+  }
+
   const nativeRuntime = isNativeRuntime();
   const mutationModule = await import('./nativeFirestoreMutation');
   const nativeMutation = nativeRuntime ? mutationModule : null;
@@ -1433,7 +1440,6 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   let nativePhotoPath = '';
   let webPhotoPath = '';
   if (input?.photoFile) {
-    validateLegacyRosterPhotoFile(input.photoFile);
     try {
       if (nativeRuntime) {
         const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId));

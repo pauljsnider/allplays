@@ -589,6 +589,20 @@ describe('addRosterPlayerForApp native writes', () => {
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
+  it.each([
+    ['a non-image file', new File(['text'], 'player.txt', { type: 'text/plain' })],
+    ['an empty image', new File([], 'player.jpg', { type: 'image/jpeg' })],
+    ['an oversized image', new File([new Uint8Array((5 * 1024 * 1024) + 1)], 'player.jpg', { type: 'image/jpeg' })]
+  ])('rejects %s before creating the native player owner', async (_label, photoFile) => {
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile
+    })).rejects.toThrow(/image|5MB/i);
+
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).not.toHaveBeenCalled();
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).not.toHaveBeenCalled();
+  });
+
   it('creates the player owner before uploading, then persists the final native photo', async () => {
     const file = new File(['photo'], 'player.jpg', { type: 'image/jpeg' });
     nativeStorageMocks.uploadNativePlayerPhotoFile.mockImplementationOnce(async () => {
@@ -730,6 +744,20 @@ describe('addRosterPlayerForApp browser photo scope', () => {
     });
     dbMocks.applyRosterCsvImportOperations.mockResolvedValue([{ playerId: 'native-player-1' }]);
     __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it.each([
+    ['a non-image file', new File(['text'], 'player.txt', { type: 'text/plain' })],
+    ['an empty image', new File([], 'player.jpg', { type: 'image/jpeg' })],
+    ['an oversized image', new File([new Uint8Array((5 * 1024 * 1024) + 1)], 'player.jpg', { type: 'image/jpeg' })]
+  ])('rejects %s before creating the browser player owner', async (_label, photoFile) => {
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile
+    })).rejects.toThrow(/image|5MB/i);
+
+    expect(dbMocks.applyRosterCsvImportOperations).not.toHaveBeenCalled();
+    expect(dbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
   });
 
   it('creates the browser player owner before uploading and persists that same id', async () => {

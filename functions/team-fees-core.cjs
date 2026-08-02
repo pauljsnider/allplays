@@ -11,6 +11,7 @@ const LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS = Object.freeze([
     'paymentLinkUrl',
     'paymentUrl',
     'stripeCheckoutSessionId',
+    'checkoutSessionId',
     'checkoutAttemptToken',
     'checkoutAmountCents',
     'checkoutCreationPayerUid',
@@ -18,10 +19,146 @@ const LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS = Object.freeze([
     'checkoutCreationRequest'
 ]);
 
+const LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS = Object.freeze([
+    'lastPaidStripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'paymentIntentId',
+    'stripeCustomerId',
+    'stripeChargeId',
+    'stripeRefundId',
+    'stripeLastRefundId',
+    'stripeEventId',
+    'eventId',
+    'receiptEmail',
+    'refundedBy',
+    'recordedBy',
+    'adjustedBy',
+    'canceledBy',
+    'latestAuditActorId',
+    'internalNote',
+    'adminNote',
+    'reason'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS = Object.freeze([
+    'checkoutSessionId',
+    'paymentIntentId',
+    'receiptEmail',
+    'eventId'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS = Object.freeze([
+    'ledgerEntries',
+    'paymentLedger',
+    'activity',
+    'receipts',
+    'payments',
+    'adjustments'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS = new Set([
+    ...LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
+    'note'
+]);
+
+function hasMeaningfulValue(value) {
+    return value !== undefined && value !== null && value !== '';
+}
+
+function hasLegacyReadableTeamFeeLedgerPrivateState(value) {
+    if (Array.isArray(value)) return value.some(hasLegacyReadableTeamFeeLedgerPrivateState);
+    if (!value || typeof value !== 'object') return false;
+    return Object.entries(value).some(([key, childValue]) => (
+        (LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(key) && hasMeaningfulValue(childValue))
+        || hasLegacyReadableTeamFeeLedgerPrivateState(childValue)
+    ));
+}
+
+function extractLegacyReadableTeamFeeLedgerPrivateState(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry, index) => {
+            const privateState = extractLegacyReadableTeamFeeLedgerPrivateState(entry);
+            return privateState && Object.keys(privateState).length ? { index, ...privateState } : null;
+        }).filter(Boolean);
+    }
+    if (!value || typeof value !== 'object') return null;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, childValue]) => {
+        if (LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(key) && hasMeaningfulValue(childValue)) {
+            return [[key, childValue]];
+        }
+        const nestedPrivateState = extractLegacyReadableTeamFeeLedgerPrivateState(childValue);
+        return nestedPrivateState && Object.keys(nestedPrivateState).length
+            ? [[key, nestedPrivateState]]
+            : [];
+    }));
+}
+
 function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
     return LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.some((field) => (
-        recipient[field] !== undefined && recipient[field] !== null && recipient[field] !== ''
+        hasMeaningfulValue(recipient[field])
     ));
+}
+
+function hasLegacyReadableTeamFeeBillingState(recipient = {}) {
+    if (LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS.some((field) => hasMeaningfulValue(recipient[field]))) {
+        return true;
+    }
+    const receiptMetadata = recipient.receiptMetadata;
+    if (receiptMetadata && typeof receiptMetadata === 'object' && !Array.isArray(receiptMetadata)) {
+        if (LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS.some((field) => hasMeaningfulValue(receiptMetadata[field]))) {
+            return true;
+        }
+    }
+    return LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS.some((field) => (
+        Array.isArray(recipient[field]) && hasLegacyReadableTeamFeeLedgerPrivateState(recipient[field])
+    ));
+}
+
+function getLegacyReadableTeamFeeLedgerPrivateState(recipient = {}) {
+    return Object.fromEntries(LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS.flatMap((field) => {
+        if (!Array.isArray(recipient[field])) return [];
+        const privateEntries = extractLegacyReadableTeamFeeLedgerPrivateState(recipient[field]);
+        return privateEntries.length ? [[field, privateEntries]] : [];
+    }));
+}
+
+function buildLegacyReadableTeamFeeAdminBilling({ recipient = {}, existingAdminBilling = {}, now = null } = {}) {
+    const receiptMetadata = recipient.receiptMetadata && typeof recipient.receiptMetadata === 'object' && !Array.isArray(recipient.receiptMetadata)
+        ? recipient.receiptMetadata
+        : {};
+    const legacyLedgerPrivateState = getLegacyReadableTeamFeeLedgerPrivateState(recipient);
+    const legacyBilling = Object.fromEntries(Object.entries({
+        type: 'legacy_readable_billing_migration',
+        provider: recipient.paymentProvider || receiptMetadata.provider || 'stripe',
+        stripeCheckoutSessionId: recipient.stripeCheckoutSessionId || recipient.checkoutSessionId || receiptMetadata.checkoutSessionId,
+        lastPaidStripeCheckoutSessionId: recipient.lastPaidStripeCheckoutSessionId,
+        stripePaymentIntentId: recipient.stripePaymentIntentId || recipient.paymentIntentId || receiptMetadata.paymentIntentId,
+        stripeCustomerId: recipient.stripeCustomerId,
+        stripeChargeId: recipient.stripeChargeId,
+        stripeRefundId: recipient.stripeRefundId,
+        stripeLastRefundId: recipient.stripeLastRefundId,
+        stripeEventId: recipient.stripeEventId || recipient.eventId || receiptMetadata.eventId,
+        receiptEmail: recipient.receiptEmail || receiptMetadata.receiptEmail,
+        refundedBy: recipient.refundedBy,
+        recordedBy: recipient.recordedBy,
+        adjustedBy: recipient.adjustedBy,
+        canceledBy: recipient.canceledBy,
+        latestAuditActorId: recipient.latestAuditActorId,
+        internalNote: recipient.internalNote,
+        adminNote: recipient.adminNote,
+        reason: recipient.reason,
+        ...(Object.keys(legacyLedgerPrivateState).length ? { legacyLedgerPrivateState } : {}),
+        ...(now ? { migratedAt: now, updatedAt: now } : {})
+    }).filter(([, value]) => hasMeaningfulValue(value)));
+    const authoritativeBilling = Object.fromEntries(
+        Object.entries(existingAdminBilling).filter(([, value]) => hasMeaningfulValue(value))
+    );
+    return {
+        ...legacyBilling,
+        ...authoritativeBilling
+    };
 }
 
 function buildLegacyReadableTeamFeeCheckoutAttempt({ recipient = {}, existingAttempt = {}, now = null } = {}) {
@@ -39,14 +176,18 @@ function buildLegacyReadableTeamFeeCheckoutAttempt({ recipient = {}, existingAtt
         version: 1,
         ...(readableCheckoutUrl ? { checkoutUrl: readableCheckoutUrl } : {}),
         ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
-        ...(recipient.stripeCheckoutSessionId ? { stripeCheckoutSessionId: recipient.stripeCheckoutSessionId } : {}),
+        ...((recipient.stripeCheckoutSessionId || recipient.checkoutSessionId) ? {
+            stripeCheckoutSessionId: recipient.stripeCheckoutSessionId || recipient.checkoutSessionId
+        } : {}),
         ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),
         ...(recipient.checkoutAmountCents ? { checkoutAmountCents: recipient.checkoutAmountCents } : {}),
         ...(recipient.checkoutCreationReservationId ? { reservationId: recipient.checkoutCreationReservationId } : {}),
         ...(recipient.checkoutCreationPayerUid ? { payerUid: recipient.checkoutCreationPayerUid } : {}),
         ...(recipient.checkoutCreationAmountCents ? { amountCents: recipient.checkoutCreationAmountCents } : {}),
         ...(recipient.checkoutCreationRequest ? { checkoutCreationRequest: recipient.checkoutCreationRequest } : {}),
-        ...(recipient.checkoutCreatedAt || now ? { createdAt: recipient.checkoutCreatedAt || now } : {}),
+        ...(recipient.checkoutCreatedAt || recipient.checkoutCreationStartedAt || now ? {
+            createdAt: recipient.checkoutCreatedAt || recipient.checkoutCreationStartedAt || now
+        } : {}),
         ...(now ? { updatedAt: now } : {}),
         ...authoritativeAttempt
     };
@@ -571,8 +712,13 @@ function buildTeamFeePaidUpdate({ recipient = {}, checkoutAttempt = recipient, s
 
 module.exports = {
     LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS,
     hasLegacyReadableTeamFeeCheckoutState,
+    hasLegacyReadableTeamFeeBillingState,
     buildLegacyReadableTeamFeeCheckoutAttempt,
+    buildLegacyReadableTeamFeeAdminBilling,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeePaidCents,

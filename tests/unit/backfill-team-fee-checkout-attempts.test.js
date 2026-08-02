@@ -141,6 +141,132 @@ describe('team-fee checkout attempt backfill', () => {
         expect(db.state.get(recipientPath)).not.toHaveProperty(field);
     });
 
+    it.each([
+        ['lastPaidStripeCheckoutSessionId', 'lastPaidStripeCheckoutSessionId'],
+        ['stripePaymentIntentId', 'stripePaymentIntentId'],
+        ['paymentIntentId', 'stripePaymentIntentId'],
+        ['stripeCustomerId', 'stripeCustomerId'],
+        ['stripeChargeId', 'stripeChargeId'],
+        ['stripeRefundId', 'stripeRefundId'],
+        ['stripeLastRefundId', 'stripeLastRefundId'],
+        ['stripeEventId', 'stripeEventId'],
+        ['eventId', 'stripeEventId'],
+        ['receiptEmail', 'receiptEmail'],
+        ['refundedBy', 'refundedBy'],
+        ['recordedBy', 'recordedBy'],
+        ['adjustedBy', 'adjustedBy'],
+        ['canceledBy', 'canceledBy'],
+        ['latestAuditActorId', 'latestAuditActorId'],
+        ['internalNote', 'internalNote'],
+        ['adminNote', 'adminNote'],
+        ['reason', 'reason']
+    ])('moves and scrubs the top-level private billing alias %s when it is the only legacy state', async (field, privateField) => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: { [field]: `${field}-private-value` }
+        });
+
+        await expect(backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        })).resolves.toEqual({ matched: 1, migrated: 1 });
+
+        expect(db.state.get(adminBillingPath)).toMatchObject({
+            [privateField]: `${field}-private-value`,
+            type: 'legacy_readable_billing_migration'
+        });
+        expect(db.state.get(recipientPath)).not.toHaveProperty(field);
+        expect(db.state.get(recipientPath)).toHaveProperty('hasAdminBilling', true);
+        expect(db.state.has(attemptPath)).toBe(false);
+    });
+
+    it.each([
+        ['checkoutSessionId', 'stripeCheckoutSessionId'],
+        ['paymentIntentId', 'stripePaymentIntentId'],
+        ['receiptEmail', 'receiptEmail'],
+        ['eventId', 'stripeEventId']
+    ])('moves and scrubs the nested receiptMetadata.%s alias while preserving public receipt data', async (field, privateField) => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: {
+                receiptMetadata: {
+                    provider: 'stripe',
+                    amountPaidCents: 2500,
+                    [field]: `${field}-private-value`
+                }
+            }
+        });
+
+        await backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        });
+
+        expect(db.state.get(adminBillingPath)).toMatchObject({
+            [privateField]: `${field}-private-value`
+        });
+        expect(db.state.get(recipientPath).receiptMetadata).toEqual({
+            provider: 'stripe',
+            amountPaidCents: 2500
+        });
+    });
+
+    it('preserves existing private billing authority and removes private ledger aliases from readable arrays', async () => {
+        const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+        const adminBillingPath = `${recipientPath}/adminBilling/latest`;
+        const db = makeFirestore({
+            [recipientPath]: {
+                stripePaymentIntentId: 'pi_legacy',
+                ledgerEntries: [{
+                    type: 'stripe_refund',
+                    amountCents: 500,
+                    receiptEmail: 'parent@example.com',
+                    note: 'Private refund note',
+                    receiptMetadata: {
+                        paymentIntentId: 'pi_nested',
+                        currency: 'usd'
+                    }
+                }]
+            },
+            [adminBillingPath]: {
+                stripePaymentIntentId: 'pi_private',
+                receiptEmail: 'private@example.com'
+            }
+        });
+
+        await backfillLegacyTeamFeeCheckoutAttempts({
+            db,
+            apply: true,
+            fieldValue,
+            logger: { log: vi.fn() }
+        });
+
+        expect(db.state.get(adminBillingPath)).toMatchObject({
+            stripePaymentIntentId: 'pi_private',
+            receiptEmail: 'private@example.com',
+            legacyLedgerPrivateState: {
+                ledgerEntries: [{
+                    index: 0,
+                    receiptEmail: 'parent@example.com',
+                    note: 'Private refund note',
+                    receiptMetadata: { paymentIntentId: 'pi_nested' }
+                }]
+            }
+        });
+        expect(db.state.get(recipientPath).ledgerEntries).toEqual([{
+            type: 'stripe_refund',
+            amountCents: 500,
+            receiptMetadata: { currency: 'usd' }
+        }]);
+    });
+
     it('keeps dry runs read-only', async () => {
         const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
         const db = makeFirestore({
