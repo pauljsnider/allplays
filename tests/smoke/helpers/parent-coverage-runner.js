@@ -297,6 +297,29 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         }
 
         await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+        if (step.action === 'restoreFriendship') {
+            const peerEmail = actorCredentials('peer').email;
+            const anchors = page.getByText(peerEmail, { exact: true });
+            await expect(anchors).toHaveCount(1, { timeout: 20_000 });
+            const container = anchors.locator(
+                'xpath=ancestor-or-self::*[self::article or self::li or self::tr or @role="row" or @role="listitem" or @data-testid][1]'
+            );
+            await expect(container).toHaveCount(1, { timeout: 20_000 });
+            const candidates = [
+                container.getByRole('button', { name: 'Cancel request', exact: true }),
+                container.getByRole('button', { name: 'Remove friend', exact: true })
+            ];
+            const visible = [];
+            for (const candidate of candidates) {
+                if (await candidate.count() === 1 && await candidate.isVisible()) visible.push(candidate);
+            }
+            if (visible.length !== 1) {
+                throw new Error('bounded friendship restoration target is unavailable or ambiguous');
+            }
+            await visible[0].click();
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            return;
+        }
         const target = await locatorFor(page, step.target, variables, step.scope);
         if ([
             'click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute',

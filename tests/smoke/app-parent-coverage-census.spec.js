@@ -5,16 +5,15 @@ import { expect, test } from '@playwright/test';
 import {
     buildParentCoverageOutcome,
     buildSanitizedParentCoverageFailureError,
+    classifyParentCoverageError,
     REPORT_SCHEMA_VERSION,
     readValidatedCatalog,
     readValidatedContract,
-    redactParentCoverageValue,
     stableFailureSignature
 } from '../../scripts/parent-coverage-contract.mjs';
 import {
     createParentCoverageRuntime,
-    executeParentCoverageCleanup,
-    getParentCoverageSecrets
+    executeParentCoverageCleanup
 } from './helpers/parent-coverage-runner.js';
 
 const enabled = process.env.SMOKE_SUITE === 'parent-coverage-census';
@@ -66,17 +65,16 @@ test('executes one validated parent workflow contract', async ({ browser }, test
         await runtime?.close();
     }
 
-    const redact = runtime
-        ? (value) => runtime.redact(value)
-        : (value) => redactParentCoverageValue(value, getParentCoverageSecrets());
+    // Never serialize Playwright messages: assertion failures can embed arbitrary
+    // production DOM text. Reports retain only a bounded failure classification.
     const sanitizedCleanupFailures = cleanupFailures.map(({ action, error: cleanupFailure }) => ({
         action,
-        summary: redact(cleanupFailure?.message || cleanupFailure)
+        summary: classifyParentCoverageError(cleanupFailure)
     }));
     const outcome = buildParentCoverageOutcome({
         workflowId: contract.workflowId,
-        setupSummary: setupError ? redact(setupError?.message || setupError) : '',
-        productSummary: productError ? redact(productError?.message || productError) : '',
+        setupSummary: setupError ? classifyParentCoverageError(setupError) : '',
+        productSummary: productError ? classifyParentCoverageError(productError) : '',
         productAction,
         cleanupFailures: sanitizedCleanupFailures,
         cleanupRequired: contract.cleanupRequired

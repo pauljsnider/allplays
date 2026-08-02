@@ -6,6 +6,7 @@ import {
 } from '../smoke/helpers/parent-coverage-runner.js';
 
 const runnerSource = readFileSync('tests/smoke/helpers/parent-coverage-runner.js', 'utf8');
+const censusSource = readFileSync('tests/smoke/app-parent-coverage-census.spec.js', 'utf8');
 
 describe('parent coverage cleanup execution', () => {
     it('attempts every restoration and retains every cleanup failure', async () => {
@@ -52,6 +53,30 @@ describe('parent coverage cleanup execution', () => {
         expect(tracker.shouldExecute(cleanup)).toBe(true);
         tracker.record({ action: 'click', mutationId: 'other', commitMutation: true }, 'cleanup');
         expect(tracker.shouldExecute({ action: 'click', mutationId: 'other' })).toBe(false);
+    });
+
+    it('arms upload cleanup before a later save or send can fail', () => {
+        const tracker = createParentCoverageMutationTracker();
+        tracker.record({
+            action: 'uploadSyntheticImage',
+            mutationId: 'synthetic-upload',
+            commitMutation: true
+        });
+        expect(tracker.shouldExecute({ action: 'click', mutationId: 'synthetic-upload' })).toBe(true);
+    });
+
+    it('restores exactly one pending or accepted peer friendship state', () => {
+        expect(runnerSource).toContain("actorCredentials('peer').email");
+        expect(runnerSource).toContain("name: 'Cancel request', exact: true");
+        expect(runnerSource).toContain("name: 'Remove friend', exact: true");
+        expect(runnerSource).toContain('if (visible.length !== 1)');
+    });
+
+    it('never writes raw Playwright messages into the uploaded report', () => {
+        expect(censusSource).toContain('classifyParentCoverageError(cleanupFailure)');
+        expect(censusSource).toContain('classifyParentCoverageError(productError)');
+        expect(censusSource).not.toContain('cleanupFailure?.message');
+        expect(censusSource).not.toContain('productError?.message');
     });
 
     it('requires mailbox actions to finish on the workflow-scoped app route', () => {

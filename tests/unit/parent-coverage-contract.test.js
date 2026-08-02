@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildParentCoverageOutcome,
     buildSanitizedParentCoverageFailureError,
+    classifyParentCoverageError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
     redactParentCoverageValue,
@@ -115,9 +116,9 @@ function validP13Contract() {
             { action: 'expectHidden', target: remove },
             {
                 action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Profile image', exact: true },
-                mutationId: 'profile-image'
+                mutationId: 'profile-image', commitMutation: true
             },
-            { action: 'click', target: save, mutationId: 'profile-image', commitMutation: true },
+            { action: 'click', target: save, mutationId: 'profile-image' },
             { action: 'expectVisible', target: remove }
         ],
         cleanupSteps: [
@@ -201,14 +202,20 @@ describe('parent coverage contract boundary', () => {
             cleanupRequired: false,
             lifecycleTransition: true,
             steps: [
+                { action: 'fill', actor: 'lifecycle', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_INVITE_CODE}' },
                 { action: 'fillActorEmail', actor: 'lifecycle', target: { kind: 'label', name: 'Email', exact: true } },
                 { action: 'fillActorPassword', actor: 'lifecycle', target: { kind: 'label', name: 'Password', exact: true } },
                 { action: 'click', actor: 'lifecycle', target: { kind: 'role', role: 'button', name: 'Create account', exact: true } },
-                { action: 'expectText', actor: 'lifecycle', target: { kind: 'text', name: 'Verify your email', exact: true }, value: 'Verify' }
+                { action: 'expectText', actor: 'lifecycle', target: { kind: 'text', name: 'Verify your email', exact: true }, value: 'Verify' },
+                { action: 'expectRoute', actor: 'lifecycle', route: '/verify-pending' }
             ],
             cleanupSteps: []
         });
-        expect(validateContract(signup, catalog, 'P02').steps).toHaveLength(5);
+        expect(validateContract(signup, catalog, 'P02').steps).toHaveLength(7);
+        expect(() => validateContract({
+            ...signup,
+            steps: signup.steps.filter((step) => step.action !== 'expectRoute')
+        }, catalog, 'P02')).toThrow(/ordered trusted P02 lifecycle expectRoute workflow behavior/);
         expect(() => validateContract({
             ...signup,
             steps: [{
@@ -341,6 +348,34 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P12')).toThrow(/profile-fields|ordered trusted P12 primary fill workflow behavior/);
     });
 
+    it('keeps the complete P17 RSVP notes and sibling workflow constructible', () => {
+        const rsvp = { kind: 'label', name: 'RSVP', exact: true };
+        const note = { kind: 'label', name: 'Note', exact: true };
+        const sibling = { kind: 'label', name: 'Sibling', exact: true };
+        const save = { kind: 'role', role: 'button', name: 'Save', exact: true };
+        const contract = validContract({
+            workflowId: 'P17', title: catalog.workflows[16].title, actors: ['primary'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'rememberControl', target: rsvp, option: 'rsvp' },
+                { action: 'rememberControl', target: note, option: 'note' },
+                { action: 'rememberControl', target: sibling, option: 'sibling' },
+                { action: 'select', target: rsvp, option: 'Going', mutationId: 'rsvp-update' },
+                { action: 'fill', target: note, value: '{RUN_MARKER}', mutationId: 'rsvp-update' },
+                { action: 'fill', target: sibling, value: '{RUN_MARKER}', mutationId: 'rsvp-update' },
+                { action: 'click', target: save, mutationId: 'rsvp-update', commitMutation: true },
+                { action: 'expectText', target: { kind: 'text', name: '{RUN_MARKER}', exact: true }, value: '{RUN_MARKER}' }
+            ],
+            cleanupSteps: [
+                { action: 'restoreControl', target: rsvp, option: 'rsvp', mutationId: 'rsvp-update' },
+                { action: 'restoreControl', target: note, option: 'note', mutationId: 'rsvp-update' },
+                { action: 'restoreControl', target: sibling, option: 'sibling', mutationId: 'rsvp-update' },
+                { action: 'click', target: save, mutationId: 'rsvp-update' }
+            ]
+        });
+        expect(validateContract(contract, catalog, 'P17').workflowId).toBe('P17');
+    });
+
     it('binds reversible mutations to actor-specific targets and cleanup mutation ids', () => {
         const reversible = validP12Contract();
         expect(validateContract(reversible, catalog, 'P12').steps).toHaveLength(7);
@@ -427,23 +462,94 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P20')).toThrow(/inverse cleanup must be bound to an exact entity scope/);
     });
 
+    it('requires P14 to prove the child image slot is empty before replacement', () => {
+        const name = { kind: 'label', name: 'Name', exact: true };
+        const image = { kind: 'label', name: 'Image', exact: true };
+        const save = { kind: 'role', role: 'button', name: 'Save', exact: true };
+        const remove = { kind: 'role', role: 'button', name: 'Remove image', exact: true };
+        const childImage = validContract({
+            workflowId: 'P14', title: catalog.workflows[13].title, actors: ['primary'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'expectHidden', target: remove },
+                { action: 'rememberControl', target: name, option: 'child-name' },
+                { action: 'fill', target: name, value: '{RUN_MARKER}', mutationId: 'child-image' },
+                { action: 'uploadSyntheticImage', target: image, mutationId: 'child-image', commitMutation: true },
+                { action: 'click', target: save, mutationId: 'child-image' },
+                { action: 'expectText', target: { kind: 'text', name: '{RUN_MARKER}', exact: true }, value: '{RUN_MARKER}' }
+            ],
+            cleanupSteps: [
+                { action: 'click', target: remove, mutationId: 'child-image', scope: '{RUN_MARKER}' },
+                { action: 'restoreControl', target: name, option: 'child-name', mutationId: 'child-image' },
+                { action: 'click', target: save, mutationId: 'child-image' }
+            ]
+        });
+        expect(validateContract(childImage, catalog, 'P14').workflowId).toBe('P14');
+        expect(() => validateContract({
+            ...childImage,
+            steps: childImage.steps.filter((step) => step.action !== 'expectHidden')
+        }, catalog, 'P14')).toThrow(/ordered trusted P14 primary expectHidden workflow behavior/);
+    });
+
+    it('models P26 friendship request and acceptance as one bounded restoration', () => {
+        const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+        const friendship = validContract({
+            workflowId: 'P26', title: catalog.workflows[25].title, actors: ['primary', 'peer'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'click', actor: 'primary', target: button('Add friend'), mutationId: 'friendship', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'click', actor: 'peer', target: button('Accept'), mutationId: 'friendship', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Message', exact: true }, value: '{RUN_MARKER}', mutationId: 'friend-message' },
+                { action: 'click', actor: 'primary', target: button('Send'), mutationId: 'friend-message', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: '{RUN_MARKER}', exact: true }, value: '{RUN_MARKER}' }
+            ],
+            cleanupSteps: [
+                { action: 'click', actor: 'primary', target: button('Delete message'), mutationId: 'friend-message', scope: '{RUN_MARKER}' },
+                { action: 'restoreFriendship', actor: 'primary', mutationId: 'friendship' }
+            ]
+        });
+        expect(validateContract(friendship, catalog, 'P26').workflowId).toBe('P26');
+        expect(() => validateContract({
+            ...friendship,
+            cleanupSteps: [...friendship.cleanupSteps, friendship.cleanupSteps[1]]
+        }, catalog, 'P26')).toThrow(/one actor|target-specific inverse/);
+    });
+
+    it('models a P22 ride request and owner approval as one cancellable lifecycle', () => {
+        const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+        const ride = validContract({
+            workflowId: 'P22', title: catalog.workflows[21].title, actors: ['primary', 'peer'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                { action: 'click', actor: 'peer', target: button('Request ride'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Ride request pending', exact: true }, value: 'pending' },
+                { action: 'click', actor: 'primary', target: button('Approve'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Approved', exact: true }, value: 'Approved' }
+            ],
+            cleanupSteps: [
+                { action: 'click', actor: 'peer', target: button('Cancel'), mutationId: 'ride-request', scope: '{RUN_MARKER}' }
+            ]
+        });
+        expect(validateContract(ride, catalog, 'P22').workflowId).toBe('P22');
+    });
+
     it('requires a distinct run-scoped inverse for every AI attachment', () => {
         const removeAttachment = { kind: 'role', role: 'button', name: 'Remove attachment', exact: true };
         const contract = validContract({
             workflowId: 'P36', title: catalog.workflows[35].title, actors: ['primary'],
             mutatesProduction: true, cleanupRequired: true,
             steps: [
-                { action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Image', exact: true }, mutationId: 'ai-message' },
+                { action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Image', exact: true }, mutationId: 'ai-image', commitMutation: true },
                 { action: 'expectText', target: { kind: 'text', name: 'Image attachment', exact: true }, value: 'image' },
-                { action: 'uploadSyntheticDocument', target: { kind: 'label', name: 'Document', exact: true }, mutationId: 'ai-message' },
+                { action: 'uploadSyntheticDocument', target: { kind: 'label', name: 'Document', exact: true }, mutationId: 'ai-document', commitMutation: true },
                 { action: 'expectText', target: { kind: 'text', name: 'Document PDF', exact: true }, value: 'document' },
                 { action: 'fill', target: { kind: 'label', name: 'Prompt', exact: true }, value: '{RUN_MARKER}', mutationId: 'ai-message' },
                 { action: 'click', target: { kind: 'role', role: 'button', name: 'Send', exact: true }, mutationId: 'ai-message', commitMutation: true },
                 { action: 'expectText', target: { kind: 'text', name: 'Assistant response', exact: true }, value: '{RUN_MARKER}' }
             ],
             cleanupSteps: [
-                { action: 'click', target: removeAttachment, mutationId: 'ai-message', scope: '{RUN_MARKER}.png' },
-                { action: 'click', target: removeAttachment, mutationId: 'ai-message', scope: '{RUN_MARKER}.pdf' },
+                { action: 'click', target: removeAttachment, mutationId: 'ai-image', scope: '{RUN_MARKER}.png' },
+                { action: 'click', target: removeAttachment, mutationId: 'ai-document', scope: '{RUN_MARKER}.pdf' },
                 { action: 'click', target: { kind: 'role', role: 'button', name: 'Delete message', exact: true }, mutationId: 'ai-message', scope: '{RUN_MARKER}' }
             ]
         });
@@ -451,7 +557,7 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract({
             ...contract,
             cleanupSteps: contract.cleanupSteps.slice(1)
-        }, catalog, 'P36')).toThrow(/trusted target-specific inverse/);
+        }, catalog, 'P36')).toThrow(/same mutationId|trusted target-specific inverse/);
     });
 
     it('makes multi-operation rideshare coverage possible and unwinds it in reverse', () => {
@@ -482,6 +588,7 @@ describe('parent coverage contract boundary', () => {
             workflowId: 'P02', title: catalog.workflows[1].title, actors: ['lifecycle'],
             mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true,
             steps: [
+                { action: 'fill', target: { kind: 'label', name: 'Invite code', exact: true }, value: '{LIFECYCLE_INVITE_CODE}' },
                 { action: 'fillActorEmail', target: { kind: 'label', name: 'Email', exact: true } },
                 { action: 'fillActorPassword', target: { kind: 'label', name: 'Password', exact: true } }
             ]
@@ -492,7 +599,7 @@ describe('parent coverage contract boundary', () => {
             steps: [...signupWithoutSubmission.steps.filter((step) => step.action !== 'expectVisible'), {
                 action: 'click', target: { kind: 'role', role: 'button', name: 'Create account', exact: true }
             }]
-        }, catalog, 'P02')).toThrow(/ordered trusted P02 lifecycle expectVisible\|expectText\|expectRoute workflow behavior/);
+        }, catalog, 'P02')).toThrow(/ordered trusted P02 lifecycle expectVisible\|expectText workflow behavior/);
     });
 
     it('requires exact semantic targets for every untrusted production interaction', () => {
@@ -535,14 +642,17 @@ describe('parent coverage contract boundary', () => {
             title: catalog.workflows[26].title,
             actors: ['primary', 'lifecycle'],
             mutatesProduction: true,
-            cleanupRequired: false,
-            lifecycleTransition: true,
+            cleanupRequired: true,
+            lifecycleTransition: false,
             steps: [{
                 action: 'click',
                 actor: 'primary',
                 target: { kind: 'role', role: 'button', name: 'Accept invite' }
             }],
-            cleanupSteps: []
+            cleanupSteps: [{
+                action: 'click', actor: 'primary', mutationId: 'invalid-household', scope: '{LIFECYCLE_EMAIL}',
+                target: { kind: 'role', role: 'button', name: 'Revoke access for {LIFECYCLE_EMAIL}', exact: true }
+            }]
         });
         expect(() => validateContract(household, catalog, 'P27')).toThrow(
             /outside the trusted P27\/primary mutation capability/
@@ -570,31 +680,31 @@ describe('parent coverage contract boundary', () => {
             title: catalog.workflows[26].title,
             actors: ['primary', 'lifecycle'],
             mutatesProduction: true,
-            cleanupRequired: false,
-            lifecycleTransition: true,
+            cleanupRequired: true,
+            lifecycleTransition: false,
             steps: [
                 { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
                 {
                     action: 'click', actor: 'primary',
                     target: { kind: 'role', role: 'button', name: 'Revoke access', exact: true }
                 }
-            ]
+            ],
+            cleanupSteps: [{
+                action: 'click', actor: 'primary', mutationId: 'household', scope: '{LIFECYCLE_EMAIL}',
+                target: { kind: 'role', role: 'button', name: 'Revoke access for {LIFECYCLE_EMAIL}', exact: true }
+            }]
         });
         expect(() => validateContract(household, catalog, 'P27')).toThrow(/outside the trusted P27\/primary mutation capability/);
         expect(validateContract({
             ...household,
             steps: [
-                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Email', exact: true }, value: '{LIFECYCLE_EMAIL}' },
-                { action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Send invite', exact: true } },
+                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Email', exact: true }, value: '{LIFECYCLE_EMAIL}', mutationId: 'household' },
+                { action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Send invite', exact: true }, mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
                 { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
-                { action: 'click', actor: 'lifecycle', target: { kind: 'role', role: 'button', name: 'Accept invite', exact: true } },
-                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: '{LIFECYCLE_EMAIL}', exact: true }, value: '{LIFECYCLE_EMAIL}' },
-                {
-                    action: 'click', actor: 'primary',
-                    target: { kind: 'role', role: 'button', name: 'Revoke access for {LIFECYCLE_EMAIL}', exact: true }
-                }
+                { action: 'click', actor: 'lifecycle', target: { kind: 'role', role: 'button', name: 'Accept invite', exact: true }, mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
+                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: '{LIFECYCLE_EMAIL}', exact: true }, value: '{LIFECYCLE_EMAIL}' }
             ]
-        }, catalog, 'P27').steps).toHaveLength(6);
+        }, catalog, 'P27').steps).toHaveLength(5);
     });
 
     it('rejects routes and actions outside each trusted workflow capability', () => {
@@ -655,6 +765,14 @@ describe('parent coverage contract boundary', () => {
         expect(error.message).toContain('a'.repeat(64));
         expect(error.message).not.toContain(rawUrl);
         expect(error.message).not.toContain('oobCode');
+    });
+
+    it('classifies Playwright failures without retaining production-derived text', () => {
+        const raw = new Error('expect(locator).toContainText failed: Received "Parent 555-0109 private household chat"');
+        const classification = classifyParentCoverageError(raw);
+        expect(classification).toBe('assertion-failed');
+        expect(classification).not.toContain('555-0109');
+        expect(classification).not.toContain('household chat');
     });
 
     it('retains product and cleanup failures while keeping the product regression primary', () => {
