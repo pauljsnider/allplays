@@ -52,6 +52,29 @@ describe('app runtime issue collection', () => {
         expect(issues).toEqual([]);
     });
 
+    it('ignores browser cancellations caused by controlled navigation', () => {
+        const page = new EventEmitter();
+        const issues = collectAppRuntimeIssues(page, [], { includeApiFailures: true });
+
+        page.emit('requestfailed', request(
+            'fetch',
+            'https://firestore.googleapis.com/google.firestore.v1.Firestore/Listen/channel',
+            { errorText: 'net::ERR_ABORTED' }
+        ));
+        page.emit('requestfailed', request(
+            'image',
+            'https://firebasestorage.googleapis.com/v0/b/project/o/team.png',
+            { errorText: 'NS_BINDING_ABORTED' }
+        ));
+        page.emit('requestfailed', request(
+            'font',
+            'https://example.test/app.woff2',
+            { errorText: 'Load request cancelled' }
+        ));
+
+        expect(issues).toEqual([]);
+    });
+
     it('keeps broad API monitoring opt-in for the parent census', () => {
         const page = new EventEmitter();
         const issues = collectAppRuntimeIssues(page);

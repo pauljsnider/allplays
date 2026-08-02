@@ -2,6 +2,11 @@ import { expect } from '@playwright/test';
 
 export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;
 const AUTHENTICATED_CONTEXT_CLOSE_TIMEOUT_MS = 5_000;
+const controlledNavigationCancellationErrors = new Set([
+    'net::ERR_ABORTED',
+    'NS_BINDING_ABORTED',
+    'Load request cancelled'
+]);
 
 const sensitivePatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
@@ -86,8 +91,10 @@ export function collectAppRuntimeIssues(page, secrets = [], { includeApiFailures
     });
     page.on('requestfailed', (request) => {
         if (!monitoredResourceTypes.has(request.resourceType())) return;
+        const errorText = request.failure()?.errorText || 'failed';
+        if (controlledNavigationCancellationErrors.has(errorText)) return;
         const kind = includeApiFailures ? 'network' : 'asset';
-        issues.push(`${kind}:${request.failure()?.errorText || 'failed'}:${safeRequestLabel(request.url())}`);
+        issues.push(`${kind}:${errorText}:${safeRequestLabel(request.url())}`);
     });
     page.on('response', (response) => {
         if (!monitoredResourceTypes.has(response.request().resourceType())) return;
