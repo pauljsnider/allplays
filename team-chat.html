@@ -493,12 +493,12 @@
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
         const CHAT_REACTIONS = [
-            { key: 'thumbs_up', emoji: '👍' },
-            { key: 'heart', emoji: '❤️' },
-            { key: 'joy', emoji: '😂' },
-            { key: 'wow', emoji: '😮' },
-            { key: 'sad', emoji: '😢' },
-            { key: 'clap', emoji: '👏' }
+            { key: 'thumbs_up', emoji: '👍', label: 'Like' },
+            { key: 'heart', emoji: '❤️', label: 'Love' },
+            { key: 'joy', emoji: '😂', label: 'Funny' },
+            { key: 'wow', emoji: '😮', label: 'Wow' },
+            { key: 'sad', emoji: '😢', label: 'Sad' },
+            { key: 'clap', emoji: '👏', label: 'Clap' }
         ];
         const CHAT_REACTION_BY_KEY = new Map(CHAT_REACTIONS.map(r => [r.key, r.emoji]));
         let aiModelCache = null;
@@ -510,7 +510,7 @@
         let isLoadingMediaGalleryHistory = false;
         const chatMediaShareFileCache = new Map();
         const chatMediaShareFilePending = new Map();
-        let activeReactionPickerMessageId = null;
+        let activeMessageMenuId = null;
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
         const reactionUserNameCache = new Map();
@@ -793,7 +793,9 @@
                 return;
             }
 
-            let html = messages.map(msg => renderMessage(msg)).join('');
+            let html = messages.map((msg, index) => renderMessage(msg, {
+                preferActionsAbove: messages.length > 2 && index >= messages.length - 2
+            })).join('');
             if (aiUiPending) {
                 html += `
                     <div id="ai-thinking-placeholder" class="flex justify-start gap-2">
@@ -893,7 +895,7 @@
             return normalized;
         }
 
-        function renderReactionControls(msg, { isOwn }) {
+        function renderReactionControls(msg, { isOwn, canEdit, canDelete, displayName, preferActionsAbove }) {
             const reactions = normalizeMessageReactions(msg);
             const pills = CHAT_REACTIONS
                 .map(({ key, emoji }) => {
@@ -929,35 +931,61 @@
                 .filter(Boolean)
                 .join('');
 
-            const pickerOpen = activeReactionPickerMessageId === msg.id;
-            const picker = pickerOpen ? `
-                <div class="absolute bottom-full ${isOwn ? 'right-0' : 'left-0'} mb-2 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-lg z-20" data-reaction-ui="true">
-                    ${CHAT_REACTIONS.map(({ key, emoji }) => `
+            const menuOpen = activeMessageMenuId === msg.id;
+            const managementActions = [
+                canEdit ? `
+                    <button type="button" onclick="window.editMessage('${msg.id}')"
+                        class="min-h-9 flex-1 inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-400" data-reaction-ui="true">
+                        Edit
+                    </button>
+                ` : '',
+                canDelete ? `
+                    <button type="button" onclick="window.deleteMessage('${msg.id}')"
+                        class="min-h-9 flex-1 inline-flex items-center justify-center rounded-lg px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-primary-400" data-reaction-ui="true">
+                        Delete
+                    </button>
+                ` : ''
+            ].filter(Boolean).join('');
+            const menu = menuOpen ? `
+                <div id="message-actions-${escapeHtml(msg.id)}" role="group" aria-label="Message actions for ${escapeHtml(displayName)}"
+                    class="absolute ${preferActionsAbove ? 'bottom-full mb-2' : 'top-full mt-2'} ${isOwn ? 'left-0' : 'right-0 sm:left-0 sm:right-auto'} z-20 w-max max-w-[calc(100vw-3rem)] rounded-xl border border-gray-200 bg-white p-1 shadow-lg" data-reaction-ui="true">
+                    <div class="flex items-center gap-0.5" aria-label="Reactions" data-reaction-ui="true">
+                    ${CHAT_REACTIONS.map(({ key, emoji, label }) => `
                         <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
-                            class="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
+                            class="w-9 h-9 rounded-full bg-white hover:bg-gray-50 text-lg focus:outline-none focus:ring-2 focus:ring-primary-400" aria-label="${label}" data-reaction-ui="true">
                             ${emoji}
                         </button>
                     `).join('')}
+                    </div>
+                    ${managementActions ? `
+                        <div class="mt-1 flex gap-1 border-t border-gray-100 pt-1" data-reaction-ui="true">
+                            ${managementActions}
+                        </div>
+                    ` : ''}
                 </div>
             ` : '';
 
             const alignClass = isOwn ? 'justify-end' : 'justify-start';
-            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
-            return `
-                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
-                    <div class="relative inline-flex items-center gap-1.5" data-reaction-ui="true">
-                        ${pills}
-                        <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
-                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
-                            <span class="text-sm">😊</span>
-                        </button>
-                        ${picker}
-                    </div>
+            const menuButtonState = menuOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
+            const reactionControls = pills ? `
+                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-message-actions-footer="true" data-reaction-ui="true">
+                    ${pills}
+                </div>
+            ` : '';
+            const actionControl = `
+                <div class="absolute bottom-0 ${isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'} z-10 inline-flex" data-reaction-ui="true">
+                    <button type="button" onclick="window.toggleMessageMenu('${msg.id}')" data-reaction-ui="true"
+                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm hover:text-primary-600 hover:border-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-400 transition ${menuButtonState}"
+                            aria-label="Open message actions for ${escapeHtml(displayName)}" aria-expanded="${menuOpen}" aria-controls="message-actions-${escapeHtml(msg.id)}">
+                        <span class="text-lg leading-none" aria-hidden="true">⋮</span>
+                    </button>
+                    ${menu}
                 </div>
             `;
+            return { reactionControls, actionControl };
         }
 
-        function renderMessage(msg) {
+        function renderMessage(msg, { preferActionsAbove = false } = {}) {
             const isAi = msg.ai === true;
             const isOwn = !isAi && msg.senderId === currentUser.uid;
             const isDeleted = msg.deleted === true;
@@ -994,15 +1022,7 @@
                 </div>
             ` : '';
             const messageText = msg.text ? `<p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>` : '';
-            const reactionControls = renderReactionControls(msg, { isOwn });
-
-            const actions = [];
-            if (canEdit) {
-                actions.push(`<button onclick="window.editMessage('${msg.id}')" class="text-gray-400 hover:text-primary-600 text-xs">Edit</button>`);
-            }
-            if (canDelete) {
-                actions.push(`<button onclick="window.deleteMessage('${msg.id}')" class="text-gray-400 hover:text-red-600 text-xs">Delete</button>`);
-            }
+            const { reactionControls, actionControl } = renderReactionControls(msg, { isOwn, canEdit, canDelete, displayName, preferActionsAbove });
 
             const bubbleClass = isAi
                 ? 'bg-indigo-50 text-gray-900 border border-indigo-100'
@@ -1012,8 +1032,8 @@
 
             if (isOwn) {
                 return `
-                    <div class="group flex justify-end gap-2">
-                        <div class="max-w-[75%]">
+                    <div class="group flex justify-end gap-2" data-message-id="${escapeHtml(msg.id)}">
+                        <div class="relative max-w-[75%]">
                             <div class="text-xs text-gray-500 text-right mb-1">
                                 ${msg.editedAt ? '<span class="italic">(edited)</span> ' : ''}${timestamp}
                             </div>
@@ -1021,20 +1041,16 @@
                                 ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
-                            ${actions.length > 0 ? `
-                                <div class="flex justify-end gap-2 mt-1">
-                                    ${actions.join(' ')}
-                                </div>
-                            ` : ''}
+                            ${actionControl}
                         </div>
                         ${avatar}
                     </div>
                 `;
             } else {
                 return `
-                    <div class="group flex justify-start gap-2">
+                    <div class="group flex justify-start gap-2" data-message-id="${escapeHtml(msg.id)}">
                         ${avatar}
-                        <div class="max-w-[75%]">
+                        <div class="relative max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
                                 <span class="font-medium">${escapeHtml(displayName)}</span>
                                 ${msg.editedAt ? '<span class="italic">(edited)</span>' : ''}
@@ -1044,11 +1060,7 @@
                                 ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
-                            ${actions.length > 0 ? `
-                                <div class="flex gap-2 mt-1">
-                                    ${actions.join(' ')}
-                                </div>
-                            ` : ''}
+                            ${actionControl}
                         </div>
                     </div>
                 `;
@@ -1622,7 +1634,7 @@
             liveMessages = [];
             liveOldestDoc = null;
             hasMoreMessages = true;
-            activeReactionPickerMessageId = null;
+            activeMessageMenuId = null;
             activeReactionInfo = null;
             document.getElementById('messages-container').innerHTML = `
                 <div class="text-center py-8">
@@ -2655,8 +2667,8 @@
             return postChatMessage(teamId, message);
         }
 
-        window.toggleReactionPicker = function(messageId) {
-            activeReactionPickerMessageId = activeReactionPickerMessageId === messageId ? null : messageId;
+        window.toggleMessageMenu = function(messageId) {
+            activeMessageMenuId = activeMessageMenuId === messageId ? null : messageId;
             activeReactionInfo = null;
             renderMessages();
         };
@@ -2708,7 +2720,7 @@
 
             try {
                 await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid, { conversationId: selectedConversationId });
-                activeReactionPickerMessageId = null;
+                activeMessageMenuId = null;
                 activeReactionInfo = null;
             } catch (error) {
                 console.error('Error toggling reaction:', error);
@@ -2834,7 +2846,7 @@
                 liveMessages = [];
                 liveOldestDoc = null;
                 hasMoreMessages = true;
-                activeReactionPickerMessageId = null;
+                activeMessageMenuId = null;
                 activeReactionInfo = null;
                 startRealtimeUpdates();
                 btn.disabled = false;
@@ -2907,11 +2919,11 @@
                     hideMentionMenu();
                 }
                 if (!e.target.closest('[data-reaction-ui="true"]')) {
-                    const hadPicker = activeReactionPickerMessageId !== null;
+                    const hadMenu = activeMessageMenuId !== null;
                     const hadInfo = activeReactionInfo !== null;
-                    activeReactionPickerMessageId = null;
+                    activeMessageMenuId = null;
                     activeReactionInfo = null;
-                    if (hadPicker || hadInfo) {
+                    if (hadMenu || hadInfo) {
                         renderMessages();
                     }
                 }
@@ -3101,6 +3113,8 @@
             const msg = messages.find(m => m.id === messageId);
             if (!msg || msg.deleted || !msg.text) return;
 
+            activeMessageMenuId = null;
+            renderMessages();
             editingMessageId = messageId;
             document.getElementById('edit-textarea').value = msg.text;
             document.getElementById('edit-modal').classList.remove('hidden');
@@ -3140,6 +3154,8 @@
 
         // Delete functionality
         window.deleteMessage = async function(messageId) {
+            activeMessageMenuId = null;
+            renderMessages();
             if (!confirm('Delete this message?')) return;
 
             try {
