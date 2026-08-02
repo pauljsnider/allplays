@@ -18,11 +18,32 @@ export function sanitizeNativeStorageSegment(value: unknown, fallback: string) {
     .replace(/[^\w.-]+/g, '_') || fallback;
 }
 
-export function buildNativeProfilePhotoFileName(fileName: unknown, timestamp = Date.now()) {
+function createNativeProfilePhotoUploadNonce() {
+  const secureCrypto = globalThis.crypto;
+  if (typeof secureCrypto?.randomUUID === 'function') {
+    return secureCrypto.randomUUID().replace(/-/g, '');
+  }
+  if (typeof secureCrypto?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    secureCrypto.getRandomValues(bytes);
+    return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  }
+  throw new Error('Secure random values are required for profile photo uploads.');
+}
+
+export function buildNativeProfilePhotoFileName(
+  fileName: unknown,
+  timestamp = Date.now(),
+  nonce = createNativeProfilePhotoUploadNonce()
+) {
   const safeFileName = sanitizeNativeStorageSegment(fileName, '');
   const extensionMatch = safeFileName.match(/\.([A-Za-z0-9]{1,10})$/);
   const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : '';
-  return `${timestamp}_profile-photo${extension}`;
+  const safeNonce = sanitizeNativeStorageSegment(nonce, '');
+  if (!safeNonce) {
+    throw new Error('Upload attempt identifier is required for profile photo uploads.');
+  }
+  return `${timestamp}_${safeNonce}_profile-photo${extension}`;
 }
 
 async function runNativeStorageOperation<T>({

@@ -41,6 +41,8 @@ describe('native primary Storage profile uploads', () => {
     authMocks.getNativeAuthUserId.mockReturnValue('user-1');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-id-token');
     vi.spyOn(Date, 'now').mockReturnValue(12345);
+    vi.spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValue('11111111-1111-4111-8111-111111111111');
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -53,6 +55,8 @@ describe('native primary Storage profile uploads', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('uploads the signed-in user photo to primary Storage with native auth and App Check', async () => {
@@ -60,7 +64,7 @@ describe('native primary Storage profile uploads', () => {
 
     const upload = await uploadNativeUserProfilePhoto(file, 'user-1');
 
-    const expectedPath = 'profile-photos/users/user-1/12345_profile-photo.jpg';
+    const expectedPath = 'profile-photos/users/user-1/12345_11111111111141118111111111111111_profile-photo.jpg';
     const expectedRequestUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o?uploadType=media&name=${encodeURIComponent(expectedPath)}`;
     expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
     expect(appCheckMocks.getPrimaryAppCheckHeaders).toHaveBeenCalledWith({
@@ -110,7 +114,7 @@ describe('native primary Storage profile uploads', () => {
 
     await expect(uploadNativeUserProfilePhoto(file, 'user-1')).rejects.toThrow('backend unavailable');
 
-    const expectedPath = 'profile-photos/users/user-1/12345_profile-photo.jpg';
+    const expectedPath = 'profile-photos/users/user-1/12345_11111111111141118111111111111111_profile-photo.jpg';
     const cleanupUrl = `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(expectedPath)}`;
     expect(fetch).toHaveBeenNthCalledWith(2, cleanupUrl, expect.objectContaining({
       method: 'DELETE',
@@ -123,7 +127,7 @@ describe('native primary Storage profile uploads', () => {
 
     const upload = await uploadNativePlayerPhoto(file, 'team-1', 'player-7');
 
-    const expectedPath = 'profile-photos/teams/team-1/players/player-7/12345_profile-photo.png';
+    const expectedPath = 'profile-photos/teams/team-1/players/player-7/12345_11111111111141118111111111111111_profile-photo.png';
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
@@ -136,7 +140,7 @@ describe('native primary Storage profile uploads', () => {
 
     await uploadNativeTeamPhotoFile(file, 'team-1');
 
-    const expectedPath = 'profile-photos/teams/team-1/team/12345_profile-photo.png';
+    const expectedPath = 'profile-photos/teams/team-1/team/12345_11111111111141118111111111111111_profile-photo.png';
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(`name=${encodeURIComponent(expectedPath)}`),
       expect.objectContaining({ body: file })
@@ -147,12 +151,12 @@ describe('native primary Storage profile uploads', () => {
     [
       'player',
       (file: File) => uploadNativePlayerPhoto(file, 'team-1', 'player-7'),
-      'profile-photos/teams/team-1/players/player-7/12345_profile-photo.png'
+      'profile-photos/teams/team-1/players/player-7/12345_11111111111141118111111111111111_profile-photo.png'
     ],
     [
       'team',
       (file: File) => uploadNativeTeamPhotoFile(file, 'team-1'),
-      'profile-photos/teams/team-1/team/12345_profile-photo.png'
+      'profile-photos/teams/team-1/team/12345_11111111111141118111111111111111_profile-photo.png'
     ]
   ])('cleans the reserved %s path when the upload response is unsuccessful', async (_kind, upload, expectedPath) => {
     vi.mocked(fetch)
@@ -171,6 +175,50 @@ describe('native primary Storage profile uploads', () => {
       method: 'DELETE',
       signal: expect.any(AbortSignal)
     }));
+  });
+
+  it('isolates same-millisecond native attempts so failed cleanup cannot delete a successful photo', async () => {
+    const successfulNonce = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const failedNonce = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    vi.mocked(globalThis.crypto.randomUUID)
+      .mockReturnValueOnce(successfulNonce)
+      .mockReturnValueOnce(failedNonce);
+    const successfulPath = 'profile-photos/users/user-1/12345_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa_profile-photo.jpg';
+    const failedPath = 'profile-photos/users/user-1/12345_bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb_profile-photo.jpg';
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method === 'DELETE') {
+        return { ok: true, status: 204, json: async () => ({}) } as Response;
+      }
+      const candidatePath = decodeURIComponent(new URL(url).searchParams.get('name') || '');
+      if (candidatePath === successfulPath) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: successfulPath, downloadTokens: 'success-token' })
+        } as Response;
+      }
+      return {
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { message: 'backend unavailable' } })
+      } as Response;
+    });
+
+    const results = await Promise.allSettled([
+      uploadNativeUserProfilePhoto(new File(['first'], 'photo.jpg', { type: 'image/jpeg' }), 'user-1'),
+      uploadNativeUserProfilePhoto(new File(['second'], 'photo.jpg', { type: 'image/jpeg' }), 'user-1')
+    ]);
+
+    expect(results[0]).toMatchObject({ status: 'fulfilled', value: { path: successfulPath } });
+    expect(results[1]).toMatchObject({ status: 'rejected', reason: expect.objectContaining({ message: 'backend unavailable' }) });
+    const deleteUrls = vi.mocked(fetch).mock.calls
+      .filter(([, init]) => init?.method === 'DELETE')
+      .map(([url]) => String(url));
+    expect(deleteUrls).toEqual([
+      `https://firebasestorage.googleapis.com/v0/b/primary-bucket.example/o/${encodeURIComponent(failedPath)}`
+    ]);
+    expect(deleteUrls[0]).not.toContain(encodeURIComponent(successfulPath));
   });
 
   it('deletes a failed native upload with the same auth and App Check boundary', async () => {
