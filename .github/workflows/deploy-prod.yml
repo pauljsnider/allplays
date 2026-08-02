@@ -1395,6 +1395,11 @@ jobs:
               echo "::notice::Created or reused and activated the exact staged Firestore ruleset."
             else
               retry_firebase_deploy \
+                "functions:cleanupCertificateSignature" \
+                "certificate-signature-cleanup-compatibility" \
+                3 \
+                15
+              retry_firebase_deploy \
                 "functions:commitCertificateDefaults" \
                 "certificate-defaults-writer-compatibility" \
                 3 \

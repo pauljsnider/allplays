@@ -351,8 +351,9 @@ const {
 const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
-  isAuthorizedCertificateSignatureCleanupPath,
-  isCertificateSignaturePathReferenced,
+  authenticateLegacyImageSignatureReferences,
+  isAuthorizedCertificateSignatureCleanupTarget,
+  isCertificateSignatureTargetReferenced,
   normalizeCertificateTeamId,
   planCertificateSignatureCleanup
 } = require('./certificate-signature-cleanup-core.cjs');
@@ -14127,6 +14128,33 @@ async function requireCertificateTeamAdmin(teamId, context) {
   if (!canManage) {
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can save certificate defaults.');
   }
+  return { team, user, callerEmail };
+}
+
+function getCertificateSignatureCleanupId(teamId, target = {}) {
+  const storageBucket = String(target.storageBucket || 'primary').trim();
+  const storagePath = String(target.storagePath || '').trim();
+  const identity = storageBucket === 'primary'
+    ? `${teamId}\n${storagePath}`
+    : `${teamId}\n${storageBucket}\n${storagePath}`;
+  return crypto.createHash('sha256').update(identity).digest('hex');
+}
+
+async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
+  const uploaderIds = new Set([
+    String(context.auth?.uid || '').trim(),
+    String(team.ownerId || '').trim()
+  ].filter(Boolean));
+  const managerEmails = [...new Set([
+    team.ownerEmail,
+    team.ownerEmailLower,
+    ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
+  ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
+  if (managerEmails.length) {
+    const result = await admin.auth().getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+    result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
+  }
+  return [...uploaderIds];
 }
 
 exports.commitCertificateDefaults = functions.https.onCall(async (data, context = {}) => {
@@ -14144,7 +14172,7 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
   if (serializedDefaults.length > 500_000) {
     throw new functions.https.HttpsError('invalid-argument', 'Certificate defaults are too large.');
   }
-  await requireCertificateTeamAdmin(teamId, context);
+  const { team } = await requireCertificateTeamAdmin(teamId, context);
 
   const {
     id: _ignoredId,
@@ -14153,6 +14181,30 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
     ...clientDefaults
   } = requestedDefaults;
   const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
+  const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
+  const legacyImageBucket = admin.storage().bucket(legacyImageBucketName);
+  const previousDefaultsForAuthentication = await defaultsRef.get();
+  let authenticatedLegacyReferences = [];
+  try {
+    authenticatedLegacyReferences = await authenticateLegacyImageSignatureReferences({
+      defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
+      legacyBucketName: legacyImageBucketName,
+      allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
+      lookupExistingUserIds: async (candidates) => {
+        const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
+        return result.users.map((userRecord) => userRecord.uid);
+      },
+      getObjectMetadata: async (storagePath) => {
+        const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
+        return metadata;
+      }
+    });
+  } catch (error) {
+    console.warn('Unable to authenticate a URL-only legacy certificate signature.', {
+      teamId,
+      error: error?.message || String(error)
+    });
+  }
   await firestore.runTransaction(async (transaction) => {
     const previousSnap = await transaction.get(defaultsRef);
     let cleanupPlan;
@@ -14161,17 +14213,20 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
         teamId,
         previousDefaults: previousSnap.exists ? previousSnap.data() || {} : {},
         nextDefaults: clientDefaults,
-        requestedBy: context.auth.uid
+        requestedBy: context.auth.uid,
+        legacyBucketName: legacyImageBucketName,
+        authenticatedLegacyReferences
       });
     } catch (error) {
       throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
     }
 
-    for (const storagePath of cleanupPlan.nextPaths) {
-      const cleanupId = crypto.createHash('sha256').update(`${teamId}\n${storagePath}`).digest('hex');
+    for (const target of cleanupPlan.nextTargets.values()) {
+      const storagePath = target.storagePath;
+      const cleanupId = getCertificateSignatureCleanupId(teamId, target);
       const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
       const cleanupSnap = await transaction.get(cleanupRef);
-      if (cleanupSnap.exists && !cleanupPlan.previousPaths.has(storagePath)) {
+      if (cleanupSnap.exists && !cleanupPlan.previousTargets.has(`${target.storageBucket || 'primary'}\n${storagePath}`)) {
         throw new functions.https.HttpsError(
           'failed-precondition',
           'A removed signature image cannot be restored. Upload it again before saving.'
@@ -14179,12 +14234,18 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
       }
     }
 
-    cleanupPlan.cleanupPaths.forEach((storagePath) => {
-      const cleanupId = crypto.createHash('sha256').update(`${teamId}\n${storagePath}`).digest('hex');
+    cleanupPlan.cleanupTargets.forEach((target) => {
+      const storagePath = target.storagePath;
+      const cleanupId = getCertificateSignatureCleanupId(teamId, target);
       const cleanupRef = firestore.doc(`teams/${teamId}/certificateSignatureCleanup/${cleanupId}`);
       transaction.set(cleanupRef, {
         teamId,
         storagePath,
+        storageBucket: target.storageBucket || 'primary',
+        legacyBucketName: target.legacyBucketName || null,
+        legacyOwnerId: target.legacyOwnerId || null,
+        legacyProvenance: target.legacyProvenance || null,
+        sourceUrlHash: target.sourceUrlHash || null,
         requestedBy: context.auth.uid,
         status: 'pending',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -14214,7 +14275,8 @@ exports.cleanupCertificateSignature = functions
     if (cleanup.status !== 'pending') return null;
     if (
       cleanup.teamId !== teamId ||
-      !isAuthorizedCertificateSignatureCleanupPath(teamId, storagePath, cleanup.requestedBy)
+      (cleanup.storageBucket === 'legacy-image' && cleanup.legacyBucketName !== (process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')) ||
+      !isAuthorizedCertificateSignatureCleanupTarget(teamId, cleanup)
     ) {
       console.error('Discarding invalid certificate signature cleanup job.', {
         teamId,
@@ -14232,7 +14294,7 @@ exports.cleanupCertificateSignature = functions
       const currentCleanupSnap = await transaction.get(cleanupSnap.ref);
       const defaultsSnap = await transaction.get(defaultsRef);
       if (!currentCleanupSnap.exists || currentCleanupSnap.data()?.status !== 'pending') return false;
-      if (isCertificateSignaturePathReferenced(defaultsSnap.exists ? defaultsSnap.data() || {} : {}, storagePath)) {
+      if (isCertificateSignatureTargetReferenced(defaultsSnap.exists ? defaultsSnap.data() || {} : {}, cleanup)) {
         transaction.set(cleanupSnap.ref, {
           status: 'blocked-referenced',
           completedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -14243,7 +14305,10 @@ exports.cleanupCertificateSignature = functions
     });
     if (!shouldDelete) return null;
 
-    await admin.storage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+    const cleanupBucket = cleanup.storageBucket === 'legacy-image'
+      ? admin.storage().bucket(process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')
+      : admin.storage().bucket();
+    await cleanupBucket.file(storagePath).delete({ ignoreNotFound: true });
     await cleanupSnap.ref.set({
       status: 'completed',
       completedAt: admin.firestore.FieldValue.serverTimestamp()
