@@ -5,6 +5,8 @@ const { join } = require('node:path');
 
 const {
   authenticateLegacyImageSignatureReferences,
+  authenticatePrimaryCertificateSignatureReferences,
+  getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
   isAuthorizedCertificateSignatureCleanupPath,
@@ -16,6 +18,7 @@ const {
 } = require('../certificate-signature-cleanup-core.cjs');
 
 const legacyBucket = 'game-flow-img.firebasestorage.app';
+const primaryBucket = 'all-plays-ai.firebasestorage.app';
 const legacyPath = 'user-photos/1700000000000_certificate-signature_owner_admin_My_Signature.png';
 const legacyUrl = `https://firebasestorage.googleapis.com/v0/b/${legacyBucket}/o/${encodeURIComponent(legacyPath)}?alt=media&token=legacy-token`;
 
@@ -23,21 +26,31 @@ test('queues removed legacy user-scoped signatures only for their original uploa
   const legacyPath = 'certificate-signatures/users/original-admin/legacy.png';
   const legacyDisplayUrl = 'https://firebasestorage.googleapis.com/v0/b/all-plays-ai.appspot.com/o/certificate-signatures%2Fusers%2Foriginal-admin%2Flegacy.png?alt=media&token=old-token';
   const nextPath = 'certificate-signatures/teams/team-1/new.png';
+  const authenticatedPrimaryReference = {
+    objectGeneration: '1700000000000000',
+    storageBucket: 'primary',
+    storageBucketName: primaryBucket,
+    storagePath: legacyPath
+  };
+  authenticatedPrimaryReference.objectKey = getCertificateSignatureObjectKey(authenticatedPrimaryReference);
   const ownedPlan = planCertificateSignatureCleanup({
     teamId: 'team-1',
     previousDefaults: { signers: [{ signatureImagePath: legacyPath, signatureImageUrl: legacyDisplayUrl }] },
     nextDefaults: { signers: [{ signatureImagePath: nextPath }] },
-    requestedBy: 'original-admin'
+    requestedBy: 'original-admin',
+    authenticatedPrimaryReferences: [authenticatedPrimaryReference]
   });
   const foreignPlan = planCertificateSignatureCleanup({
     teamId: 'team-1',
     previousDefaults: { signers: [{ signatureImagePath: legacyPath }] },
     nextDefaults: { signers: [{ signatureImagePath: nextPath }] },
-    requestedBy: 'other-admin'
+    requestedBy: 'other-admin',
+    authenticatedPrimaryReferences: [authenticatedPrimaryReference]
   });
 
   assert.deepEqual(ownedPlan.cleanupPaths, [legacyPath]);
-  assert.deepEqual(ownedPlan.retiredSourceUrls, [legacyDisplayUrl]);
+  assert.deepEqual(ownedPlan.retiredPaths, [legacyPath]);
+  assert.deepEqual(ownedPlan.retiredObjectKeys, [authenticatedPrimaryReference.objectKey]);
   assert.deepEqual(foreignPlan.cleanupPaths, []);
   assert.equal(getLegacySignatureOwnerId(legacyPath), 'original-admin');
 });
@@ -132,6 +145,7 @@ test('parses only exact token-authenticated legacy signature URLs from the confi
 test('authenticates a URL-only legacy signature with unambiguous Auth identity and matching object token', async () => {
   const references = await authenticateLegacyImageSignatureReferences({
     defaults: { signers: [{ signatureImageUrl: legacyUrl }] },
+    teamId: 'team-1',
     legacyBucketName: legacyBucket,
     allowedUploaderIds: ['owner_admin'],
     lookupExistingUserIds: async (candidates) => {
@@ -140,16 +154,29 @@ test('authenticates a URL-only legacy signature with unambiguous Auth identity a
     },
     getObjectMetadata: async (storagePath) => {
       assert.equal(storagePath, legacyPath);
-      return { metadata: { firebaseStorageDownloadTokens: 'other-token,legacy-token' } };
-    }
+      return {
+        generation: '1700000000000001',
+        metadata: { firebaseStorageDownloadTokens: 'other-token,legacy-token' }
+      };
+    },
+    lookupTeamObjectBinding: async (reference) => ({
+      teamId: 'team-1',
+      signerField: 'certificateDefaults.signers.0.signatureImageUrl',
+      objectKey: reference.objectKey
+    })
   });
 
   assert.deepEqual(references, [{
     legacyBucketName: legacyBucket,
     legacyOwnerId: 'owner_admin',
-    legacyProvenance: 'auth-user-and-download-token',
+    legacyProvenance: 'server-inventory-team-binding',
+    legacySignerField: 'certificateDefaults.signers.0.signatureImageUrl',
+    legacyTeamId: 'team-1',
+    objectGeneration: '1700000000000001',
+    objectKey: `${legacyBucket}\n${legacyPath}\n1700000000000001`,
     sourceUrlHash: '68127cf2c504fde8b2455e1dbfd251a0f319c56e650137a3237c58786174e576',
     storageBucket: 'legacy-image',
+    storageBucketName: legacyBucket,
     storagePath: legacyPath,
     url: legacyUrl
   }]);
@@ -160,25 +187,76 @@ test('fails closed for ambiguous, unrelated, or token-mismatched legacy signatur
   const authenticate = (existingUserIds, allowedUploaderIds = ['owner_admin'], token = 'legacy-token') => (
     authenticateLegacyImageSignatureReferences({
       defaults: { signers: [{ signatureImageUrl: legacyUrl }] },
+      teamId: 'team-1',
       legacyBucketName: legacyBucket,
       allowedUploaderIds,
       lookupExistingUserIds: async () => existingUserIds,
-      getObjectMetadata: async () => ({ metadata: { firebaseStorageDownloadTokens: token } })
+      getObjectMetadata: async () => ({
+        generation: '1700000000000001',
+        metadata: { firebaseStorageDownloadTokens: token }
+      }),
+      lookupTeamObjectBinding: async (reference) => ({
+        teamId: 'team-1',
+        signerField: 'certificateDefaults.signers.0.signatureImageUrl',
+        objectKey: reference.objectKey
+      })
     })
   );
 
   assert.deepEqual(await authenticate(['owner', 'owner_admin']), []);
   assert.deepEqual(await authenticate(['owner_admin'], ['different-admin']), []);
   assert.deepEqual(await authenticate(['owner_admin'], ['owner_admin'], 'wrong-token'), []);
+  assert.deepEqual(await authenticateLegacyImageSignatureReferences({
+    defaults: { signers: [{ signatureImageUrl: legacyUrl }] },
+    teamId: 'team-1',
+    legacyBucketName: legacyBucket,
+    allowedUploaderIds: ['owner_admin'],
+    lookupExistingUserIds: async () => ['owner_admin'],
+    getObjectMetadata: async () => ({
+      generation: '1700000000000001',
+      metadata: { firebaseStorageDownloadTokens: 'legacy-token' }
+    }),
+    lookupTeamObjectBinding: async (reference) => ({
+      teamId: 'team-2',
+      signerField: 'certificateDefaults.signers.0.signatureImageUrl',
+      objectKey: reference.objectKey
+    })
+  }), []);
+});
+
+test('authenticates primary cleanup targets only with an immutable object generation', async () => {
+  const path = 'certificate-signatures/teams/team-1/current.png';
+  const references = await authenticatePrimaryCertificateSignatureReferences({
+    defaults: { signers: [{ signatureImagePath: path }] },
+    storageBucketName: primaryBucket,
+    getObjectMetadata: async () => ({ generation: '1700000000000002' })
+  });
+  assert.deepEqual(references, [{
+    objectGeneration: '1700000000000002',
+    objectKey: `${primaryBucket}\n${path}\n1700000000000002`,
+    storageBucket: 'primary',
+    storageBucketName: primaryBucket,
+    storagePath: path
+  }]);
+  assert.deepEqual(await authenticatePrimaryCertificateSignatureReferences({
+    defaults: { signers: [{ signatureImagePath: path }] },
+    storageBucketName: primaryBucket,
+    getObjectMetadata: async () => ({})
+  }), []);
 });
 
 test('queues an authenticated removed URL-only signature in the legacy bucket and blocks unverified removal', () => {
   const reference = {
     legacyBucketName: legacyBucket,
     legacyOwnerId: 'owner_admin',
-    legacyProvenance: 'auth-user-and-download-token',
+    legacyProvenance: 'server-inventory-team-binding',
+    legacySignerField: 'certificateDefaults.signers.0.signatureImageUrl',
+    legacyTeamId: 'team-1',
+    objectGeneration: '1700000000000001',
+    objectKey: `${legacyBucket}\n${legacyPath}\n1700000000000001`,
     sourceUrlHash: '68127cf2c504fde8b2455e1dbfd251a0f319c56e650137a3237c58786174e576',
     storageBucket: 'legacy-image',
+    storageBucketName: legacyBucket,
     storagePath: legacyPath,
     url: legacyUrl
   };
@@ -206,11 +284,19 @@ test('queues an authenticated removed URL-only signature in the legacy bucket an
     legacyBucketName: legacyBucket,
     authenticatedLegacyReferences: [reference]
   });
+  const movedSignerRemovalPlan = planCertificateSignatureCleanup({
+    teamId: 'team-1',
+    previousDefaults: { signers: [{ name: 'Other' }, { signatureImageUrl: legacyUrl }] },
+    nextDefaults: { signers: [] },
+    legacyBucketName: legacyBucket,
+    authenticatedLegacyReferences: [reference]
+  });
 
   assert.deepEqual(retainedPlan.cleanupTargets, []);
   assert.deepEqual(reorderedRetainedPlan.cleanupTargets, []);
   assert.deepEqual(removalPlan.cleanupTargets, [{ ...reference, sourceUrls: [legacyUrl] }]);
-  assert.deepEqual(removalPlan.retiredSourceUrls, [legacyUrl]);
+  assert.deepEqual(removalPlan.retiredObjectKeys, [reference.objectKey]);
+  assert.deepEqual(movedSignerRemovalPlan.cleanupTargets, []);
   assert.equal(isAuthorizedCertificateSignatureCleanupTarget('team-1', {
     ...reference,
     requestedBy: 'different-current-admin'
@@ -226,12 +312,14 @@ test('queues an authenticated removed URL-only signature in the legacy bucket an
     signers: [{ signatureImageUrl: legacyUrl.replace('?alt=media&token=legacy-token', '?token=legacy-token&alt=media') }]
   }, reference), true);
   assert.equal(isCertificateSignatureTargetReferenced({ signers: [] }, reference), false);
-  assert.throws(() => planCertificateSignatureCleanup({
+  const unverifiedRemovalPlan = planCertificateSignatureCleanup({
     teamId: 'team-1',
     previousDefaults,
     nextDefaults: { signers: [] },
     legacyBucketName: legacyBucket
-  }), /ownership could not be verified/);
+  });
+  assert.deepEqual(unverifiedRemovalPlan.cleanupTargets, []);
+  assert.deepEqual(unverifiedRemovalPlan.retiredObjectKeys, []);
   assert.throws(() => planCertificateSignatureCleanup({
     teamId: 'team-1',
     previousDefaults: { signers: [] },
@@ -249,7 +337,8 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /exports\.commitCertificateDefaults\s*=\s*functions\.https\.onCall/);
   assert.match(functionsSource, /firestore\.runTransaction[\s\S]*planCertificateSignatureCleanup/);
   assert.match(functionsSource, /transaction\.get\(cleanupRef\)[\s\S]*removed signature image cannot be restored/i);
-  assert.match(functionsSource, /retiredSignatureImageUrls[\s\S]*cleanupPlan\.retiredSourceUrls/);
+  assert.match(functionsSource, /retiredSignatureImageObjectKeys[\s\S]*cleanupPlan\.retiredObjectKeys/);
+  assert.match(functionsSource, /retiredSignatureImagePaths[\s\S]*cleanupPlan\.retiredPaths/);
   assert.match(functionsSource, /certificateSignatureCleanup\/\$\{cleanupId\}/);
   assert.match(functionsSource, /status: 'pending'/);
   assert.match(functionsSource, /exports\.cleanupCertificateSignature[\s\S]*\.onWrite/);
@@ -257,11 +346,12 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /isAuthorizedCertificateSignatureCleanupTarget\(teamId, cleanup\)/);
   assert.match(functionsSource, /collection\(`teams\/\$\{teamId\}\/certificates`\)[\s\S]*collection\(`teams\/\$\{teamId\}\/certificateBatches`\)/);
   assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*transaction\.get\(certificatesQuery\)[\s\S]*transaction\.get\(certificateBatchesQuery\)[\s\S]*referenceRecords\.some[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);
-  assert.match(functionsSource, /cleanup\.storageBucket === 'legacy-image'[\s\S]*IMAGE_STORAGE_BUCKET[\s\S]*cleanupBucket\.file\(storagePath\)\.delete[\s\S]*status: 'completed'/);
+  assert.match(functionsSource, /cleanup\.storageBucket === 'legacy-image'[\s\S]*IMAGE_STORAGE_BUCKET[\s\S]*file\(storagePath, \{[\s\S]*preconditionOpts[\s\S]*ifGenerationMatch[\s\S]*blocked-generation-changed[\s\S]*status: 'completed'/);
   assert.match(dbSource, /export async function setCertificateDefaults[\s\S]*return commitCertificateDefaults\(teamId, defaults\)/);
   assert.doesNotMatch(dbSource, /setDoc\(doc\(db, 'teams', teamId, 'settings', 'certificateDefaults'\)/);
   assert.match(rulesSource, /match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults[\s\S]*allow create, update, delete: if false;/);
-  assert.match(rulesSource, /retiredSignatureImageUrls[\s\S]*hasNoRetiredCertificateSignatureUrls/);
+  assert.match(rulesSource, /retiredSignatureImagePaths[\s\S]*hasNoRetiredCertificateSignaturePaths/);
+  assert.match(rulesSource, /certificateSignersHaveCanonicalImagePaths/);
   assert.match(rulesSource, /match \/certificateBatches\/\{batchId\}[\s\S]*isCertificateBatchCreateSafe[\s\S]*isCertificateBatchUpdateSafe/);
   assert.match(rulesSource, /match \/certificates\/\{certificateId\}[\s\S]*isCertificateOutputCreateSafe[\s\S]*isCertificateOutputUpdateSafe/);
 });

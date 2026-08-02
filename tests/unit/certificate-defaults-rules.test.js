@@ -27,10 +27,13 @@ describe('certificate defaults Firestore rules', () => {
     });
 
     it('requires saved-output writers to serialize with signature retirement', () => {
+        expect(repositoryInstructions).toMatch(/Canonicalize the Storage identity to bucket[\s\S]*immutable generation/);
         expect(repositoryInstructions).toMatch(
-            /durable retired-reference deny-list[\s\S]*reject creates or changed snapshots[\s\S]*signature reference remains byte-for-byte unchanged[\s\S]*real Firestore Rules race regression/
+            /durable retired-object deny-list[\s\S]*reject every URL\/token\/encoding alias[\s\S]*signature URL and path remain byte-for-byte unchanged[\s\S]*Firestore Rules race regressions/
         );
-        expect(rules).toContain('retiredSignatureImageUrls');
+        expect(rules).toContain('retiredSignatureImagePaths');
+        expect(rules).toContain('certificateSignersHaveCanonicalImagePaths');
+        expect(rules).toContain('certificateSignersUseCurrentImages');
         expect(rules).toContain('isCertificateOutputUpdateSafe');
         expect(rules).toContain('isCertificateBatchUpdateSafe');
     });
@@ -125,14 +128,16 @@ describe('certificate defaults Firestore rules', () => {
             deployWorkflow.indexOf('- name: Archive installed Functions runtime into trusted handoff')
         );
 
-        expect(baselineStage).toContain('${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs');
-        expect(baselineStage).toContain('${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs');
-        expect(baselineStage).toContain('node "$baseline_compactor"');
-        expect(baselineStage).toContain('node "$baseline_transformer"');
+        expect(baselineStage).toContain('git archive "$FIRESTORE_BASELINE_SHA"');
+        expect(baselineStage).toContain('baseline_checkout/scripts/compact-firestore-rules.mjs');
+        expect(baselineStage).toContain('baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs');
+        expect(baselineStage).toContain('cd "$baseline_checkout"');
+        expect(baselineStage).toContain('baseline_node_major=');
+        expect(baselineStage).toContain('current_node_major=');
         expect(baselineStage).not.toContain('node scripts/compact-firestore-rules.mjs');
         expect(baselineStage).not.toContain('node scripts/build-certificate-defaults-compat-rules.mjs');
         expect(repositoryInstructions).toMatch(
-            /historical baseline variant only with the transformer and compactor from that exact baseline SHA[\s\S]*today's generator[\s\S]*must never be used as deployment provenance/i
+            /historical baseline variant only from an isolated checkout of that exact baseline SHA[\s\S]*complete generation pipeline[\s\S]*current-workspace code or dependencies[\s\S]*must never establish historical deployment provenance/i
         );
     });
 
@@ -173,14 +178,16 @@ describe('certificate defaults Firestore rules', () => {
             await compatibilityEnv.withSecurityRulesDisabled(async (context) => {
                 await setDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
                     signers: [],
-                    retiredSignatureImageUrls: ['https://images.example.test/retired-signature.png']
+                    retiredSignatureImageObjectKeys: ['bucket\nretired.png\n1700000000000000'],
+                    retiredSignatureImagePaths: ['certificate-signatures/teams/team-a/retired.png']
                 });
             });
             const ownerDb = compatibilityEnv.authenticatedContext('owner-a').firestore();
             const defaultsRef = doc(ownerDb, 'teams/team-a/settings/certificateDefaults');
 
             await assertSucceeds(updateDoc(defaultsRef, { signers: [{ name: 'Coach' }] }));
-            await assertFails(updateDoc(defaultsRef, { retiredSignatureImageUrls: [] }));
+            await assertFails(updateDoc(defaultsRef, { retiredSignatureImageObjectKeys: [] }));
+            await assertFails(updateDoc(defaultsRef, { retiredSignatureImagePaths: [] }));
             await assertFails(updateDoc(defaultsRef, {
                 signers: [{
                     name: 'Coach',
@@ -211,7 +218,8 @@ describe('certificate defaults Firestore rules', () => {
                     adminEmails: ['admin-a@example.com']
                 });
                 await setDoc(doc(firestore, 'teams/team-a/settings/certificateDefaults'), {
-                    retiredSignatureImageUrls: ['https://images.example.test/retired-signature.png'],
+                    retiredSignatureImageObjectKeys: ['bucket\ncertificate-signatures/teams/team-a/retired.png\n1700000000000000'],
+                    retiredSignatureImagePaths: ['certificate-signatures/teams/team-a/retired.png'],
                     signers: [{
                         signatureImageUrl: 'https://images.example.test/current-signature.png',
                         signatureImagePath: 'certificate-signatures/teams/team-a/current.png'
@@ -227,7 +235,10 @@ describe('certificate defaults Firestore rules', () => {
                     status: 'published'
                 });
                 await setDoc(doc(firestore, 'teams/team-a/certificates/clean'), {
-                    signers: [{ signatureImageUrl: 'https://images.example.test/current-signature.png' }],
+                    signers: [{
+                        signatureImageUrl: 'https://images.example.test/current-signature.png',
+                        signatureImagePath: 'certificate-signatures/teams/team-a/current.png'
+                    }],
                     status: 'draft'
                 });
                 await setDoc(doc(firestore, 'teams/team-a/certificateBatches/historical'), {
@@ -277,8 +288,18 @@ describe('certificate defaults Firestore rules', () => {
 
         it('rejects stale certificate and batch references after signature retirement', async () => {
             const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
-            const retiredSigner = [{ signatureImageUrl: 'https://images.example.test/retired-signature.png' }];
-            const currentSigner = [{ signatureImageUrl: 'https://images.example.test/current-signature.png' }];
+            const retiredSigner = [{
+                signatureImageUrl: 'https://images.example.test/retired-signature.png?token=alias-a',
+                signatureImagePath: 'certificate-signatures/teams/team-a/retired.png'
+            }];
+            const retiredAliasSigner = [{
+                signatureImageUrl: 'https://images.example.test/retired-signature.png?token=alias-b&alt=media',
+                signatureImagePath: 'certificate-signatures/teams/team-a/retired.png'
+            }];
+            const currentSigner = [{
+                signatureImageUrl: 'https://images.example.test/current-signature.png',
+                signatureImagePath: 'certificate-signatures/teams/team-a/current.png'
+            }];
 
             await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificates/stale-create'), {
                 signers: retiredSigner,
@@ -289,10 +310,21 @@ describe('certificate defaults Firestore rules', () => {
                 status: 'draft'
             }));
             await assertFails(updateDoc(doc(ownerDb, 'teams/team-a/certificates/clean'), {
-                signers: retiredSigner
+                signers: retiredAliasSigner
             }));
             await assertFails(updateDoc(doc(ownerDb, 'teams/team-a/certificateBatches/clean'), {
-                shared: { signers: retiredSigner }
+                shared: { signers: retiredAliasSigner }
+            }));
+            await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificates/url-only-alias'), {
+                signers: [{ signatureImageUrl: 'https://images.example.test/retired-signature.png?token=alias-c' }],
+                status: 'draft'
+            }));
+            await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificates/forged-path-alias'), {
+                signers: [{
+                    signatureImageUrl: 'https://images.example.test/retired-signature.png?token=alias-d',
+                    signatureImagePath: 'certificate-signatures/teams/team-a/forged.png'
+                }],
+                status: 'draft'
             }));
 
             await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificates/current-create'), {
@@ -301,6 +333,47 @@ describe('certificate defaults Firestore rules', () => {
             }));
             await assertSucceeds(setDoc(doc(ownerDb, 'teams/team-a/certificateBatches/current-create'), {
                 shared: { signers: currentSigner },
+                status: 'draft'
+            }));
+        });
+
+        it('retains a reference written before retirement for the worker final re-read', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const racePath = 'certificate-signatures/teams/team-a/race.png';
+            const raceRef = doc(ownerDb, 'teams/team-a/certificates/pre-retirement-race');
+            const raceSigner = {
+                signatureImageUrl: 'https://images.example.test/race.png?token=first',
+                signatureImagePath: racePath
+            };
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await updateDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
+                    signers: [raceSigner]
+                });
+            });
+
+            await assertSucceeds(setDoc(raceRef, {
+                signers: [raceSigner],
+                status: 'draft'
+            }));
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await updateDoc(doc(context.firestore(), 'teams/team-a/settings/certificateDefaults'), {
+                    signers: [],
+                    retiredSignatureImagePaths: [
+                        'certificate-signatures/teams/team-a/retired.png',
+                        racePath
+                    ]
+                });
+                expect((await getDoc(doc(
+                    context.firestore(),
+                    'teams/team-a/certificates/pre-retirement-race'
+                ))).exists()).toBe(true);
+            });
+            await assertFails(setDoc(doc(ownerDb, 'teams/team-a/certificates/post-retirement-race'), {
+                signers: [{
+                    signatureImageUrl: 'https://images.example.test/race.png?token=alias',
+                    signatureImagePath: racePath
+                }],
                 status: 'draft'
             }));
         });

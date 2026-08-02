@@ -41,6 +41,19 @@ function hashLegacyImageSignatureReference(bucketName, storagePath, downloadToke
     .digest('hex');
 }
 
+function normalizeObjectGeneration(value) {
+  const generation = String(value || '').trim();
+  return /^\d+$/.test(generation) ? generation : '';
+}
+
+function getCertificateSignatureObjectKey(target = {}) {
+  const storageBucketName = String(target.storageBucketName || target.legacyBucketName || '').trim();
+  const storagePath = String(target.storagePath || '').trim();
+  const objectGeneration = normalizeObjectGeneration(target.objectGeneration);
+  if (!storageBucketName || !storagePath || !objectGeneration) return '';
+  return `${storageBucketName}\n${storagePath}\n${objectGeneration}`;
+}
+
 function parseLegacyImageSignatureUrl(value, legacyBucketName) {
   const rawUrl = String(value || '').trim();
   const expectedBucket = String(legacyBucketName || '').trim();
@@ -110,15 +123,18 @@ function collectLegacyImageSignatureUrls(defaults = {}, legacyBucketName) {
 
 async function authenticateLegacyImageSignatureReferences({
   defaults = {},
+  teamId,
   legacyBucketName,
   allowedUploaderIds = [],
   lookupExistingUserIds,
-  getObjectMetadata
+  getObjectMetadata,
+  lookupTeamObjectBinding
 }) {
+  const normalizedTeamId = normalizeCertificateTeamId(teamId);
   const allowed = new Set(allowedUploaderIds.map((value) => String(value || '').trim()).filter(Boolean));
   const signers = Array.isArray(defaults?.signers) ? defaults.signers : [];
   const references = [];
-  for (const signer of signers) {
+  for (const [signerIndex, signer] of signers.entries()) {
     if (String(signer?.signatureImagePath || '').trim()) continue;
     const parsed = parseLegacyImageSignatureUrl(signer?.signatureImageUrl, legacyBucketName);
     if (!parsed) continue;
@@ -136,17 +152,58 @@ async function authenticateLegacyImageSignatureReferences({
         ? tokenMetadata.map(String)
         : String(tokenMetadata || '').split(',').map((value) => value.trim()).filter(Boolean);
       if (!storedTokens.includes(parsed.downloadToken)) continue;
-      references.push({
+      const reference = {
         legacyBucketName: String(legacyBucketName || '').trim(),
         legacyOwnerId: existingUserIds[0],
-        legacyProvenance: 'auth-user-and-download-token',
+        legacySignerField: `certificateDefaults.signers.${signerIndex}.signatureImageUrl`,
+        legacyTeamId: normalizedTeamId,
+        objectGeneration: normalizeObjectGeneration(metadata?.generation),
         sourceUrlHash: parsed.sourceUrlHash,
         storageBucket: LEGACY_IMAGE_STORAGE_KIND,
+        storageBucketName: String(legacyBucketName || '').trim(),
         storagePath: parsed.storagePath,
         url: parsed.url
+      };
+      reference.objectKey = getCertificateSignatureObjectKey(reference);
+      if (!reference.objectKey || typeof lookupTeamObjectBinding !== 'function') continue;
+      const binding = await lookupTeamObjectBinding(reference);
+      if (
+        String(binding?.teamId || '').trim() !== normalizedTeamId ||
+        String(binding?.signerField || '').trim() !== reference.legacySignerField ||
+        String(binding?.objectKey || '').trim() !== reference.objectKey
+      ) continue;
+      references.push({
+        ...reference,
+        legacyProvenance: 'server-inventory-team-binding'
       });
     } catch {
       // Missing objects and unavailable Auth/Storage evidence are unverified.
+    }
+  }
+  return references;
+}
+
+async function authenticatePrimaryCertificateSignatureReferences({
+  defaults = {},
+  storageBucketName,
+  getObjectMetadata
+}) {
+  const bucketName = String(storageBucketName || '').trim();
+  if (!bucketName || typeof getObjectMetadata !== 'function') return [];
+  const references = [];
+  for (const storagePath of collectCertificateSignaturePaths(defaults)) {
+    try {
+      const metadata = await getObjectMetadata(storagePath);
+      const reference = {
+        objectGeneration: normalizeObjectGeneration(metadata?.generation),
+        storageBucket: PRIMARY_STORAGE_KIND,
+        storageBucketName: bucketName,
+        storagePath
+      };
+      reference.objectKey = getCertificateSignatureObjectKey(reference);
+      if (reference.objectKey) references.push(reference);
+    } catch {
+      // A missing object or unavailable generation is not safe to delete.
     }
   }
   return references;
@@ -159,23 +216,40 @@ function collectCertificateSignaturePaths(defaults = {}) {
     .filter(Boolean));
 }
 
-function collectCertificateSignatureTargets(defaults = {}, authenticatedLegacyReferences = []) {
+function collectCertificateSignatureTargets(
+  defaults = {},
+  authenticatedLegacyReferences = [],
+  authenticatedPrimaryReferences = []
+) {
   const targets = [];
+  const authenticatedPrimaryByPath = new Map(authenticatedPrimaryReferences.map((reference) => [
+    String(reference?.storagePath || '').trim(),
+    reference
+  ]));
   const signerEntries = collectCertificateSignerEntries(defaults);
   collectCertificateSignaturePaths(defaults).forEach((storagePath) => {
     const sourceUrls = signerEntries
       .filter((signer) => String(signer?.signatureImagePath || '').trim() === storagePath)
       .map((signer) => String(signer?.signatureImageUrl || '').trim())
       .filter(Boolean);
-    targets.push({ storageBucket: PRIMARY_STORAGE_KIND, storagePath, sourceUrls: [...new Set(sourceUrls)] });
+    targets.push({
+      ...(authenticatedPrimaryByPath.get(storagePath) || {}),
+      storageBucket: PRIMARY_STORAGE_KIND,
+      storagePath,
+      sourceUrls: [...new Set(sourceUrls)]
+    });
   });
-  const signerUrls = new Set((Array.isArray(defaults?.signers) ? defaults.signers : [])
-    .map((signer) => String(signer?.signatureImageUrl || '').trim())
-    .filter(Boolean));
+  const defaultSigners = Array.isArray(defaults?.signers) ? defaults.signers : [];
   authenticatedLegacyReferences.forEach((reference) => {
-    const remainsReferenced = [...signerUrls].some((signerUrl) => (
-      parseLegacyImageSignatureUrl(signerUrl, reference?.legacyBucketName)?.sourceUrlHash === reference?.sourceUrlHash
-    ));
+    const signerIndexMatch = String(reference?.legacySignerField || '').match(
+      /^certificateDefaults\.signers\.([0-3])\.signatureImageUrl$/
+    );
+    const signerIndex = signerIndexMatch ? Number(signerIndexMatch[1]) : -1;
+    const signerUrl = signerIndex >= 0 && signerIndex < defaultSigners.length
+      ? String(defaultSigners[signerIndex]?.signatureImageUrl || '').trim()
+      : '';
+    const remainsReferenced = Boolean(signerUrl) &&
+      parseLegacyImageSignatureUrl(signerUrl, reference?.legacyBucketName)?.sourceUrlHash === reference?.sourceUrlHash;
     if (remainsReferenced) targets.push({
       ...reference,
       sourceUrls: [String(reference?.url || '').trim()].filter(Boolean)
@@ -193,11 +267,20 @@ function planCertificateSignatureCleanup({
   nextDefaults = {},
   requestedBy = null,
   legacyBucketName = '',
-  authenticatedLegacyReferences = []
+  authenticatedLegacyReferences = [],
+  authenticatedPrimaryReferences = []
 }) {
   const normalizedTeamId = normalizeCertificateTeamId(teamId);
-  const previousTargets = collectCertificateSignatureTargets(previousDefaults, authenticatedLegacyReferences);
-  const nextTargets = collectCertificateSignatureTargets(nextDefaults, authenticatedLegacyReferences);
+  const previousTargets = collectCertificateSignatureTargets(
+    previousDefaults,
+    authenticatedLegacyReferences,
+    authenticatedPrimaryReferences
+  );
+  const nextTargets = collectCertificateSignatureTargets(
+    nextDefaults,
+    authenticatedLegacyReferences,
+    authenticatedPrimaryReferences
+  );
   const previousPaths = new Set([...previousTargets.values()].map((target) => target.storagePath));
   const nextPaths = new Set([...nextTargets.values()].map((target) => target.storagePath));
 
@@ -209,16 +292,9 @@ function planCertificateSignatureCleanup({
   const nextLegacyUrlHashes = new Set([...nextLegacyUrls]
     .map((legacyUrl) => parseLegacyImageSignatureUrl(legacyUrl, legacyBucketName)?.sourceUrlHash)
     .filter(Boolean));
-  const authenticatedUrlHashes = new Set(authenticatedLegacyReferences.map((reference) => reference.sourceUrlHash));
   for (const legacyUrlHash of nextLegacyUrlHashes) {
     if (!previousLegacyUrlHashes.has(legacyUrlHash)) {
       throw new Error('Certificate defaults contain a newly injected legacy signature URL.');
-    }
-  }
-  for (const legacyUrlHash of previousLegacyUrlHashes) {
-    if (nextLegacyUrlHashes.has(legacyUrlHash)) continue;
-    if (!authenticatedUrlHashes.has(legacyUrlHash)) {
-      throw new Error('Legacy signature ownership could not be verified. Ask a current team signer to replace it.');
     }
   }
 
@@ -230,19 +306,30 @@ function planCertificateSignatureCleanup({
     throw new Error('Certificate defaults contain an invalid signature path.');
   }
 
-  const cleanupTargets = [...previousTargets.entries()].filter(([key, target]) => {
+  const retiredTargets = [...previousTargets.entries()].filter(([key, target]) => {
     if (nextTargets.has(key)) return false;
     if (target.storageBucket === LEGACY_IMAGE_STORAGE_KIND) return true;
     const path = target.storagePath;
     if (isTeamSignaturePath(normalizedTeamId, path)) return true;
     return getLegacySignatureOwnerId(path) === String(requestedBy || '').trim();
   }).map(([, target]) => target);
+  const cleanupTargets = retiredTargets.filter((target) => (
+    getCertificateSignatureObjectKey(target) &&
+    (target.storageBucket !== LEGACY_IMAGE_STORAGE_KIND ||
+      target.legacyProvenance === 'server-inventory-team-binding')
+  ));
   return {
     previousPaths,
     nextPaths,
     cleanupPaths: cleanupTargets.map((target) => target.storagePath),
     cleanupTargets,
-    retiredSourceUrls: [...new Set(cleanupTargets.flatMap((target) => target.sourceUrls || []))],
+    retiredObjectKeys: [...new Set(cleanupTargets
+      .map((target) => getCertificateSignatureObjectKey(target))
+      .filter(Boolean))],
+    retiredPaths: [...new Set(retiredTargets
+      .filter((target) => target.storageBucket === PRIMARY_STORAGE_KIND)
+      .map((target) => String(target.storagePath || '').trim())
+      .filter(Boolean))],
     previousTargets,
     nextTargets
   };
@@ -261,11 +348,17 @@ function isAuthorizedCertificateSignatureCleanupTarget(teamId, target = {}) {
   if (target.storageBucket === LEGACY_IMAGE_STORAGE_KIND) {
     return LEGACY_IMAGE_SIGNATURE_PATH_PATTERN.test(String(target.storagePath || '').trim()) &&
       /^[a-f0-9]{64}$/.test(String(target.sourceUrlHash || '').trim()) &&
-      target.legacyProvenance === 'auth-user-and-download-token' &&
+      target.legacyProvenance === 'server-inventory-team-binding' &&
+      String(target.legacyTeamId || '').trim() === normalizeCertificateTeamId(teamId) &&
+      /^certificateDefaults\.signers\.[0-3]\.signatureImageUrl$/.test(
+        String(target.legacySignerField || '').trim()
+      ) &&
       getLegacyImageSignatureOwnerCandidates(target.storagePath)
-        .includes(String(target.legacyOwnerId || '').trim());
+        .includes(String(target.legacyOwnerId || '').trim()) &&
+      getCertificateSignatureObjectKey(target) === String(target.objectKey || '').trim();
   }
-  return isAuthorizedCertificateSignatureCleanupPath(teamId, target.storagePath, target.requestedBy);
+  return isAuthorizedCertificateSignatureCleanupPath(teamId, target.storagePath, target.requestedBy) &&
+    getCertificateSignatureObjectKey(target) === String(target.objectKey || '').trim();
 }
 
 function isCertificateSignatureTargetReferenced(defaults, target = {}) {
@@ -282,10 +375,12 @@ function isCertificateSignatureTargetReferenced(defaults, target = {}) {
 
 module.exports = {
   authenticateLegacyImageSignatureReferences,
+  authenticatePrimaryCertificateSignatureReferences,
   collectCertificateSignaturePaths,
   collectCertificateSignerEntries,
   collectLegacyImageSignatureUrls,
   extractFirebaseStoragePathFromUrl,
+  getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
   isAuthorizedCertificateSignatureCleanupPath,

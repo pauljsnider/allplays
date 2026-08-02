@@ -352,6 +352,7 @@ const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-ident
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticateLegacyImageSignatureReferences,
+  authenticatePrimaryCertificateSignatureReferences,
   isAuthorizedCertificateSignatureCleanupTarget,
   isCertificateSignatureTargetReferenced,
   normalizeCertificateTeamId,
@@ -14178,17 +14179,21 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
     id: _ignoredId,
     updatedAt: _ignoredUpdatedAt,
     updatedBy: _ignoredUpdatedBy,
-    retiredSignatureImageUrls: _ignoredRetiredSignatureImageUrls,
+    retiredSignatureImageObjectKeys: _ignoredRetiredSignatureImageObjectKeys,
+    retiredSignatureImagePaths: _ignoredRetiredSignatureImagePaths,
     ...clientDefaults
   } = requestedDefaults;
   const defaultsRef = firestore.doc(`teams/${teamId}/settings/certificateDefaults`);
   const legacyImageBucketName = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
   const legacyImageBucket = admin.storage().bucket(legacyImageBucketName);
+  const primaryImageBucket = admin.storage().bucket();
   const previousDefaultsForAuthentication = await defaultsRef.get();
   let authenticatedLegacyReferences = [];
+  let authenticatedPrimaryReferences = [];
   try {
     authenticatedLegacyReferences = await authenticateLegacyImageSignatureReferences({
       defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
+      teamId,
       legacyBucketName: legacyImageBucketName,
       allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
       lookupExistingUserIds: async (candidates) => {
@@ -14198,10 +14203,30 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
       getObjectMetadata: async (storagePath) => {
         const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
         return metadata;
+      },
+      lookupTeamObjectBinding: async (reference) => {
+        const bindingId = crypto.createHash('sha256').update(reference.objectKey).digest('hex');
+        const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
+        return bindingSnap.exists ? bindingSnap.data() || {} : null;
       }
     });
   } catch (error) {
     console.warn('Unable to authenticate a URL-only legacy certificate signature.', {
+      teamId,
+      error: error?.message || String(error)
+    });
+  }
+  try {
+    authenticatedPrimaryReferences = await authenticatePrimaryCertificateSignatureReferences({
+      defaults: previousDefaultsForAuthentication.exists ? previousDefaultsForAuthentication.data() || {} : {},
+      storageBucketName: primaryImageBucket.name,
+      getObjectMetadata: async (storagePath) => {
+        const [metadata] = await primaryImageBucket.file(storagePath).getMetadata();
+        return metadata;
+      }
+    });
+  } catch (error) {
+    console.warn('Unable to authenticate an existing primary certificate signature generation.', {
       teamId,
       error: error?.message || String(error)
     });
@@ -14216,23 +14241,33 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
         nextDefaults: clientDefaults,
         requestedBy: context.auth.uid,
         legacyBucketName: legacyImageBucketName,
-        authenticatedLegacyReferences
+        authenticatedLegacyReferences,
+        authenticatedPrimaryReferences
       });
     } catch (error) {
       throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid certificate signature path.');
     }
 
-    const priorRetiredSignatureImageUrls = previousSnap.exists &&
-      Array.isArray(previousSnap.data()?.retiredSignatureImageUrls)
-      ? previousSnap.data().retiredSignatureImageUrls
+    const priorRetiredSignatureImageObjectKeys = previousSnap.exists &&
+      Array.isArray(previousSnap.data()?.retiredSignatureImageObjectKeys)
+      ? previousSnap.data().retiredSignatureImageObjectKeys
       : [];
-    const retiredSignatureImageUrls = [...new Set([
-      ...priorRetiredSignatureImageUrls,
-      ...cleanupPlan.retiredSourceUrls
+    const retiredSignatureImageObjectKeys = [...new Set([
+      ...priorRetiredSignatureImageObjectKeys,
+      ...cleanupPlan.retiredObjectKeys
+    ].map((value) => String(value || '').trim()).filter(Boolean))];
+    const priorRetiredSignatureImagePaths = previousSnap.exists &&
+      Array.isArray(previousSnap.data()?.retiredSignatureImagePaths)
+      ? previousSnap.data().retiredSignatureImagePaths
+      : [];
+    const retiredSignatureImagePaths = [...new Set([
+      ...priorRetiredSignatureImagePaths,
+      ...cleanupPlan.retiredPaths
     ].map((value) => String(value || '').trim()).filter(Boolean))];
     if (
-      retiredSignatureImageUrls.length > 1000 ||
-      JSON.stringify(retiredSignatureImageUrls).length > 500_000
+      retiredSignatureImageObjectKeys.length > 1000 ||
+      retiredSignatureImagePaths.length > 1000 ||
+      JSON.stringify({ retiredSignatureImageObjectKeys, retiredSignatureImagePaths }).length > 500_000
     ) {
       throw new functions.https.HttpsError(
         'resource-exhausted',
@@ -14264,7 +14299,12 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
         legacyBucketName: target.legacyBucketName || null,
         legacyOwnerId: target.legacyOwnerId || null,
         legacyProvenance: target.legacyProvenance || null,
+        legacySignerField: target.legacySignerField || null,
+        legacyTeamId: target.legacyTeamId || null,
+        objectGeneration: target.objectGeneration || null,
+        objectKey: target.objectKey || null,
         sourceUrlHash: target.sourceUrlHash || null,
+        storageBucketName: target.storageBucketName || null,
         requestedBy: context.auth.uid,
         status: 'pending',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -14273,7 +14313,8 @@ exports.commitCertificateDefaults = functions.https.onCall(async (data, context 
     });
     transaction.set(defaultsRef, {
       ...clientDefaults,
-      retiredSignatureImageUrls,
+      retiredSignatureImageObjectKeys,
+      retiredSignatureImagePaths,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: context.auth.uid
     }, { merge: true });
@@ -14337,7 +14378,22 @@ exports.cleanupCertificateSignature = functions
     const cleanupBucket = cleanup.storageBucket === 'legacy-image'
       ? admin.storage().bucket(process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app')
       : admin.storage().bucket();
-    await cleanupBucket.file(storagePath).delete({ ignoreNotFound: true });
+    try {
+      await cleanupBucket.file(storagePath, {
+        preconditionOpts: {
+          ifGenerationMatch: String(cleanup.objectGeneration || '').trim()
+        }
+      }).delete({ ignoreNotFound: true });
+    } catch (error) {
+      if (Number(error?.code) === 412) {
+        await cleanupSnap.ref.set({
+          status: 'blocked-generation-changed',
+          completedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return null;
+      }
+      throw error;
+    }
     await cleanupSnap.ref.set({
       status: 'completed',
       completedAt: admin.firestore.FieldValue.serverTimestamp()

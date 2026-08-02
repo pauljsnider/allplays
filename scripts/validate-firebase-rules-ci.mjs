@@ -486,16 +486,22 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'firestore-baseline-compat.rules', 'Production Firestore compatibility baseline handoff');
     assertIncludes(
         deployProd,
-        '${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs',
-        'Production Firestore baseline exact-SHA compactor'
+        'git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"',
+        'Production Firestore isolated exact-SHA checkout'
     );
     assertIncludes(
         deployProd,
-        '${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs',
-        'Production Firestore baseline exact-SHA compatibility transformer'
+        'baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"',
+        'Production Firestore baseline-checkout compactor'
     );
-    assertIncludes(deployProd, 'node "$baseline_compactor"', 'Production Firestore baseline compactor execution');
-    assertIncludes(deployProd, 'node "$baseline_transformer"', 'Production Firestore baseline transformer execution');
+    assertIncludes(
+        deployProd,
+        'baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"',
+        'Production Firestore baseline-checkout compatibility transformer'
+    );
+    assertIncludes(deployProd, 'cd "$baseline_checkout"', 'Production Firestore isolated pipeline execution');
+    assertIncludes(deployProd, 'baseline_node_major=', 'Production Firestore historical runtime provenance');
+    assertIncludes(deployProd, 'current_node_major=', 'Production Firestore compatible runtime enforcement');
     assertIncludes(
         deployProd,
         'firestore_baseline_mode: ${{ steps.firestore_config.outputs.firestore_baseline_mode }}',

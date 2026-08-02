@@ -805,25 +805,94 @@ service cloud.firestore {
         : ['invalid-certificate-batch-shared-state'];
     }
 
-    function hasNoRetiredCertificateSignatureUrls(teamId, signerImageUrls) {
+    function certificateBatchSignerImagePaths(data) {
+      let shared = data.get('shared', {});
+      return shared is map
+        ? certificateSignerImagePaths(shared)
+        : ['invalid-certificate-batch-shared-state'];
+    }
+
+    function certificateSignerHasCanonicalImagePath(teamId, signer) {
+      let imageUrl = signer is map ? signer.get('signatureImageUrl', null) : null;
+      let imagePath = signer is map ? signer.get('signatureImagePath', null) : null;
+      return imageUrl == null ||
+             (imageUrl is string &&
+               (imageUrl.size() == 0 ||
+                 (imagePath is string &&
+                   imagePath.matches('^certificate-signatures/teams/' + teamId + '/[^/]+$'))));
+    }
+
+    function certificateSignersHaveCanonicalImagePaths(teamId, data) {
+      let signers = data.get('signers', []);
+      return signers is list &&
+             signers.size() <= 4 &&
+             (signers.size() < 1 || certificateSignerHasCanonicalImagePath(teamId, signers[0])) &&
+             (signers.size() < 2 || certificateSignerHasCanonicalImagePath(teamId, signers[1])) &&
+             (signers.size() < 3 || certificateSignerHasCanonicalImagePath(teamId, signers[2])) &&
+             (signers.size() < 4 || certificateSignerHasCanonicalImagePath(teamId, signers[3]));
+    }
+
+    function certificateSignerImageMatches(candidate, imageUrl, imagePath) {
+      return candidate is map &&
+             candidate.get('signatureImageUrl', null) == imageUrl &&
+             candidate.get('signatureImagePath', null) == imagePath;
+    }
+
+    function certificateSignerUsesCurrentImage(teamId, signer) {
+      let imageUrl = signer is map ? signer.get('signatureImageUrl', null) : null;
+      let imagePath = signer is map ? signer.get('signatureImagePath', null) : null;
       let defaultsPath = /databases/$(database)/documents/teams/$(teamId)/settings/certificateDefaults;
-      let retiredUrls = exists(defaultsPath)
-        ? get(defaultsPath).data.get('retiredSignatureImageUrls', [])
+      let currentSigners = exists(defaultsPath) ? get(defaultsPath).data.get('signers', []) : [];
+      return imageUrl == null ||
+             (imageUrl is string && imageUrl.size() == 0) ||
+             (currentSigners is list &&
+               ((currentSigners.size() > 0 && certificateSignerImageMatches(currentSigners[0], imageUrl, imagePath)) ||
+                (currentSigners.size() > 1 && certificateSignerImageMatches(currentSigners[1], imageUrl, imagePath)) ||
+                (currentSigners.size() > 2 && certificateSignerImageMatches(currentSigners[2], imageUrl, imagePath)) ||
+                (currentSigners.size() > 3 && certificateSignerImageMatches(currentSigners[3], imageUrl, imagePath))));
+    }
+
+    function certificateSignersUseCurrentImages(teamId, data) {
+      let signers = data.get('signers', []);
+      return signers is list &&
+             signers.size() <= 4 &&
+             (signers.size() < 1 || certificateSignerUsesCurrentImage(teamId, signers[0])) &&
+             (signers.size() < 2 || certificateSignerUsesCurrentImage(teamId, signers[1])) &&
+             (signers.size() < 3 || certificateSignerUsesCurrentImage(teamId, signers[2])) &&
+             (signers.size() < 4 || certificateSignerUsesCurrentImage(teamId, signers[3]));
+    }
+
+    function certificateBatchSignersHaveCanonicalImagePaths(teamId, data) {
+      let shared = data.get('shared', {});
+      return shared is map && certificateSignersHaveCanonicalImagePaths(teamId, shared);
+    }
+
+    function certificateBatchSignersUseCurrentImages(teamId, data) {
+      let shared = data.get('shared', {});
+      return shared is map && certificateSignersUseCurrentImages(teamId, shared);
+    }
+
+    function hasNoRetiredCertificateSignaturePaths(teamId, signerImagePaths) {
+      let defaultsPath = /databases/$(database)/documents/teams/$(teamId)/settings/certificateDefaults;
+      let retiredPaths = exists(defaultsPath)
+        ? get(defaultsPath).data.get('retiredSignatureImagePaths', [])
         : [];
-      return retiredUrls is list &&
-             retiredUrls.size() <= 1000 &&
-             !retiredUrls.hasAny(signerImageUrls);
+      return retiredPaths is list &&
+             retiredPaths.size() <= 1000 &&
+             !retiredPaths.hasAny(signerImagePaths);
     }
 
     function isLegacyCertificateDefaultsCreateSafe(data) {
-      return !data.keys().hasAny(['retiredSignatureImageUrls']) &&
+      return !data.keys().hasAny(['retiredSignatureImageObjectKeys', 'retiredSignatureImagePaths']) &&
              certificateSignerImageUrls(data) == [null, null, null, null] &&
              certificateSignerImagePaths(data) == [null, null, null, null];
     }
 
     function isLegacyCertificateDefaultsUpdateSafe() {
-      return request.resource.data.get('retiredSignatureImageUrls', []) ==
-               resource.data.get('retiredSignatureImageUrls', []) &&
+      return request.resource.data.get('retiredSignatureImageObjectKeys', []) ==
+               resource.data.get('retiredSignatureImageObjectKeys', []) &&
+             request.resource.data.get('retiredSignatureImagePaths', []) ==
+               resource.data.get('retiredSignatureImagePaths', []) &&
              certificateSignerImageUrls(request.resource.data) ==
                certificateSignerImageUrls(resource.data) &&
              certificateSignerImagePaths(request.resource.data) ==
@@ -831,23 +900,35 @@ service cloud.firestore {
     }
 
     function isCertificateOutputCreateSafe(teamId, data) {
-      return hasNoRetiredCertificateSignatureUrls(teamId, certificateSignerImageUrls(data));
+      return certificateSignersHaveCanonicalImagePaths(teamId, data) &&
+             certificateSignersUseCurrentImages(teamId, data) &&
+             hasNoRetiredCertificateSignaturePaths(teamId, certificateSignerImagePaths(data));
     }
 
     function isCertificateOutputUpdateSafe(teamId) {
       let nextUrls = certificateSignerImageUrls(request.resource.data);
-      return nextUrls == certificateSignerImageUrls(resource.data) ||
-             hasNoRetiredCertificateSignatureUrls(teamId, nextUrls);
+      let nextPaths = certificateSignerImagePaths(request.resource.data);
+      return (nextUrls == certificateSignerImageUrls(resource.data) &&
+                nextPaths == certificateSignerImagePaths(resource.data)) ||
+             (certificateSignersHaveCanonicalImagePaths(teamId, request.resource.data) &&
+                certificateSignersUseCurrentImages(teamId, request.resource.data) &&
+                hasNoRetiredCertificateSignaturePaths(teamId, nextPaths));
     }
 
     function isCertificateBatchCreateSafe(teamId, data) {
-      return hasNoRetiredCertificateSignatureUrls(teamId, certificateBatchSignerImageUrls(data));
+      return certificateBatchSignersHaveCanonicalImagePaths(teamId, data) &&
+             certificateBatchSignersUseCurrentImages(teamId, data) &&
+             hasNoRetiredCertificateSignaturePaths(teamId, certificateBatchSignerImagePaths(data));
     }
 
     function isCertificateBatchUpdateSafe(teamId) {
       let nextUrls = certificateBatchSignerImageUrls(request.resource.data);
-      return nextUrls == certificateBatchSignerImageUrls(resource.data) ||
-             hasNoRetiredCertificateSignatureUrls(teamId, nextUrls);
+      let nextPaths = certificateBatchSignerImagePaths(request.resource.data);
+      return (nextUrls == certificateBatchSignerImageUrls(resource.data) &&
+                nextPaths == certificateBatchSignerImagePaths(resource.data)) ||
+             (certificateBatchSignersHaveCanonicalImagePaths(teamId, request.resource.data) &&
+                certificateBatchSignersUseCurrentImages(teamId, request.resource.data) &&
+                hasNoRetiredCertificateSignaturePaths(teamId, nextPaths));
     }
 
     function isPlayerSelf(teamId, playerId) {

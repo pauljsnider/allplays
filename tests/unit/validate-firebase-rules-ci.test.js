@@ -186,12 +186,16 @@ concurrency:
           FIRESTORE_BASELINE_MODE: \${{ steps.firestore_config.outputs.firestore_baseline_mode }}
           FIRESTORE_BASELINE_SHA: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
         run: |
-          git show "\${FIRESTORE_BASELINE_SHA}:firestore.rules" > "$baseline_source"
-          git show "\${FIRESTORE_BASELINE_SHA}:scripts/compact-firestore-rules.mjs" > "$baseline_compactor"
-          node "$baseline_compactor" "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
-          git show "\${FIRESTORE_BASELINE_SHA}:scripts/build-certificate-defaults-compat-rules.mjs" > "$baseline_transformer"
-          node "$baseline_transformer" "$baseline_source" "$baseline_compatibility_source"
-          node "$baseline_compactor" "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+          baseline_checkout="$(mktemp -d "$RUNNER_TEMP/firestore-baseline-checkout.XXXXXX")"
+          git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"
+          baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"
+          baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"
+          baseline_node_major="$(awk baseline-node "$baseline_checkout/.github/workflows/deploy-prod.yml")"
+          current_node_major="$(node -p baseline-node)"
+          cd "$baseline_checkout"
+          node "scripts/compact-firestore-rules.mjs" "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
+          node "scripts/build-certificate-defaults-compat-rules.mjs" "$baseline_source" "$baseline_compatibility_source"
+          node "scripts/compact-firestore-rules.mjs" "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
           echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules."
           FIRESTORE_BASELINE_MODE="compatibility"
           printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
