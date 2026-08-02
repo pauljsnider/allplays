@@ -85,7 +85,10 @@ describe('certificate defaults Firestore rules', () => {
             /! "\$latest_prior_run_id" =~ \^\[0-9\]\+\$[\s\S]*! "\$firestore_success_run_id" =~ \^\[0-9\]\+\$[\s\S]*"\$firestore_success_run_id" != "\$latest_prior_run_id"/
         );
         expect(deployWorkflow).toMatch(
-            /No valid successful production deploy baseline was found[\s\S]*component_marker_found" == "true"[\s\S]*firestore_baseline_sha=\$firestore_success_sha[\s\S]*Preserving the durable Firestore component baseline despite empty successful workflow history/
+            /No valid successful production deploy baseline was found[\s\S]*component_marker_found" == "true"[\s\S]*firestore_baseline_sha=\$firestore_success_sha[\s\S]*Preserving the durable Firestore component baseline despite unavailable successful workflow history/
+        );
+        expect(deployWorkflow).toMatch(
+            /last successful production deploy commit is unavailable locally[\s\S]*conservatively enabling every non-Firestore migration/
         );
         expect(deployWorkflow).toMatch(
             /Pre-migration baselines already contain the legacy direct-write[\s\S]*FIRESTORE_BASELINE_MODE="compatibility"[\s\S]*firestore-baseline\.mode/

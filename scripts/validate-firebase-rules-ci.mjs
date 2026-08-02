@@ -616,8 +616,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'Preserving the durable Firestore component baseline despite empty successful workflow history.',
-        'Production Firestore retained component baseline after workflow history expiry'
+        'Preserving the durable Firestore component baseline despite unavailable successful workflow history.',
+        'Production Firestore retained component baseline after workflow history loss'
     );
     assertIncludes(
         deployProd,

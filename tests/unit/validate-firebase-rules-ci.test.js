@@ -152,8 +152,9 @@ concurrency:
           echo "No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
           if [[ "$component_marker_found" == "true" ]]; then
             echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
-            echo "Preserving the durable Firestore component baseline despite empty successful workflow history."
+            echo "Preserving the durable Firestore component baseline despite unavailable successful workflow history."
           fi
+          echo "The last successful production deploy commit is unavailable locally; conservatively enabling every non-Firestore migration."
           echo "The Firestore component deployment lookup failed; the active release mode is unknown."
           firestore_success_mode="unmarked"
           firestore_success_mode="ambiguous"

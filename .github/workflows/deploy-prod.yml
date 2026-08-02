@@ -380,8 +380,13 @@ jobs:
             fi
           fi
 
-          if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::warning::No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
+          if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            || ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
+            if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::warning::No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
+            else
+              echo "::warning::The last successful production deploy commit is unavailable locally; conservatively enabling every non-Firestore migration."
+            fi
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
@@ -411,23 +416,13 @@ jobs:
               else
                 echo "certificate_defaults_lockdown_needed=true" >> "$GITHUB_OUTPUT"
               fi
-              echo "::notice::Preserving the durable Firestore component baseline despite empty successful workflow history."
+              echo "::notice::Preserving the durable Firestore component baseline despite unavailable successful workflow history."
             else
               echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
               echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
               echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
             fi
             exit 0
-          elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
-            echo "::warning::The last successful production deploy commit is unavailable locally; forcing authorization rules-first ordering."
-            echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
-            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
-            echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
-            echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
-            echo "storage_changed=true" >> "$GITHUB_OUTPUT"
-            echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
           else
             if [[ "$component_lookup_succeeded" == "true" ]] \
               && [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
