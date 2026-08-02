@@ -64,8 +64,14 @@ describe('certificate defaults Firestore rules', () => {
         const nativeReadinessGate = deployWorkflow.indexOf('[[ "$native_callable_ready" == "true" ]]');
 
         expect(inventoryProducer).toBeGreaterThan(-1);
+        expect(deployWorkflow).toContain(
+            'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
+        );
+        expect(deployWorkflow).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then'
+        );
         expect(deployWorkflow).toMatch(
-            /retry_firebase_deploy\s+\\\s+"functions:indexCertificateLegacySignaturesOnDefaultsWrite"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
+            /retry_firebase_deploy\s+\\\s+"\$retry_enabled_inventory_producer_target"\s+\\\s+"certificate-signature-inventory-producer"\s+\\\s+3\s+\\\s+15\s+\\\s+true/
         );
         expect(inventoryProducer).toBeLessThan(inventoryBackfill);
         expect(inventoryBackfill).toBeLessThan(compatibilityCleanup);
