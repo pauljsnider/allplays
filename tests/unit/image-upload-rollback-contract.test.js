@@ -6,21 +6,28 @@ function read(relativePath) {
 }
 
 describe('legacy image upload rollback contracts', () => {
-    it('removes own authenticated profile and team-draft uploads during account deletion', () => {
+    it('removes own authenticated profile uploads without deleting team-owned photos during account deletion', () => {
         const source = read('functions/index.js');
 
         expect(source).toContain('primaryBucket.deleteFiles({ prefix: `profile-photos/users/${uid}/`, force: true })');
         expect(source).toContain('primaryBucket.deleteFiles({ prefix: `profile-photos/team-drafts/${uid}/`, force: true })');
+        expect(source).not.toContain('primaryBucket.deleteFiles({ prefix: `profile-photos/teams/${uid}/`');
     });
 
-    it('rolls back team photos until the team document references them', () => {
+    it('creates a team before uploading its photo and persists the final team-owned path', () => {
         const source = read('edit-team.html');
+        const createIndex = source.indexOf('const newTeamId = await createTeam(teamData);');
+        const newTeamUploadIndex = source.indexOf('teamId: newTeamId', createIndex);
 
-        expect(source).toContain('const uploadedPhoto = await uploadTeamPhoto(fileInput.files[0], {');
-        expect(source).toContain("teamId: currentTeamId || ''");
+        expect(source).toContain('const uploadedPhoto = await uploadTeamPhoto(pendingTeamPhotoFile, {');
+        expect(createIndex).toBeGreaterThan(0);
+        expect(newTeamUploadIndex).toBeGreaterThan(createIndex);
+        expect(source).not.toContain("teamId: currentTeamId || ''");
+        expect(source).toContain('photoPath: uploadedPhoto.path');
         expect(source).toContain('teamPhotoPersisted = true;');
-        expect(source).toContain('if (newlyUploadedTeamPhotoPath && !teamPhotoPersisted)');
+        expect(source).toContain('if (newlyUploadedTeamPhotoPath && !teamPhotoPersisted && definitiveNonCommit)');
         expect(source).toContain('await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);');
+        expect(source).toContain('The team save may have completed, so the uploaded photo was preserved.');
     });
 
     it('saves roster photos and private fields in one batch and rolls back failed uploads', () => {

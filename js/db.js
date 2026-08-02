@@ -40,10 +40,9 @@ import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
 import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
 import {
     buildPlayerProfilePhotoPath,
-    buildTeamDraftProfilePhotoPath,
     buildTeamProfilePhotoPath,
     buildUserProfilePhotoPath
-} from './profile-photo-paths.js?v=1';
+} from './profile-photo-paths.js?v=2';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -519,9 +518,7 @@ export async function uploadTeamPhoto(file, options = {}) {
     });
 
     const userId = getRequiredSignedInUserId();
-    const path = options?.teamId
-        ? buildTeamProfilePhotoPath(options.teamId, userId, file.name)
-        : buildTeamDraftProfilePhotoPath(userId, file.name);
+    const path = buildTeamProfilePhotoPath(options?.teamId, userId, file.name);
     console.log('Upload path:', path);
 
     const storageRef = ref(storage, path);

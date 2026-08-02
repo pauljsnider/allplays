@@ -27,7 +27,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await testEnv.clearStorage();
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const firestore = context.firestore();
-                await firestore.doc('teams/team-a').set({ ownerId: 'owner-a', ownerEmail: 'legacy-owner@example.com', adminEmails: [] });
+                await firestore.doc('teams/team-a').set({
+                    ownerId: 'owner-a',
+                    ownerEmail: 'legacy-owner@example.com',
+                    adminEmails: ['admin-a@example.com']
+                });
                 await firestore.doc('teams/team-b').set({ ownerId: 'owner-b', adminEmails: [] });
                 await firestore.doc('teams/team-a/mediaFolders/folder-a').set({ visibility: 'team' });
                 await firestore.doc('teams/team-b/mediaFolders/folder-b').set({ visibility: 'team' });
@@ -155,7 +159,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
-        it('allows only a verified team manager to upload a native team photo', async () => {
+        it('allows verified team managers to replace a final team-owned photo and denies draft paths', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
             });
@@ -167,9 +171,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 email: 'member-a@example.com',
                 email_verified: true
             }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
 
+            const ownerPhotoRef = ownerStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg');
             await assertSucceeds(
-                ownerStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg').put(
+                ownerPhotoRef.put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
@@ -180,7 +189,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
-            await assertSucceeds(
+            await assertFails(
                 ownerStorage.ref('profile-photos/team-drafts/owner-a/team.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
@@ -188,6 +197,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
             await assertFails(
                 memberStorage.ref('profile-photos/team-drafts/owner-a/spoofed.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                adminStorage.ref('profile-photos/teams/team-a/team/owner-a/team.jpg').delete()
+            );
+            await assertSucceeds(
+                adminStorage.ref('profile-photos/teams/team-a/team/admin-a/replacement.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )

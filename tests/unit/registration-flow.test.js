@@ -429,8 +429,8 @@ describe('public registration flow', () => {
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
-        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+        expect(rules).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
+        expect(rules).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
         expect(rules).not.toContain('function isPendingRegistrationPayloadValid');
         expect(rules).not.toContain('isPublicRegistrationCapacityCounterUpdate');
         expect(rules).not.toContain('isPublicPendingRegistrationCreate');
@@ -815,7 +815,7 @@ describe('public registration flow', () => {
         const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
 
         expect(rules).not.toContain('isPendingRegistrationPayloadValid');
-        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+        expect(rules).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
         expect(functionsSource).toContain('checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)');
         expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
     });

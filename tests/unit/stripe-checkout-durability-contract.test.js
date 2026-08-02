@@ -18,10 +18,12 @@ describe('Stripe Checkout durability contract', () => {
         const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
         const registration = exportBlock('createStripeRegistrationCheckout', 'cancelStripeRegistrationCheckout');
 
-        for (const block of [teamPass, teamFee, registration]) {
+        for (const block of [teamPass, teamFee]) {
             expect(block).toContain('stripe.checkout.sessions.create({');
             expect(block).toContain('idempotencyKey:');
         }
+        expect(registration).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
+        expect(registration).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(teamPass).toContain('isCanonicalStripeCheckoutUrl');
         expect(teamFee).toContain('getNewTeamFeeCheckoutSessionFailure');
         expect(teamFeeCoreSource).toContain('function getNewTeamFeeCheckoutSessionFailure');
@@ -45,5 +47,16 @@ describe('Stripe Checkout durability contract', () => {
         expect(registration).toContain("expireStripeCheckoutSessionForRollback(stripe, session, 'registration-persistence')");
         expect(registration).toContain('clearRegistrationCheckoutCreationReservation');
         expect(registration).toContain('releaseRegistrationCheckoutCapacity');
+        expect(registration).toContain('getRegistrationCheckoutPersistenceState');
+        expect(registration).toContain("persistenceState === 'committed'");
+    });
+
+    it('persists and reuses the exact registration Stripe request across uncertain retries', () => {
+        const registration = exportBlock('createStripeRegistrationCheckout', 'cancelStripeRegistrationCheckout');
+
+        expect(functionsSource).toContain('checkoutCreationRequest: proposedCheckoutCreationRequest');
+        expect(functionsSource).toContain('isReusableRegistrationCheckoutCreationRequest');
+        expect(registration).toContain('isUncertainStripeCheckoutCreationError(error)');
+        expect(registration).toContain('createRegistrationCheckoutCapability(checkoutCreationRequest.idempotencyKey)');
     });
 });

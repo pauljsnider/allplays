@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const CRITICAL_RULES = [
     {
@@ -98,6 +99,38 @@ for (const rule of changedRules) {
     const matches = diffText.match(rule.requiredPattern) || [];
     if (matches.length === 0) {
         failures.push(rule.failure);
+    }
+}
+
+if (changedFiles.has('js/db.js')) {
+    const productionSources = execGit(['ls-files', '*.html', 'js/*.js', 'js/**/*.js'])
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const dbImportVersions = new Map();
+    const dbImportPattern = /(?:\.\.\/|\.\/)+(?:js\/)?db\.js\?v=(\d+)/g;
+    for (const file of productionSources) {
+        const source = readFileSync(file, 'utf8');
+        const versions = Array.from(source.matchAll(dbImportPattern), (match) => Number(match[1]));
+        if (versions.length > 0) dbImportVersions.set(file, versions);
+    }
+    const distinctVersions = new Set(Array.from(dbImportVersions.values()).flat());
+    if (distinctVersions.size !== 1) {
+        const details = Array.from(dbImportVersions.entries())
+            .filter(([, versions]) => versions.some((version) => !distinctVersions.has(version) || distinctVersions.size > 1))
+            .map(([file, versions]) => `${file}: ${Array.from(new Set(versions)).join(', ')}`)
+            .join('\n');
+        failures.push(`js/db.js changed but production consumers do not share one cache version.\n${details}`);
+    }
+
+    const addedVersions = Array.from(diffText.matchAll(/^\+(?!\+\+\+).*db\.js\?v=(\d+)/gm), (match) => Number(match[1]));
+    const removedVersions = Array.from(diffText.matchAll(/^-(?!---).*db\.js\?v=(\d+)/gm), (match) => Number(match[1]));
+    if (
+        addedVersions.length === 0
+        || removedVersions.length === 0
+        || Math.max(...addedVersions) <= Math.max(...removedVersions)
+    ) {
+        failures.push('js/db.js changed without increasing the shared production db.js cache version.');
     }
 }
 

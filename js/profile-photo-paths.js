@@ -29,7 +29,3 @@ export function buildPlayerProfilePhotoPath(teamId, playerId, userId, fileName, 
 export function buildTeamProfilePhotoPath(teamId, userId, fileName, timestamp = Date.now()) {
     return `profile-photos/teams/${requireProfilePhotoPathSegment(teamId, 'Team')}/team/${requireProfilePhotoPathSegment(userId, 'User')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
 }
-
-export function buildTeamDraftProfilePhotoPath(userId, fileName, timestamp = Date.now()) {
-    return `profile-photos/team-drafts/${requireProfilePhotoPathSegment(userId, 'User')}/${buildProfilePhotoFileName(fileName, timestamp)}`;
-}

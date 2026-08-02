@@ -1679,6 +1679,8 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
 
   const nativeRuntime = isNativeRuntime();
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
+  const previousPhotoPath = cleanString(team?.photoPath);
+  let photoPath: string | null = previousPhotoPath || null;
   let nativePhotoPath = '';
   let webPhotoPath = '';
   if (input?.photoFile) {
@@ -1687,10 +1689,12 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativeTeamPhotoFile(input.photoFile!, normalizedTeamId));
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
+      photoPath = uploaded.path;
     } else {
       const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true, teamId: normalizedTeamId });
       photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
       webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+      photoPath = webPhotoPath || null;
     }
   }
 
@@ -1700,6 +1704,7 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     zip: normalizeTeamZip(input?.zip),
     isPublic: input?.isPublic === true,
     photoUrl,
+    photoPath,
     leagueUrl,
     twitchChannel: parsedLivestream?.twitchChannel ?? null,
     streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
@@ -1719,10 +1724,18 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   } catch (error) {
     if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
       await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-    } else if (webPhotoPath) {
+    } else if (webPhotoPath && isDefinitiveFirestoreWriteFailure(error)) {
       await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
     }
     throw error;
+  }
+
+  if (previousPhotoPath && previousPhotoPath !== photoPath) {
+    if (nativeRuntime) {
+      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(previousPhotoPath)).catch(() => undefined);
+    } else {
+      await Promise.resolve(deleteLegacyImageUpload(previousPhotoPath)).catch(() => undefined);
+    }
   }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
@@ -3020,6 +3033,21 @@ function toNullableNumber(value: any) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function isDefinitiveFirestoreWriteFailure(error: unknown) {
+  const code = cleanString((error as { code?: unknown })?.code).toLowerCase().split('/').pop() || '';
+  return new Set([
+    'already-exists',
+    'failed-precondition',
+    'invalid-argument',
+    'not-found',
+    'out-of-range',
+    'permission-denied',
+    'resource-exhausted',
+    'unauthenticated',
+    'unimplemented'
+  ]).has(code);
 }
 
 function cleanString(value: unknown) {

@@ -96,6 +96,9 @@ function makeFirestore(seed = {}, metrics = {}, options = {}) {
                 throw new Error('Forced Firestore transaction failure.');
             }
             operations.forEach((operation) => write(operation.ref.path, operation.value, operation.options));
+            if (options.failTransactionAfterCommitWhen?.({ call: metrics.transactionCalls, operations })) {
+                throw new Error('Forced Firestore post-commit response failure.');
+            }
             return result;
         }
     };
@@ -402,6 +405,73 @@ test('expires a new Stripe session and clears its reservation when Firestore per
     const recipient = firestore._state.get(recipientPath);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationStartedAt'), false);
+});
+
+test('returns a committed team-fee checkout without expiring it when the transaction response fails', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const { callable, firestore, metrics } = loadCallable({
+        firestoreOptions: {
+            failTransactionAfterCommitWhen: ({ operations }) => operations.some(({ value }) => Boolean(value?.checkoutUrl))
+        }
+    });
+
+    const result = await callable(input, context);
+
+    assert.deepEqual(result, {
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_new',
+        sessionId: 'cs_test_new'
+    });
+    assert.deepEqual(metrics.expireCalls, []);
+    const recipient = firestore._state.get(recipientPath);
+    assert.equal(recipient.checkoutStatus, 'open');
+    assert.equal(recipient.stripeCheckoutSessionId, 'cs_test_new');
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+});
+
+test('does not expire a shared idempotent team-fee session when one concurrent persistence response fails', async () => {
+    let checkoutPersistenceResponses = 0;
+    let releaseFirstCreate;
+    let markFirstCreateStarted;
+    const firstCreateStarted = new Promise((resolve) => {
+        markFirstCreateStarted = resolve;
+    });
+    let createCount = 0;
+    const loaded = loadCallable({
+        firestoreOptions: {
+            failTransactionAfterCommitWhen: ({ operations }) => {
+                if (!operations.some(({ value }) => Boolean(value?.checkoutUrl))) return false;
+                checkoutPersistenceResponses += 1;
+                return checkoutPersistenceResponses === 1;
+            }
+        },
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                markFirstCreateStarted();
+                await new Promise((resolve) => {
+                    releaseFirstCreate = resolve;
+                });
+            }
+            return makeSession({
+                id: 'cs_test_shared_commit',
+                url: 'https://checkout.stripe.com/c/pay/cs_test_shared_commit',
+                metadata: clone(params.metadata)
+            });
+        }
+    });
+
+    const firstPromise = loaded.callable(input, context);
+    await firstCreateStarted;
+    const secondPromise = loaded.callable(input, context);
+    while (loaded.metrics.createCalls.length < 2) {
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    releaseFirstCreate();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    assert.deepEqual(first, second);
+    assert.equal(first.sessionId, 'cs_test_shared_commit');
+    assert.deepEqual(loaded.metrics.expireCalls, []);
 });
 
 test('uses one durable idempotency reservation for concurrent checkout creation', async () => {

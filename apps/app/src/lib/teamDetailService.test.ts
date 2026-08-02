@@ -5,6 +5,7 @@ const dbMocks = vi.hoisted(() => ({
   addPlayer: vi.fn(),
   applyRosterCsvImportOperations: vi.fn(),
   createConfig: vi.fn(),
+  deleteLegacyImageUpload: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAdSpaceSponsors: vi.fn(),
   getConfigs: vi.fn(),
@@ -321,7 +322,12 @@ describe('updateTeamSettingsForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     nativeRuntimeState.isNative = false;
-    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', photoUrl: 'https://img.example.test/team.png' });
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      photoUrl: 'https://img.example.test/team.png',
+      photoPath: 'profile-photos/teams/team-1/team/owner-1/old.jpg'
+    });
     dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
       Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
     ));
@@ -378,8 +384,10 @@ describe('updateTeamSettingsForApp', () => {
 
     expect(dbMocks.uploadTeamPhoto).toHaveBeenCalledWith(file, { returnUpload: true, teamId: 'team-1' });
     expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      photoUrl: 'https://primary.example/team.jpg'
+      photoUrl: 'https://primary.example/team.jpg',
+      photoPath: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
     }));
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/owner-1/old.jpg');
   });
 
   it('rejects invalid livestream links before writing', async () => {
@@ -408,9 +416,13 @@ describe('updateTeamSettingsForApp', () => {
     expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenCalledWith([
       expect.objectContaining({
         pathSegments: ['teams', 'team-1'],
-        data: expect.objectContaining({ photoUrl: 'https://primary.example/team.jpg' })
+        data: expect.objectContaining({
+          photoUrl: 'https://primary.example/team.jpg',
+          photoPath: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
+        })
       })
     ]);
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/owner-1/old.jpg');
     expect(dbMocks.uploadTeamPhoto).not.toHaveBeenCalled();
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
@@ -431,6 +443,36 @@ describe('updateTeamSettingsForApp', () => {
     })).rejects.toThrow('may have completed');
 
     expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
+
+  it('keeps a browser team photo when the document save outcome is uncertain', async () => {
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('network unavailable'), { code: 'unavailable' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('network unavailable');
+
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalled();
+  });
+
+  it('removes a browser team photo when the document save definitely failed', async () => {
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/owner-1/team.jpg'
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('save denied'), { code: 'firestore/permission-denied' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('save denied');
+
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/owner-1/team.jpg');
   });
 });
 

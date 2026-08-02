@@ -12,6 +12,7 @@ import {
   query,
   setDoc,
   startAfter,
+  updateDoc,
   where
 } from 'firebase/firestore';
 
@@ -30,7 +31,8 @@ describe('public registration Firestore boundary', () => {
     );
     expect(helper).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
     expect(helper).toContain("data.get('submittedByUserId', '') == request.auth.uid");
-    expect(registrationBlock).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+    expect(registrationBlock).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
+    expect(registrationBlock).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
     expect(registrationBlock).not.toContain('allow create: if request.auth == null');
   });
 
@@ -83,6 +85,31 @@ describe('public registration Firestore boundary', () => {
       await assertFails(setDoc(
         doc(anonymousDb, 'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'direct-write'),
         { guardian: { email: 'attacker@example.com' }, status: 'pending' }
+      ));
+    });
+
+    it('lets team owners review registrations without letting clients forge checkout reservations', async () => {
+      const ownerDb = testEnv.authenticatedContext('owner-1', {
+        email: 'owner@example.com',
+        email_verified: true
+      }).firestore();
+      const existingRef = doc(
+        ownerDb,
+        'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'
+      );
+
+      await assertSucceeds(updateDoc(existingRef, { decisionNote: 'Reviewed by coach' }));
+      await assertFails(updateDoc(existingRef, {
+        checkoutCreationReservationId: 'forged-reservation',
+        checkoutCreationRequest: { idempotencyKey: 'forged' }
+      }));
+      await assertFails(setDoc(
+        doc(ownerDb, 'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'forged-checkout'),
+        {
+          status: 'pending',
+          checkoutCreationReservationId: 'forged-reservation',
+          checkoutCreationRequest: { idempotencyKey: 'forged' }
+        }
       ));
     });
 

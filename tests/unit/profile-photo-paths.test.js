@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildPlayerProfilePhotoPath,
-    buildTeamDraftProfilePhotoPath,
     buildTeamProfilePhotoPath,
     buildUserProfilePhotoPath
 } from '../../js/profile-photo-paths.js';
 
 describe('profile photo Storage paths', () => {
-    it('binds own, player, team, and team-draft uploads to the authenticated primary Storage contract', () => {
+    it('binds own, player, and team uploads to the authenticated primary Storage contract', () => {
         expect(buildUserProfilePhotoPath('user/1', 'My photo.jpg', 123)).toBe(
             'profile-photos/users/user_1/123_My_photo.jpg'
         );
@@ -16,9 +15,6 @@ describe('profile photo Storage paths', () => {
         );
         expect(buildTeamProfilePhotoPath('team/1', 'user/1', 'Logo.png', 123)).toBe(
             'profile-photos/teams/team_1/team/user_1/123_Logo.png'
-        );
-        expect(buildTeamDraftProfilePhotoPath('user/1', 'Logo.png', 123)).toBe(
-            'profile-photos/team-drafts/user_1/123_Logo.png'
         );
     });
 

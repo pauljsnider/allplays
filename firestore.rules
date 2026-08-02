@@ -1140,6 +1140,44 @@ service cloud.firestore {
              ]);
     }
 
+    function hasNoServerOwnedRegistrationCheckoutFields(data) {
+      return !data.keys().hasAny([
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationRequest',
+               'retryCapacityReservationId',
+               'checkoutUrl',
+               'paymentLink',
+               'checkoutStatus',
+               'paymentProvider',
+               'stripeCheckoutSessionId',
+               'stripePaymentStatus',
+               'checkoutAmountCents',
+               'checkoutCurrency',
+               'checkoutCreatedAt',
+               'publicCheckoutCapabilityHash'
+             ]);
+    }
+
+    function hasNoChangedServerOwnedRegistrationCheckoutFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationRequest',
+               'retryCapacityReservationId',
+               'checkoutUrl',
+               'paymentLink',
+               'checkoutStatus',
+               'paymentProvider',
+               'stripeCheckoutSessionId',
+               'stripePaymentStatus',
+               'checkoutAmountCents',
+               'checkoutCurrency',
+               'checkoutCreatedAt',
+               'publicCheckoutCapabilityHash'
+             ]);
+    }
+
     function hasNoIntroducedPrivateTeamFeeBillingFields() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
@@ -3366,9 +3404,12 @@ service cloud.firestore {
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
-          allow update: if isTeamOwnerOrAdmin(teamId);
+          allow update: if isTeamOwnerOrAdmin(teamId) &&
+                        hasNoChangedServerOwnedRegistrationCheckoutFields();
           allow delete: if isTeamOwnerOrAdmin(teamId);
-          allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';
+          allow create: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.status == 'pending' &&
+                        hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);
         }
       }
 

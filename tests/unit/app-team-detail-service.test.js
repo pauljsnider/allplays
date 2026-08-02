@@ -1954,7 +1954,10 @@ describe('React app team detail model', () => {
         getGames.mockResolvedValue([]);
         getConfigs.mockResolvedValue([]);
         updateTeam.mockResolvedValue(undefined);
-        uploadTeamPhoto.mockResolvedValue('https://img.example.test/updated.png');
+        uploadTeamPhoto.mockResolvedValue({
+            url: 'https://img.example.test/updated.png',
+            path: 'profile-photos/teams/team-1/team/coach-1/team.png'
+        });
 
         const photoFile = new File(['abc'], 'team.png', { type: 'image/png' });
         await updateTeamSettingsForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -1972,6 +1975,7 @@ describe('React app team detail model', () => {
             zip: '662101234',
             isPublic: false,
             photoUrl: 'https://img.example.test/updated.png',
+            photoPath: 'profile-photos/teams/team-1/team/coach-1/team.png',
             leagueUrl: null,
             twitchChannel: null,
             streamEmbedUrl: null,
@@ -1992,9 +1996,9 @@ describe('React app team detail model', () => {
         getConfigs.mockResolvedValue([]);
         uploadTeamPhoto.mockResolvedValue({
             url: 'https://img.example.test/updated.png',
-            path: 'team-photos/new-team.png'
+            path: 'profile-photos/teams/team-1/team/coach-1/team.png'
         });
-        updateTeam.mockRejectedValueOnce(new Error('team save denied'));
+        updateTeam.mockRejectedValueOnce(Object.assign(new Error('team save denied'), { code: 'permission-denied' }));
 
         await expect(updateTeamSettingsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
             name: 'Bears',
@@ -2004,7 +2008,7 @@ describe('React app team detail model', () => {
             photoFile: new File(['abc'], 'team.png', { type: 'image/png' })
         })).rejects.toThrow('team save denied');
 
-        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('team-photos/new-team.png');
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/coach-1/team.png');
     });
 
     it('rejects empty team names and non-staff team setting edits', async () => {
