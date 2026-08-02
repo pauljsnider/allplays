@@ -244,11 +244,11 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=22');
+        expect(html).toContain('./js/certificates/studio.js?v=23');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=137'");
+        expect(studio).toContain("from '../db.js?v=138'");
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');

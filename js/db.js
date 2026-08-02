@@ -691,7 +691,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=21'; // Import resolveZip
+import { resolveZip } from './utils.js?v=22'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -8241,13 +8241,63 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
  * @param {string[]} teamIds - Array of team IDs
  * @returns {Promise<Object>} Map of teamId to unread count
  */
+// One count job can issue two Firestore aggregation reads, so keep the global
+// ceiling low enough to protect large inboxes while still filling normal ones.
+export const UNREAD_CHAT_COUNT_CONCURRENCY = 6;
+
+const unreadChatCountJobQueue = [];
+let activeUnreadChatCountJobs = 0;
+
+function drainUnreadChatCountJobQueue() {
+    while (activeUnreadChatCountJobs < UNREAD_CHAT_COUNT_CONCURRENCY && unreadChatCountJobQueue.length > 0) {
+        const entry = unreadChatCountJobQueue.shift();
+        if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
+        if (entry.deadlineAt !== null && Date.now() >= entry.deadlineAt) {
+            entry.resolve();
+            continue;
+        }
+
+        activeUnreadChatCountJobs += 1;
+        void Promise.resolve()
+            .then(entry.run)
+            .then(entry.resolve, entry.reject)
+            .finally(() => {
+                activeUnreadChatCountJobs -= 1;
+                drainUnreadChatCountJobQueue();
+            });
+    }
+}
+
+function enqueueUnreadChatCountJob(run, deadlineAt) {
+    return new Promise((resolve, reject) => {
+        const entry = { run, deadlineAt, resolve, reject, deadlineTimer: null };
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                resolve();
+                return;
+            }
+            entry.deadlineTimer = setTimeout(() => {
+                const queueIndex = unreadChatCountJobQueue.indexOf(entry);
+                if (queueIndex === -1) return;
+                unreadChatCountJobQueue.splice(queueIndex, 1);
+                resolve();
+            }, remainingMs);
+        }
+        unreadChatCountJobQueue.push(entry);
+        drainUnreadChatCountJobQueue();
+    });
+}
+
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
-    const counts = {};
+    const uniqueTeamIds = Array.from(new Set(teamIds));
+    const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0]));
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
     const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     const defaultConversationOnly = options?.defaultConversationOnly === true;
+    const deadlineAt = Number.isFinite(options?.deadlineAt) ? Number(options.deadlineAt) : null;
     let userData = {};
 
     try {
@@ -8255,59 +8305,129 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
         userData = userDoc.data() || {};
     } catch (err) {
         console.warn(`Failed to load chat state for user ${userId}:`, err);
-        teamIds.forEach((teamId) => {
-            counts[teamId] = 0;
-        });
         return counts;
     }
 
-    await Promise.all(teamIds.map(async (teamId) => {
-        try {
-            const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
-                ? conversationIdsByTeam[teamId]
-                : null;
-            const conversationLookup = conversationLookupByTeam?.[teamId] || {};
-            const loadedConversationIds = storedConversationIds || (defaultConversationOnly
-                ? [DEFAULT_TEAM_CONVERSATION_ID]
-                : (await getChatConversations(
-                    teamId,
-                    conversationLookup.user || null,
-                    {
-                        team: conversationLookup.team || null,
-                        canModerate: conversationLookup.canModerate === true
-                    }
-                )).map((conversation) => conversation?.id).filter(Boolean));
-            const conversationIds = Array.from(new Set([
-                DEFAULT_TEAM_CONVERSATION_ID,
-                ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
-            ]));
+    const teamStates = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, { pending: 0, total: 0 }]));
+    const jobs = [];
+    const conversationIdsForTeam = (loadedConversationIds) => Array.from(new Set([
+        DEFAULT_TEAM_CONVERSATION_ID,
+        ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
+    ]));
+    const addConversationJobs = (teamId, conversationIds) => {
+        teamStates[teamId].pending += conversationIds.length;
+        conversationIds.forEach((conversationId) => {
+            jobs.push({ type: 'count', teamId, conversationId });
+        });
+    };
 
-            const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
+    uniqueTeamIds.forEach((teamId) => {
+        const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
+            ? conversationIdsByTeam[teamId]
+            : null;
+        if (storedConversationIds || defaultConversationOnly) {
+            addConversationJobs(teamId, conversationIdsForTeam(storedConversationIds || [DEFAULT_TEAM_CONVERSATION_ID]));
+            return;
+        }
+
+        teamStates[teamId].pending = 1;
+        jobs.push({ type: 'discover', teamId });
+    });
+
+    return await new Promise((resolve) => {
+        let activeJobs = 0;
+        let nextJobIndex = 0;
+        let settled = false;
+        let deadlineTimer = null;
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (deadlineTimer) clearTimeout(deadlineTimer);
+            resolve({ ...counts });
+        };
+        const isExpired = () => deadlineAt !== null && Date.now() >= deadlineAt;
+        const completeTeamJob = (teamId, count = 0) => {
+            const state = teamStates[teamId];
+            state.total += Number(count || 0);
+            state.pending -= 1;
+            if (state.pending === 0) counts[teamId] = state.total;
+        };
+        const runJob = async (job) => {
+            if (job.type === 'discover') {
                 try {
-                    const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[teamId] || {};
-                    return await getUnreadChatCount(userId, teamId, {
-                        userData,
-                        conversationId,
-                        latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, conversationId)
-                            ? latestMessageAtByConversation[conversationId]
-                            : isDefaultTeamConversation(conversationId)
-                                && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
-                                ? latestMessageAtByTeam[teamId]
-                                : undefined
+                    const conversationLookup = conversationLookupByTeam?.[job.teamId] || {};
+                    const loadedConversationIds = (await getChatConversations(
+                        job.teamId,
+                        conversationLookup.user || null,
+                        {
+                            team: conversationLookup.team || null,
+                            canModerate: conversationLookup.canModerate === true
+                        }
+                    )).map((conversation) => conversation?.id).filter(Boolean);
+                    if (settled || isExpired()) return;
+                    const conversationIds = conversationIdsForTeam(loadedConversationIds);
+                    teamStates[job.teamId].pending += conversationIds.length - 1;
+                    conversationIds.forEach((conversationId) => {
+                        jobs.push({ type: 'count', teamId: job.teamId, conversationId });
                     });
                 } catch (err) {
-                    console.warn(`Failed to get unread count for team ${teamId} conversation ${conversationId}:`, err);
-                    return 0;
+                    console.warn(`Failed to get unread count for team ${job.teamId}:`, err);
+                    if (!settled) completeTeamJob(job.teamId);
                 }
-            }));
+                return;
+            }
 
-            counts[teamId] = unreadCounts.reduce((sum, count) => sum + Number(count || 0), 0);
-        } catch (err) {
-            console.warn(`Failed to get unread count for team ${teamId}:`, err);
-            counts[teamId] = 0;
+            try {
+                const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[job.teamId] || {};
+                const count = await getUnreadChatCount(userId, job.teamId, {
+                    userData,
+                    conversationId: job.conversationId,
+                    latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, job.conversationId)
+                        ? latestMessageAtByConversation[job.conversationId]
+                        : isDefaultTeamConversation(job.conversationId)
+                            && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, job.teamId)
+                            ? latestMessageAtByTeam[job.teamId]
+                            : undefined
+                });
+                if (!settled) completeTeamJob(job.teamId, count);
+            } catch (err) {
+                console.warn(`Failed to get unread count for team ${job.teamId} conversation ${job.conversationId}:`, err);
+                if (!settled) completeTeamJob(job.teamId);
+            }
+        };
+        const scheduleNext = () => {
+            if (settled) return;
+            if (isExpired()) {
+                finish();
+                return;
+            }
+            const job = jobs[nextJobIndex];
+            if (!job) {
+                if (activeJobs === 0) finish();
+                return;
+            }
+            nextJobIndex += 1;
+            activeJobs += 1;
+            void enqueueUnreadChatCountJob(() => runJob(job), deadlineAt).finally(() => {
+                activeJobs -= 1;
+                scheduleNext();
+            });
+        };
+
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                finish();
+                return;
+            }
+            deadlineTimer = setTimeout(finish, remainingMs);
         }
-    }));
-    return counts;
+
+        const workerCount = Math.min(UNREAD_CHAT_COUNT_CONCURRENCY, jobs.length);
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) scheduleNext();
+        if (workerCount === 0) finish();
+    });
 }
 
 
