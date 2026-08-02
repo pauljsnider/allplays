@@ -829,7 +829,9 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('link', { name: 'Household' }));
         await screen.findByText('No pending household invites');
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
-        fireEvent.change(screen.getByPlaceholderText('Recipient email'), { target: { value: 'guardian@example.com' } });
+        expect(screen.getByLabelText('Name')).toBeTruthy();
+        expect(screen.getByLabelText('Relation')).toBeTruthy();
+        fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'guardian@example.com' } });
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 

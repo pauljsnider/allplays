@@ -108,10 +108,3 @@ jobs:
           PARENT_CENSUS_PLAYER_ID: ${{ vars.PARENT_CENSUS_PLAYER_ID }}
           PARENT_CENSUS_REDEMPTION_TEAM_ID: ${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}
           PARENT_CENSUS_REDEMPTION_PLAYER_ID: ${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}
-
-      - name: Audit protected mailbox grant
-        run: node scripts/audit-parent-coverage-mailbox.mjs
-        env:
-          PARENT_CENSUS_MAILBOX_CLIENT_ID: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_ID }}
-          PARENT_CENSUS_MAILBOX_CLIENT_SECRET: ${{ secrets.PARENT_CENSUS_MAILBOX_CLIENT_SECRET }}
-          PARENT_CENSUS_MAILBOX_REFRESH_TOKEN: ${{ secrets.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN }}

@@ -7,10 +7,6 @@ import {
     workflowRouteAllowed
 } from '../../../scripts/parent-coverage-contract.mjs';
 import {
-    findLatestParentMailboxActionLink,
-    validateParentMailboxActionUrl
-} from '../../../scripts/parent-coverage-mailbox.mjs';
-import {
     buildAppSmokeUrl,
     collectAppRuntimeIssues,
     signInToApp
@@ -51,10 +47,7 @@ export function getParentCoverageSecrets() {
         process.env.PARENT_CENSUS_LIFECYCLE_EMAIL,
         process.env.PARENT_CENSUS_LIFECYCLE_PASSWORD,
         process.env.PARENT_CENSUS_ADMIN_EMAIL,
-        process.env.PARENT_CENSUS_ADMIN_PASSWORD,
-        process.env.PARENT_CENSUS_MAILBOX_CLIENT_ID,
-        process.env.PARENT_CENSUS_MAILBOX_CLIENT_SECRET,
-        process.env.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN
+        process.env.PARENT_CENSUS_ADMIN_PASSWORD
     ].filter(Boolean);
 }
 
@@ -229,9 +222,20 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
     const pendingControlRestorations = new Map();
     const pendingCleanupTargets = new Map();
     const mutationTracker = createParentCoverageMutationTracker();
-    const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
     const secrets = getParentCoverageSecrets();
+    const controlledNavigationDepth = new WeakMap();
+    const controlledLifecycleClickWorkflows = new Set(['P02', 'P08', 'P37']);
+
+    async function withControlledNavigation(page, operation) {
+        controlledNavigationDepth.set(page, (controlledNavigationDepth.get(page) || 0) + 1);
+        try {
+            return await operation();
+        } finally {
+            const nextDepth = (controlledNavigationDepth.get(page) || 1) - 1;
+            controlledNavigationDepth.set(page, Math.max(0, nextDepth));
+        }
+    }
     if (/\{LIFECYCLE_(?:SIGNUP|TEAM)_INVITE_CODE\}/.test(JSON.stringify(contract))) {
         const adminEmail = String(process.env.PARENT_CENSUS_ADMIN_EMAIL || '');
         const adminPassword = String(process.env.PARENT_CENSUS_ADMIN_PASSWORD || '');
@@ -276,7 +280,15 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             : { width: 1280, height: 720 };
         const context = await browser.newContext({ serviceWorkers: 'block', viewport });
         const page = await context.newPage();
-        const runtime = { context, page, issues: collectAppRuntimeIssues(page, secrets), signedIn: false };
+        const runtime = {
+            context,
+            page,
+            issues: collectAppRuntimeIssues(page, secrets, {
+                includeApiFailures: true,
+                isControlledNavigation: () => (controlledNavigationDepth.get(page) || 0) > 0
+            }),
+            signedIn: false
+        };
         actors.set(actor, runtime);
         return runtime;
     }
@@ -303,7 +315,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
 
     async function assertCleanupClickPersisted(page, target, workflowId) {
         await expect(target).toBeHidden({ timeout: 20_000 });
-        await page.reload({ waitUntil: 'domcontentloaded' });
+        await withControlledNavigation(page, () => page.reload({ waitUntil: 'domcontentloaded' }));
         await assertAllowedPage(page, appBaseUrl, workflowId);
         await expect(target).toBeHidden({ timeout: 20_000 });
     }
@@ -330,7 +342,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             () => countVisibleRestorationTargets(page, email, names),
             { timeout: 20_000 }
         ).toBe(0);
-        await page.reload({ waitUntil: 'domcontentloaded' });
+        await withControlledNavigation(page, () => page.reload({ waitUntil: 'domcontentloaded' }));
         await assertAllowedPage(page, appBaseUrl, workflowId);
         await expect.poll(
             () => countVisibleRestorationTargets(page, email, names),
@@ -351,7 +363,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         const pendingControls = pendingControlRestorations.get(key) || [];
         const pendingTargets = pendingCleanupTargets.get(key) || [];
         if (!pendingControls.length && !pendingTargets.length) return false;
-        await page.reload({ waitUntil: 'domcontentloaded' });
+        await withControlledNavigation(page, () => page.reload({ waitUntil: 'domcontentloaded' }));
         await assertAllowedPage(page, appBaseUrl, workflowId);
         for (const restoration of pendingControls) {
             const restoredTarget = await locatorFor(page, restoration.target, variables, restoration.scope);
@@ -379,21 +391,24 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         };
         if (step.action === 'login') {
             const credentials = actorCredentials(actor);
-            await signInToApp(page, { appBaseUrl, ...credentials, roleLabel: `parent-census-${actor}` });
+            await withControlledNavigation(page, () => signInToApp(
+                page,
+                { appBaseUrl, ...credentials, roleLabel: `parent-census-${actor}` }
+            ));
             runtime.signedIn = true;
             await assertAllowedPage(page, appBaseUrl);
             return;
         }
         if (step.action === 'goto') {
-            await page.goto(buildAppSmokeUrl(appBaseUrl, interpolateTemplate(step.route, variables)), {
-                waitUntil: 'domcontentloaded',
-                timeout: 45_000
-            });
+            await withControlledNavigation(page, () => page.goto(
+                buildAppSmokeUrl(appBaseUrl, interpolateTemplate(step.route, variables)),
+                { waitUntil: 'domcontentloaded', timeout: 45_000 }
+            ));
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
         if (step.action === 'reload') {
-            await page.reload({ waitUntil: 'domcontentloaded' });
+            await withControlledNavigation(page, () => page.reload({ waitUntil: 'domcontentloaded' }));
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
@@ -402,21 +417,35 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${expectedRoute}`);
             return;
         }
-        if (step.action === 'openLatestMailboxLink') {
-            const credentials = actorCredentials(actor);
-            const actionUrl = await findLatestParentMailboxActionLink({
-                action: step.option,
-                recipient: credentials.email,
-                clientId: process.env.PARENT_CENSUS_MAILBOX_CLIENT_ID || '',
-                clientSecret: process.env.PARENT_CENSUS_MAILBOX_CLIENT_SECRET || '',
-                refreshToken: process.env.PARENT_CENSUS_MAILBOX_REFRESH_TOKEN || '',
-                afterEpoch: mailboxAfterEpoch
+        if (step.action === 'redeemRunScopedHouseholdInvite') {
+            if (!runtime.signedIn) throw new Error('lifecycle actor must sign in before household invite redemption');
+            const source = await actorRuntime(step.option);
+            await assertAllowedPage(source.page, appBaseUrl, contract.workflowId);
+            const marker = variables.RUN_MARKER;
+            if (!marker) throw new Error('run-scoped household invite marker is unavailable');
+            const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const relation = source.page.getByText(new RegExp(`^${escapedMarker}\\s+for\\s+`, 'i'));
+            await expect(relation).toHaveCount(1, { timeout: 20_000 });
+            const container = relation.locator(
+                'xpath=ancestor-or-self::*[self::article or self::li or @role="listitem" or contains(@class,"rounded-xl")][1]'
+            );
+            await expect(container).toHaveCount(1, { timeout: 20_000 });
+            await expect(container.getByText(actorCredentials('lifecycle').email, { exact: true })).toHaveCount(1);
+            const inviteText = await container.innerText();
+            const inviteCode = inviteText.match(/\bCode\s+([A-HJ-NP-Z2-9]{8})\b/i)?.[1]?.toUpperCase() || '';
+            if (!inviteCode) throw new Error('run-scoped household invite code is unavailable');
+            await withControlledNavigation(page, async () => {
+                await page.goto(buildAppSmokeUrl(
+                    appBaseUrl,
+                    `/accept-invite?code=${encodeURIComponent(inviteCode)}&type=household`
+                ), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+                await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+                await expect.poll(
+                    () => new URL(page.url()).hash,
+                    { timeout: 20_000 }
+                ).toMatch(/^#\/home(?:\?|$)/);
             });
-            await page.goto(actionUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-            validateParentMailboxActionUrl(page.url(), step.option, {
-                allowConsumed: true,
-                requireAppRoute: true
-            });
+            markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
@@ -441,14 +470,19 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             ) {
                 throw new Error('run-scoped family share link left the trusted workflow capability');
             }
-            await page.goto(destination.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+            await withControlledNavigation(page, () => page.goto(
+                destination.toString(),
+                { waitUntil: 'domcontentloaded', timeout: 45_000 }
+            ));
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
         if (step.action === 'logout') {
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
-            await page.getByRole('button', { name: 'Sign out' }).first().click();
-            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/(?:auth|home)(?:\?|$)/);
+            await withControlledNavigation(page, async () => {
+                await page.getByRole('button', { name: 'Sign out' }).first().click();
+                await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/(?:auth|home)(?:\?|$)/);
+            });
             runtime.signedIn = false;
             return;
         }
@@ -516,7 +550,14 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         case 'click':
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
             if (phase === 'cleanup') await clickCleanupTarget(page, target);
-            else await target.click();
+            else if (controlledLifecycleClickWorkflows.has(contract.workflowId)) {
+                await withControlledNavigation(page, async () => {
+                    await target.click();
+                    // Lifecycle transitions such as invite redemption schedule
+                    // their route change just after the click promise resolves.
+                    await page.waitForTimeout(750);
+                });
+            } else await target.click();
             markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             if (phase === 'cleanup') {
@@ -541,23 +582,27 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             }
             break;
         case 'clickAndExpectGoogleAuth': {
-            const popup = await clickAndExpectGoogleAuth(page, target);
-            const authPage = popup || page;
-            await authPage.waitForLoadState('domcontentloaded', { timeout: 45_000 });
-            const destination = new URL(authPage.url());
-            if (destination.protocol !== 'https:' || destination.hostname !== 'accounts.google.com' || destination.port) {
-                throw new Error('Google sign-in did not reach the allowlisted account handoff');
-            }
-            if (popup) await popup.close();
-            else await page.goBack({ waitUntil: 'domcontentloaded' });
+            await withControlledNavigation(page, async () => {
+                const popup = await clickAndExpectGoogleAuth(page, target);
+                const authPage = popup || page;
+                await authPage.waitForLoadState('domcontentloaded', { timeout: 45_000 });
+                const destination = new URL(authPage.url());
+                if (destination.protocol !== 'https:' || destination.hostname !== 'accounts.google.com' || destination.port) {
+                    throw new Error('Google sign-in did not reach the allowlisted account handoff');
+                }
+                if (popup) await popup.close();
+                else await page.goBack({ waitUntil: 'domcontentloaded' });
+            });
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         }
         case 'clickAndExpectRoute': {
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
-            await target.click();
             const expectedRoute = interpolateTemplate(step.route, variables);
-            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${expectedRoute}`);
+            await withControlledNavigation(page, async () => {
+                await target.click();
+                await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${expectedRoute}`);
+            });
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         }

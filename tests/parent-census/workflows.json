@@ -3,9 +3,9 @@
   "workflows": [
     { "id": "P01", "title": "Parent invite landing preserves invite context", "group": "identity", "actors": ["anonymous"] },
     { "id": "P02", "title": "Invite-based email and password signup", "group": "identity", "actors": ["lifecycle"] },
-    { "id": "P03", "title": "Email verification and resend", "group": "identity", "actors": ["lifecycle"] },
-    { "id": "P04", "title": "First verified login and onboarding", "group": "identity", "actors": ["lifecycle"] },
-    { "id": "P05", "title": "Password reset request and completion", "group": "identity", "actors": ["lifecycle"] },
+    { "id": "P03", "title": "Email verification resend request (delivery not verified)", "group": "identity", "actors": ["lifecycle"] },
+    { "id": "P04", "title": "First login and onboarding", "group": "identity", "actors": ["lifecycle"] },
+    { "id": "P05", "title": "Password reset request (delivery not verified)", "group": "identity", "actors": ["lifecycle"] },
     { "id": "P06", "title": "Normal login session restoration and logout", "group": "identity", "actors": ["primary"] },
     { "id": "P07", "title": "Google sign-in handoff and return", "group": "identity", "actors": ["anonymous"] },
     { "id": "P08", "title": "Team invite and access-code redemption", "group": "access", "actors": ["lifecycle"] },

@@ -96,9 +96,18 @@ describe('parent coverage cleanup execution', () => {
         expect(censusSource).not.toContain('productError?.message');
     });
 
-    it('requires mailbox actions to finish on the workflow-scoped app route', () => {
-        expect(runnerSource).toContain('requireAppRoute: true');
-        expect(runnerSource).toMatch(/requireAppRoute: true[\s\S]+assertAllowedPage\(page, appBaseUrl, contract\.workflowId\)/);
+    it('redeems the exact run-scoped household invite without mailbox access', () => {
+        expect(runnerSource).toContain("step.action === 'redeemRunScopedHouseholdInvite'");
+        expect(runnerSource).toContain('run-scoped household invite code is unavailable');
+        expect(runnerSource).toContain("toMatch(/^#\\/home(?:\\?|$)/)");
+        expect(runnerSource).not.toContain('PARENT_CENSUS_MAILBOX_');
+        expect(runnerSource).not.toContain('findLatestParentMailboxActionLink');
+    });
+
+    it('suppresses navigation aborts only for explicit lifecycle transitions', () => {
+        expect(runnerSource).toContain("new Set(['P02', 'P08', 'P37'])");
+        expect(runnerSource).toContain('controlledLifecycleClickWorkflows.has(contract.workflowId)');
+        expect(runnerSource).toContain('else await target.click()');
     });
 
     it('fails closed on ambiguous entity scopes and mutation targets', () => {
@@ -139,7 +148,7 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toContain('cleanupGroupHasStateCommit(step)');
         expect(runnerSource).toContain('pendingCleanupTargets.set(pendingKey, pending)');
         expect(runnerSource).toContain("page.once('dialog', acceptDialog)");
-        expect(runnerSource).toMatch(/await page\.reload[\s\S]+toEqual\(restoration\.state\)/);
+        expect(runnerSource).toMatch(/withControlledNavigation\(page, \(\) => page\.reload[\s\S]+toEqual\(restoration\.state\)/);
     });
 
     it('resolves an invite only for its exact purpose-bound team and player target', () => {

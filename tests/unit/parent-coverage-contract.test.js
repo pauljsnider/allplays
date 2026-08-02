@@ -7,6 +7,7 @@ import {
     classifyParentCoverageError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
+    parentCoverageEvidenceScope,
     redactParentCoverageValue,
     stableFailureSignature,
     validateCatalog,
@@ -226,6 +227,41 @@ describe('parent coverage contract boundary', () => {
                 value: 'embedded-password'
             }]
         }, catalog, 'P02')).toThrow(/unsupported key value/);
+    });
+
+    it('keeps email workflows request-scoped and labels unverified delivery', () => {
+        const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+        const verification = validContract({
+            workflowId: 'P03', title: catalog.workflows[2].title, actors: ['lifecycle'],
+            mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true,
+            steps: [
+                { action: 'login', actor: 'lifecycle' },
+                { action: 'goto', actor: 'lifecycle', route: '/verify-pending' },
+                { action: 'click', actor: 'lifecycle', target: button("I've verified, continue") },
+                { action: 'expectText', actor: 'lifecycle', target: { kind: 'text', name: 'We could not confirm verification yet', exact: true }, value: 'could not confirm verification' },
+                { action: 'click', actor: 'lifecycle', target: button('Resend verification email') },
+                { action: 'expectText', actor: 'lifecycle', target: { kind: 'text', name: 'Verification email queued', exact: true }, value: 'Verification email queued' },
+                { action: 'expectRoute', actor: 'lifecycle', route: '/verify-pending' }
+            ]
+        });
+        const reset = validContract({
+            workflowId: 'P05', title: catalog.workflows[4].title, actors: ['lifecycle'],
+            mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true,
+            steps: [
+                { action: 'click', actor: 'lifecycle', target: button('Forgot password?') },
+                { action: 'fillActorEmail', actor: 'lifecycle', target: { kind: 'label', name: 'Password reset email', exact: true } },
+                { action: 'click', actor: 'lifecycle', target: button('Send reset email') },
+                { action: 'expectText', actor: 'lifecycle', target: { kind: 'text', name: 'If an account exists', exact: true }, value: 'reset email has been queued' },
+                { action: 'expectRoute', actor: 'lifecycle', route: '/auth' }
+            ]
+        });
+
+        expect(validateContract(verification, catalog, 'P03').workflowId).toBe('P03');
+        expect(validateContract(reset, catalog, 'P05').workflowId).toBe('P05');
+        expect(parentCoverageEvidenceScope('P02')).toContain('email-delivery-unverified');
+        expect(parentCoverageEvidenceScope('P03')).toContain('email-delivery-unverified');
+        expect(parentCoverageEvidenceScope('P05')).toContain('email-delivery-unverified');
+        expect(parentCoverageEvidenceScope('P27')).toBe('end-to-end');
     });
 
     it('restricts the checkout popup primitive to the two checkout workflows', () => {
@@ -725,25 +761,23 @@ describe('parent coverage contract boundary', () => {
             cleanupRequired: true,
             lifecycleTransition: false,
             steps: [
-                { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
-                {
-                    action: 'click', actor: 'primary',
-                    target: { kind: 'role', role: 'button', name: 'Revoke access', exact: true }
-                }
+                { action: 'redeemRunScopedHouseholdInvite', actor: 'primary', option: 'primary' }
             ],
             cleanupSteps: [{ action: 'restoreHouseholdAccess', actor: 'primary', mutationId: 'household' }]
         });
-        expect(() => validateContract(household, catalog, 'P27')).toThrow(/outside the trusted P27\/primary mutation capability/);
+        expect(() => validateContract(household, catalog, 'P27')).toThrow(/restricted to P27 lifecycle from primary/);
         expect(validateContract({
             ...household,
             steps: [
                 { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Email', exact: true }, value: '{LIFECYCLE_EMAIL}', mutationId: 'household' },
-                { action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Send invite', exact: true }, mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
-                { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
-                { action: 'click', actor: 'lifecycle', target: { kind: 'role', role: 'button', name: 'Accept invite', exact: true }, mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
+                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Relation', exact: true }, value: '{RUN_MARKER}', mutationId: 'household' },
+                { action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Create invite', exact: true }, mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
+                { action: 'login', actor: 'lifecycle' },
+                { action: 'redeemRunScopedHouseholdInvite', actor: 'lifecycle', option: 'primary', mutationId: 'household', scope: '{LIFECYCLE_EMAIL}', commitMutation: true },
+                { action: 'reload', actor: 'primary' },
                 { action: 'expectText', actor: 'primary', target: { kind: 'text', name: '{LIFECYCLE_EMAIL}', exact: true }, value: '{LIFECYCLE_EMAIL}' }
             ]
-        }, catalog, 'P27').steps).toHaveLength(5);
+        }, catalog, 'P27').steps).toHaveLength(7);
     });
 
     it('rejects routes and actions outside each trusted workflow capability', () => {
