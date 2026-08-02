@@ -210,6 +210,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
+
+            const ownerPlayerPhotoRef = ownerStorage.ref(
+                'profile-photos/teams/team-a/players/player-a/owner-a/player.jpg'
+            );
+            await assertSucceeds(
+                ownerPlayerPhotoRef.put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertSucceeds(
+                adminStorage.ref('profile-photos/teams/team-a/players/player-a/owner-a/player.jpg').delete()
+            );
+            await assertSucceeds(
+                adminStorage.ref('profile-photos/teams/team-a/players/player-a/admin-a/replacement.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
         });
 
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {

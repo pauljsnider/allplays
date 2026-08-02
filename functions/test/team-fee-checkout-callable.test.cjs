@@ -389,6 +389,7 @@ test('does not persist or return an unsafe destination from fresh Stripe creatio
     assert.equal(metrics.writes.some(({ value }) => Boolean(value?.checkoutUrl)), false);
     const recipient = firestore._state.get(recipientPath);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationRequest'), false);
 });
 
 test('expires a new Stripe session and clears its reservation when Firestore persistence fails', async () => {
@@ -405,6 +406,7 @@ test('expires a new Stripe session and clears its reservation when Firestore per
     const recipient = firestore._state.get(recipientPath);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationStartedAt'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationRequest'), false);
 });
 
 test('returns a committed team-fee checkout without expiring it when the transaction response fails', async () => {
@@ -426,6 +428,7 @@ test('returns a committed team-fee checkout without expiring it when the transac
     assert.equal(recipient.checkoutStatus, 'open');
     assert.equal(recipient.stripeCheckoutSessionId, 'cs_test_new');
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationRequest'), false);
 });
 
 test('does not expire a shared idempotent team-fee session when one concurrent persistence response fails', async () => {
@@ -512,6 +515,87 @@ test('uses one durable idempotency reservation for concurrent checkout creation'
     const idempotencyKeys = loaded.metrics.createCalls.map(({ options }) => options?.idempotencyKey);
     assert.match(idempotencyKeys[0], /^team_fee_checkout_[a-f0-9]{64}$/);
     assert.equal(idempotencyKeys[0], idempotencyKeys[1]);
+    assert.deepEqual(loaded.metrics.createCalls[0], loaded.metrics.createCalls[1]);
+});
+
+test('replays the exact team-fee Stripe request after an uncertain provider response, even after the app timeout', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    let createCount = 0;
+    const loaded = loadCallable({
+        seed: baseSeed({
+            feeTitle: 'Spring dues',
+            playerName: 'Original Player',
+            parentEmail: 'original-parent@example.com'
+        }),
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                throw Object.assign(new Error('provider connection closed'), { type: 'StripeConnectionError' });
+            }
+            return makeSession({
+                id: 'cs_test_uncertain_retry',
+                url: 'https://checkout.stripe.com/c/pay/cs_test_uncertain_retry',
+                metadata: clone(params.metadata)
+            });
+        }
+    });
+
+    await assert.rejects(loaded.callable(input, context), /provider connection closed/);
+    const reserved = loaded.firestore._state.get(recipientPath);
+    reserved.feeTitle = 'Changed dues';
+    reserved.playerName = 'Changed Player';
+    reserved.parentEmail = 'changed-parent@example.com';
+    reserved.checkoutCreationStartedAt = Date.now() - (24 * 60 * 60 * 1000);
+    loaded.firestore._state.set(recipientPath, reserved);
+
+    const retryContext = {
+        auth: {
+            uid: 'owner-1',
+            token: { email: 'changed-owner@example.com', email_verified: true }
+        }
+    };
+    const result = await loaded.callable(input, retryContext);
+
+    assert.equal(result.sessionId, 'cs_test_uncertain_retry');
+    assert.equal(loaded.metrics.createCalls.length, 2);
+    assert.deepEqual(loaded.metrics.createCalls[1], loaded.metrics.createCalls[0]);
+    assert.equal(Object.prototype.hasOwnProperty.call(
+        loaded.firestore._state.get(recipientPath),
+        'checkoutCreationRequest'
+    ), false);
+});
+
+test('clears an exact team-fee creation request after a definitive Stripe rejection', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    let createCount = 0;
+    const loaded = loadCallable({
+        create: async (params) => {
+            createCount += 1;
+            if (createCount === 1) {
+                throw Object.assign(new Error('invalid Stripe request'), {
+                    type: 'StripeInvalidRequestError',
+                    statusCode: 400
+                });
+            }
+            return makeSession({
+                id: 'cs_test_after_definitive_rejection',
+                url: 'https://checkout.stripe.com/c/pay/cs_test_after_definitive_rejection',
+                metadata: clone(params.metadata)
+            });
+        }
+    });
+
+    await assert.rejects(loaded.callable(input, context), /invalid Stripe request/);
+    const afterFailure = loaded.firestore._state.get(recipientPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(afterFailure, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(afterFailure, 'checkoutCreationRequest'), false);
+
+    const result = await loaded.callable(input, context);
+    assert.equal(result.sessionId, 'cs_test_after_definitive_rejection');
+    assert.notEqual(
+        loaded.metrics.createCalls[0].options.idempotencyKey,
+        loaded.metrics.createCalls[1].options.idempotencyKey
+    );
 });
 
 test('uses a stable idempotency key for repeated team-pass checkout creation', async () => {

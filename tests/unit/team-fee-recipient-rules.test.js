@@ -168,6 +168,7 @@ describe('team fee recipient Firestore rules', () => {
             checkoutCreationStartedAt: 'client-time',
             checkoutCreationPayerUid: 'parent-a',
             checkoutCreationAmountCents: 2500,
+            checkoutCreationRequest: { version: 1, idempotencyKey: 'forged' },
             paymentProvider: 'stripe',
             stripePaymentStatus: 'unpaid',
             stripePaymentAmountCents: 2500,

@@ -83,6 +83,7 @@ export type TeamDetailPlayer = {
   name: string;
   number: string;
   photoUrl: string | null;
+  photoPath?: string | null;
   position: string;
   isLinked: boolean;
   active: boolean;
@@ -1407,6 +1408,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     name,
     number: cleanString(input?.number),
     photoUrl,
+    photoPath: nativePhotoPath || webPhotoPath || null,
     ...(position ? { position } : {}),
     profile: {
       customFields: publicValues
@@ -1443,10 +1445,23 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   } catch (error) {
     if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
       await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-    } else if (webPhotoPath) {
-      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+      throw error;
     }
-    throw error;
+    if (webPhotoPath) {
+      const persistenceState = isDefinitiveFirestoreWriteFailure(error)
+        ? 'not-committed'
+        : await getPlayerPhotoPersistenceState(normalizedTeamId, playerId, webPhotoPath);
+      if (persistenceState === 'committed') {
+        savedPlayerId = playerId;
+      } else {
+        if (persistenceState === 'not-committed') {
+          await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+        }
+        throw error;
+      }
+    } else {
+      throw error;
+    }
   }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
@@ -2464,6 +2479,7 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     name: cleanString(player?.name || player?.playerName) || 'Player',
     number: cleanString(player?.number),
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
+    photoPath: cleanString(player?.photoPath) || null,
     position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
     isLinked: linked.has(id),
     active: player?.active !== false
@@ -3048,6 +3064,19 @@ function isDefinitiveFirestoreWriteFailure(error: unknown) {
     'unauthenticated',
     'unimplemented'
   ]).has(code);
+}
+
+async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, expectedPhotoPath: string) {
+  if (!expectedPhotoPath) return 'not-committed' as const;
+  try {
+    const players = await getPlayers(teamId, { includeInactive: true });
+    const player = players.find((candidate: any) => candidate?.id === playerId);
+    return cleanString(player?.photoPath) === expectedPhotoPath
+      ? 'committed' as const
+      : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
 }
 
 function cleanString(value: unknown) {

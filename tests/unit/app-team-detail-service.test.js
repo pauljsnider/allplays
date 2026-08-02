@@ -609,7 +609,10 @@ describe('React app team detail model', () => {
                 sortOrder: 3
             }
         ]);
-        uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
+        uploadPlayerPhoto.mockResolvedValue({
+            url: 'https://img.example.test/player-1.png',
+            path: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png'
+        });
         applyRosterCsvImportOperations.mockImplementation(async (_teamId, operations) => operations);
 
         const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
@@ -639,6 +642,7 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png',
                 position: 'Forward',
                 profile: {
                     customFields: {
@@ -656,6 +660,7 @@ describe('React app team detail model', () => {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/coach-1/player.png',
                 position: 'Forward',
                 profile: {
                     customFields: {

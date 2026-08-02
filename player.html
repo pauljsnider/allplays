@@ -1217,6 +1217,7 @@
             emergencyContactPhone,
             medicalInfo,
             photoUrl,
+            photoPath,
             profile,
             privateProfileLoadFailed,
             privateFieldsDirty
@@ -1240,11 +1241,42 @@
                 data.photoUrl = photoUrl;
             }
 
+            if (typeof photoPath !== 'undefined') {
+                data.photoPath = photoPath;
+            }
+
             if (profile) {
                 data.profile = profile;
             }
 
             return data;
+        }
+
+        function isDefinitiveFirestoreWriteFailure(error) {
+            const code = String(error?.code || '').trim().toLowerCase().split('/').pop() || '';
+            return new Set([
+                'already-exists',
+                'failed-precondition',
+                'invalid-argument',
+                'not-found',
+                'out-of-range',
+                'permission-denied',
+                'resource-exhausted',
+                'unauthenticated',
+                'unimplemented'
+            ]).has(code);
+        }
+
+        async function getPlayerPhotoPersistenceState(expectedPhotoPath) {
+            try {
+                const players = await getPlayers(currentTeamId, { includeInactive: true });
+                const player = players.find((candidate) => candidate?.id === currentPlayer?.id);
+                return String(player?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
         }
 
         document.getElementById('close-edit-modal').addEventListener('click', () => {
@@ -1281,10 +1313,12 @@
             btn.textContent = 'Saving...';
             let newlyUploadedPlayerPhotoPath = '';
             let playerPhotoPersisted = false;
+            const previousPhotoPath = String(currentPlayer?.photoPath || '').trim();
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
                 let photoUrl;
+                let photoPath;
                 const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
                 const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
                 const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
@@ -1304,6 +1338,7 @@
                     });
                     photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
                     newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
+                    photoPath = newlyUploadedPlayerPhotoPath || null;
                 }
 
                 const data = buildPlayerProfileUpdatePayload({
@@ -1311,6 +1346,7 @@
                     emergencyContactPhone: document.getElementById('edit-ec-phone').value,
                     medicalInfo: document.getElementById('edit-medical-info').value,
                     photoUrl,
+                    photoPath,
                     profile: editableRosterFields.length ? { ...(currentPlayer.profile || {}), customFields: profileValues } : null,
                     privateProfileLoadFailed,
                     privateFieldsDirty
@@ -1324,8 +1360,25 @@
                     privateData.medicalInfo = medicalInfo;
                 }
 
-                await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
-                playerPhotoPersisted = Boolean(photoUrl);
+                try {
+                    await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                    playerPhotoPersisted = Boolean(newlyUploadedPlayerPhotoPath);
+                } catch (error) {
+                    const persistenceState = newlyUploadedPlayerPhotoPath && !isDefinitiveFirestoreWriteFailure(error)
+                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)
+                        : 'not-committed';
+                    if (persistenceState === 'committed') {
+                        playerPhotoPersisted = true;
+                    } else {
+                        if (persistenceState === 'unknown') {
+                            playerPhotoPersisted = true;
+                        }
+                        throw error;
+                    }
+                }
+                if (newlyUploadedPlayerPhotoPath && previousPhotoPath && previousPhotoPath !== newlyUploadedPlayerPhotoPath) {
+                    await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                }
                 if (playerPhotoPersisted) {
                     document.getElementById('edit-photo-input').value = '';
                 }

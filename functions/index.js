@@ -546,8 +546,6 @@ function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
 }
 
-const TEAM_FEE_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS = 15 * 60 * 1000;
-
 function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId) {
   const hash = crypto.createHash('sha256')
     .update([
@@ -558,6 +556,79 @@ function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId
     ].join('|'))
     .digest('hex');
   return `team_fee_checkout_${hash}`;
+}
+
+function buildTeamFeeCheckoutCreationRequest({
+  appUrl,
+  input,
+  recipient,
+  amountCents,
+  email,
+  uid,
+  reservationId
+}) {
+  const checkoutAttemptToken = reservationId.replace(/-/g, '');
+  const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
+  const title = recipient.feeTitle || recipient.title || 'Team fee';
+  const playerName = recipient.playerName || recipient.childName || '';
+  const description = playerName ? `${title} for ${playerName}` : title;
+  const customerEmail = String(email || recipient.parentEmail || recipient.email || '').trim();
+  return {
+    version: 1,
+    idempotencyKey: buildTeamFeeCheckoutIdempotencyKey(input, reservationId),
+    checkoutAttemptToken,
+    stripeParams: {
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          unit_amount: amountCents,
+          product_data: { name: description }
+        },
+        quantity: 1
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      ...(customerEmail ? { customer_email: customerEmail } : {}),
+      client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
+      metadata: buildTeamFeeCheckoutMetadata({
+        ...input,
+        payerUid: uid,
+        checkoutAttemptToken,
+        checkoutAmountCents: amountCents
+      })
+    }
+  };
+}
+
+function isReusableTeamFeeCheckoutCreationRequest(request, { input, uid, amountCents, reservationId }) {
+  const params = request?.stripeParams;
+  const metadata = params?.metadata;
+  const lineItem = params?.line_items?.[0];
+  const expectedAttemptToken = reservationId.replace(/-/g, '');
+  return Boolean(
+    request
+    && request.version === 1
+    && request.idempotencyKey === buildTeamFeeCheckoutIdempotencyKey(input, reservationId)
+    && request.checkoutAttemptToken === expectedAttemptToken
+    && params?.mode === 'payment'
+    && typeof params.success_url === 'string'
+    && typeof params.cancel_url === 'string'
+    && params.client_reference_id === `${input.teamId}:${input.batchId}:${input.recipientId}`
+    && Array.isArray(params.line_items)
+    && params.line_items.length === 1
+    && lineItem?.quantity === 1
+    && lineItem?.price_data?.currency === 'usd'
+    && lineItem?.price_data?.unit_amount === amountCents
+    && typeof lineItem?.price_data?.product_data?.name === 'string'
+    && metadata?.product === 'team_fee'
+    && metadata?.teamId === input.teamId
+    && metadata?.batchId === input.batchId
+    && metadata?.recipientId === input.recipientId
+    && metadata?.payerUid === uid
+    && metadata?.checkoutAttemptToken === expectedAttemptToken
+    && metadata?.checkoutAmountCents === String(amountCents)
+  );
 }
 
 async function expireStripeCheckoutSessionForRollback(stripe, session, operation) {
@@ -620,7 +691,8 @@ async function reserveTeamFeeCheckoutCreation({
   email,
   amountCents,
   observedSessionId,
-  proposedReservationId
+  proposedReservationId,
+  appUrl
 }) {
   const now = admin.firestore.FieldValue.serverTimestamp();
   return firestore.runTransaction(async (transaction) => {
@@ -646,28 +718,52 @@ async function reserveTeamFeeCheckoutCreation({
     }
 
     const existingReservationId = String(latestRecipient.checkoutCreationReservationId || '').trim();
-    const existingReservationStartedAtMillis = firestoreTimestampToMillis(latestRecipient.checkoutCreationStartedAt);
-    const existingReservationIsActive = Boolean(existingReservationId) && (
-      !Number.isFinite(existingReservationStartedAtMillis)
-      || Date.now() - existingReservationStartedAtMillis < TEAM_FEE_CHECKOUT_CREATION_RESERVATION_TIMEOUT_MS
-    );
-    if (existingReservationIsActive) {
+    if (existingReservationId) {
       const existingPayerUid = String(latestRecipient.checkoutCreationPayerUid || '').trim();
       const existingAmountCents = Math.round(Number(latestRecipient.checkoutCreationAmountCents || 0));
       if (existingPayerUid !== uid || existingAmountCents !== amountCents) {
         throw new functions.https.HttpsError('failed-precondition', 'Team fee checkout creation is already in progress.');
       }
-      return { reservationId: existingReservationId, recipient: latestRecipient };
+      const existingRequest = latestRecipient.checkoutCreationRequest;
+      if (!isReusableTeamFeeCheckoutCreationRequest(existingRequest, {
+        input,
+        uid,
+        amountCents,
+        reservationId: existingReservationId
+      })) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'This checkout has an incomplete prior creation attempt. Contact support before retrying.'
+        );
+      }
+      return {
+        reservationId: existingReservationId,
+        checkoutCreationRequest: existingRequest
+      };
     }
+
+    const checkoutCreationRequest = buildTeamFeeCheckoutCreationRequest({
+      appUrl,
+      input,
+      recipient: latestRecipient,
+      amountCents,
+      email,
+      uid,
+      reservationId: proposedReservationId
+    });
 
     transaction.set(recipientRef, {
       checkoutCreationReservationId: proposedReservationId,
       checkoutCreationStartedAt: now,
       checkoutCreationPayerUid: uid,
       checkoutCreationAmountCents: amountCents,
+      checkoutCreationRequest,
       updatedAt: now
     }, { merge: true });
-    return { reservationId: proposedReservationId, recipient: latestRecipient };
+    return {
+      reservationId: proposedReservationId,
+      checkoutCreationRequest
+    };
   });
 }
 
@@ -683,6 +779,7 @@ async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservation
       checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
       checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
       checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
     return true;
@@ -5206,6 +5303,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     }
   }
 
+  const { appUrl } = getStripeConfig();
   const proposedReservationId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
   const reservation = await reserveTeamFeeCheckoutCreation({
     input,
@@ -5216,46 +5314,21 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     email,
     amountCents,
     observedSessionId: persistedSessionId,
-    proposedReservationId
+    proposedReservationId,
+    appUrl
   });
   const checkoutCreationReservationId = reservation.reservationId;
-  const checkoutAttemptToken = checkoutCreationReservationId.replace(/-/g, '');
-  const { appUrl } = getStripeConfig();
-  const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
-  const checkoutRecipient = reservation.recipient;
-  const title = checkoutRecipient.feeTitle || checkoutRecipient.title || 'Team fee';
-  const playerName = checkoutRecipient.playerName || checkoutRecipient.childName || '';
-  const description = playerName ? `${title} for ${playerName}` : title;
+  const checkoutCreationRequest = reservation.checkoutCreationRequest;
+  const checkoutAttemptToken = checkoutCreationRequest.checkoutAttemptToken;
   let session;
   try {
-    session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          unit_amount: amountCents,
-          product_data: {
-            name: description
-          }
-        },
-        quantity: 1
-      }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      customer_email: email || checkoutRecipient.parentEmail || checkoutRecipient.email || undefined,
-      client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
-      metadata: buildTeamFeeCheckoutMetadata({
-        ...input,
-        payerUid: context.auth.uid,
-        checkoutAttemptToken,
-        checkoutAmountCents: amountCents
-      })
-    }, {
-      idempotencyKey: buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId)
+    session = await stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams, {
+      idempotencyKey: checkoutCreationRequest.idempotencyKey
     });
   } catch (error) {
-    // Preserve the reservation because Stripe may have accepted an uncertain
-    // request. A retry by the same payer reuses the exact idempotency key.
+    if (!isUncertainStripeCheckoutCreationError(error)) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, checkoutCreationReservationId).catch(() => {});
+    }
     throw error;
   }
 
@@ -5319,6 +5392,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
         checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
         checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
         checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
         updatedAt: changedAt
       };
       const changedFields = getChangedTeamFeeFinancialFields(latestRecipient, recipientUpdate);

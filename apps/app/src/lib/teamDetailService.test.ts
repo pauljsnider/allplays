@@ -562,9 +562,31 @@ describe('addRosterPlayerForApp browser photo scope', () => {
     expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', [expect.objectContaining({
       type: 'add',
       playerId: 'native-player-1',
-      payload: expect.objectContaining({ photoUrl: 'https://primary.example/player.jpg' })
+      payload: expect.objectContaining({
+        photoUrl: 'https://primary.example/player.jpg',
+        photoPath: 'profile-photos/teams/team-1/players/native-player-1/owner-1/player.jpg'
+      })
     })]);
     expect(result.playerId).toBe('native-player-1');
+  });
+
+  it('recovers a browser player create when an authoritative read confirms the write committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/owner-1/player.jpg';
+    dbMocks.getPlayers
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 'native-player-1', photoPath: newPath }]);
+    dbMocks.applyRosterCsvImportOperations.mockRejectedValueOnce(
+      Object.assign(new Error('response unavailable'), { code: 'unavailable' })
+    );
+    __resetTeamDetailBaseSnapshotCacheForTests();
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result.playerId).toBe('native-player-1');
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
   });
 });
 

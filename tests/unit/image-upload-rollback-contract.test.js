@@ -40,6 +40,8 @@ describe('legacy image upload rollback contracts', () => {
         expect(source).toContain("type: 'add',");
         expect(source).toContain('playerId: reservedPlayerId,');
         expect(source).toContain('payload: playerData,');
+        expect(source).toContain('photoPath: nextPhotoPath || null');
+        expect(source).toContain("getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath)");
         expect(source).not.toContain('const savedPlayerId = await addPlayer(currentTeamId, playerData);');
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
     });
@@ -51,7 +53,9 @@ describe('legacy image upload rollback contracts', () => {
 
         expect(validationIndex).toBeGreaterThan(0);
         expect(uploadIndex).toBeGreaterThan(validationIndex);
-        expect(source).toContain('playerPhotoPersisted = Boolean(photoUrl);');
+        expect(source).toContain('photoPath = newlyUploadedPlayerPhotoPath || null;');
+        expect(source).toContain('await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)');
+        expect(source).toContain("if (persistenceState === 'unknown')");
         expect(source).toContain('if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted)');
     });
 

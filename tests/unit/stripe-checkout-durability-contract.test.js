@@ -18,10 +18,10 @@ describe('Stripe Checkout durability contract', () => {
         const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
         const registration = exportBlock('createStripeRegistrationCheckout', 'cancelStripeRegistrationCheckout');
 
-        for (const block of [teamPass, teamFee]) {
-            expect(block).toContain('stripe.checkout.sessions.create({');
-            expect(block).toContain('idempotencyKey:');
-        }
+        expect(teamPass).toContain('stripe.checkout.sessions.create({');
+        expect(teamPass).toContain('idempotencyKey:');
+        expect(teamFee).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
+        expect(teamFee).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(registration).toContain('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams');
         expect(registration).toContain('idempotencyKey: checkoutCreationRequest.idempotencyKey');
         expect(teamPass).toContain('isCanonicalStripeCheckoutUrl');
@@ -35,10 +35,20 @@ describe('Stripe Checkout durability contract', () => {
         const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
 
         expect(teamFee.indexOf('reserveTeamFeeCheckoutCreation')).toBeLessThan(
-            teamFee.indexOf('stripe.checkout.sessions.create({')
+            teamFee.indexOf('stripe.checkout.sessions.create(checkoutCreationRequest.stripeParams')
         );
         expect(teamFee).toContain("expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-persistence')");
         expect(teamFee).toContain('clearTeamFeeCheckoutCreationReservation');
+    });
+
+    it('persists and reuses the exact team-fee Stripe request across uncertain retries', () => {
+        const teamFee = exportBlock('createStripeTeamFeeCheckout', 'refundStripeTeamFeePayment');
+
+        expect(functionsSource).toContain('checkoutCreationRequest: existingRequest');
+        expect(functionsSource).toContain('checkoutCreationRequest,');
+        expect(functionsSource).toContain('isReusableTeamFeeCheckoutCreationRequest');
+        expect(teamFee).toContain('isUncertainStripeCheckoutCreationError(error)');
+        expect(teamFee).toContain('checkoutCreationRequest: admin.firestore.FieldValue.delete()');
     });
 
     it('compensates registration persistence failure after Stripe succeeds', () => {

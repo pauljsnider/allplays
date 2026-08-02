@@ -579,6 +579,7 @@
         let currentUser = null;
         let editingPlayerId = null;
         let editingPhotoUrl = null;
+        let editingPhotoPath = null;
         let editingPlayerProfile = null;
         let rosterFieldDefinitions = [];
         let rosterFieldDefinitionDrafts = [];
@@ -2044,6 +2045,7 @@
         function resetForm() {
             editingPlayerId = null;
             editingPhotoUrl = null;
+            editingPhotoPath = null;
             editingPlayerProfile = null;
             document.getElementById('add-player-form').reset();
             document.getElementById('submit-player').textContent = 'Add Player';
@@ -2367,6 +2369,7 @@
 
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
+            editingPhotoPath = player.photoPath || null;
             editingPlayerProfile = player.profile || null;
             document.getElementById('playerName').value = player.name || '';
             document.getElementById('playerNumber').value = player.number || '';
@@ -2431,10 +2434,40 @@
             }
         });
 
+        function isDefinitiveFirestoreWriteFailure(error) {
+            const code = String(error?.code || '').trim().toLowerCase().split('/').pop() || '';
+            return new Set([
+                'already-exists',
+                'failed-precondition',
+                'invalid-argument',
+                'not-found',
+                'out-of-range',
+                'permission-denied',
+                'resource-exhausted',
+                'unauthenticated',
+                'unimplemented'
+            ]).has(code);
+        }
+
+        async function getPlayerPhotoPersistenceState(playerId, expectedPhotoPath) {
+            try {
+                const players = await getPlayers(currentTeamId, { includeInactive: true });
+                const player = players.find((candidate) => candidate?.id === playerId);
+                return String(player?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
+        }
+
         document.getElementById('add-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             let newlyUploadedPlayerPhotoPath = '';
             let playerPhotoPersisted = false;
+            let playerPhotoWriteAttempted = false;
+            const previousPhotoPath = editingPhotoPath || '';
+            let nextPhotoPath = previousPhotoPath;
             const name = document.getElementById('playerName').value;
             const number = document.getElementById('playerNumber').value;
             const photoInput = document.getElementById('playerPhoto');
@@ -2454,6 +2487,7 @@
 
                 if (removePhoto) {
                     photoUrl = null;
+                    nextPhotoPath = '';
                 }
 
                 if (photoInput.files.length > 0) {
@@ -2475,6 +2509,7 @@
                     });
                     photoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
                     newlyUploadedPlayerPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
+                    nextPhotoPath = newlyUploadedPlayerPhotoPath;
                 }
 
                 const { publicProfile: existingPublicProfile, privateValues: legacyProtectedValues } = splitProtectedRosterProfileValues(editingPlayerProfile || {});
@@ -2487,12 +2522,14 @@
                     name,
                     number,
                     photoUrl,
+                    photoPath: nextPhotoPath || null,
                     profile: publicProfile
                 };
                 if (Object.prototype.hasOwnProperty.call(publicValues, 'position')) {
                     playerData.position = publicValues.position;
                 }
 
+                playerPhotoWriteAttempted = true;
                 if (editingPlayerId) {
                     await applyRosterCsvImportOperations(currentTeamId, [{
                         type: 'update',
@@ -2510,9 +2547,30 @@
                 }
                 playerPhotoPersisted = true;
 
+                if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {
+                    await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                }
+
                 resetForm();
                 loadRoster();
             } catch (error) {
+                if (newlyUploadedPlayerPhotoPath && playerPhotoWriteAttempted && !isDefinitiveFirestoreWriteFailure(error)) {
+                    const persistenceState = await getPlayerPhotoPersistenceState(reservedPlayerId, nextPhotoPath);
+                    if (persistenceState === 'committed') {
+                        playerPhotoPersisted = true;
+                        if (previousPhotoPath && previousPhotoPath !== nextPhotoPath) {
+                            await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                        }
+                        resetForm();
+                        loadRoster();
+                        return;
+                    }
+                    if (persistenceState === 'unknown') {
+                        console.error(error);
+                        alert('The player may have saved. The new photo was kept; refresh the roster before retrying.');
+                        return;
+                    }
+                }
                 if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
                     await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
                 }
