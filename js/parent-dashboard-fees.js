@@ -117,8 +117,31 @@ function getFeePaidCents(fee) {
     return getFirstDefined(fee?.paidAmountCents, fee?.amountPaidCents, fee?.totalPaidCents, fee?.paidCents);
 }
 
+function getCanonicalStripeCheckoutUrl(value) {
+    if (typeof value !== 'string' || !value || value !== value.trim()) return '';
+
+    try {
+        const destination = new URL(value);
+        if (
+            destination.protocol !== 'https:' ||
+            destination.hostname !== 'checkout.stripe.com' ||
+            destination.username ||
+            destination.password ||
+            destination.port ||
+            !destination.pathname ||
+            destination.pathname === '/'
+        ) {
+            return '';
+        }
+        return value;
+    } catch {
+        return '';
+    }
+}
+
 function getFeeCheckoutUrl(fee) {
-    return getFirstDefined(fee?.checkoutUrl, fee?.checkoutURL, fee?.paymentLink, fee?.paymentLinkUrl, fee?.paymentUrl);
+    const checkoutUrl = getFirstDefined(fee?.checkoutUrl, fee?.checkoutURL, fee?.paymentLink, fee?.paymentLinkUrl, fee?.paymentUrl);
+    return getCanonicalStripeCheckoutUrl(checkoutUrl);
 }
 
 function getFeeRecipientId(fee) {
@@ -427,11 +450,14 @@ export function renderParentTeamFees(fees, options = {}) {
         const lineItems = renderInvoiceLineItems(fee);
         const installmentSchedule = renderInstallmentSchedule(fee);
         const receiptActivity = renderReceiptActivity(fee);
+        const checkoutUnavailable = paymentsEnabled && isOnlineTeamFeeCollection(fee) && isPayActionAllowed(fee) && !fee.checkoutUrl;
         const payAction = paymentsEnabled && isOnlineTeamFeeCollection(fee) && fee.checkoutUrl && isPayActionAllowed(fee)
             ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay online</a>`
             : paymentsEnabled && canInitiateCheckout(fee)
                 ? `<button type="button" data-team-fee-checkout="true" data-team-id="${escapeHtml(fee.teamId)}" data-batch-id="${escapeHtml(fee.batchId)}" data-recipient-id="${escapeHtml(fee.recipientId)}" class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70">Pay online</button>`
-                : '';
+                : checkoutUnavailable
+                    ? '<p class="max-w-xs text-sm text-amber-700" role="status">Checkout link unavailable. Refresh and try again.</p>'
+                    : '';
 
         return `
             <div class="team-fee-card rounded-xl border border-gray-200 border-l-4 ${meta.accentClass} bg-white p-4 shadow-sm">
