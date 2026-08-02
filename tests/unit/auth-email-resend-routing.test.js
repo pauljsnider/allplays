@@ -145,7 +145,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain(
             '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"'
         );
-        expect(productionSource).toContain('if verify_active_firestore_rules; then');
+        expect(productionSource).toContain('if verify_active_firestore_rules "$final_firestore_rules"; then');
         expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15');
         expect(productionSource).toContain('currently unavailable projects:test request');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');

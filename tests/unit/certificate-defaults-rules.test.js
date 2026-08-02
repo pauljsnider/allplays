@@ -12,13 +12,77 @@ import {
     setDoc,
     updateDoc
 } from 'firebase/firestore';
+import { buildCertificateDefaultsCompatibilityRules } from '../../scripts/build-certificate-defaults-compat-rules.mjs';
+import { compactFirestoreRules } from '../../scripts/compact-firestore-rules.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const compatibilityRules = compactFirestoreRules(buildCertificateDefaultsCompatibilityRules(rules));
+const deployWorkflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
 
 describe('certificate defaults Firestore rules', () => {
     it('keeps shared defaults readable to team admins but server-writable only', () => {
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults/);
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow create, update, delete: if false;/);
+    });
+
+    it('builds a narrowly scoped transitional ruleset', () => {
+        const sourceCompatibilityRules = buildCertificateDefaultsCompatibilityRules(rules);
+
+        expect(sourceCompatibilityRules).toContain(
+            "allow read, create, update, delete: if settingId == 'certificateDefaults'"
+        );
+        expect(sourceCompatibilityRules).not.toContain(
+            '// All writes must cross the callable\'s trusted provenance/tombstone checks.'
+        );
+        expect(() => buildCertificateDefaultsCompatibilityRules(sourceCompatibilityRules)).toThrow(
+            'Expected exactly one server-only certificate defaults rules block.'
+        );
+    });
+
+    it('deploys the writer and compatibility rules before callers, then activates the denial', () => {
+        const compatibilityFunction = deployWorkflow.indexOf('certificate-defaults-writer-compatibility');
+        const compatibilityRules = deployWorkflow.indexOf('certificate-defaults-rules-compatibility');
+        const application = deployWorkflow.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+        const finalRules = deployWorkflow.indexOf('certificate-defaults-rules-final');
+
+        expect(compatibilityFunction).toBeGreaterThan(-1);
+        expect(compatibilityRules).toBeGreaterThan(compatibilityFunction);
+        expect(application).toBeGreaterThan(compatibilityRules);
+        expect(finalRules).toBeGreaterThan(application);
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('transitional emulator coverage', () => {
+        let compatibilityEnv;
+
+        beforeAll(async () => {
+            compatibilityEnv = await initializeTestEnvironment({
+                projectId: `allplays-certificate-defaults-compat-${Date.now()}`,
+                firestore: { rules: compatibilityRules }
+            });
+        }, 30000);
+
+        beforeEach(async () => {
+            await compatibilityEnv.clearFirestore();
+            await compatibilityEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams/team-a'), {
+                    ownerId: 'owner-a',
+                    adminEmails: []
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await compatibilityEnv?.cleanup();
+        });
+
+        it('keeps only authorized legacy defaults writes open during caller rollout', async () => {
+            const ownerDb = compatibilityEnv.authenticatedContext('owner-a').firestore();
+            const outsiderDb = compatibilityEnv.authenticatedContext('outsider').firestore();
+            const defaultsPath = 'teams/team-a/settings/certificateDefaults';
+
+            await assertSucceeds(setDoc(doc(ownerDb, defaultsPath), { signers: [] }));
+            await assertFails(setDoc(doc(outsiderDb, defaultsPath), { signers: [] }));
+        });
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {

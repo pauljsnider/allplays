@@ -155,6 +155,7 @@ jobs:
       deployments: read
     outputs:
       admin_user_search_backfill_needed: ${{ steps.firestore_config.outputs.admin_user_search_backfill_needed }}
+      certificate_defaults_lockdown_needed: ${{ steps.firestore_config.outputs.certificate_defaults_lockdown_needed }}
       firestore_changed: ${{ steps.firestore_config.outputs.changed }}
       head_sha: ${{ steps.handoff_identity.outputs.head_sha }}
       registration_checkout_backfill_needed: ${{ steps.firestore_config.outputs.registration_checkout_backfill_needed }}
@@ -197,6 +198,13 @@ jobs:
           jq '.hosting.public = "site"' "$config_file" > "$config_file.tmp"
           mv "$config_file.tmp" "$config_file"
           node scripts/compact-firestore-rules.mjs firestore.rules "$bundle_dir/firestore.rules"
+          compatibility_rules_source="$RUNNER_TEMP/firestore-certificate-defaults-compat.source.rules"
+          node scripts/build-certificate-defaults-compat-rules.mjs \
+            firestore.rules \
+            "$compatibility_rules_source"
+          node scripts/compact-firestore-rules.mjs \
+            "$compatibility_rules_source" \
+            "$bundle_dir/firestore-certificate-defaults-compat.rules"
           cp firestore.indexes.json storage.rules "$bundle_dir/"
           echo "FIREBASE_PRODUCTION_BUNDLE=$bundle_dir" >> "$GITHUB_ENV"
 
@@ -240,6 +248,7 @@ jobs:
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "::warning::The successful production deploy lookup failed; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
@@ -307,6 +316,7 @@ jobs:
           if [[ ! "$last_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
@@ -314,11 +324,21 @@ jobs:
           elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
             echo "::warning::The last successful production deploy commit is unavailable locally; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
           else
+            if [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+              && git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null \
+              && git show "${firestore_success_sha}:firestore.rules" \
+                | sed -n '/match \/settings\/{settingId}/,/^      }/p' \
+                | grep -Fq 'allow create, update, delete: if false;'; then
+              echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "certificate_defaults_lockdown_needed=true" >> "$GITHUB_OUTPUT"
+            fi
             if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- \
               _migration/backfill-admin-user-search-index.js \
               functions/admin-user-search-index-core.cjs; then
@@ -431,6 +451,7 @@ jobs:
       - name: Validate and extract trusted production handoff before OIDC
         env:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
+          CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: ${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
           REGISTRATION_CHECKOUT_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.registration_checkout_backfill_needed }}
@@ -445,6 +466,10 @@ jobs:
           fi
           if [[ "$FIRESTORE_CONFIG_CHANGED" != "true" && "$FIRESTORE_CONFIG_CHANGED" != "false" ]]; then
             echo "Invalid Firestore change state." >&2
+            exit 1
+          fi
+          if [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" != "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" != "false" ]]; then
+            echo "Invalid certificate defaults lockdown state." >&2
             exit 1
           fi
           if [[ "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" != "true" && "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" != "false" ]]; then
@@ -475,6 +500,8 @@ jobs:
           test -f "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
           test ! -L "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
           test -f "$bundle/firestore.rules"
+          test -f "$bundle/firestore-certificate-defaults-compat.rules"
+          test ! -L "$bundle/firestore-certificate-defaults-compat.rules"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
           test -f "$bundle/firebase-prod.generated.json"
@@ -572,6 +599,7 @@ jobs:
         shell: bash
         env:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
+          CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: ${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           GH_TOKEN: ${{ github.token }}
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}
@@ -582,6 +610,9 @@ jobs:
           firebase_cli="$FIREBASE_PRODUCTION_BUNDLE/firebase-cli/node_modules/firebase-tools/lib/bin/firebase.js"
           firebase_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-prod.generated.json"
           firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
+          final_firestore_rules="$FIREBASE_PRODUCTION_BUNDLE/firestore.rules"
+          compatibility_firestore_rules="$FIREBASE_PRODUCTION_BUNDLE/firestore-certificate-defaults-compat.rules"
+          finalize_firestore_rules="false"
           transient_pattern='(^|[^[:alnum:]])(429|500|502|503|504)([^[:alnum:]]|$)|HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists|service[[:space:]_-]+unavailable|econnreset|connection[[:space:]_-]+reset|network[[:space:]_-]+reset|etimedout|timed[[:space:]_-]+out|timeout'
           retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
 
@@ -602,6 +633,7 @@ jobs:
           fi
 
           verify_active_firestore_rules() {
+            local expected_rules_source="${1:-$final_firestore_rules}"
             local release_json ruleset_json ruleset_name local_rules_b64 active_rules_b64
             release_json="$(mktemp "$RUNNER_TEMP/firestore-release.XXXXXX.json")"
             ruleset_json="$(mktemp "$RUNNER_TEMP/firestore-ruleset.XXXXXX.json")"
@@ -632,7 +664,7 @@ jobs:
               return 1
             fi
 
-            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
             active_rules_b64="$(
               jq -er '
                 (.source.files // [])
@@ -647,11 +679,12 @@ jobs:
           }
 
           find_recent_matching_firestore_ruleset() {
+            local expected_rules_source="${1:-$final_firestore_rules}"
             local list_file ruleset_file ruleset_name local_rules_b64 candidate_rules_b64
             local attempt curl_status http_status list_succeeded
             list_file="$(mktemp "$RUNNER_TEMP/firestore-rulesets.XXXXXX.json")"
             ruleset_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-candidate.XXXXXX.json")"
-            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
             list_succeeded="false"
 
             for attempt in 1 2 3; do
@@ -740,13 +773,14 @@ jobs:
           }
 
           create_firestore_ruleset_with_retry() {
+            local expected_rules_source="${1:-$final_firestore_rules}"
             local payload_file response_file ruleset_name local_rules_b64 created_rules_b64
             local attempt curl_status http_status retry_delay_seconds
             payload_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create.XXXXXX.json")"
             response_file="$(mktemp "$RUNNER_TEMP/firestore-ruleset-create-response.XXXXXX.json")"
-            local_rules_b64="$(base64 < "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" | tr -d '\n')"
+            local_rules_b64="$(base64 < "$expected_rules_source" | tr -d '\n')"
             jq -n \
-              --rawfile rules_source "$FIREBASE_PRODUCTION_BUNDLE/firestore.rules" \
+              --rawfile rules_source "$expected_rules_source" \
               '{
                 source:{
                   files:[
@@ -812,23 +846,25 @@ jobs:
           }
 
           ensure_exact_firestore_ruleset() {
+            local expected_rules_source="${1:-$final_firestore_rules}"
             local ruleset_name
-            if ruleset_name="$(find_recent_matching_firestore_ruleset)"; then
+            if ruleset_name="$(find_recent_matching_firestore_ruleset "$expected_rules_source")"; then
               printf '%s\n' "$ruleset_name"
               return 0
             fi
-            if ruleset_name="$(create_firestore_ruleset_with_retry)"; then
+            if ruleset_name="$(create_firestore_ruleset_with_retry "$expected_rules_source")"; then
               printf '%s\n' "$ruleset_name"
               return 0
             fi
             # A timed-out create may still have committed an immutable ruleset.
             # Recheck exact source before failing; never create or activate by name alone.
-            ruleset_name="$(find_recent_matching_firestore_ruleset)" || return 1
+            ruleset_name="$(find_recent_matching_firestore_ruleset "$expected_rules_source")" || return 1
             printf '%s\n' "$ruleset_name"
           }
 
           activate_firestore_ruleset_with_retry() {
             local ruleset_name="$1"
+            local expected_rules_source="${2:-$final_firestore_rules}"
             local payload_file response_file attempt verify_attempt curl_status http_status retry_delay_seconds
             [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
             payload_file="$(mktemp "$RUNNER_TEMP/firestore-release-patch.XXXXXX.json")"
@@ -865,7 +901,7 @@ jobs:
                 && [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
                 && [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]; then
                 for verify_attempt in 1 2 3 4 5; do
-                  if verify_active_firestore_rules; then
+                  if verify_active_firestore_rules "$expected_rules_source"; then
                     rm -f "$payload_file" "$response_file"
                     return 0
                   fi
@@ -898,12 +934,26 @@ jobs:
               echo "| Signal | Result |"
               echo "| --- | --- |"
               echo "| Failed stage | ${failed_stage} |"
-              echo '| Guaranteed not deployed | `hosting`, `functions` |'
+              echo '| Guaranteed not deployed | Full `hosting`, `functions` application |'
               echo "| Firestore configuration | Exact rules and indexes were not both verified. |"
               echo
-              echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+              echo "The full application deployment remains fail-closed. A narrowly targeted compatibility function may already be current."
               echo
               echo "Recovery: follow the [production Firestore deploy retry procedure](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          write_firestore_finalization_blocked_summary() {
+            {
+              echo "### Firestore server-only finalization blocked"
+              echo
+              echo "| Signal | Result |"
+              echo "| --- | --- |"
+              echo '| Application | Updated callable and callers are deployed. |'
+              echo '| Transitional rules | Certificate defaults remain owner/admin writable for backward compatibility. |'
+              echo '| Final rules | The exact server-only ruleset was not activated. |'
+              echo
+              echo "No client outage was introduced. Retry this exact release to finish tightening the write boundary."
             } >> "$GITHUB_STEP_SUMMARY"
           }
 
@@ -1031,20 +1081,45 @@ jobs:
           }
 
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            # Keep coupled authorization/index changes fail-closed: application code
-            # must not publish until its Firestore configuration is active.
-            if verify_active_firestore_rules; then
+            # Most authorization changes publish before their callers. Certificate
+            # defaults are a compatibility migration: deploy the server writer,
+            # activate an otherwise-exact transitional ruleset, publish every new
+            # caller, and only then remove the legacy direct-write path.
+            if verify_active_firestore_rules "$final_firestore_rules"; then
               echo "::notice::The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
-            else
-              # The documented RuleSet create endpoint compiles the source and
+            elif [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
+              retry_firebase_deploy \
+                "functions:commitCertificateDefaults" \
+                "certificate-defaults-writer-compatibility" \
+                3 \
+                15
+              # The documented RuleSet create endpoint compiles each source and
               # rejects syntax or semantic errors. Avoid Firebase CLI's separate,
-              # currently unavailable projects:test request, verify the returned
+              # currently unavailable projects:test request, verify every returned
               # immutable source byte-for-byte, then update only rulesetName.
-              if ! ruleset_name="$(ensure_exact_firestore_ruleset)"; then
+              if ! compatibility_ruleset_name="$(ensure_exact_firestore_ruleset "$compatibility_firestore_rules")"; then
+                write_firestore_configuration_blocked_summary "compatibility ruleset creation and exact-source verification"
+                exit 2
+              fi
+              if ! activate_firestore_ruleset_with_retry "$compatibility_ruleset_name" "$compatibility_firestore_rules"; then
+                write_firestore_configuration_blocked_summary "compatibility ruleset release activation"
+                exit 2
+              fi
+              echo "::notice::certificate-defaults-rules-compatibility is active."
+              if ! final_ruleset_name="$(ensure_exact_firestore_ruleset "$final_firestore_rules")"; then
+                write_firestore_configuration_blocked_summary "final ruleset creation and exact-source verification"
+                exit 2
+              fi
+              finalize_firestore_rules="true"
+            else
+              # After the one-time compatibility migration, future unrelated
+              # authorization changes remain rules-first and never reopen direct
+              # certificate-defaults writes.
+              if ! final_ruleset_name="$(ensure_exact_firestore_ruleset "$final_firestore_rules")"; then
                 write_firestore_configuration_blocked_summary "immutable ruleset creation and exact-source verification"
                 exit 2
               fi
-              if ! activate_firestore_ruleset_with_retry "$ruleset_name"; then
+              if ! activate_firestore_ruleset_with_retry "$final_ruleset_name" "$final_firestore_rules"; then
                 write_firestore_configuration_blocked_summary "exact ruleset release activation"
                 exit 2
               fi
@@ -1060,12 +1135,15 @@ jobs:
             # unrelated Rules API outage must not fail a Hosting/Functions-only fix.
             :
           fi
-          # Record this component immediately. A later Hosting, Functions, or
-          # migration failure must not make the next run redeploy current rules.
-          if ! record_component_deployment \
-            "production-firestore" \
-            "Firestore rules and indexes are current at ${GITHUB_SHA}."; then
-            echo "::warning::Firestore is current, but its component marker could not be recorded. A future failed production retry may conservatively redeploy it."
+          # A transitional ruleset is not the exact component and must never earn
+          # the exact-SHA marker. Otherwise record immediately so a later unrelated
+          # application failure does not force a redundant rules deployment.
+          if [[ "$finalize_firestore_rules" != "true" ]]; then
+            if ! record_component_deployment \
+              "production-firestore" \
+              "Firestore rules and indexes are current at ${GITHUB_SHA}."; then
+              echo "::warning::Firestore is current, but its component marker could not be recorded. A future failed production retry may conservatively redeploy it."
+            fi
           fi
 
           # These event handlers intentionally enable automatic retries and have
@@ -1096,6 +1174,19 @@ jobs:
             node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-registration-checkout-attempts.mjs" --apply
           fi
           retry_firebase_deploy "hosting,functions" "application"
+
+          if [[ "$finalize_firestore_rules" == "true" ]]; then
+            if ! activate_firestore_ruleset_with_retry "$final_ruleset_name" "$final_firestore_rules"; then
+              write_firestore_finalization_blocked_summary
+              exit 2
+            fi
+            echo "::notice::certificate-defaults-rules-final is active."
+            if ! record_component_deployment \
+              "production-firestore" \
+              "Firestore rules and indexes are current at ${GITHUB_SHA}."; then
+              echo "::warning::Firestore is current, but its component marker could not be recorded. A future failed production retry may conservatively redeploy it."
+            fi
+          fi
 
           if [[ "$ADMIN_USER_SEARCH_BACKFILL_NEEDED" == "true" ]]; then
             node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs" --apply

@@ -444,12 +444,57 @@ export function validateProductionDeployCommand(deployProd) {
         'write_firestore_configuration_blocked_summary()',
         'Production Firestore fail-closed summary'
     );
-    assertMatches(
+    assertIncludes(
         deployProd,
-        /if verify_active_firestore_rules; then[\s\S]{0,1000}else[\s\S]{0,2000}ensure_exact_firestore_ruleset[\s\S]{0,1000}activate_firestore_ruleset_with_retry[\s\S]{0,1000}fi[\s\S]{0,500}retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore create-release-index ordering'
+        'CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: ${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}',
+        'Production certificate defaults lockdown change output'
     );
-    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
+    assertIncludes(
+        deployProd,
+        'git show "${firestore_success_sha}:firestore.rules"',
+        'Production certificate defaults lockdown baseline source'
+    );
+    assertIncludes(
+        deployProd,
+        "grep -Fq 'allow create, update, delete: if false;'",
+        'Production certificate defaults completed-lockdown detection'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults one-time transition completion'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults unknown-baseline fail-closed state'
+    );
+    assertIncludes(deployProd, 'certificate-defaults-writer-compatibility', 'Production certificate defaults writer compatibility deploy');
+    assertIncludes(deployProd, 'certificate-defaults-rules-compatibility', 'Production certificate defaults transitional rules activation');
+    assertIncludes(deployProd, 'certificate-defaults-rules-final', 'Production certificate defaults final rules activation');
+    assertIncludes(
+        deployProd,
+        'scripts/build-certificate-defaults-compat-rules.mjs',
+        'Production certificate defaults compatibility rules generator'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-certificate-defaults-compat.rules',
+        'Production certificate defaults compacted compatibility rules handoff'
+    );
+    const certificateWriterDeploy = deployProd.indexOf('certificate-defaults-writer-compatibility');
+    const certificateCompatibilityRules = deployProd.indexOf('certificate-defaults-rules-compatibility');
+    const certificateApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+    const certificateFinalRules = deployProd.indexOf('certificate-defaults-rules-final');
+    if (
+        certificateWriterDeploy === -1
+        || certificateCompatibilityRules <= certificateWriterDeploy
+        || certificateApplicationDeploy <= certificateCompatibilityRules
+        || certificateFinalRules <= certificateApplicationDeploy
+    ) {
+        throw new Error('Production certificate defaults must deploy writer, transitional rules, callers, then the final denial.');
+    }
+    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(
         deployProd,
         'Exact rules and indexes were not both verified.',
@@ -461,7 +506,8 @@ export function validateProductionDeployCommand(deployProd) {
         '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
         'Production Firestore retry-exhaustion recovery link'
     );
-    assertIncludes(deployProd, 'Application deployment remains fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'The full application deployment remains fail-closed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'No client outage was introduced.', 'Production Firestore finalization retry guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'deployments: read', 'Production component deployment read permission');
     assertIncludes(deployProd, 'deployments: write', 'Production component deployment write permission');
@@ -523,11 +569,11 @@ export function validateProductionDeployCommand(deployProd) {
         'ensure_exact_firestore_ruleset',
         'Production Firestore exact ruleset creation or reuse'
     );
-    assertMatches(
-        changedBranch,
-        /if verify_active_firestore_rules; then[\s\S]*else[\s\S]*ensure_exact_firestore_ruleset[\s\S]*activate_firestore_ruleset_with_retry[\s\S]*fi[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore exact-source short circuit'
-    );
+    assertIncludes(changedBranch, 'verify_active_firestore_rules "$final_firestore_rules"', 'Production Firestore exact-source short circuit');
+    assertIncludes(changedBranch, 'elif [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]', 'Production certificate defaults one-time compatibility condition');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$compatibility_firestore_rules"', 'Production Firestore compatibility ruleset verification');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$final_firestore_rules"', 'Production Firestore final ruleset verification');
+    assertIncludes(changedBranch, 'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15', 'Production Firestore index ordering');
     assertIncludes(
         changedBranch,
         'currently unavailable projects:test request',

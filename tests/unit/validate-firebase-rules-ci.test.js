@@ -106,6 +106,7 @@ concurrency:
         deployments: read
         deployments: write
       outputs:
+        certificate_defaults_lockdown_needed: \${{ steps.firestore_config.outputs.certificate_defaults_lockdown_needed }}
         storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
       - name: Detect Firebase rules changes
         id: firestore_config
@@ -127,12 +128,15 @@ concurrency:
           done
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "The successful production deploy lookup failed; forcing authorization rules-first ordering."
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
           firestore_success_sha="$deployment_sha"
+          git show "\${firestore_success_sha}:firestore.rules" | grep -Fq 'allow create, update, delete: if false;'
+          echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
@@ -167,6 +171,7 @@ concurrency:
             deploy_args+=(--force)
             node "$firebase_cli" deploy "\${deploy_args[@]}"
           env:
+            CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: \${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
           retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
           retry_jitter_seconds=$((RANDOM % 16))
@@ -206,19 +211,31 @@ concurrency:
           }
           write_firestore_configuration_blocked_summary() {
             {
-              echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
+              echo '| Guaranteed not deployed | Full \`hosting\`, \`functions\` application |'
               echo "Exact rules and indexes were not both verified."
-              echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+              echo "The full application deployment remains fail-closed."
               echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
             } >> "$GITHUB_STEP_SUMMARY"
           }
+          write_firestore_finalization_blocked_summary() {
+            echo "No client outage was introduced."
+          }
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            if verify_active_firestore_rules; then
+            if verify_active_firestore_rules "$final_firestore_rules"; then
               echo "The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
+            elif [[ "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
+              retry_firebase_deploy "functions:commitCertificateDefaults" "certificate-defaults-writer-compatibility" 3 15
+              node scripts/build-certificate-defaults-compat-rules.mjs
+              test -f "$bundle/firestore-certificate-defaults-compat.rules"
+              ensure_exact_firestore_ruleset "$compatibility_firestore_rules"
+              activate_firestore_ruleset_with_retry "$compatibility_ruleset_name" "$compatibility_firestore_rules"
+              echo "certificate-defaults-rules-compatibility"
+              ensure_exact_firestore_ruleset "$final_firestore_rules"
+              finalize_firestore_rules="true"
             else
               echo "currently unavailable projects:test request"
-              ensure_exact_firestore_ruleset
-              activate_firestore_ruleset_with_retry
+              ensure_exact_firestore_ruleset "$final_firestore_rules"
+              activate_firestore_ruleset_with_retry "$final_ruleset_name" "$final_firestore_rules"
               echo "Created or reused and activated the exact staged Firestore ruleset."
             fi
             retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15
@@ -231,6 +248,7 @@ concurrency:
           record_component_deployment "production-firestore"
           retry_firebase_deploy "$retry_enabled_function_targets" "retry-enabled-functions" 3 15 true
           retry_firebase_deploy "hosting,functions" "application"
+          echo "certificate-defaults-rules-final"
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
@@ -306,7 +324,7 @@ concurrency:
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'',
+            'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'',
             'echo "Deployment blocked"'
         ))).toThrow('Production Firestore retry-exhaustion blocked application surfaces');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
@@ -321,7 +339,7 @@ concurrency:
             `ensure_exact_firestore_ruleset`,
             `retry_firebase_deploy "hosting,functions" "application"
             ensure_exact_firestore_ruleset`
-        ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
+        ))).toThrow('Production certificate defaults must deploy writer, transitional rules, callers, then the final denial');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'
