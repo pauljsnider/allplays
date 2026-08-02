@@ -222,8 +222,10 @@ concurrency:
               --config "$deploy_config"
               --non-interactive
             )
+            retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
             retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
-            if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
+            if [[ "$deploy_targets" != "$retry_enabled_function_targets"
+              && "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
             deploy_args+=(--force)
@@ -322,6 +324,7 @@ concurrency:
             echo 'state: "success"'
           }
           record_component_deployment "production-firestore"
+          retry_firebase_deploy "$retry_enabled_inventory_producer_target" "certificate-signature-inventory-producer" 3 15 true
           retry_firebase_deploy "$retry_enabled_function_targets" "retry-enabled-functions" 3 15 true
           retry_firebase_deploy "hosting,functions" "application"
           echo "certificate-defaults-rules-final"
