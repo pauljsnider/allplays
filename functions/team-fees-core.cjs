@@ -13,6 +13,14 @@ function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
     return token;
 }
 
+function getValidCheckoutAttemptToken(value) {
+    try {
+        return normalizeCheckoutAttemptToken(value);
+    } catch {
+        return '';
+    }
+}
+
 function normalizeTeamFeeCheckoutInput(data = {}) {
     const teamId = normalizeString(data.teamId);
     const batchId = normalizeString(data.batchId);
@@ -186,11 +194,101 @@ function buildTeamFeeCheckoutMetadata({ teamId, batchId, recipientId, payerUid, 
     return metadata;
 }
 
+function getCanonicalStripeCheckoutUrl(value) {
+    if (typeof value !== 'string' || !value || value !== value.trim()) return null;
+
+    try {
+        const destination = new URL(value);
+        if (
+            destination.protocol !== 'https:' ||
+            destination.hostname !== 'checkout.stripe.com' ||
+            destination.username ||
+            destination.password ||
+            destination.port ||
+            !destination.pathname ||
+            destination.pathname === '/'
+        ) {
+            return null;
+        }
+        return destination;
+    } catch {
+        return null;
+    }
+}
+
+function isCanonicalStripeCheckoutUrl(value) {
+    return Boolean(getCanonicalStripeCheckoutUrl(value));
+}
+
+function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = {}, amountCents = 0 } = {}) {
+    const recipientUrl = getCanonicalStripeCheckoutUrl(recipient.checkoutUrl);
+    if (!recipientUrl) return 'checkout_url_invalid';
+
+    const sessionUrl = getCanonicalStripeCheckoutUrl(session.url);
+    if (!sessionUrl) return 'checkout_session_url_invalid';
+    if (recipientUrl.href !== sessionUrl.href) return 'checkout_url_mismatch';
+
+    const recipientSessionId = normalizeString(recipient.stripeCheckoutSessionId);
+    const sessionId = normalizeString(session.id);
+    if (!recipientSessionId || !sessionId || recipientSessionId !== sessionId) return 'checkout_session_mismatch';
+    if (recipient.checkoutStatus !== 'open') return 'checkout_recipient_not_open';
+    if (session.status !== 'open') return 'checkout_session_not_open';
+    if (session.mode !== 'payment') return 'checkout_session_mode_mismatch';
+    if (session.payment_status !== 'unpaid') return 'checkout_session_not_unpaid';
+
+    const recipientToken = getValidCheckoutAttemptToken(recipient.checkoutAttemptToken);
+    if (!recipientToken) return 'checkout_attempt_invalid';
+    const sessionToken = getValidCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+    if (!sessionToken || recipientToken !== sessionToken) return 'checkout_attempt_mismatch';
+
+    const expectedAmountCents = Math.round(Number(amountCents));
+    const recipientAmountCents = Math.round(Number(recipient.checkoutAmountCents));
+    const sessionAmountCents = Math.round(Number(session.amount_total));
+    const metadataAmountCents = Math.round(Number(session.metadata?.checkoutAmountCents));
+    if (
+        !Number.isFinite(expectedAmountCents) || expectedAmountCents <= 0 ||
+        !Number.isFinite(recipientAmountCents) || recipientAmountCents <= 0 ||
+        !Number.isFinite(sessionAmountCents) || sessionAmountCents <= 0 ||
+        !Number.isFinite(metadataAmountCents) || metadataAmountCents <= 0 ||
+        recipientAmountCents !== expectedAmountCents ||
+        sessionAmountCents !== expectedAmountCents ||
+        metadataAmountCents !== expectedAmountCents
+    ) {
+        return 'checkout_amount_mismatch';
+    }
+
+    const metadata = session.metadata || {};
+    if (metadata.product !== 'team_fee') return 'checkout_product_mismatch';
+    if (normalizeString(metadata.teamId) !== normalizeString(input.teamId)) return 'checkout_team_mismatch';
+    if (normalizeString(metadata.batchId) !== normalizeString(input.batchId)) return 'checkout_batch_mismatch';
+    if (normalizeString(metadata.recipientId) !== normalizeString(input.recipientId)) return 'checkout_recipient_mismatch';
+
+    return '';
+}
+
+function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkoutAttemptToken = '', amountCents = 0 } = {}) {
+    if (!normalizeString(session.id)) return 'checkout_session_missing';
+    if (!isCanonicalStripeCheckoutUrl(session.url)) return 'checkout_url_invalid';
+
+    return getTeamFeeCheckoutReuseFailure({
+        recipient: {
+            checkoutUrl: session.url,
+            stripeCheckoutSessionId: session.id,
+            checkoutAttemptToken,
+            checkoutStatus: 'open',
+            checkoutAmountCents: amountCents
+        },
+        session,
+        input,
+        amountCents
+    });
+}
+
 function canReuseTeamFeeCheckoutSession(recipient = {}, amountCents = 0) {
     return Boolean(
-        recipient.checkoutUrl &&
+        isCanonicalStripeCheckoutUrl(recipient.checkoutUrl) &&
         recipient.stripeCheckoutSessionId &&
-        normalizeCheckoutAttemptToken(recipient.checkoutAttemptToken) &&
+        getValidCheckoutAttemptToken(recipient.checkoutAttemptToken) &&
         recipient.checkoutStatus === 'open' &&
         Number(recipient.checkoutAmountCents) === Number(amountCents)
     );
@@ -203,8 +301,8 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
         return 'checkout_session_mismatch';
     }
 
-    const recipientToken = normalizeCheckoutAttemptToken(recipient.checkoutAttemptToken);
-    const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+    const recipientToken = getValidCheckoutAttemptToken(recipient.checkoutAttemptToken);
+    const sessionToken = getValidCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
     const isLegacyCheckoutSession = !recipientToken && !sessionToken;
     if (!isLegacyCheckoutSession && (!recipientToken || !sessionToken || recipientToken !== sessionToken)) {
         return 'checkout_attempt_mismatch';
@@ -433,6 +531,9 @@ module.exports = {
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
     canReuseTeamFeeCheckoutSession,
+    isCanonicalStripeCheckoutUrl,
+    getTeamFeeCheckoutReuseFailure,
+    getNewTeamFeeCheckoutSessionFailure,
     getTeamFeeCheckoutGuardFailure,
     shouldApplyTeamFeeCheckoutSession,
     shouldMarkTeamFeePaidFromEvent,
