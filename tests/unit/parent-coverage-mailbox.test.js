@@ -79,4 +79,21 @@ describe('parent coverage protected mailbox boundary', () => {
             fetchImpl
         })).resolves.toBe(true);
     });
+
+    it('keeps OAuth credentials out of authorization failures', async () => {
+        const fetchImpl = vi.fn().mockResolvedValueOnce(response({}, 401));
+        const clientId = 'sensitive-client-id';
+        const clientSecret = 'sensitive-client-secret';
+        const refreshToken = 'sensitive-refresh-token';
+        let message = '';
+        try {
+            await auditParentCoverageMailboxAccess({ clientId, clientSecret, refreshToken, fetchImpl });
+        } catch (error) {
+            message = String(error?.message || error);
+        }
+        expect(message).toBe('mailbox authorization failed with status 401');
+        expect(message).not.toContain(clientId);
+        expect(message).not.toContain(clientSecret);
+        expect(message).not.toContain(refreshToken);
+    });
 });
