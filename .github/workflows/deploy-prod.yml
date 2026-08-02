@@ -157,6 +157,7 @@ jobs:
       admin_user_search_backfill_needed: ${{ steps.firestore_config.outputs.admin_user_search_backfill_needed }}
       firestore_changed: ${{ steps.firestore_config.outputs.changed }}
       head_sha: ${{ steps.handoff_identity.outputs.head_sha }}
+      registration_checkout_backfill_needed: ${{ steps.firestore_config.outputs.registration_checkout_backfill_needed }}
       storage_changed: ${{ steps.firestore_config.outputs.storage_changed }}
       team_fee_checkout_backfill_needed: ${{ steps.firestore_config.outputs.team_fee_checkout_backfill_needed }}
 
@@ -240,6 +241,7 @@ jobs:
             echo "::warning::The successful production deploy lookup failed; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -306,12 +308,14 @@ jobs:
             echo "::warning::No valid successful production deploy baseline was found; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
           elif ! git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
             echo "::warning::The last successful production deploy commit is unavailable locally; forcing authorization rules-first ordering."
             echo "admin_user_search_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
           else
@@ -328,6 +332,13 @@ jobs:
               echo "team_fee_checkout_backfill_needed=false" >> "$GITHUB_OUTPUT"
             else
               echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
+            fi
+            if git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- \
+              _migration/backfill-registration-checkout-attempts.js \
+              functions/registration-payment-webhook-core.cjs; then
+              echo "registration_checkout_backfill_needed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "registration_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
             fi
             if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
               || ! git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null; then
@@ -360,6 +371,8 @@ jobs:
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs"
           cp _migration/backfill-team-fee-checkout-attempts.js \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-team-fee-checkout-attempts.mjs"
+          cp _migration/backfill-registration-checkout-attempts.js \
+            "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-registration-checkout-attempts.mjs"
           cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"
 
       - name: Install isolated Firebase deploy CLI without OIDC or lifecycle scripts
@@ -420,6 +433,7 @@ jobs:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           PREPARED_HEAD_SHA: ${{ needs.prepare-deploy.outputs.head_sha }}
+          REGISTRATION_CHECKOUT_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.registration_checkout_backfill_needed }}
           STORAGE_RULES_CHANGED: ${{ needs.prepare-deploy.outputs.storage_changed }}
           TEAM_FEE_CHECKOUT_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.team_fee_checkout_backfill_needed }}
         run: |
@@ -441,6 +455,10 @@ jobs:
             echo "Invalid team fee checkout backfill state." >&2
             exit 1
           fi
+          if [[ "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" != "true" && "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" != "false" ]]; then
+            echo "Invalid registration checkout backfill state." >&2
+            exit 1
+          fi
           if [[ "$STORAGE_RULES_CHANGED" != "true" && "$STORAGE_RULES_CHANGED" != "false" ]]; then
             echo "Invalid Storage change state." >&2
             exit 1
@@ -454,6 +472,8 @@ jobs:
           test ! -L "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test -f "$bundle/_migration/backfill-team-fee-checkout-attempts.mjs"
           test ! -L "$bundle/_migration/backfill-team-fee-checkout-attempts.mjs"
+          test -f "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
+          test ! -L "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
           test -f "$bundle/firestore.rules"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
@@ -555,6 +575,7 @@ jobs:
           FIRESTORE_CONFIG_CHANGED: ${{ needs.prepare-deploy.outputs.firestore_changed }}
           GH_TOKEN: ${{ github.token }}
           GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_production.outputs.access_token }}
+          REGISTRATION_CHECKOUT_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.registration_checkout_backfill_needed }}
           TEAM_FEE_CHECKOUT_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.team_fee_checkout_backfill_needed }}
         run: |
           set -euo pipefail
@@ -1058,16 +1079,21 @@ jobs:
             3 \
             15 \
             true
-          if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
-            # Publish both producers/consumers of the private attempt state first,
+          if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true" || "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
+            # Publish every producer/consumer of the private attempt state first,
             # then atomically move and scrub historical bearer data before the
             # rest of Hosting and Functions becomes visible.
             retry_firebase_deploy \
-              "functions:createStripeTeamFeeCheckout,functions:stripeTeamPassWebhook" \
-              "team-fee-checkout-migration-compatibility" \
+              "functions:createStripeTeamFeeCheckout,functions:createStripeRegistrationCheckout,functions:cancelStripeRegistrationCheckout,functions:queueDueRegistrationFailedPaymentReminders,functions:stripeTeamPassWebhook" \
+              "checkout-migration-compatibility" \
               3 \
               15
+          fi
+          if [[ "$TEAM_FEE_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
             node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-team-fee-checkout-attempts.mjs" --apply
+          fi
+          if [[ "$REGISTRATION_CHECKOUT_BACKFILL_NEEDED" == "true" ]]; then
+            node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-registration-checkout-attempts.mjs" --apply
           fi
           retry_firebase_deploy "hosting,functions" "application"
 

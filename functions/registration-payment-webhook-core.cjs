@@ -13,6 +13,50 @@ function normalizePositiveInteger(value) {
     return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : 0;
 }
 
+const LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS = Object.freeze([
+    'checkoutAttemptToken',
+    'publicCheckoutCapabilityHash',
+    'checkoutUrl',
+    'paymentLink',
+    'stripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'lastPaidStripeCheckoutSessionId',
+    'checkoutAmountCents',
+    'checkoutCurrency',
+    'checkoutCreationRequest'
+]);
+
+function hasLegacyReadableRegistrationCheckoutState(registration = {}) {
+    return LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS.some((field) => (
+        registration[field] !== undefined && registration[field] !== null && registration[field] !== ''
+    )) || Boolean(normalizeString(registration.paymentReminder?.retryUrl));
+}
+
+function buildLegacyReadableRegistrationCheckoutAttempt({ registration = {}, existingAttempt = {}, now = null } = {}) {
+    const authoritativeAttempt = Object.fromEntries(
+        Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    );
+    return {
+        version: 1,
+        ...(registration.checkoutAttemptToken ? { checkoutAttemptToken: registration.checkoutAttemptToken } : {}),
+        ...(registration.publicCheckoutCapabilityHash ? { publicCheckoutCapabilityHash: registration.publicCheckoutCapabilityHash } : {}),
+        ...(registration.checkoutUrl || registration.paymentLink ? { checkoutUrl: registration.checkoutUrl || registration.paymentLink } : {}),
+        ...(registration.checkoutStatus ? { checkoutStatus: registration.checkoutStatus } : {}),
+        ...(registration.stripeCheckoutSessionId ? { stripeCheckoutSessionId: registration.stripeCheckoutSessionId } : {}),
+        ...(registration.stripePaymentIntentId ? { stripePaymentIntentId: registration.stripePaymentIntentId } : {}),
+        ...(registration.lastPaidStripeCheckoutSessionId ? { lastPaidStripeCheckoutSessionId: registration.lastPaidStripeCheckoutSessionId } : {}),
+        ...(registration.stripePaymentStatus ? { stripePaymentStatus: registration.stripePaymentStatus } : {}),
+        ...(registration.checkoutAmountCents ? { checkoutAmountCents: registration.checkoutAmountCents } : {}),
+        ...(registration.checkoutCurrency ? { checkoutCurrency: registration.checkoutCurrency } : {}),
+        ...(registration.checkoutCreationReservationId ? { reservationId: registration.checkoutCreationReservationId } : {}),
+        ...(registration.checkoutCreationRequest ? { checkoutCreationRequest: registration.checkoutCreationRequest } : {}),
+        ...(registration.paymentReminder?.retryUrl ? { paymentRetryUrl: registration.paymentReminder.retryUrl } : {}),
+        ...(registration.checkoutCreatedAt || now ? { createdAt: registration.checkoutCreatedAt || now } : {}),
+        ...(now ? { updatedAt: now } : {}),
+        ...authoritativeAttempt
+    };
+}
+
 /**
  * Returns a stable ignored reason when a signed Stripe paid event is not the
  * authoritative, still-open checkout for the registration.
@@ -61,6 +105,9 @@ function getRegistrationPaidCheckoutGuardFailure({
 }
 
 module.exports = {
+    LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS,
+    hasLegacyReadableRegistrationCheckoutState,
+    buildLegacyReadableRegistrationCheckoutAttempt,
     getRegistrationPaidCheckoutGuardFailure,
     normalizeRegistrationCheckoutCurrency: normalizeCurrency
 };

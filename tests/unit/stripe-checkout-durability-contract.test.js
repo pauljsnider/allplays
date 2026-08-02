@@ -88,6 +88,8 @@ describe('Stripe Checkout durability contract', () => {
         expect(functionsSource).toContain('checkoutCreationRequest: proposedCheckoutCreationRequest');
         expect(functionsSource).toContain('isReusableRegistrationCheckoutCreationRequest');
         expect(registration).toContain('isUncertainStripeCheckoutCreationError(error)');
-        expect(registration).toContain('createRegistrationCheckoutCapability(checkoutCreationRequest.idempotencyKey)');
+        expect(functionsSource).toContain('createRegistrationCheckoutCapability(idempotencyKey)');
+        expect(functionsSource).toContain('function getRegistrationCheckoutCreationRequestCapability(request)');
+        expect(registration).toContain('getRegistrationCheckoutCreationRequestCapability(checkoutCreationRequest)');
     });
 });

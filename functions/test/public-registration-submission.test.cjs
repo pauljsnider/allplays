@@ -1458,6 +1458,84 @@ function createMockResponse() {
     };
 }
 
+test('migrates a legacy readable registration checkout inside a paid webhook transaction', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/legacy-registration';
+    const seed = buildSeedState();
+    seed[registrationPath] = {
+        id: 'legacy-registration',
+        teamId: 'team-1',
+        formId: 'form-1',
+        status: 'pending',
+        paymentStatus: 'checkout_open',
+        checkoutStatus: 'open',
+        registrationCapacityReleased: false,
+        selectedOption: { id: 'u10', countKey: 'u10', capacityLimit: 5 },
+        guardian: { email: 'parent@example.com' },
+        checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy-registration',
+        paymentLink: 'https://checkout.stripe.com/c/pay/legacy-registration',
+        stripeCheckoutSessionId: 'cs_legacy_registration',
+        stripePaymentIntentId: 'pi_legacy_registration',
+        checkoutAttemptToken: 'legacytoken123456',
+        publicCheckoutCapabilityHash: 'legacy-capability-hash',
+        checkoutAmountCents: 5000,
+        checkoutCurrency: 'usd',
+        paymentReminder: {
+            status: 'active',
+            retryUrl: 'https://allplays.test/app/#/registration?publicCheckoutCapability=legacy'
+        }
+    };
+    const { firestore, stripeState, mod } = loadFunctionsModule(seed);
+    stripeState.webhookEvent = {
+        id: 'evt_legacy_registration_paid',
+        type: 'checkout.session.completed',
+        data: {
+            object: {
+                id: 'cs_legacy_registration',
+                payment_status: 'paid',
+                payment_intent: 'pi_legacy_registration',
+                amount_total: 5000,
+                currency: 'usd',
+                metadata: {
+                    product: 'registration',
+                    teamId: 'team-1',
+                    formId: 'form-1',
+                    registrationId: 'legacy-registration',
+                    checkoutAttemptToken: 'legacytoken123456'
+                }
+            }
+        }
+    };
+
+    const response = createMockResponse();
+    await mod.stripeTeamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' }
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    assert.equal(registration.paymentStatus, 'paid');
+    for (const field of [
+        'checkoutUrl',
+        'paymentLink',
+        'stripeCheckoutSessionId',
+        'stripePaymentIntentId',
+        'checkoutAttemptToken',
+        'publicCheckoutCapabilityHash',
+        'checkoutAmountCents',
+        'checkoutCurrency'
+    ]) {
+        assert.equal(Object.prototype.hasOwnProperty.call(registration, field), false);
+    }
+    assert.equal(Object.prototype.hasOwnProperty.call(registration.paymentReminder || {}, 'retryUrl'), false);
+    const privateAttempt = firestore.snapshot(`${registrationPath}/checkoutAttempts/current`);
+    assert.equal(privateAttempt.checkoutStatus, 'complete');
+    assert.equal(privateAttempt.stripeCheckoutSessionId, 'cs_legacy_registration');
+    assert.equal(privateAttempt.stripePaymentIntentId, 'pi_legacy_registration');
+    assert.equal(firestore.snapshot('stripeEvents/evt_legacy_registration_paid').ignored, undefined);
+});
+
 test('records installment payment progress after Stripe marks the first installment paid', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
         feeAmountCents: 12500,

@@ -128,7 +128,7 @@ describe('team-fee checkout attempt backfill', () => {
 
     it('stages and runs the backfill only after compatibility functions deploy', () => {
         const workflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
-        const compatibilityDeploy = workflow.indexOf('team-fee-checkout-migration-compatibility');
+        const compatibilityDeploy = workflow.indexOf('checkout-migration-compatibility');
         const backfill = workflow.indexOf('backfill-team-fee-checkout-attempts.mjs\" --apply');
         const fullDeploy = workflow.indexOf('retry_firebase_deploy \"hosting,functions\" \"application\"');
 

@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS,
+    buildLegacyReadableRegistrationCheckoutAttempt,
     getRegistrationPaidCheckoutGuardFailure,
+    hasLegacyReadableRegistrationCheckoutState,
     normalizeRegistrationCheckoutCurrency
 } = require('../../functions/registration-payment-webhook-core.cjs');
 
@@ -35,6 +38,40 @@ function currentCheckout(overrides = {}) {
 }
 
 describe('registration paid webhook guard', () => {
+    it('recognizes and moves every historical readable checkout field while private state wins', () => {
+        const registration = {
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
+            stripeCheckoutSessionId: 'cs_legacy',
+            stripePaymentIntentId: 'pi_legacy',
+            lastPaidStripeCheckoutSessionId: 'cs_paid_legacy',
+            checkoutAttemptToken: 'legacytoken123456',
+            publicCheckoutCapabilityHash: 'legacy-capability-hash',
+            checkoutAmountCents: 7500,
+            checkoutCurrency: 'usd',
+            paymentReminder: { retryUrl: 'https://allplays.test/app/#/registration?publicCheckoutCapability=legacy' }
+        };
+
+        expect(hasLegacyReadableRegistrationCheckoutState(registration)).toBe(true);
+        expect(LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS).toContain('stripePaymentIntentId');
+        expect(LEGACY_READABLE_REGISTRATION_CHECKOUT_FIELDS).toContain('lastPaidStripeCheckoutSessionId');
+        expect(buildLegacyReadableRegistrationCheckoutAttempt({
+            registration,
+            existingAttempt: {
+                checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+                stripeCheckoutSessionId: 'cs_private',
+                paymentRetryUrl: 'https://allplays.test/app/#/registration?publicCheckoutCapability=private'
+            },
+            now: 'server-now'
+        })).toMatchObject({
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+            stripeCheckoutSessionId: 'cs_private',
+            stripePaymentIntentId: 'pi_legacy',
+            lastPaidStripeCheckoutSessionId: 'cs_paid_legacy',
+            paymentRetryUrl: 'https://allplays.test/app/#/registration?publicCheckoutCapability=private',
+            updatedAt: 'server-now'
+        });
+    });
+
     it('accepts only the current authoritative checkout with the exact recorded amount and currency', () => {
         expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout())).toBe('');
     });

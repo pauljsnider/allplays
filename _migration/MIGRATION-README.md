@@ -79,3 +79,8 @@ and attempt tokens into each recipient's server-private `checkoutAttempts/curren
 document before scrubbing those fields from the recipient. Run it manually
 without arguments for a read-only dry run; pass `--apply` only when executing
 the migration against the intended Firebase project.
+`backfill-registration-checkout-attempts.js` follows the same automatic,
+dry-run-by-default contract for registration checkout URLs, capabilities,
+provider IDs, exact requests, and nested payment-reminder retry URLs. It gives
+an existing private checkout attempt precedence, moves any remaining legacy
+state, and scrubs every readable bearer field transactionally.
