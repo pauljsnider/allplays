@@ -93,7 +93,7 @@ function buildDbProfileUpdateHelpers() {
         .replace('export async function updatePlayerPrivateProfile', 'async function updatePlayerPrivateProfile');
 
     const factory = new Function('deps', `
-        const { Timestamp, updateDoc, doc, db, setDoc } = deps;
+        const { Timestamp, updateDoc, doc, db, setDoc, writeBatch, deleteField } = deps;
         ${assertFnSource}
         ${publicFnSource}
         ${privateFnSource}
@@ -107,7 +107,13 @@ function buildDbProfileUpdateHelpers() {
         updateDoc: vi.fn(() => Promise.resolve()),
         setDoc: vi.fn(() => Promise.resolve()),
         doc: vi.fn((database, path, maybeId) => maybeId ? `${path}/${maybeId}` : path),
-        db: {}
+        db: {},
+        deleteField: vi.fn(() => 'delete-field'),
+        writeBatch: vi.fn(() => ({
+            update: vi.fn((...args) => deps.updateDoc(...args)),
+            set: vi.fn((...args) => deps.setDoc(...args)),
+            commit: vi.fn(() => Promise.resolve())
+        }))
     };
 
     return {
@@ -290,6 +296,28 @@ describe('player profile private doc writes', () => {
 
         expect(deps.updateDoc).toHaveBeenCalledTimes(1);
         expect(deps.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('persists the player photo cleanup path with the public URL', async () => {
+        const { deps, updatePlayerProfile } = buildDbProfileUpdateHelpers();
+        const photoPath = 'profile-photos/teams/team-1/players/player-1/photo.jpg';
+
+        await updatePlayerProfile('team-1', 'player-1', {
+            photoUrl: 'https://img.example/player.jpg',
+            photoPath
+        });
+
+        expect(deps.updateDoc).toHaveBeenCalledWith('teams/team-1/players/player-1', {
+            photoUrl: 'https://img.example/player.jpg',
+            photoPath: 'delete-field',
+            updatedAt: 'ts-now'
+        });
+        expect(deps.setDoc).toHaveBeenCalledWith(
+            'teams/team-1/players/player-1/private/profile',
+            { photoPath, updatedAt: 'ts-now' },
+            { merge: true }
+        );
+        expect(deps.writeBatch).toHaveBeenCalledTimes(1);
     });
 
     it('writes emergency contact and medical info through the private profile helper', async () => {

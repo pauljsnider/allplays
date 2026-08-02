@@ -22,6 +22,7 @@ import {
   getGames,
   getLocalAttractionSponsors,
   getPlayerTrackingStatuses,
+  getPlayerPrivateProfile,
   getPlayers,
   getPlayersWithPrivateRosterContacts,
   getPublicTrackingItems,
@@ -83,6 +84,7 @@ export type TeamDetailPlayer = {
   name: string;
   number: string;
   photoUrl: string | null;
+  photoPath?: string | null;
   position: string;
   isLinked: boolean;
   active: boolean;
@@ -1377,35 +1379,28 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
   const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
   const position = cleanString(publicValues.position);
 
-  const nativeRuntime = isNativeRuntime();
-  const nativeMutation = nativeRuntime ? await import('./nativeFirestoreMutation') : null;
-  const playerId = nativeMutation ? nativeMutation.createNativeFirestoreDocumentId() : '';
-  let photoUrl: string | null = null;
-  let nativePhotoPath = '';
-  let webPhotoPath = '';
+  // Reject an invalid photo before creating the durable roster owner. Once the
+  // owner exists, every later photo failure is reported as partial success so a
+  // retry cannot create a duplicate player.
   if (input?.photoFile) {
     validateLegacyRosterPhotoFile(input.photoFile);
-    if (nativeRuntime) {
-      const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId));
-      photoUrl = uploaded.url;
-      nativePhotoPath = uploaded.path;
-    } else {
-      const uploaded = await uploadPlayerPhoto(input.photoFile, { returnUpload: true });
-      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
-      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
-    }
   }
 
-  const player = {
+  const nativeRuntime = isNativeRuntime();
+  const mutationModule = await import('./nativeFirestoreMutation');
+  const nativeMutation = nativeRuntime ? mutationModule : null;
+  // Reserve and create the final player owner before any photo upload. A
+  // permanent Storage object must never exist without its owning roster doc.
+  const playerId = mutationModule.createNativeFirestoreDocumentId();
+  let player = {
     name,
     number: cleanString(input?.number),
-    photoUrl,
+    photoUrl: null as string | null,
     ...(position ? { position } : {}),
     profile: {
       customFields: publicValues
     }
   };
-
   let savedPlayerId = playerId;
   try {
     if (nativeMutation) {
@@ -1418,6 +1413,7 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
         {
           pathSegments: ['teams', normalizedTeamId, 'players', playerId, 'private', 'profile'],
           data: {
+            photoPath: null,
             ...(Object.keys(privateValues).length ? { rosterFields: privateValues } : {}),
             updatedAt: new Date()
           }
@@ -1426,25 +1422,100 @@ export async function addRosterPlayerForApp(teamId: string, user: AuthUser | nul
     } else {
       const [savedOperation] = await applyRosterCsvImportOperations(normalizedTeamId, [{
         type: 'add',
-        payload: player,
+        playerId,
+        payload: { ...player, photoPath: null },
         privateRosterFields: privateValues
       }]);
       savedPlayerId = cleanString(savedOperation?.playerId);
       if (!savedPlayerId) throw new Error('The new roster player could not be saved.');
     }
   } catch (error) {
-    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-    } else if (webPhotoPath) {
-      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+    const ownerState = isDefinitiveFirestoreWriteFailure(error)
+      ? 'not-committed'
+      : await getRosterPlayerOwnerState(normalizedTeamId, playerId);
+    if (ownerState !== 'committed') throw error;
+    savedPlayerId = playerId;
+  }
+
+  let nativePhotoPath = '';
+  let webPhotoPath = '';
+  if (input?.photoFile) {
+    try {
+      if (nativeRuntime) {
+        const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativePlayerPhotoFile(input.photoFile!, normalizedTeamId, playerId));
+        player = { ...player, photoUrl: uploaded.url };
+        nativePhotoPath = uploaded.path;
+      } else {
+        const uploaded = await uploadPlayerPhoto(input.photoFile, {
+          returnUpload: true,
+          teamId: normalizedTeamId,
+          playerId
+        });
+        player = { ...player, photoUrl: uploaded.url };
+        webPhotoPath = uploaded.path;
+      }
+    } catch (error) {
+      invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+      return {
+        playerId: savedPlayerId,
+        player: { ...player, photoPath: null },
+        photoWarning: `Player was added, but the photo upload failed: ${cleanString((error as { message?: unknown })?.message) || 'Unknown upload error.'}`
+      };
     }
-    throw error;
+
+    let photoWarning = '';
+    try {
+      if (nativeMutation) {
+        await nativeMutation.commitNativeFirestoreWrites([
+          {
+            pathSegments: ['teams', normalizedTeamId, 'players', playerId],
+            data: { photoUrl: player.photoUrl, updatedAt: new Date() }
+          },
+          {
+            pathSegments: ['teams', normalizedTeamId, 'players', playerId, 'private', 'profile'],
+            data: { photoPath: nativePhotoPath || null, updatedAt: new Date() }
+          }
+        ]);
+      } else {
+        await applyRosterCsvImportOperations(normalizedTeamId, [{
+          type: 'update',
+          playerId,
+          payload: { photoUrl: player.photoUrl, photoPath: webPhotoPath || null }
+        }]);
+      }
+    } catch (error) {
+      const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
+      const persistenceState = isDefinitiveFirestoreWriteFailure(error)
+        ? 'not-committed'
+        : await getPlayerPhotoPersistenceState(normalizedTeamId, playerId, uploadedPhotoPath);
+      if (persistenceState === 'committed') {
+        savedPlayerId = playerId;
+      } else {
+        if (persistenceState === 'not-committed' && nativePhotoPath) {
+          await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+        } else if (persistenceState === 'not-committed' && webPhotoPath) {
+          await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+        }
+        if (persistenceState === 'not-committed') {
+          player = { ...player, photoUrl: null };
+          nativePhotoPath = '';
+          webPhotoPath = '';
+        }
+        photoWarning = `Player was added, but saving the photo reference failed: ${cleanString((error as { message?: unknown })?.message) || 'Unknown save error.'}`;
+      }
+    }
+    invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+    return {
+      playerId: savedPlayerId,
+      player: { ...player, photoPath: nativePhotoPath || webPhotoPath || null },
+      ...(photoWarning ? { photoWarning } : {})
+    };
   }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
     playerId: savedPlayerId,
-    player
+    player: { ...player, photoPath: nativePhotoPath || webPhotoPath || null }
   };
 }
 
@@ -1671,6 +1742,8 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
 
   const nativeRuntime = isNativeRuntime();
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
+  const previousPhotoPath = cleanString(team?.photoPath);
+  let photoPath: string | null = previousPhotoPath || null;
   let nativePhotoPath = '';
   let webPhotoPath = '';
   if (input?.photoFile) {
@@ -1679,10 +1752,12 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       const uploaded = await import('./nativeStorageUpload').then((module) => module.uploadNativeTeamPhotoFile(input.photoFile!, normalizedTeamId));
       photoUrl = uploaded.url;
       nativePhotoPath = uploaded.path;
+      photoPath = uploaded.path;
     } else {
-      const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true });
-      photoUrl = typeof uploaded === 'string' ? uploaded : uploaded.url;
-      webPhotoPath = typeof uploaded === 'string' ? '' : uploaded.path;
+      const uploaded = await uploadTeamPhoto(input.photoFile, { returnUpload: true, teamId: normalizedTeamId });
+      photoUrl = uploaded.url;
+      webPhotoPath = uploaded.path;
+      photoPath = webPhotoPath || null;
     }
   }
 
@@ -1692,6 +1767,7 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     zip: normalizeTeamZip(input?.zip),
     isPublic: input?.isPublic === true,
     photoUrl,
+    photoPath,
     leagueUrl,
     twitchChannel: parsedLivestream?.twitchChannel ?? null,
     streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
@@ -1709,12 +1785,28 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       await updateTeam(normalizedTeamId, payload);
     }
   } catch (error) {
-    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-    } else if (webPhotoPath) {
-      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+    const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
+    const persistenceState = uploadedPhotoPath
+      ? isDefinitiveFirestoreWriteFailure(error)
+        ? 'not-committed' as const
+        : await getTeamPhotoPersistenceState(normalizedTeamId, uploadedPhotoPath)
+      : 'unknown' as const;
+    if (persistenceState !== 'committed') {
+      if (persistenceState === 'not-committed' && nativePhotoPath) {
+        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+      } else if (persistenceState === 'not-committed' && webPhotoPath) {
+        await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+      }
+      throw error;
     }
-    throw error;
+  }
+
+  if (previousPhotoPath && previousPhotoPath !== photoPath) {
+    if (nativeRuntime) {
+      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(previousPhotoPath)).catch(() => undefined);
+    } else {
+      await Promise.resolve(deleteLegacyImageUpload(previousPhotoPath)).catch(() => undefined);
+    }
   }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
@@ -2443,6 +2535,7 @@ function normalizePlayer(player: any, linked: Set<string>, includeParentContacts
     name: cleanString(player?.name || player?.playerName) || 'Player',
     number: cleanString(player?.number),
     photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
+    photoPath: cleanString(player?.photoPath) || null,
     position: cleanString(player?.position || player?.primaryPosition || player?.profile?.customFields?.position || player?.customFields?.position),
     isLinked: linked.has(id),
     active: player?.active !== false
@@ -3012,6 +3105,56 @@ function toNullableNumber(value: any) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function isDefinitiveFirestoreWriteFailure(error: unknown) {
+  const code = cleanString((error as { code?: unknown })?.code).toLowerCase().split('/').pop() || '';
+  return new Set([
+    'already-exists',
+    'failed-precondition',
+    'invalid-argument',
+    'not-found',
+    'out-of-range',
+    'permission-denied',
+    'resource-exhausted',
+    'unauthenticated',
+    'unimplemented'
+  ]).has(code);
+}
+
+async function getRosterPlayerOwnerState(teamId: string, playerId: string) {
+  try {
+    const players = await getPlayers(teamId, { includeInactive: true });
+    return (Array.isArray(players) ? players : []).some((player) => cleanString(player?.id) === playerId)
+      ? 'committed' as const
+      : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
+}
+
+async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, expectedPhotoPath: string) {
+  if (!expectedPhotoPath) return 'not-committed' as const;
+  try {
+    const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
+    return cleanString(privateProfile?.photoPath) === expectedPhotoPath
+      ? 'committed' as const
+      : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
+}
+
+async function getTeamPhotoPersistenceState(teamId: string, expectedPhotoPath: string) {
+  if (!expectedPhotoPath) return 'not-committed' as const;
+  try {
+    const team = await getTeam(teamId, { includeInactive: true });
+    return cleanString(team?.photoPath) === expectedPhotoPath
+      ? 'committed' as const
+      : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
 }
 
 function cleanString(value: unknown) {

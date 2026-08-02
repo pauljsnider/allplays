@@ -490,12 +490,12 @@ describe('React app parent tools service', () => {
             statusLabel: 'Open',
             collectionMode: 'online_stripe',
             checkoutStatus: 'open',
-            checkoutUrl: 'https://pay.example.test/open',
+            checkoutUrl: '',
             notes: 'Bring jersey deposit form.',
             offlinePaymentInstructions: 'Cash or check accepted at practice.',
-            canPay: true,
+            canPay: false,
             checkoutInitiatable: false,
-            paymentAction: 'checkoutUrl',
+            paymentAction: '',
             lineItems: [{ title: 'Season', amountCents: 10000 }],
             installments: [{ label: 'Deposit', amountCents: 5000 }],
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
@@ -503,7 +503,7 @@ describe('React app parent tools service', () => {
         expect(fees[1]).toMatchObject({
             collectionMode: 'offline_manual',
             checkoutStatus: 'open',
-            checkoutUrl: 'https://pay.example.test/offline',
+            checkoutUrl: '',
             offlinePaymentInstructions: 'Pay by cash or check.',
             canPay: false,
             checkoutInitiatable: false,
@@ -536,8 +536,8 @@ describe('React app parent tools service', () => {
         });
         expect(adjustedFee).toMatchObject({
             canPay: true,
-            checkoutInitiatable: false,
-            paymentAction: 'checkoutUrl'
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout'
         });
         expect(staleFee).toMatchObject({
             canPay: true,
@@ -1221,7 +1221,7 @@ describe('React app parent tools service', () => {
     it('throws error if checkout URL is not returned from backend', async () => {
         dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: null });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
-            .rejects.toThrow('Failed to get checkout URL.');
+            .rejects.toThrow('invalid checkout destination');
     });
 
     it('allows capability-based checkout cancellation without a raw registration id', async () => {
@@ -1245,11 +1245,11 @@ describe('React app parent tools service', () => {
     });
 
     it('initiates Stripe checkout for team fees and requires a returned URL', async () => {
-        stripeMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.com/c/pay/team-fee');
 
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1')).resolves.toEqual({
             success: true,
-            checkoutUrl: 'https://checkout.stripe.test/team-fee'
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/team-fee'
         });
         expect(stripeMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' });
 
@@ -1258,7 +1258,11 @@ describe('React app parent tools service', () => {
 
         stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('');
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
-            .rejects.toThrow('Failed to get checkout URL.');
+            .rejects.toThrow('Stripe returned an invalid checkout destination.');
+
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('https://checkout.stripe.com.attacker.example/c/pay/team-fee');
+        await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
+            .rejects.toThrow('Stripe returned an invalid checkout destination.');
     });
 
     describe('updateTeamMediaItemForApp', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildTeamPassMarkup,
+    getCanonicalStripeCheckoutUrl,
     getTeamPassAccess,
     normalizeTeamPassStatus,
     readTeamPassStatus,
@@ -26,6 +27,15 @@ function mockFirebaseForDocs(docs) {
 }
 
 describe('team pass UI helpers', () => {
+    it('accepts only canonical Stripe Checkout destinations before navigation', () => {
+        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com/c/pay/team-pass')).toBe('https://checkout.stripe.com/c/pay/team-pass');
+        expect(getCanonicalStripeCheckoutUrl('http://checkout.stripe.com/c/pay/insecure')).toBe('');
+        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com.attacker.example/c/pay/lookalike')).toBe('');
+        expect(getCanonicalStripeCheckoutUrl('https://user:password@checkout.stripe.com/c/pay/credentialed')).toBe('');
+        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com:8443/c/pay/port')).toBe('');
+        expect(getCanonicalStripeCheckoutUrl('https://checkout.stripe.com/')).toBe('');
+    });
+
     it('treats coaches and admins as staff for the management panel', () => {
         expect(getTeamPassAccess({ uid: 'coach-1', coachOf: ['team-1'] }, TEAM)).toMatchObject({
             isStaff: true,

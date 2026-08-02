@@ -1478,6 +1478,42 @@ describe('TeamDetail', () => {
     expect(status.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
   });
 
+  it('closes and refreshes after a player is created even when its photo reports a partial-save warning', async () => {
+    const managedModel = { ...model, canManageTeam: true };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce({
+        ...managedModel,
+        players: [
+          ...managedModel.players,
+          { id: 'player-2', name: 'Alex New', number: '14', photoUrl: null, position: '', isLinked: false, active: true }
+        ]
+      });
+    teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValueOnce({
+      playerId: 'player-2',
+      player: { name: 'Alex New', number: '14', photoUrl: null, photoPath: null, profile: { customFields: {} } },
+      photoWarning: 'Player was added, but the photo upload failed: storage unavailable'
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add player' }));
+    fireEvent.change(screen.getByPlaceholderText('Player name'), { target: { value: 'Alex New' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save player' }));
+
+    expect(await screen.findByText('Player was added, but the photo upload failed: storage unavailable')).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
+    expect(screen.queryByPlaceholderText('Player name')).toBeNull();
+  });
+
   it('opens bulk roster import in a new team-scoped AI chat instead of rendering a second importer', async () => {
     const managedModel = {
       ...model,

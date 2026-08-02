@@ -3,16 +3,16 @@ import { buildDrillDiagramUploadPaths } from '../../js/drill-upload-paths.js';
 
 describe('drill upload paths', () => {
     it('builds drill diagram image and fallback paths with sanitized values', () => {
-        const paths = buildDrillDiagramUploadPaths('team/alpha', 'drill 01', 'user 7', 'my drill (v1).png', 1700000000000);
+        const paths = buildDrillDiagramUploadPaths('team/alpha', 'drill 01', 'user 7', 'my drill (v1).png', 1700000000000, 'upload-1');
 
-        expect(paths.imagePath).toBe('drill-diagrams/drill_01/1700000000000_my_drill_v1_.png');
-        expect(paths.fallbackPath).toBe('stat-sheets/drills/team_alpha/drill_01/user_7/1700000000000_my_drill_v1_.png');
+        expect(paths.imagePath).toBe('drill-diagrams/drill_01/1700000000000_upload-1_my_drill_v1_.png');
+        expect(paths.fallbackPath).toBe('stat-sheets/drills/team_alpha/drill_01/user_7/1700000000000_upload-1_my_drill_v1_.png');
     });
 
     it('uses defaults when drill id or file name are missing', () => {
-        const paths = buildDrillDiagramUploadPaths('', '', '', '', 1700000000001);
+        const paths = buildDrillDiagramUploadPaths('', '', '', '', 1700000000001, 'upload-2');
 
-        expect(paths.imagePath).toBe('drill-diagrams/unknown/1700000000001_diagram');
-        expect(paths.fallbackPath).toBe('stat-sheets/drills/unknown-team/unknown/unknown-user/1700000000001_diagram');
+        expect(paths.imagePath).toBe('drill-diagrams/unknown/1700000000001_upload-2_diagram');
+        expect(paths.fallbackPath).toBe('stat-sheets/drills/unknown-team/unknown/unknown-user/1700000000001_upload-2_diagram');
     });
 });

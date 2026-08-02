@@ -207,7 +207,10 @@ beforeEach(() => {
             mediaType: kind === 'profile-photo' ? 'image' : mediaType
         };
     });
-    dbMocks.uploadPlayerPhoto.mockResolvedValue('https://example.test/new-photo.jpg');
+    dbMocks.uploadPlayerPhoto.mockResolvedValue({
+        url: 'https://example.test/new-photo.jpg',
+        path: 'profile-photos/teams/team-1/players/player-1/new-photo.jpg'
+    });
     dbMocks.getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball' }]);
     dbMocks.getPlayerTrackingStatuses.mockResolvedValue([{ playerId: 'player-1', itemId: 'item-1', status: 'complete' }]);
     profileStatMocks.collectPlayerVideoClips.mockReturnValue([{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }]);
@@ -536,13 +539,18 @@ describe('React app parent player detail service', () => {
             photoFile: file
         });
 
-        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, { returnUpload: true });
+        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, {
+            returnUpload: true,
+            teamId: 'team-1',
+            playerId: 'player-1'
+        });
         expect(dbMocks.updatePlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             emergencyContact: { name: 'Alex Parent', phone: '555-0199' },
             medicalInfo: 'Inhaler'
         });
         expect(dbMocks.updatePlayerProfile).toHaveBeenCalledWith('team-1', 'player-1', {
-            photoUrl: 'https://example.test/new-photo.jpg'
+            photoUrl: 'https://example.test/new-photo.jpg',
+            photoPath: 'profile-photos/teams/team-1/players/player-1/new-photo.jpg'
         });
     });
 
@@ -569,7 +577,9 @@ describe('React app parent player detail service', () => {
             url: 'https://example.test/new-photo.jpg',
             path: 'player-photos/new-photo.jpg'
         });
-        dbMocks.updatePlayerProfile.mockRejectedValueOnce(new Error('player photo save denied'));
+        dbMocks.updatePlayerProfile.mockRejectedValueOnce(
+            Object.assign(new Error('player photo save denied'), { code: 'permission-denied' })
+        );
 
         await expect(updateParentPlayerEditableProfile({
             user: user(),

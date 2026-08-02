@@ -207,7 +207,7 @@ async function installModuleMocks(page) {
         }
 
         export async function uploadPlayerPhoto() {
-            return '';
+            return { url: '', path: '' };
         }
 
         export async function deleteLegacyImageUpload() {}

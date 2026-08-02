@@ -40,7 +40,8 @@ describe('native credential persistence boundary', () => {
         expect(nativeStorageSource).toContain('getNativeAuthUserId()');
         expect(nativeStorageSource).toContain('getPrimaryAppCheckHeaders');
         expect(nativeStorageSource).toContain('profile-photos/users/${userId}');
-        expect(nativeStorageSource).toContain('profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${userId}');
+        expect(nativeStorageSource).toContain('profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${privateFileName}');
+        expect(nativeStorageSource).not.toContain('profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${userId}');
         expect(nativeStorageSource).not.toContain('window.localStorage');
         expect(nativeStorageSource).not.toContain('refresh_token');
         expect(nativeStorageSource).not.toContain('accounts:signUp');

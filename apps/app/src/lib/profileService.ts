@@ -62,6 +62,7 @@ export type ProfileDocument = {
   displayName?: string;
   phone?: string;
   photoUrl?: string | null;
+  photoPath?: string | null;
   signInMethod?: string;
   hasPassword?: boolean;
   updatedAt?: unknown;

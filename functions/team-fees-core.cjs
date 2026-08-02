@@ -4,6 +4,210 @@ function normalizeString(value) {
     return String(value || '').trim();
 }
 
+const LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS = Object.freeze([
+    'checkoutUrl',
+    'checkoutURL',
+    'paymentLink',
+    'paymentLinkUrl',
+    'paymentUrl',
+    'stripeCheckoutSessionId',
+    'checkoutSessionId',
+    'checkoutAttemptToken',
+    'checkoutAmountCents',
+    'checkoutCreationPayerUid',
+    'checkoutCreationAmountCents',
+    'checkoutCreationRequest'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS = Object.freeze([
+    'lastPaidStripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'paymentIntentId',
+    'stripeCustomerId',
+    'stripeChargeId',
+    'stripeRefundId',
+    'stripeLastRefundId',
+    'stripeEventId',
+    'eventId',
+    'receiptEmail',
+    'refundedBy',
+    'recordedBy',
+    'adjustedBy',
+    'canceledBy',
+    'latestAuditActorId',
+    'internalNote',
+    'adminNote',
+    'reason'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS = Object.freeze([
+    'checkoutSessionId',
+    'paymentIntentId',
+    'receiptEmail',
+    'eventId'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS = Object.freeze([
+    'ledgerEntries',
+    'paymentLedger',
+    'activity',
+    'receipts',
+    'payments',
+    'adjustments'
+]);
+
+const LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS = new Set([
+    ...LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS
+]);
+
+function hasMeaningfulValue(value) {
+    return value !== undefined && value !== null && value !== '';
+}
+
+function isLegacyTeamFeeRefundLedgerEntry(entry) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+    const marker = normalizeString(
+        entry.type || entry.kind || entry.action || entry.category || entry.label || entry.title
+    ).toLowerCase();
+    return marker.includes('refund')
+        || entry.refund === true
+        || entry.isRefund === true
+        || entry.refundAmountCents !== undefined;
+}
+
+function isLegacyReadableTeamFeeLedgerPrivateField(field, entry) {
+    return LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS.has(field)
+        || (field === 'note' && isLegacyTeamFeeRefundLedgerEntry(entry));
+}
+
+function hasLegacyReadableTeamFeeLedgerPrivateState(value) {
+    if (Array.isArray(value)) return value.some(hasLegacyReadableTeamFeeLedgerPrivateState);
+    if (!value || typeof value !== 'object') return false;
+    return Object.entries(value).some(([key, childValue]) => (
+        (isLegacyReadableTeamFeeLedgerPrivateField(key, value) && hasMeaningfulValue(childValue))
+        || hasLegacyReadableTeamFeeLedgerPrivateState(childValue)
+    ));
+}
+
+function extractLegacyReadableTeamFeeLedgerPrivateState(value) {
+    if (Array.isArray(value)) {
+        return value.map((entry, index) => {
+            const privateState = extractLegacyReadableTeamFeeLedgerPrivateState(entry);
+            return privateState && Object.keys(privateState).length ? { index, ...privateState } : null;
+        }).filter(Boolean);
+    }
+    if (!value || typeof value !== 'object') return null;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, childValue]) => {
+        if (isLegacyReadableTeamFeeLedgerPrivateField(key, value) && hasMeaningfulValue(childValue)) {
+            return [[key, childValue]];
+        }
+        const nestedPrivateState = extractLegacyReadableTeamFeeLedgerPrivateState(childValue);
+        return nestedPrivateState && Object.keys(nestedPrivateState).length
+            ? [[key, nestedPrivateState]]
+            : [];
+    }));
+}
+
+function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
+    return LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS.some((field) => (
+        hasMeaningfulValue(recipient[field])
+    ));
+}
+
+function hasLegacyReadableTeamFeeBillingState(recipient = {}) {
+    if (LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS.some((field) => hasMeaningfulValue(recipient[field]))) {
+        return true;
+    }
+    const receiptMetadata = recipient.receiptMetadata;
+    if (receiptMetadata && typeof receiptMetadata === 'object' && !Array.isArray(receiptMetadata)) {
+        if (LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS.some((field) => hasMeaningfulValue(receiptMetadata[field]))) {
+            return true;
+        }
+    }
+    return LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS.some((field) => (
+        Array.isArray(recipient[field]) && hasLegacyReadableTeamFeeLedgerPrivateState(recipient[field])
+    ));
+}
+
+function getLegacyReadableTeamFeeLedgerPrivateState(recipient = {}) {
+    return Object.fromEntries(LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS.flatMap((field) => {
+        if (!Array.isArray(recipient[field])) return [];
+        const privateEntries = extractLegacyReadableTeamFeeLedgerPrivateState(recipient[field]);
+        return privateEntries.length ? [[field, privateEntries]] : [];
+    }));
+}
+
+function buildLegacyReadableTeamFeeAdminBilling({ recipient = {}, existingAdminBilling = {}, now = null } = {}) {
+    const receiptMetadata = recipient.receiptMetadata && typeof recipient.receiptMetadata === 'object' && !Array.isArray(recipient.receiptMetadata)
+        ? recipient.receiptMetadata
+        : {};
+    const legacyLedgerPrivateState = getLegacyReadableTeamFeeLedgerPrivateState(recipient);
+    const legacyBilling = Object.fromEntries(Object.entries({
+        type: 'legacy_readable_billing_migration',
+        provider: recipient.paymentProvider || receiptMetadata.provider || 'stripe',
+        stripeCheckoutSessionId: receiptMetadata.checkoutSessionId,
+        lastPaidStripeCheckoutSessionId: recipient.lastPaidStripeCheckoutSessionId,
+        stripePaymentIntentId: recipient.stripePaymentIntentId || recipient.paymentIntentId || receiptMetadata.paymentIntentId,
+        stripeCustomerId: recipient.stripeCustomerId,
+        stripeChargeId: recipient.stripeChargeId,
+        stripeRefundId: recipient.stripeRefundId,
+        stripeLastRefundId: recipient.stripeLastRefundId,
+        stripeEventId: recipient.stripeEventId || recipient.eventId || receiptMetadata.eventId,
+        receiptEmail: recipient.receiptEmail || receiptMetadata.receiptEmail,
+        refundedBy: recipient.refundedBy,
+        recordedBy: recipient.recordedBy,
+        adjustedBy: recipient.adjustedBy,
+        canceledBy: recipient.canceledBy,
+        latestAuditActorId: recipient.latestAuditActorId,
+        internalNote: recipient.internalNote,
+        adminNote: recipient.adminNote,
+        reason: recipient.reason,
+        ...(Object.keys(legacyLedgerPrivateState).length ? { legacyLedgerPrivateState } : {}),
+        ...(now ? { migratedAt: now, updatedAt: now } : {})
+    }).filter(([, value]) => hasMeaningfulValue(value)));
+    const authoritativeBilling = Object.fromEntries(
+        Object.entries(existingAdminBilling).filter(([, value]) => hasMeaningfulValue(value))
+    );
+    return {
+        ...legacyBilling,
+        ...authoritativeBilling
+    };
+}
+
+function buildLegacyReadableTeamFeeCheckoutAttempt({ recipient = {}, existingAttempt = {}, now = null } = {}) {
+    const readableCheckoutUrl = [
+        recipient.checkoutUrl,
+        recipient.checkoutURL,
+        recipient.paymentLink,
+        recipient.paymentLinkUrl,
+        recipient.paymentUrl
+    ].find((value) => normalizeString(value));
+    const authoritativeAttempt = Object.fromEntries(
+        Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    );
+    return {
+        version: 1,
+        ...(readableCheckoutUrl ? { checkoutUrl: readableCheckoutUrl } : {}),
+        ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
+        ...((recipient.stripeCheckoutSessionId || recipient.checkoutSessionId) ? {
+            stripeCheckoutSessionId: recipient.stripeCheckoutSessionId || recipient.checkoutSessionId
+        } : {}),
+        ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),
+        ...(recipient.checkoutAmountCents ? { checkoutAmountCents: recipient.checkoutAmountCents } : {}),
+        ...(recipient.checkoutCreationReservationId ? { reservationId: recipient.checkoutCreationReservationId } : {}),
+        ...(recipient.checkoutCreationPayerUid ? { payerUid: recipient.checkoutCreationPayerUid } : {}),
+        ...(recipient.checkoutCreationAmountCents ? { amountCents: recipient.checkoutCreationAmountCents } : {}),
+        ...(recipient.checkoutCreationRequest ? { checkoutCreationRequest: recipient.checkoutCreationRequest } : {}),
+        ...(recipient.checkoutCreatedAt || recipient.checkoutCreationStartedAt || now ? {
+            createdAt: recipient.checkoutCreatedAt || recipient.checkoutCreationStartedAt || now
+        } : {}),
+        ...(now ? { updatedAt: now } : {}),
+        ...authoritativeAttempt
+    };
+}
+
 function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
     const token = normalizeString(value);
     if (!token) return '';
@@ -220,7 +424,7 @@ function isCanonicalStripeCheckoutUrl(value) {
     return Boolean(getCanonicalStripeCheckoutUrl(value));
 }
 
-function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = {}, amountCents = 0 } = {}) {
+function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = {}, amountCents = 0, payerUid = '' } = {}) {
     const recipientUrl = getCanonicalStripeCheckoutUrl(recipient.checkoutUrl);
     if (!recipientUrl) return 'checkout_url_invalid';
 
@@ -262,11 +466,14 @@ function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = 
     if (normalizeString(metadata.teamId) !== normalizeString(input.teamId)) return 'checkout_team_mismatch';
     if (normalizeString(metadata.batchId) !== normalizeString(input.batchId)) return 'checkout_batch_mismatch';
     if (normalizeString(metadata.recipientId) !== normalizeString(input.recipientId)) return 'checkout_recipient_mismatch';
+    const expectedPayerUid = normalizeString(payerUid);
+    if (expectedPayerUid && normalizeString(recipient.payerUid) !== expectedPayerUid) return 'checkout_payer_mismatch';
+    if (expectedPayerUid && normalizeString(metadata.payerUid) !== expectedPayerUid) return 'checkout_payer_mismatch';
 
     return '';
 }
 
-function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkoutAttemptToken = '', amountCents = 0 } = {}) {
+function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkoutAttemptToken = '', amountCents = 0, payerUid = '' } = {}) {
     if (!normalizeString(session.id)) return 'checkout_session_missing';
     if (!isCanonicalStripeCheckoutUrl(session.url)) return 'checkout_url_invalid';
 
@@ -276,11 +483,13 @@ function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkou
             stripeCheckoutSessionId: session.id,
             checkoutAttemptToken,
             checkoutStatus: 'open',
-            checkoutAmountCents: amountCents
+            checkoutAmountCents: amountCents,
+            payerUid
         },
         session,
         input,
-        amountCents
+        amountCents,
+        payerUid
     });
 }
 
@@ -294,22 +503,22 @@ function canReuseTeamFeeCheckoutSession(recipient = {}, amountCents = 0) {
     );
 }
 
-function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
-    const activeSessionId = normalizeString(recipient.stripeCheckoutSessionId);
+function getTeamFeeCheckoutGuardFailure({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
+    const activeSessionId = normalizeString(checkoutAttempt.stripeCheckoutSessionId);
     const sessionId = normalizeString(session.id);
     if (!activeSessionId || !sessionId || activeSessionId !== sessionId) {
         return 'checkout_session_mismatch';
     }
 
-    const recipientToken = getValidCheckoutAttemptToken(recipient.checkoutAttemptToken);
+    const recipientToken = getValidCheckoutAttemptToken(checkoutAttempt.checkoutAttemptToken);
     const sessionToken = getValidCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
     const isLegacyCheckoutSession = !recipientToken && !sessionToken;
     if (!isLegacyCheckoutSession && (!recipientToken || !sessionToken || recipientToken !== sessionToken)) {
         return 'checkout_attempt_mismatch';
     }
 
-    const sessionAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
-    const expectedCheckoutAmountCents = Math.round(Number(recipient.checkoutAmountCents || 0));
+    const sessionAmountCents = getTeamFeeStripePaidAmountCents({ checkoutAttempt, session });
+    const expectedCheckoutAmountCents = Math.round(Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents || 0));
     if (!Number.isFinite(sessionAmountCents) || sessionAmountCents <= 0) {
         return 'checkout_amount_missing';
     }
@@ -323,8 +532,8 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
     return '';
 }
 
-function shouldApplyTeamFeeCheckoutSession({ recipient = {}, session = {} } = {}) {
-    return !getTeamFeeCheckoutGuardFailure({ recipient, session });
+function shouldApplyTeamFeeCheckoutSession({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
+    return !getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session });
 }
 
 function shouldMarkTeamFeePaidFromEvent(event = {}) {
@@ -347,14 +556,14 @@ function shouldRecordTeamFeeCheckoutNotPaidFromEvent(event = {}) {
         Boolean(metadata.teamId && metadata.batchId && metadata.recipientId);
 }
 
-function getTeamFeeStripePaidAmountCents({ recipient = {}, session = {} } = {}) {
+function getTeamFeeStripePaidAmountCents({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
     const sessionAmount = Number(session.amount_total ?? session.amount_paid ?? session.amount_subtotal);
     if (Number.isFinite(sessionAmount) && sessionAmount > 0) {
         return Math.round(sessionAmount);
     }
 
-    if (recipient.stripeCheckoutSessionId && session.id && recipient.stripeCheckoutSessionId === session.id) {
-        const checkoutAmount = Number(recipient.checkoutAmountCents);
+    if (checkoutAttempt.stripeCheckoutSessionId && session.id && checkoutAttempt.stripeCheckoutSessionId === session.id) {
+        const checkoutAmount = Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents);
         if (Number.isFinite(checkoutAmount) && checkoutAmount > 0) {
             return Math.round(checkoutAmount);
         }
@@ -469,9 +678,9 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     };
 }
 
-function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receivedAt }) {
+function buildTeamFeePaidUpdate({ recipient = {}, checkoutAttempt = recipient, session = {}, eventId, receivedAt }) {
     const existingPaidCents = getTeamFeePaidCents(recipient);
-    const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
+    const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, checkoutAttempt, session });
     const paidAmountCents = existingPaidCents + stripePaidAmountCents;
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
 
@@ -517,6 +726,15 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
 }
 
 module.exports = {
+    LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
+    LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS,
+    isLegacyReadableTeamFeeLedgerPrivateField,
+    hasLegacyReadableTeamFeeCheckoutState,
+    hasLegacyReadableTeamFeeBillingState,
+    buildLegacyReadableTeamFeeCheckoutAttempt,
+    buildLegacyReadableTeamFeeAdminBilling,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeePaidCents,

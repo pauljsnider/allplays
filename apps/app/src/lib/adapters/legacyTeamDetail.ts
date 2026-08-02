@@ -42,6 +42,7 @@ export const inviteParent = (...args: any[]) => callLegacyDb('inviteParent', arg
 export const getLocalAttractionSponsors = (...args: any[]) => callLegacyDb('getLocalAttractionSponsors', args);
 export const getPlayers = (...args: any[]) => callLegacyDb('getPlayers', args);
 export const getPlayersWithPrivateRosterContacts = (...args: any[]) => callLegacyDb('getPlayersWithPrivateRosterContacts', args);
+export const getPlayerPrivateProfile = (...args: any[]) => callLegacyDb('getPlayerPrivateProfile', args);
 export const getPlayerTrackingStatuses = (...args: any[]) => callLegacyDb('getPlayerTrackingStatuses', args);
 export const getPublicTrackingItems = (...args: any[]) => callLegacyDb('getPublicTrackingItems', args);
 export const getRosterFieldDefinitions = (...args: any[]) => callLegacyDb('getRosterFieldDefinitions', args);
@@ -61,8 +62,12 @@ export const reactivatePlayer = (...args: any[]) => callLegacyDb('reactivatePlay
 export const deleteLegacyImageUpload = (...args: any[]) => callLegacyDb('deleteLegacyImageUpload', args);
 export const setPlayerPrivateRosterProfileFields = (...args: any[]) => callLegacyDb('setPlayerPrivateRosterProfileFields', args);
 export const updateConfig = (...args: any[]) => callLegacyDb('updateConfig', args);
-export const uploadPlayerPhoto = (...args: any[]) => callLegacyDb('uploadPlayerPhoto', args);
-export const uploadTeamPhoto = (...args: any[]) => callLegacyDb('uploadTeamPhoto', args);
+export const uploadPlayerPhoto = (file: File, options: Record<string, unknown> = {}): Promise<{ url: string; path: string }> => (
+  Promise.resolve(callLegacyDb('uploadPlayerPhoto', [file, { ...options, returnUpload: true }]))
+);
+export const uploadTeamPhoto = (file: File, options: Record<string, unknown> = {}): Promise<{ url: string; path: string }> => (
+  Promise.resolve(callLegacyDb('uploadTeamPhoto', [file, { ...options, returnUpload: true }]))
+);
 export const sendInviteEmail = legacy_sendInviteEmail as (...args: any[]) => any;
 export const queueInviteEmail = legacy_queueInviteEmail as (...args: any[]) => any;
 export const inviteExistingTeamAdmin = legacy_inviteExistingTeamAdmin as (...args: any[]) => any;

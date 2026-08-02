@@ -128,7 +128,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
         expect(productionSource).toContain(
-            'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
+            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
         );
         expect(productionSource).toContain('"retry-enabled-functions"');
         expect(productionSource.match(/deploy_args\+=\(--force\)/g) ?? []).toHaveLength(1);
@@ -145,7 +145,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain(
             '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"'
         );
-        expect(productionSource).toContain('if verify_active_firestore_rules; then');
+        expect(productionSource).toContain('if verify_active_firestore_rules "$final_firestore_rules"; then');
         expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15');
         expect(productionSource).toContain('currently unavailable projects:test request');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');

@@ -295,7 +295,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, 'retry_firebase_deploy "hosting,functions" "application"', 'Production application deploy targets');
     assertIncludes(
         deployProd,
-        'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
+        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(
@@ -444,12 +444,121 @@ export function validateProductionDeployCommand(deployProd) {
         'write_firestore_configuration_blocked_summary()',
         'Production Firestore fail-closed summary'
     );
-    assertMatches(
+    assertIncludes(
         deployProd,
-        /if verify_active_firestore_rules; then[\s\S]{0,1000}else[\s\S]{0,2000}ensure_exact_firestore_ruleset[\s\S]{0,1000}activate_firestore_ruleset_with_retry[\s\S]{0,1000}fi[\s\S]{0,500}retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore create-release-index ordering'
+        'CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: ${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}',
+        'Production certificate defaults lockdown change output'
     );
-    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
+    assertIncludes(
+        deployProd,
+        'git show "${firestore_success_sha}:firestore.rules"',
+        'Production certificate defaults lockdown baseline source'
+    );
+    assertIncludes(
+        deployProd,
+        "grep -Fq 'allow create, update, delete: if false;'",
+        'Production certificate defaults completed-lockdown detection'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults one-time transition completion'
+    );
+    assertIncludes(
+        deployProd,
+        'echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"',
+        'Production certificate defaults unknown-baseline fail-closed state'
+    );
+    assertIncludes(deployProd, 'certificate-defaults-writer-compatibility', 'Production certificate defaults writer compatibility deploy');
+    assertIncludes(deployProd, 'certificate-signature-inventory-producer', 'Production certificate signature inventory producer deploy');
+    assertIncludes(deployProd, 'backfill-certificate-legacy-signature-inventory.mjs" --apply', 'Production certificate signature inventory backfill');
+    assertIncludes(deployProd, 'certificate-signature-cleanup-compatibility', 'Production certificate signature cleanup compatibility deploy');
+    assertIncludes(deployProd, 'certificate-defaults-rules-compatibility', 'Production certificate defaults transitional rules activation');
+    assertIncludes(deployProd, 'certificate-defaults-rules-final', 'Production certificate defaults final rules activation');
+    assertIncludes(
+        deployProd,
+        'scripts/build-certificate-defaults-compat-rules.mjs',
+        'Production certificate defaults compatibility rules generator'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-certificate-defaults-compat.rules',
+        'Production certificate defaults compacted compatibility rules handoff'
+    );
+    assertIncludes(deployProd, 'firestore-baseline.rules', 'Production Firestore exact baseline handoff');
+    assertIncludes(deployProd, 'firestore-baseline-compat.rules', 'Production Firestore compatibility baseline handoff');
+    assertIncludes(
+        deployProd,
+        'git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"',
+        'Production Firestore isolated exact-SHA checkout'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"',
+        'Production Firestore baseline-checkout compactor'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"',
+        'Production Firestore baseline-checkout compatibility transformer'
+    );
+    assertIncludes(deployProd, 'cd "$baseline_checkout"', 'Production Firestore isolated pipeline execution');
+    assertIncludes(deployProd, 'baseline_node_major=', 'Production Firestore historical runtime provenance');
+    assertIncludes(deployProd, 'current_node_major=', 'Production Firestore compatible runtime enforcement');
+    assertIncludes(
+        deployProd,
+        'firestore_baseline_mode: ${{ steps.firestore_config.outputs.firestore_baseline_mode }}',
+        'Production Firestore baseline release-mode output'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_description" == *"compatibility rules"*',
+        'Production Firestore compatibility marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_component_description="Firestore compatibility rules at ${GITHUB_SHA}; packaged native clients still use direct writes."',
+        'Production Firestore compatibility marker preservation'
+    );
+    assertIncludes(
+        deployProd,
+        'CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: ${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}',
+        'Production installed-native callable readiness gate'
+    );
+    assertIncludes(
+        deployProd,
+        'Keeping certificate-defaults compatibility rules until supported installed native versions use the callable.',
+        'Production installed-native compatibility hold'
+    );
+    assertIncludes(
+        deployProd,
+        '&& "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true"',
+        'Production installed-native readiness forces finalization without source drift'
+    );
+    assertIncludes(
+        deployProd,
+        'return 2',
+        'Production active Firestore rules unknown-state classification'
+    );
+    const certificateInventoryProducer = deployProd.indexOf('certificate-signature-inventory-producer');
+    const certificateInventoryBackfill = deployProd.indexOf('backfill-certificate-legacy-signature-inventory.mjs" --apply');
+    const certificateCleanupConsumer = deployProd.indexOf('certificate-signature-cleanup-compatibility');
+    const certificateWriterDeploy = deployProd.indexOf('certificate-defaults-writer-compatibility');
+    const certificateCompatibilityRules = deployProd.indexOf('certificate-defaults-rules-compatibility');
+    const certificateApplicationDeploy = deployProd.indexOf('retry_firebase_deploy "hosting,functions" "application"');
+    const certificateFinalRules = deployProd.indexOf('certificate-defaults-rules-final');
+    if (
+        certificateInventoryProducer === -1
+        || certificateInventoryBackfill <= certificateInventoryProducer
+        || certificateCleanupConsumer <= certificateInventoryBackfill
+        || certificateWriterDeploy <= certificateCleanupConsumer
+        || certificateCompatibilityRules <= certificateWriterDeploy
+        || certificateApplicationDeploy <= certificateCompatibilityRules
+        || certificateFinalRules <= certificateApplicationDeploy
+    ) {
+        throw new Error('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial.');
+    }
+    assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(
         deployProd,
         'Exact rules and indexes were not both verified.',
@@ -461,7 +570,8 @@ export function validateProductionDeployCommand(deployProd) {
         '${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion',
         'Production Firestore retry-exhaustion recovery link'
     );
-    assertIncludes(deployProd, 'Application deployment remains fail-closed, so Hosting and Functions were not deployed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'The full application deployment remains fail-closed.', 'Production Firestore retry-exhaustion fail-closed guidance');
+    assertIncludes(deployProd, 'No client outage was introduced.', 'Production Firestore finalization retry guidance');
     assertIncludes(deployProd, 'actions: read', 'Production workflow-run read permission');
     assertIncludes(deployProd, 'deployments: read', 'Production component deployment read permission');
     assertIncludes(deployProd, 'deployments: write', 'Production component deployment write permission');
@@ -470,7 +580,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(deployProd, '-f branch="$baseline_branch"', 'Production successful deploy branch filter');
     assertIncludes(deployProd, '-f status=success', 'Production successful deploy filter');
     assertIncludes(deployProd, 'for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do', 'Production successful deploy lookup retries');
-    assertIncludes(deployProd, 'if last_success_sha="$(gh api', 'Production successful deploy guarded lookup');
+    assertIncludes(deployProd, 'if last_success_run_json="$(gh api', 'Production successful deploy guarded lookup');
     assertIncludes(deployProd, 'if [[ "$lookup_succeeded" != "true" ]]; then', 'Production successful deploy lookup failure fallback');
     assertIncludes(deployProd, 'The successful production deploy lookup failed; forcing authorization rules-first ordering.', 'Production successful deploy lookup warning');
     const lookupFallbackStart = deployProd.indexOf('if [[ "$lookup_succeeded" != "true" ]]; then');
@@ -485,11 +595,113 @@ export function validateProductionDeployCommand(deployProd) {
     }
     assertIncludes(deployProd, 'repos/${GITHUB_REPOSITORY}/deployments', 'Production Firestore component deployment lookup');
     assertIncludes(deployProd, '-f environment=production-firestore', 'Production Firestore component environment filter');
+    assertIncludes(deployProd, 'component_page=1', 'Production Firestore component pagination start');
+    assertIncludes(deployProd, '-F page="$component_page"', 'Production Firestore component pagination request');
+    assertIncludes(
+        deployProd,
+        'component_page=$((component_page + 1))',
+        'Production Firestore component pagination advance'
+    );
+    assertIncludes(
+        deployProd,
+        'deployment_page_count < 100',
+        'Production Firestore component pagination completion'
+    );
+    assertIncludes(
+        deployProd,
+        '[.[] | select(.state == "success")][0] // empty',
+        'Production Firestore successful status lookup across inactive markers'
+    );
     assertIncludes(deployProd, 'firestore_success_sha="$deployment_sha"', 'Production Firestore component successful SHA');
     assertIncludes(
         deployProd,
         'git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"',
         'Production Firestore stale component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'git diff --quiet "$firestore_success_sha" "$last_success_sha" --',
+        'Production Firestore unchanged-only component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'advancing its SHA and forcing live mode classification',
+        'Production Firestore mode classification across unchanged deploys'
+    );
+    assertIncludes(
+        deployProd,
+        'The protected native-readiness gate can finalize the same',
+        'Production Firestore external finalization ambiguity handling'
+    );
+    assertIncludes(deployProd, 'latest_prior_run_id=', 'Production Firestore latest prior run identity');
+    assertIncludes(deployProd, 'select((.id | tostring) != $current)', 'Production Firestore current-run exclusion');
+    assertIncludes(deployProd, 'run_history_lookup_succeeded', 'Production Firestore run history lookup state');
+    assertIncludes(
+        deployProd,
+        'The production run history lookup failed; the active Firestore release mode is unknown.',
+        'Production Firestore run history unknown-state handling'
+    );
+    assertIncludes(deployProd, 'deployment_log_url=', 'Production Firestore component marker run identity');
+    assertIncludes(deployProd, 'component_marker_found="true"', 'Production Firestore component marker presence');
+    assertIncludes(
+        deployProd,
+        'The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification.',
+        'Production Firestore failed/incomplete retry ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing prior-run identity ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]]',
+        'Production Firestore missing component-marker run identity ambiguity handling'
+    );
+    assertIncludes(
+        deployProd,
+        'Preserving the durable Firestore component baseline despite unavailable successful workflow history.',
+        'Production Firestore retained component baseline after workflow history loss'
+    );
+    assertIncludes(
+        deployProd,
+        'conservatively enabling every non-Firestore migration',
+        'Production non-Firestore migration fallback after workflow history expiry'
+    );
+    assertIncludes(
+        deployProd,
+        'FIRESTORE_BASELINE_MODE="compatibility"',
+        'Production legacy writable baseline compatibility classification'
+    );
+    assertIncludes(
+        deployProd,
+        'A trusted final component marker cannot reference legacy client-writable certificate defaults rules.',
+        'Production contradictory legacy final marker rejection'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component deployment lookup failed; the active release mode is unknown.',
+        'Production Firestore component lookup unknown-state handling'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="unmarked"',
+        'Production Firestore missing component marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="ambiguous"',
+        'Production Firestore generated compatibility/final ambiguity state'
+    );
+    assertIncludes(
+        deployProd,
+        'forcing live exact-source classification',
+        'Production Firestore unmarked-mode live classification'
+    );
+    assertIncludes(
+        deployProd,
+        'if [[ "$component_lookup_succeeded" != "true" ]]; then\n              echo "certificate_defaults_lockdown_needed=unknown"',
+        'Production Firestore component lookup blocks lockdown inference'
     );
     assertIncludes(
         deployProd,
@@ -523,11 +735,16 @@ export function validateProductionDeployCommand(deployProd) {
         'ensure_exact_firestore_ruleset',
         'Production Firestore exact ruleset creation or reuse'
     );
-    assertMatches(
-        changedBranch,
-        /if verify_active_firestore_rules; then[\s\S]*else[\s\S]*ensure_exact_firestore_ruleset[\s\S]*activate_firestore_ruleset_with_retry[\s\S]*fi[\s\S]*retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15/,
-        'Production Firestore exact-source short circuit'
-    );
+    assertIncludes(changedBranch, 'verify_active_firestore_rules "$final_firestore_rules"', 'Production Firestore exact-source short circuit');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-${baseline_firestore_mode}"', 'Production Firestore trusted baseline classification');
+    assertIncludes(changedBranch, '[[ "$baseline_firestore_mode" == "ambiguous" ]]', 'Production Firestore ambiguous baseline exact-source resolution');
+    assertIncludes(changedBranch, 'active_rules_variant="baseline-compatibility"', 'Production Firestore compatibility baseline classification');
+    assertIncludes(changedBranch, 'active_rules_status == 2', 'Production Firestore unreadable active-source block');
+    assertIncludes(changedBranch, '[[ "$active_rules_variant" == *-final ]]', 'Production Firestore final boundary preservation');
+    assertIncludes(changedBranch, '[[ "$native_callable_ready" == "true" ]]', 'Production certificate defaults native readiness finalization gate');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$compatibility_firestore_rules"', 'Production Firestore compatibility ruleset verification');
+    assertIncludes(changedBranch, 'ensure_exact_firestore_ruleset "$final_firestore_rules"', 'Production Firestore final ruleset verification');
+    assertIncludes(changedBranch, 'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15', 'Production Firestore index ordering');
     assertIncludes(
         changedBranch,
         'currently unavailable projects:test request',

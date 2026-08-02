@@ -130,7 +130,10 @@ describe('Profile seed from auth.profile', () => {
         profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
         profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
         profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
-        profileServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+        profileServiceMocks.uploadProfilePhoto.mockResolvedValue({
+            url: 'https://example.test/avatar.png',
+            path: 'profile-photos/users/user-1/avatar.png'
+        });
         profileServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
         pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
             state: 'prompt',

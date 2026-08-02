@@ -66,6 +66,7 @@ import {
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import { formatCurrencyFromCents as formatCurrency } from './money';
+import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -421,11 +422,7 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
   }
 
   const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
-  if (!checkoutUrl) {
-    throw new Error('Failed to get checkout URL.');
-  }
-
-  return { success: true, checkoutUrl };
+  return { success: true, checkoutUrl: requireTrustedStripeCheckoutUrl(checkoutUrl) };
 }
 
 export async function loadParentCalendarTools(user: AuthUser | null, options: { force?: boolean } = {}) {
@@ -978,8 +975,9 @@ function normalizeAccessRequest(request: any): ParentAccessRequest {
 
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   const normalized = normalizeParentFeeRecord(fee);
-  const collectionMode = compactString(normalized.collectionMode);
-  const checkoutUrl = compactString(normalized.checkoutUrl);
+  const storedCheckoutUrl = compactString(normalized.checkoutUrl);
+  const collectionMode = compactString(normalized.collectionMode) || (storedCheckoutUrl ? 'online_stripe' : '');
+  const checkoutUrl = '';
   const checkoutStatus = compactString(normalized.checkoutStatus);
   const parentFee = {
     ...normalized,
@@ -988,16 +986,15 @@ function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
     checkoutStatus
   };
   const meta = getParentFeeStatusMeta(normalized.status);
-  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
   const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
   return {
     ...parentFee,
     amountLabel: formatParentFeeAmount(parentFee),
     dueLabel: formatParentFeeDueDate(parentFee.dueDate),
     statusLabel: meta.label,
-    canPay: canOpenCheckoutUrl || checkoutInitiatable,
+    canPay: checkoutInitiatable,
     checkoutInitiatable,
-    paymentAction: canOpenCheckoutUrl ? 'checkoutUrl' : checkoutInitiatable ? 'createCheckout' : '',
+    paymentAction: checkoutInitiatable ? 'createCheckout' : '',
     lineItems: getArrayField(normalized, ['lineItems', 'invoiceLineItems', 'invoiceItems', 'items']),
     installments: getArrayField(normalized, ['installments', 'installmentSchedule', 'paymentSchedule', 'scheduledPayments']),
     ledgerEntries: getArrayField(normalized, ['ledgerEntries', 'paymentLedger', 'activity', 'receipts', 'payments', 'adjustments'])
@@ -1278,11 +1275,7 @@ export async function initiateRegistrationCheckout(
     options.publicCheckoutCapability
   );
 
-  if (!result?.checkoutUrl) {
-    throw new Error('Failed to get checkout URL.');
-  }
-
-  return { success: true, checkoutUrl: result.checkoutUrl };
+  return { success: true, checkoutUrl: requireTrustedStripeCheckoutUrl(result?.checkoutUrl) };
 }
 
 export async function cancelRegistrationCheckout(
