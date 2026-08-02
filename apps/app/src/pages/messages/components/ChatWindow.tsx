@@ -92,6 +92,7 @@ import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
 import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';
 import { Composer } from './ChatComposer';
+import { TeamAvatar } from './TeamAvatar';
 
 const LazyTeamEmailSheet = lazy(() => import('./TeamEmailSheet'));
 
@@ -355,26 +356,6 @@ export function getDirectConversationLookupIds(currentUserId: string, recipientI
 
 export function getReverseDirectConversationId(currentUserId: string, recipientId: string) {
   return getDirectConversationLookupIds(currentUserId, recipientId)[1] || '';
-}
-
-export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
-  return (
-    <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
-      {team.photoUrl ? (
-        <AvatarImage
-          src={team.photoUrl}
-          alt={`${team.name} team photo`}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-          fallback={<span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>}
-        />
-      ) : (
-        <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
-      )}
-      {team.unreadCount > 0 ? <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-600" /> : null}
-    </div>
-  );
 }
 
 export function ChatWindow({
