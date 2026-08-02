@@ -17,7 +17,7 @@ function normalizeVerifiedRecipientPhone(token) {
 }
 
 function extractVerifiedFriendInviteRecipientIdentities(auth, HttpsError) {
-  const uid = typeof auth?.uid === 'string' ? auth.uid.trim() : '';
+  const uid = typeof auth?.uid === 'string' ? auth.uid : '';
   const token = auth?.token && typeof auth.token === 'object' && !Array.isArray(auth.token)
     ? auth.token
     : null;

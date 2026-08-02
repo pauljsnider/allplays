@@ -49,7 +49,7 @@ test('extracts a normalized verified email identity', () => {
       email_verified: true
     }
   }), {
-    uid: 'user-1',
+    uid: ' user-1 ',
     email: 'recipient@example.com',
     phone: ''
   });
