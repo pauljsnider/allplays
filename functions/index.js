@@ -640,9 +640,15 @@ async function reserveTeamPassCheckoutCreation({
     const existingReservationId = String(attempt.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
       const reservedPurchaserUid = String(attempt.purchaserUid || '').trim();
+      if (!reservedPurchaserUid || reservedPurchaserUid !== purchaserUid) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Another purchaser already has a team-pass checkout in progress. Wait for it to complete or expire before retrying.'
+        );
+      }
       if (!isReusableTeamPassCheckoutCreationRequest(attempt.checkoutCreationRequest, {
         input,
-        purchaserUid: reservedPurchaserUid,
+        purchaserUid,
         reservationId: existingReservationId
       })) {
         throw new functions.https.HttpsError(

@@ -656,7 +656,7 @@ test('uses a stable idempotency key for repeated team-pass checkout creation', a
     assert.deepEqual(attempt?.checkoutCreationRequest?.stripeParams, loaded.metrics.createCalls[0].params);
 });
 
-test('uses one team-scoped checkout attempt across different authorized purchasers', async () => {
+test('serializes team-scoped checkout attempts without sharing checkout details across purchasers', async () => {
     let releaseFirstCreate;
     let markFirstCreateStarted;
     const firstCreateStarted = new Promise((resolve) => {
@@ -695,17 +695,17 @@ test('uses one team-scoped checkout attempt across different authorized purchase
 
     const ownerPromise = loaded.teamPassCallable(teamPassInput, context);
     await firstCreateStarted;
-    const adminPromise = loaded.teamPassCallable(teamPassInput, adminContext);
-    while (loaded.metrics.createCalls.length < 2) {
-        await new Promise((resolve) => setImmediate(resolve));
-    }
+    await assert.rejects(
+        loaded.teamPassCallable(teamPassInput, adminContext),
+        (error) => error?.code === 'failed-precondition'
+            && /another purchaser already has/i.test(error?.message || '')
+    );
+    assert.equal(loaded.metrics.createCalls.length, 1);
     releaseFirstCreate();
-    const [ownerResult, adminResult] = await Promise.all([ownerPromise, adminPromise]);
+    const ownerResult = await ownerPromise;
 
-    assert.deepEqual(adminResult, ownerResult);
     assert.equal(ownerResult.sessionId, 'cs_team_pass_shared');
-    assert.equal(loaded.metrics.createCalls.length, 2);
-    assert.deepEqual(loaded.metrics.createCalls[1], loaded.metrics.createCalls[0]);
+    assert.equal(loaded.metrics.createCalls.length, 1);
     assert.equal(
         [...loaded.firestore._state.keys()].filter((path) => path.includes('/teamPassCheckoutAttempts/')).length,
         1
