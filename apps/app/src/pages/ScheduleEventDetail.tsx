@@ -425,7 +425,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               openAssignmentCount: event.openAssignmentCount,
               assignmentClaimsHydrated: event.assignmentClaimsHydrated
             }]));
-            void hydrateParentScheduleEventOptionalDetails(result).then((hydrated) => {
+            const optionalSnapshot = {
+              ...result,
+              events: result.events.map((event) => ({ ...event }))
+            };
+            void hydrateParentScheduleEventOptionalDetails(optionalSnapshot).then((hydrated) => {
               if (loadGenerationRef.current !== loadGeneration) return;
               const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
               setEvents((current) => current.map((event) => {

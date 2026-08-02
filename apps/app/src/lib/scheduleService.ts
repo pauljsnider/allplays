@@ -4234,12 +4234,16 @@ async function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[],
 }
 
 export async function hydrateParentScheduleEventOptionalDetails(schedule: ParentScheduleLoadResult): Promise<ParentScheduleLoadResult> {
-  const uniqueEvents = [...new Map(schedule.events
+  const hydratedSchedule = {
+    ...schedule,
+    events: schedule.events.map((event) => ({ ...event }))
+  };
+  const uniqueEvents = [...new Map(hydratedSchedule.events
     .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
     .map((event) => [`${event.teamId}::${event.id}`, event])).values()];
 
   await Promise.all(uniqueEvents.map(async (firstEvent) => {
-    const matchingEvents = schedule.events.filter((event) => event.teamId === firstEvent.teamId && event.id === firstEvent.id);
+    const matchingEvents = hydratedSchedule.events.filter((event) => event.teamId === firstEvent.teamId && event.id === firstEvent.id);
     const [offersResult, claimsResult] = await Promise.allSettled([
       loadCachedRideOffers(firstEvent.teamId, firstEvent.id),
       loadCachedAssignmentClaims(firstEvent.teamId, firstEvent.id)
@@ -4255,7 +4259,7 @@ export async function hydrateParentScheduleEventOptionalDetails(schedule: Parent
       }
     });
   }));
-  return schedule;
+  return hydratedSchedule;
 }
 
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {

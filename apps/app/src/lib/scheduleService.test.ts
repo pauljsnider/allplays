@@ -1701,11 +1701,16 @@ describe('parent schedule detail hydration', () => {
     await expect(rideshareLoad).resolves.toEqual([expect.objectContaining({ id: 'offer-1' })]);
     resolveClaims({ scoreboard: { claimedByUserId: 'parent-2' } });
     await expect(assignmentsLoad).resolves.toEqual(expect.any(Array));
-    await optionalHydration;
+    const hydratedDetail = await optionalHydration;
 
     expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
     expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
-    expect(detail.events[0].assignmentClaimsHydrated).toBe(true);
+    expect(hydratedDetail).not.toBe(detail);
+    expect(hydratedDetail.events[0]).not.toBe(detail.events[0]);
+    expect(hydratedDetail.events[0]).toMatchObject({
+      assignmentClaimsHydrated: true
+    });
+    expect(detail.events[0].assignmentClaimsHydrated).not.toBe(true);
   });
 });
 

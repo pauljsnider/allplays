@@ -677,25 +677,24 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
   });
 
-  it('ignores stale rideshare hydration after a same-event refresh starts a new generation', async () => {
+  it('ignores production-shaped in-place stale rideshare hydration when a newer refresh fails', async () => {
     const baselineRideshareSummary = { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
     const detail = {
       events: [buildEvent({ rideshareSummary: baselineRideshareSummary })],
       children: []
     };
     let resolveStaleHydration!: () => void;
-    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockResolvedValueOnce(detail)
+      .mockRejectedValueOnce(new Error('Refreshed event load failed.'));
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue(detail.events);
     scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
       .mockImplementationOnce((result) => new Promise((resolve) => {
-        resolveStaleHydration = () => resolve({
-          ...result,
-          events: result.events.map((event: any) => ({
-            ...event,
-            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
-          }))
-        });
-      }))
-      .mockRejectedValueOnce(new Error('Refreshed rideshare hydration failed.'));
+        resolveStaleHydration = () => {
+          result.events[0].rideshareSummary = { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false };
+          resolve(result);
+        };
+      }));
 
     const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
     await screen.findByText('Availability needed');
@@ -709,14 +708,15 @@ describe('ScheduleEventDetail loading states', () => {
         </Routes>
       </MemoryRouter>
     );
-    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(2));
+    await screen.findByText(/Unable to refresh this event/);
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
 
     await act(async () => resolveStaleHydration());
 
     expect(screen.queryByText('Check rideshare')).toBeNull();
   });
 
-  it('ignores stale assignment hydration after a same-event refresh starts a new generation', async () => {
+  it('ignores production-shaped in-place stale assignment hydration when a newer refresh fails', async () => {
     const baselineAssignments: any[] = [];
     const detail = {
       events: [buildEvent({
@@ -727,20 +727,19 @@ describe('ScheduleEventDetail loading states', () => {
       children: []
     };
     let resolveStaleHydration!: () => void;
-    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockResolvedValueOnce(detail)
+      .mockRejectedValueOnce(new Error('Refreshed event load failed.'));
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue(detail.events);
     scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
       .mockImplementationOnce((result) => new Promise((resolve) => {
-        resolveStaleHydration = () => resolve({
-          ...result,
-          events: result.events.map((event: any) => ({
-            ...event,
-            assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }],
-            openAssignmentCount: 1,
-            assignmentClaimsHydrated: true
-          }))
-        });
-      }))
-      .mockRejectedValueOnce(new Error('Refreshed assignment hydration failed.'));
+        resolveStaleHydration = () => {
+          result.events[0].assignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+          result.events[0].openAssignmentCount = 1;
+          result.events[0].assignmentClaimsHydrated = true;
+          resolve(result);
+        };
+      }));
 
     const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
     await screen.findByText('Availability needed');
@@ -754,7 +753,8 @@ describe('ScheduleEventDetail loading states', () => {
         </Routes>
       </MemoryRouter>
     );
-    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(2));
+    await screen.findByText(/Unable to refresh this event/);
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
 
     await act(async () => resolveStaleHydration());
 
