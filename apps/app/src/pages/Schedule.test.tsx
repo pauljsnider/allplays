@@ -1044,13 +1044,38 @@ describe('Schedule', () => {
 
     await waitFor(() => {
       expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenLastCalledWith(
-        'pat-schedule-ics',
+        'pat-schedule.ics',
         expect.stringContaining('Rivals')
       );
       expect(screen.getByText('Sharing failed. Check device sharing permissions and try again.')).toBeTruthy();
     });
     expect(screen.queryByText('Calendar file ready to share.')).toBeNull();
     expect(screen.queryByText('Calendar download started.')).toBeNull();
+  });
+
+  it('prevents overlapping calendar exports while one is pending', async () => {
+    const schedule = buildMixedTeamScheduleResult();
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    let resolveExport!: (result: 'downloaded') => void;
+    publicActionMocks.exportCalendarIcsFile.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveExport = resolve;
+    }));
+
+    renderSchedule();
+
+    await screen.findByText('For Pat · Bears');
+    const exportButton = screen.getByRole('button', { name: 'Export calendar' });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => expect(exportButton).toBeDisabled());
+    fireEvent.click(exportButton);
+    expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledTimes(1);
+
+    resolveExport('downloaded');
+    await waitFor(() => {
+      expect(exportButton).not.toBeDisabled();
+      expect(screen.getByText('Calendar download started.')).toBeTruthy();
+    });
   });
 
   it('keeps explicitly non-linked same-team rows out of family views and copied agendas', async () => {
