@@ -670,6 +670,10 @@ describe('Home', () => {
     expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
     expect(screen.queryByText('Home could not connect')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByText('Checking actions')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
   });
 
   it('shows first-run access actions instead of an empty Today dashboard when no players or teams are linked', async () => {

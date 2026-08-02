@@ -705,9 +705,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', mockAvatarUrl);
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
-    const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
+    const alertsTab = page.getByRole('link', { name: 'Notifications', exact: true });
     await alertsTab.click();
-    await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(alertsTab).toHaveAttribute('aria-current', 'page');
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(1);
     await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
@@ -724,7 +724,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save preferences' }).click();
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Invites', exact: true }).click();
+    await page.getByRole('link', { name: 'Invites', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Create invite' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await page.getByLabel('Recipient email').fill('friend@example.com');
@@ -756,7 +756,7 @@ test('profile exposes account, notification, invite, verification, password, upl
 
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Security', exact: true }).click();
+    await page.getByRole('link', { name: 'Sign-in & security', exact: true }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
     await expect(page.getByText('Set a password')).toBeVisible();
     await page.locator('input[placeholder="New password"]').fill('new-password');
@@ -848,7 +848,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     await page.getByLabel('Team').selectOption('team-2');
 
@@ -905,7 +905,7 @@ test('profile alerts recover from blocked native notification permissions', asyn
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByText('Notifications are off in device settings')).toBeVisible();
     await page.getByRole('button', { name: 'Open device settings' }).first().click();
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.openPushSettings)).toBe(1);

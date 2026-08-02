@@ -30,7 +30,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
   buildScheduleAgendaText,
-  canSubmitScheduleEventRsvp,
+  getScheduleEventRsvpCapability,
   filterParentScheduleEvents,
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -43,6 +43,7 @@ import {
   getScheduleLocationLabel,
   getWindowedCalendarScheduleEntries,
   getWindowedPracticePacketRows,
+  isScheduleEventAvailabilityNeeded,
   getScheduleTitle,
   getScheduleTournamentInfo,
   getScheduleMapHref,
@@ -1740,6 +1741,7 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
   }
 
   const rsvp = normalizeRsvpResponse(event.myRsvp);
+  const rsvpBadge = getScheduleRsvpBadge(event, rsvp);
   const actionText = getEventPrimaryActionText(event);
   const tournamentInfo = getScheduleTournamentInfo(event);
 
@@ -1755,9 +1757,9 @@ function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentSch
           <div className="mt-1 text-sm font-bold text-gray-700">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</div>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-600">{event.childName} · {getScheduleLocationLabel(event, 'Location TBD')}</div>
         </div>
-        <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-          {rsvpLabels[rsvp]}
-        </span>
+        {rsvpBadge ? <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadge.className}`}>
+          {rsvpBadge.label}
+        </span> : null}
       </div>
       <div className="mt-3 inline-flex min-h-8 items-center gap-2 rounded-full bg-white px-3 text-xs font-black text-primary-700 shadow-sm">
         {actionText}
@@ -2089,6 +2091,7 @@ function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canSh
         <div className="divide-y divide-gray-100">
           {renderedEvents.map((event) => {
             const rsvp = normalizeRsvpResponse(event.myRsvp);
+            const rsvpBadge = getScheduleRsvpBadge(event, rsvp);
             const tournamentInfo = getScheduleTournamentInfo(event);
             return (
               <Link key={event.eventKey} to={getGenericEventDetailPath(event, preferGameHubForStaff)} className="compact-schedule-row grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
@@ -2103,9 +2106,9 @@ function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canSh
                     <div className="mt-0.5 truncate text-xs font-bold text-indigo-700">{tournamentInfo.label}</div>
                   ) : null}
                 </div>
-                <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-                  {rsvpLabels[rsvp]}
-                </span>
+                {rsvpBadge ? <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadge.className}`}>
+                  {rsvpBadge.label}
+                </span> : null}
               </Link>
             );
           })}
@@ -2200,6 +2203,7 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
   preferGameHubForStaff: boolean;
 }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
+  const rsvpBadge = getScheduleRsvpBadge(event, rsvp);
   const eventTitle = getScheduleTitle(event);
   const defaultDetailPath = getScheduleEventDetailPath(event);
   const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff) || defaultDetailPath;
@@ -2284,9 +2288,9 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
             </span>
             {event.isCancelled ? <span className="inline-flex min-h-6 items-center rounded-full bg-rose-100 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-800">Cancelled</span> : null}
             {hasPracticePacket ? <span className="inline-flex min-h-6 items-center rounded-full bg-blue-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-blue-700">Packet ready</span> : null}
-            <span className={`inline-flex min-h-6 items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-              {rsvpLabels[rsvp]}
-            </span>
+            {rsvpBadge ? <span className={`inline-flex min-h-6 items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadge.className}`}>
+              {rsvpBadge.label}
+            </span> : null}
             {metadataPills.map((pill) => (
               <span key={pill} className="inline-flex min-h-6 items-center rounded-full bg-gray-100 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-600">
                 {pill}
@@ -2425,7 +2429,19 @@ function getEventCardActionPills(event: ParentScheduleEvent | CalendarScheduleEn
 }
 
 function isScheduleAvailabilityNeeded(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  return normalizeRsvpResponse(event.myRsvp) === 'not_responded' && canSubmitScheduleEventRsvp(event);
+  return isScheduleEventAvailabilityNeeded(event);
+}
+
+function getScheduleRsvpBadge(event: ParentScheduleEvent | CalendarScheduleEntry, rsvp = normalizeRsvpResponse(event.myRsvp)) {
+  const capability = getScheduleEventRsvpCapability(event);
+  if (capability === 'calendar_only') {
+    return { label: 'Calendar only', className: 'border-gray-200 bg-gray-100 text-gray-700' };
+  }
+  if (capability === 'locked') {
+    return { label: 'Availability closed', className: 'border-gray-200 bg-gray-100 text-gray-700' };
+  }
+  if (capability !== 'editable') return null;
+  return { label: rsvpLabels[rsvp], className: rsvpBadgeClasses[rsvp] };
 }
 
 function getEventMetadataPills(event: ParentScheduleEvent | CalendarScheduleEntry) {
@@ -2586,7 +2602,8 @@ function CalendarEventPicker({ day, entries, preferGameHubForStaff, onClose }: {
 
 function CalendarEventPickerRow({ entry, preferGameHubForStaff }: { entry: CalendarScheduleEntry; preferGameHubForStaff: boolean }) {
   const rsvp = normalizeRsvpResponse(entry.myRsvp);
-  const needsRsvp = entry.childRsvps.some((child) => normalizeRsvpResponse(child.myRsvp) === 'not_responded') || rsvp === 'not_responded';
+  const needsRsvp = getScheduleEventRsvpCapability(entry) === 'editable'
+    && (entry.childRsvps.some((child) => normalizeRsvpResponse(child.myRsvp) === 'not_responded') || rsvp === 'not_responded');
   const childLabel = entry.childNames.length ? entry.childNames.join(', ') : entry.childName;
   const actionLabel = entry.type === 'practice' ? 'Open practice' : 'Open game';
   const tournamentInfo = getScheduleTournamentInfo(entry);

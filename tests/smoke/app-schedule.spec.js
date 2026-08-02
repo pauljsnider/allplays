@@ -576,6 +576,12 @@ async function mockScheduleModules(page, options = {}) {
                     return { going: events.length, maybe: 0, notGoing: 0, notResponded: 0 };
                 }
 
+                export async function enableRsvpForImportedCalendarEvent(event) {
+                    const trackedEventId = 'calendar-materialized-event';
+                    window.__scheduleCalls.materializedEvent = { eventId: event.id, trackedEventId };
+                    return trackedEventId;
+                }
+
                 export async function updateGameScore(teamId, gameId, score, user) {
                     const payload = {
                         homeScore: Number(score?.homeScore ?? 0),

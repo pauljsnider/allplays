@@ -2011,6 +2011,29 @@ describe('Schedule', () => {
     expect(screen.getByRole('link', { name: 'Packets' }).getAttribute('aria-current')).toBe('page');
   });
 
+  it('labels calendar-only imports without contradicting the RSVP-needed metric', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [buildScheduleEvent(1, {
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        myRsvp: 'not_responded'
+      })]
+    });
+
+    renderSchedule();
+
+    expect((await screen.findAllByText('Calendar only')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Imported')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show rsvp needed' }).textContent).toContain('0');
+  });
+
   it('renders web-created tournament game metadata and the create tournament flow', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [

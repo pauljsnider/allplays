@@ -12,6 +12,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   claimParentScheduleAssignmentSlot: vi.fn(),
   createScheduleAssignment: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
+  enableRsvpForImportedCalendarEvent: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
   loadStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
@@ -1393,6 +1394,64 @@ describe('ScheduleEventDetail nav visibility', () => {
     expect(screen.queryByRole('button', { name: 'Going' })).toBeNull();
     expect(screen.queryByLabelText('Availability note')).toBeNull();
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+  });
+
+  it.each([
+    ['game', { type: 'game', opponent: 'Wolves', title: null }],
+    ['practice', { type: 'practice', opponent: null, title: 'Skills practice' }]
+  ])('lets authorized staff enable RSVP for an imported calendar %s exactly once', async (_label, eventOverrides) => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        ...eventOverrides,
+        id: 'calendar-uid-1',
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        isTeamStaff: true
+      })],
+      children: []
+    });
+    scheduleServiceMocks.enableRsvpForImportedCalendarEvent.mockResolvedValue('tracked-event-1');
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/calendar-uid-1?childId=player-1&section=availability');
+
+    expect(await screen.findByText('Calendar-only event')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Enable RSVP' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('adds a tracked copy'));
+    await waitFor(() => {
+      expect(scheduleServiceMocks.enableRsvpForImportedCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'calendar-uid-1', type: eventOverrides.type }),
+        auth.user
+      );
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/tracked-event-1?childId=player-1&section=availability');
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it('explains calendar-only RSVP limits to parents without exposing the staff mutation', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'calendar-uid-1',
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        isTeamStaff: false
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/calendar-uid-1?childId=player-1&section=availability');
+
+    expect(await screen.findByText('Calendar-only event')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    expect(screen.getByText('Ask a coach or team admin to enable RSVP for this event.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Enable RSVP' })).toBeNull();
+    expect(scheduleServiceMocks.enableRsvpForImportedCalendarEvent).not.toHaveBeenCalled();
   });
 
   it.each([
