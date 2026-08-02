@@ -471,6 +471,8 @@ describe('preview deployment workflow trust boundary', () => {
         expect(imageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
         expect(profileImageWorkflow).toContain('profile-photos/users/${staffRestSession.localId}/');
         expect(profileImageWorkflow).toContain('profile-photos/teams/${config.teamId}/players/${config.playerId}/');
+        expect(imageWriteProductionSmoke).toContain("import { randomUUID } from 'node:crypto';");
+        expect(imageWriteProductionSmoke).toContain("const attemptNonce = randomUUID().replace(/-/g, '');");
         expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
         expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
@@ -481,6 +483,11 @@ describe('preview deployment workflow trust boundary', () => {
         expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(')).toBeLessThan(
             profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
         );
+        expect(profileImageWorkflow).toContain(
+            'const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;'
+        );
+        expect(profileImageWorkflow).not.toContain('firebasestorage.googleapis.com');
+        expect(profileImageWorkflow).toContain('photoUrl: { stringValue: safeDocumentPhotoUrl }');
         expect(profileImageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
     });
 

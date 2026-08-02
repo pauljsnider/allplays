@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
@@ -22,7 +23,8 @@ import {
 const config = getAppSmokeConfig();
 const extendedEnabled = process.env.SMOKE_EXTENDED_WRITES === '1';
 const runId = String(config.runId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48);
-const smokePrefix = `allplays-smoke-${runId}`;
+const attemptNonce = randomUUID().replace(/-/g, '');
+const smokePrefix = `allplays-smoke-${runId}-${attemptNonce}`;
 const secretValues = [config.staffEmail, config.staffPassword];
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
@@ -144,8 +146,9 @@ test('profile image paths accept authenticated storage and document writes', asy
     );
     const ownProfilePath = `profile-photos/users/${staffRestSession.localId}/${smokePrefix}-profile.png`;
     const linkedPlayerPath = `profile-photos/teams/${config.teamId}/players/${config.playerId}/${smokePrefix}-player.png`;
-    const ownProfileUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(staffRestSession.storageBucket)}/o/${encodeURIComponent(ownProfilePath)}?alt=media`;
-    const linkedPlayerUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(staffRestSession.storageBucket)}/o/${encodeURIComponent(linkedPlayerPath)}?alt=media`;
+    // Exercise the same photoUrl field authorization without temporarily exposing
+    // the disposable object URL to consumers that persist profile snapshots.
+    const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;
     const targets = [
         {
             recordType: 'own-profile-image',
@@ -154,7 +157,7 @@ test('profile image paths accept authenticated storage and document writes', asy
                 documentPath: `users/${staffRestSession.localId}`,
                 expectedFields: {
                     photoPath: { stringValue: ownProfilePath },
-                    photoUrl: { stringValue: ownProfileUrl }
+                    photoUrl: { stringValue: safeDocumentPhotoUrl }
                 }
             }]
         },
@@ -164,7 +167,7 @@ test('profile image paths accept authenticated storage and document writes', asy
             documents: [
                 {
                     documentPath: `teams/${config.teamId}/players/${config.playerId}`,
-                    expectedFields: { photoUrl: { stringValue: linkedPlayerUrl } }
+                    expectedFields: { photoUrl: { stringValue: safeDocumentPhotoUrl } }
                 },
                 {
                     documentPath: `teams/${config.teamId}/players/${config.playerId}/private/profile`,
