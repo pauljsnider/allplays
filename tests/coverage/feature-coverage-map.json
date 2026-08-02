@@ -229,6 +229,7 @@
                 "apps/app/src/pages/team-detail/InsightsTab.tsx",
                 "apps/app/src/pages/team-detail/insightsTabLoader.ts",
                 "apps/app/src/pages/team-detail/MoreTab.tsx",
+                "apps/app/src/pages/team-detail/moreTabLoader.ts",
                 "apps/app/src/pages/team-detail/RosterTab.tsx",
                 "apps/app/src/pages/team-detail/rosterTabLoader.ts",
                 "apps/app/src/pages/TeamSettings.tsx",

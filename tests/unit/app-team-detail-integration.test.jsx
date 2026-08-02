@@ -76,7 +76,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
 }));
 
-import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl } from '../../apps/app/src/pages/team-detail/MoreTab.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
