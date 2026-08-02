@@ -37,6 +37,10 @@ const extendedProductionSmoke = fs.readFileSync(
     path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-extended.spec.js'),
     'utf8'
 );
+const imageWriteProductionSmoke = fs.readFileSync(
+    path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-image-writes.spec.js'),
+    'utf8'
+);
 const trustBoundaryRunbook = fs.readFileSync(
     path.join(repoRoot, 'docs', 'preview-deploy-trust-boundary.md'),
     'utf8'
@@ -433,6 +437,83 @@ describe('preview deployment workflow trust boundary', () => {
         const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
         expect(notificationAssertion).toBeGreaterThanOrEqual(0);
         expect(cleanupCall).toBeGreaterThan(notificationAssertion);
+    });
+
+    it('keeps production image writes isolated and always schedules cleanup', () => {
+        const staffWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('staff smoke writes are deterministic and removed after validation'"
+        );
+        const imageWorkflowStart = imageWriteProductionSmoke.indexOf(
+            "test('staff image upload is persisted and removed after validation'"
+        );
+        const profileImageWorkflowStart = imageWriteProductionSmoke.indexOf(
+            "test('profile image paths accept authenticated storage and document writes'"
+        );
+        const parentWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('parent smoke writes restore or remove every touched record'"
+        );
+        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, parentWorkflowStart);
+        const imageWorkflow = imageWriteProductionSmoke.slice(imageWorkflowStart, profileImageWorkflowStart);
+        const profileImageWorkflow = imageWriteProductionSmoke.slice(profileImageWorkflowStart);
+        const reconciliationWorkflow = imageWriteProductionSmoke.slice(
+            imageWriteProductionSmoke.indexOf('async function reconcileDedicatedImageFixture'),
+            imageWorkflowStart
+        );
+
+        expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(imageWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(profileImageWorkflowStart).toBeGreaterThan(imageWorkflowStart);
+        expect(staffWorkflow).toContain("getByRole('button', { name: /manage schedule/i }).click()");
+        expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
+        expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
+        expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
+        expect(imageWorkflow).toContain("recordType: 'team-media'");
+        expect(imageWorkflow).toContain('input[type="file"][accept="image/*"]');
+        expect(imageWorkflow).toContain("getByText('Uploaded', { exact: true })");
+        expect(imageWorkflow).toContain("getByText('Media item deleted.')");
+        expect(imageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
+        expect(profileImageWorkflow).toContain('profile-photos/users/${staffRestSession.localId}/');
+        expect(profileImageWorkflow).toContain('profile-photos/teams/${config.teamId}/players/${config.playerId}/');
+        expect(imageWriteProductionSmoke).toContain("import { randomUUID } from 'node:crypto';");
+        expect(imageWriteProductionSmoke).toContain("const attemptNonce = randomUUID().replace(/-/g, '');");
+        expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
+        expect(profileImageWorkflow).toContain('allowMissing: true');
+        expect(profileImageWorkflow).toContain('removeIfCreated: true');
+        expect(profileImageWorkflow).toContain('cleanupRestSession: staffRestSession');
+        expect(profileImageWorkflow).toContain('restSession: parentRestSession');
+        expect(imageWriteProductionSmoke).toContain('SMOKE_PARENT_EMAIL: config.parentEmail');
+        expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
+        expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
+        expect(profileImageWorkflow).toContain('createFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('deleteFirestoreDocument(');
+        expect(imageWriteProductionSmoke).toContain('Object.keys(createdDocument.fields || {})');
+        expect(reconciliationWorkflow).toContain("canonical private-profile baseline is missing");
+        expect(reconciliationWorkflow).toContain('Object.keys(cleanupDocument?.fields || {})');
+        expect(reconciliationWorkflow).toContain('updateTime: cleanupDocument.updateTime');
+        expect(reconciliationWorkflow).not.toContain('deleteFirebaseStorageObject(');
+        expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
+        expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');
+        expect(imageWriteProductionSmoke).toContain('isAbandonedSmokeImageValue');
+        expect(imageWriteProductionSmoke).toContain('must have an empty ${fieldName} baseline');
+        expect(imageWriteProductionSmoke).toContain('restoreFirestoreDocumentFields(');
+        expect(imageWriteProductionSmoke).toContain('{ updateTime: currentDocument.updateTime }');
+        expect(profileImageWorkflow).toContain('deleteFirebaseStorageObject(');
+        expect(profileImageWorkflow.indexOf('patchFirestoreDocumentFields(')).toBeLessThan(
+            profileImageWorkflow.indexOf('uploadFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(documentState)')).toBeLessThan(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow.slice(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        )).not.toContain('restoreImageFieldsIfUnchanged(documentState)');
+        expect(profileImageWorkflow).toContain(
+            'const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;'
+        );
+        expect(profileImageWorkflow).not.toContain('firebasestorage.googleapis.com');
+        expect(profileImageWorkflow).toContain('photoUrl: { stringValue: safeDocumentPhotoUrl }');
+        expect(profileImageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
     });
 
     it('documents the keyless credential and exact-head operational contract', () => {

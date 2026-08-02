@@ -157,8 +157,13 @@ export function getFirestoreDocumentPath(document) {
     return name.slice(index + marker.length);
 }
 
-export async function deleteFirestoreDocument(session, documentPath) {
-    const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`;
+export async function deleteFirestoreDocument(session, documentPath, { updateTime = '' } = {}) {
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
     const response = await fetch(url, {
         method: 'DELETE',
         headers: { authorization: `Bearer ${session.idToken}` }
@@ -210,6 +215,44 @@ export async function patchFirestoreDocumentFields(
     return readJson(response, 'Firestore smoke document patch');
 }
 
+export async function restoreFirestoreDocumentFields(
+    session,
+    documentPath,
+    originalDocument,
+    fieldNames,
+    { updateTime = '' } = {}
+) {
+    const normalizedFieldNames = [...new Set(
+        (fieldNames || []).map((fieldName) => String(fieldName || '').trim()).filter(Boolean)
+    )].sort();
+    if (!normalizedFieldNames.length) {
+        throw new Error('Firestore smoke field restore requires at least one field');
+    }
+    const url = new URL(
+        `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
+    );
+    normalizedFieldNames.forEach((fieldPath) => url.searchParams.append('updateMask.fieldPaths', fieldPath));
+    if (updateTime) {
+        url.searchParams.set('currentDocument.updateTime', updateTime);
+    }
+    const originalFields = originalDocument?.fields || {};
+    const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            fields: Object.fromEntries(
+                normalizedFieldNames
+                    .filter((fieldName) => Object.hasOwn(originalFields, fieldName))
+                    .map((fieldName) => [fieldName, originalFields[fieldName]])
+            )
+        })
+    });
+    return readJson(response, 'Firestore smoke field restore');
+}
+
 export async function createFirestoreDocument(session, documentPath, fields) {
     const url = new URL(
         `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents/${encodeDocumentPath(documentPath)}`
@@ -257,7 +300,26 @@ export async function deleteFirestoreDocumentsByStringFields(session, collection
     return documents.length;
 }
 
-async function deleteFirebaseStorageObject(session, storagePath) {
+export async function uploadFirebaseStorageObject(session, storagePath, body, contentType = 'image/png') {
+    if (!storagePath) throw new Error('Firebase smoke storage upload requires a path');
+    if (!session.storageBucket) throw new Error('Firebase smoke storage bucket is unavailable');
+    const url = new URL(
+        `${firebaseStorageOrigin}/v0/b/${encodeURIComponent(session.storageBucket)}/o`
+    );
+    url.searchParams.set('uploadType', 'media');
+    url.searchParams.set('name', storagePath);
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': contentType
+        },
+        body
+    });
+    return readJson(response, 'Firebase smoke storage upload');
+}
+
+export async function deleteFirebaseStorageObject(session, storagePath) {
     if (!storagePath) return;
     if (!session.storageBucket) throw new Error('Firebase smoke storage bucket is unavailable');
     const url = `${firebaseStorageOrigin}/v0/b/${encodeURIComponent(session.storageBucket)}/o/${encodeURIComponent(storagePath)}`;
