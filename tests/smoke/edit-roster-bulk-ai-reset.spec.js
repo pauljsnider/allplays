@@ -10,6 +10,9 @@ export async function getPlayers() {
 export async function getPlayersWithPrivateRosterContacts() {
     return globalThis.__rosterCsvSavedPlayers || [];
 }
+export async function getPlayerPrivateProfile() {
+    return {};
+}
 export async function addPlayer(_teamId, payload) {
     globalThis.__rosterCsvAdds = globalThis.__rosterCsvAdds || [];
     globalThis.__rosterCsvAdds.push(payload);
