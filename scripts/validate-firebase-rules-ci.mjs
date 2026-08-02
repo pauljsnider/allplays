@@ -576,6 +576,41 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'git diff --quiet "$firestore_success_sha" "$last_success_sha" --',
+        'Production Firestore unchanged-only component baseline advancement'
+    );
+    assertIncludes(
+        deployProd,
+        'advancing its SHA while preserving the release mode',
+        'Production Firestore compatibility mode preservation across unchanged deploys'
+    );
+    assertIncludes(
+        deployProd,
+        'The Firestore component deployment lookup failed; the active release mode is unknown.',
+        'Production Firestore component lookup unknown-state handling'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="unmarked"',
+        'Production Firestore missing component marker classification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_success_mode="ambiguous"',
+        'Production Firestore generated compatibility/final ambiguity state'
+    );
+    assertIncludes(
+        deployProd,
+        'forcing live exact-source classification',
+        'Production Firestore unmarked-mode live classification'
+    );
+    assertIncludes(
+        deployProd,
+        'if [[ "$component_lookup_succeeded" != "true" ]]; then\n              echo "certificate_defaults_lockdown_needed=unknown"',
+        'Production Firestore component lookup blocks lockdown inference'
+    );
+    assertIncludes(
+        deployProd,
         'firestore_success_sha="$last_success_sha"',
         'Production Firestore complete deployment baseline reuse'
     );
@@ -608,6 +643,7 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(changedBranch, 'verify_active_firestore_rules "$final_firestore_rules"', 'Production Firestore exact-source short circuit');
     assertIncludes(changedBranch, 'active_rules_variant="baseline-${baseline_firestore_mode}"', 'Production Firestore trusted baseline classification');
+    assertIncludes(changedBranch, '[[ "$baseline_firestore_mode" == "ambiguous" ]]', 'Production Firestore ambiguous baseline exact-source resolution');
     assertIncludes(changedBranch, 'active_rules_variant="baseline-compatibility"', 'Production Firestore compatibility baseline classification');
     assertIncludes(changedBranch, 'active_rules_status == 2', 'Production Firestore unreadable active-source block');
     assertIncludes(changedBranch, '[[ "$active_rules_variant" == *-final ]]', 'Production Firestore final boundary preservation');

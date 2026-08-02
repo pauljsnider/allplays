@@ -300,13 +300,11 @@ jobs:
           done
 
           if [[ "$component_lookup_succeeded" != "true" ]]; then
-            echo "::warning::The Firestore component deployment lookup failed; falling back to the last complete production deployment."
+            echo "::warning::The Firestore component deployment lookup failed; the active release mode is unknown."
           elif [[ -z "$firestore_success_sha" ]]; then
             echo "::notice::No Firestore component deployment marker exists yet; using the last complete production deployment as the migration baseline."
-          fi
-          if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]]; then
             firestore_success_sha="$last_success_sha"
-            firestore_success_mode=""
+            firestore_success_mode="unmarked"
           fi
           if [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
             && [[ "$last_success_sha" =~ ^[0-9a-f]{40}$ ]] \
@@ -314,10 +312,14 @@ jobs:
             && git cat-file -e "${last_success_sha}^{commit}" 2>/dev/null; then
             if git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"; then
               if [[ "$firestore_success_sha" != "$last_success_sha" ]]; then
-                echo "::notice::A newer complete production deployment supersedes the older Firestore component marker; advancing the rules baseline."
+                if git diff --quiet "$firestore_success_sha" "$last_success_sha" -- \
+                  firestore.rules firestore.indexes.json; then
+                  echo "::notice::A newer unchanged complete production deployment supersedes the older Firestore component marker; advancing its SHA while preserving the release mode."
+                  firestore_success_sha="$last_success_sha"
+                else
+                  echo "::warning::A newer complete production deployment changed Firestore configuration without a component marker; retaining the older trusted baseline so active-source verification must resolve the state."
+                fi
               fi
-              firestore_success_sha="$last_success_sha"
-              firestore_success_mode=""
             elif ! git merge-base --is-ancestor "$last_success_sha" "$firestore_success_sha"; then
               echo "::warning::The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
               firestore_success_sha=""
@@ -345,10 +347,22 @@ jobs:
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             echo "team_fee_checkout_backfill_needed=true" >> "$GITHUB_OUTPUT"
           else
-            if [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
+            if [[ "$component_lookup_succeeded" == "true" ]] \
+              && [[ "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
               && git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null; then
               echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
-              if [[ -z "$firestore_success_mode" ]]; then
+              if [[ "$firestore_success_mode" == "unmarked" ]]; then
+                if git show "${firestore_success_sha}:firestore.rules" \
+                  | sed -n '/match \/settings\/{settingId}/,/^      }/p' \
+                  | grep -Fq 'allow create, update, delete: if false;'; then
+                  # This source can deploy either its generated compatibility
+                  # variant or final denial. Without a component marker, only
+                  # the live exact-source classifier can resolve which is active.
+                  firestore_success_mode="ambiguous"
+                else
+                  firestore_success_mode="compatibility"
+                fi
+              elif [[ -z "$firestore_success_mode" ]]; then
                 if git show "${firestore_success_sha}:firestore.rules" \
                   | sed -n '/match \/settings\/{settingId}/,/^      }/p' \
                   | grep -Fq 'allow create, update, delete: if false;'; then
@@ -362,7 +376,9 @@ jobs:
               echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
               echo "firestore_baseline_mode=unknown" >> "$GITHUB_OUTPUT"
             fi
-            if [[ "$firestore_success_mode" == "final" ]]; then
+            if [[ "$component_lookup_succeeded" != "true" ]]; then
+              echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+            elif [[ "$firestore_success_mode" == "final" ]]; then
               echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
             else
               echo "certificate_defaults_lockdown_needed=true" >> "$GITHUB_OUTPUT"
@@ -391,6 +407,9 @@ jobs:
             if [[ ! "$firestore_success_sha" =~ ^[0-9a-f]{40}$ ]] \
               || ! git cat-file -e "${firestore_success_sha}^{commit}" 2>/dev/null; then
               echo "::warning::The Firestore component deployment commit is unavailable locally; forcing authorization rules-first ordering."
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            elif [[ "$firestore_success_mode" == "ambiguous" ]]; then
+              echo "::warning::The Firestore baseline has no component mode marker; forcing live exact-source classification."
               echo "changed=true" >> "$GITHUB_OUTPUT"
             elif git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json; then
               echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -424,7 +443,8 @@ jobs:
             "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
 
           if [[ "$FIRESTORE_BASELINE_MODE" != "final" \
-            && "$FIRESTORE_BASELINE_MODE" != "compatibility" ]]; then
+            && "$FIRESTORE_BASELINE_MODE" != "compatibility" \
+            && "$FIRESTORE_BASELINE_MODE" != "ambiguous" ]]; then
             echo "The trusted Firestore baseline does not have a recognized release mode." >&2
             exit 1
           fi
@@ -582,7 +602,7 @@ jobs:
           test ! -L "$bundle/firestore-baseline-compat.rules"
           test -f "$bundle/firestore-baseline.mode"
           test ! -L "$bundle/firestore-baseline.mode"
-          grep -Eq '^(compatibility|final)$' "$bundle/firestore-baseline.mode"
+          grep -Eq '^(ambiguous|compatibility|final)$' "$bundle/firestore-baseline.mode"
           test -f "$bundle/firestore.indexes.json"
           test -f "$bundle/storage.rules"
           test -f "$bundle/firebase-prod.generated.json"
@@ -1213,7 +1233,11 @@ jobs:
             fi
             if [[ -z "$active_rules_variant" ]]; then
               if verify_active_firestore_rules "$baseline_firestore_rules"; then
-                active_rules_variant="baseline-${baseline_firestore_mode}"
+                if [[ "$baseline_firestore_mode" == "ambiguous" ]]; then
+                  active_rules_variant="baseline-final"
+                else
+                  active_rules_variant="baseline-${baseline_firestore_mode}"
+                fi
               else
                 active_rules_status="$?"
                 if (( active_rules_status == 2 )); then

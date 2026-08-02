@@ -137,13 +137,22 @@ concurrency:
             exit 0
           fi
           gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          echo "The Firestore component deployment lookup failed; the active release mode is unknown."
+          firestore_success_mode="unmarked"
+          firestore_success_mode="ambiguous"
+          echo "forcing live exact-source classification"
           if [[ "$deployment_description" == *"compatibility rules"* ]]; then firestore_success_mode="compatibility"; fi
           firestore_success_sha="$deployment_sha"
           git show "\${firestore_success_sha}:firestore.rules" | grep -Fq 'allow create, update, delete: if false;'
           echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
+          if [[ "$component_lookup_succeeded" != "true" ]]; then
+              echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+          fi
           echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
           echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
+          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json
+          echo "advancing its SHA while preserving the release mode"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
@@ -247,6 +256,7 @@ concurrency:
               echo "The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
             else
               active_rules_variant="baseline-\${baseline_firestore_mode}"
+              if [[ "$baseline_firestore_mode" == "ambiguous" ]]; then active_rules_variant="baseline-final"; fi
               active_rules_variant="baseline-compatibility"
               if (( active_rules_status == 2 )); then exit 2; fi
               if [[ "$active_rules_variant" == *-final ]]; then
