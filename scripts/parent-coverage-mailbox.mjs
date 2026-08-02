@@ -39,12 +39,22 @@ function messageHeaders(message) {
 function receiverAuthenticationResults(message) {
     const headers = message?.payload?.headers || [];
     const returnPathIndex = headers.findIndex((header) => String(header?.name || '').trim().toLowerCase() === 'return-path');
-    const boundary = returnPathIndex === -1 ? headers.length : returnPathIndex;
-    const receiverHeader = headers.slice(0, boundary).find((header) =>
-        String(header?.name || '').trim().toLowerCase() === 'authentication-results' &&
-        /^\s*mx\.google\.com\s*;/i.test(String(header?.value || ''))
+    if (returnPathIndex === -1) return '';
+    const nextReturnPathOffset = headers.slice(returnPathIndex + 1).findIndex(
+        (header) => String(header?.name || '').trim().toLowerCase() === 'return-path'
     );
-    return String(receiverHeader?.value || '').toLowerCase();
+    const boundary = nextReturnPathOffset === -1
+        ? headers.length
+        : returnPathIndex + 1 + nextReturnPathOffset;
+    // Gmail's receiver-inserted Authentication-Results is the first such field
+    // inside the outermost delivery block (after its Return-Path and before the
+    // next forwarded delivery block). Never scan past a foreign result looking
+    // for a value that an upstream sender could have supplied.
+    const receiverHeader = headers.slice(returnPathIndex + 1, boundary).find((header) =>
+        String(header?.name || '').trim().toLowerCase() === 'authentication-results'
+    );
+    const value = String(receiverHeader?.value || '');
+    return /^\s*mx\.google\.com\s*;/i.test(value) ? value.toLowerCase() : '';
 }
 
 function extractAddress(value) {
@@ -56,9 +66,9 @@ function trustedMessageSource(message, recipient, afterEpoch) {
     const sender = extractAddress(headers.get('from'));
     if (!trustedSenderAddresses.has(sender)) return false;
     const senderDomain = sender.split('@')[1];
-    // Gmail prepends its receiver-authenticated result before Return-Path.  Do not
-    // concatenate sender-supplied Authentication-Results or trust ARC results:
-    // validating an ARC chain is outside this mailbox boundary.
+    // Trust only Gmail's first Authentication-Results in the outermost delivery
+    // block. Do not concatenate upstream results or trust ARC without validating
+    // its chain.
     const authentication = receiverAuthenticationResults(message);
     const alignedDkim = new RegExp(`dkim=pass\\b[^;]*(?:header\\.i|header\\.d)=@?${senderDomain.replaceAll('.', '\\.')}(?:\\s|;|$)`).test(authentication);
     const alignedSpf = new RegExp(`spf=pass\\b[^;]*smtp\\.mailfrom=[^;@\\s]*@${senderDomain.replaceAll('.', '\\.')}(?:\\s|;|$)`).test(authentication);

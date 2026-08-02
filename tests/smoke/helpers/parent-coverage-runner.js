@@ -65,21 +65,35 @@ function actorCredentials(actor) {
     return { email, password };
 }
 
-function locatorFor(page, descriptor, variables) {
+function baseLocator(root, descriptor, variables) {
     const name = interpolateTextTemplate(descriptor.name, variables);
     const options = descriptor.exact === undefined ? undefined : { exact: descriptor.exact };
     switch (descriptor.kind) {
     case 'role':
-        return page.getByRole(descriptor.role, { name, ...(options || {}) });
+        return root.getByRole(descriptor.role, { name, ...(options || {}) });
     case 'label':
-        return page.getByLabel(name, options);
+        return root.getByLabel(name, options);
     case 'text':
-        return page.getByText(name, options);
+        return root.getByText(name, options);
     case 'testId':
-        return page.getByTestId(name);
+        return root.getByTestId(name);
     default:
         throw new Error(`unsupported locator kind ${descriptor.kind}`);
     }
+}
+
+async function locatorFor(page, descriptor, variables, scope = '') {
+    if (!scope) return baseLocator(page, descriptor, variables);
+    const scopeText = interpolateTextTemplate(scope, variables);
+    const anchor = page.getByText(scopeText, { exact: true }).first();
+    await expect(anchor).toBeVisible({ timeout: 20_000 });
+    const container = anchor.locator(
+        'xpath=ancestor-or-self::*[self::article or self::li or self::tr or @role="row" or @role="listitem" or @data-testid][1]'
+    );
+    if (await container.count() !== 1) {
+        throw new Error('run-scoped mutation container is unavailable');
+    }
+    return baseLocator(container, descriptor, variables);
 }
 
 async function assertAllowedPage(page, appBaseUrl, workflowId = '') {
@@ -110,14 +124,22 @@ async function assertClickNavigationAllowed(target, page, appBaseUrl, workflowId
     }
 }
 
-async function makeSyntheticImage() {
+async function makeSyntheticImage(runMarker) {
     return {
-        name: 'allplays-parent-census.png',
+        name: `${runMarker}.png`,
         mimeType: 'image/png',
         buffer: Buffer.from(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nMcAAAAASUVORK5CYII=',
             'base64'
         )
+    };
+}
+
+async function makeSyntheticDocument(runMarker) {
+    return {
+        name: `${runMarker}.pdf`,
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n')
     };
 }
 
@@ -134,10 +156,24 @@ export async function executeParentCoverageCleanup(runtime, cleanupSteps) {
     return failures;
 }
 
+export function createParentCoverageMutationTracker() {
+    const completedMutationIds = new Set();
+    return {
+        record(step, phase = 'execution') {
+            if (phase === 'execution' && step.mutationId && step.commitMutation === true) {
+                completedMutationIds.add(step.mutationId);
+            }
+        },
+        shouldExecute(step) {
+            return !step.mutationId || completedMutationIds.has(step.mutationId);
+        }
+    };
+}
+
 export async function createParentCoverageRuntime(browser, contract, appBaseUrl) {
     const actors = new Map();
     const rememberedControls = new Map();
-    const completedMutationIds = new Set();
+    const mutationTracker = createParentCoverageMutationTracker();
     const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
     const secrets = getParentCoverageSecrets();
@@ -180,7 +216,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         const runtime = await actorRuntime(actor);
         const { page } = runtime;
         const markMutationCompleted = () => {
-            if (phase === 'execution' && step.mutationId) completedMutationIds.add(step.mutationId);
+            mutationTracker.record(step, phase);
         };
         if (step.action === 'login') {
             const credentials = actorCredentials(actor);
@@ -225,6 +261,31 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             return;
         }
+        if (step.action === 'openRunScopedShareLink') {
+            const source = await actorRuntime(step.option);
+            await assertAllowedPage(source.page, appBaseUrl, contract.workflowId);
+            const marker = variables.RUN_MARKER;
+            if (!marker) throw new Error('run-scoped share marker is unavailable');
+            const link = source.page.locator('a[href*="#/family/"]')
+                .filter({ hasText: marker })
+                .first();
+            await expect(link).toBeVisible({ timeout: 20_000 });
+            const href = await link.getAttribute('href');
+            if (!href) throw new Error('run-scoped family share link is unavailable');
+            const destination = new URL(href, source.page.url());
+            const allowed = new URL(appBaseUrl);
+            const route = destination.hash.startsWith('#') ? destination.hash.slice(1) : '/';
+            if (
+                destination.origin !== allowed.origin ||
+                !destination.pathname.startsWith(allowed.pathname) ||
+                !workflowRouteAllowed(contract.workflowId, route || '/', true)
+            ) {
+                throw new Error('run-scoped family share link left the trusted workflow capability');
+            }
+            await page.goto(destination.toString(), { waitUntil: 'domcontentloaded', timeout: 45_000 });
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            return;
+        }
         if (step.action === 'logout') {
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             await page.getByRole('button', { name: 'Sign out' }).first().click();
@@ -234,7 +295,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         }
 
         await assertAllowedPage(page, appBaseUrl, contract.workflowId);
-        const target = locatorFor(page, step.target, variables).first();
+        const target = (await locatorFor(page, step.target, variables, step.scope)).first();
         switch (step.action) {
         case 'click':
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
@@ -242,6 +303,31 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
+        case 'clickAndExpectGoogleAuth': {
+            const popupPromise = page.waitForEvent('popup', { timeout: 20_000 });
+            const navigationPromise = page.waitForURL((value) => value.hostname === 'accounts.google.com', { timeout: 20_000 })
+                .then(() => null);
+            await target.click();
+            const popup = await Promise.race([popupPromise, navigationPromise]);
+            const authPage = popup || page;
+            await authPage.waitForLoadState('domcontentloaded', { timeout: 45_000 });
+            const destination = new URL(authPage.url());
+            if (destination.protocol !== 'https:' || destination.hostname !== 'accounts.google.com' || destination.port) {
+                throw new Error('Google sign-in did not reach the allowlisted account handoff');
+            }
+            if (popup) await popup.close();
+            else await page.goBack({ waitUntil: 'domcontentloaded' });
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            break;
+        }
+        case 'clickAndExpectRoute': {
+            await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
+            await target.click();
+            const expectedRoute = interpolateTemplate(step.route, variables);
+            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${expectedRoute}`);
+            await assertAllowedPage(page, appBaseUrl, contract.workflowId);
+            break;
+        }
         case 'clickAndExpectDownload': {
             const downloadPromise = page.waitForEvent('download', { timeout: 20_000 });
             await target.click();
@@ -330,7 +416,11 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             break;
         }
         case 'uploadSyntheticImage':
-            await target.setInputFiles(await makeSyntheticImage());
+            await target.setInputFiles(await makeSyntheticImage(variables.RUN_MARKER));
+            markMutationCompleted();
+            break;
+        case 'uploadSyntheticDocument':
+            await target.setInputFiles(await makeSyntheticDocument(variables.RUN_MARKER));
             markMutationCompleted();
             break;
         case 'expectVisible':
@@ -354,7 +444,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         actors,
         executeStep,
         shouldExecuteCleanup(step) {
-            return !step.mutationId || completedMutationIds.has(step.mutationId);
+            return mutationTracker.shouldExecute(step);
         },
         runtimeIssues() {
             return [...actors.values()].flatMap((runtime) => runtime.issues);

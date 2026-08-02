@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { executeParentCoverageCleanup } from '../smoke/helpers/parent-coverage-runner.js';
+import {
+    createParentCoverageMutationTracker,
+    executeParentCoverageCleanup
+} from '../smoke/helpers/parent-coverage-runner.js';
 
 const runnerSource = readFileSync('tests/smoke/helpers/parent-coverage-runner.js', 'utf8');
 
@@ -38,6 +41,17 @@ describe('parent coverage cleanup execution', () => {
         }, steps);
         expect(executeStep).toHaveBeenCalledTimes(1);
         expect(executeStep).toHaveBeenCalledWith(steps[0], 'cleanup');
+    });
+
+    it('does not arm destructive cleanup until the declared forward operation completes', () => {
+        const tracker = createParentCoverageMutationTracker();
+        const cleanup = { action: 'click', mutationId: 'new-message' };
+        tracker.record({ action: 'fill', mutationId: 'new-message' });
+        expect(tracker.shouldExecute(cleanup)).toBe(false);
+        tracker.record({ action: 'click', mutationId: 'new-message', commitMutation: true });
+        expect(tracker.shouldExecute(cleanup)).toBe(true);
+        tracker.record({ action: 'click', mutationId: 'other', commitMutation: true }, 'cleanup');
+        expect(tracker.shouldExecute({ action: 'click', mutationId: 'other' })).toBe(false);
     });
 
     it('requires mailbox actions to finish on the workflow-scoped app route', () => {

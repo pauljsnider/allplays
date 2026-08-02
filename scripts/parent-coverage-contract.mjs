@@ -12,6 +12,8 @@ const actions = new Set([
     'goto',
     'reload',
     'click',
+    'clickAndExpectGoogleAuth',
+    'clickAndExpectRoute',
     'clickAndExpectDownload',
     'clickAndExpectStripeCheckout',
     'fill',
@@ -23,7 +25,9 @@ const actions = new Set([
     'rememberControl',
     'restoreControl',
     'openLatestMailboxLink',
+    'openRunScopedShareLink',
     'uploadSyntheticImage',
+    'uploadSyntheticDocument',
     'expectVisible',
     'expectHidden',
     'expectText',
@@ -53,10 +57,10 @@ const workflowCapabilities = new Map(Object.entries({
     P04: { mode: 'lifecycle', routes: ['/auth', '/home'], actions: ['click'] },
     P05: { mode: 'lifecycle', routes: ['/auth', '/reset-password'], actions: ['fill', 'fillActorEmail', 'fillActorPassword', 'click', 'openLatestMailboxLink'] },
     P06: { mode: 'readOnly', routes: ['/auth', '/home'], actions: [] },
-    P07: { mode: 'readOnly', routes: ['/auth'], actions: [] },
+    P07: { mode: 'readOnly', routes: ['/auth'], actions: ['clickAndExpectGoogleAuth'] },
     P08: { mode: 'lifecycle', routes: ['/accept-invite', '/parent-tools/access'], actions: ['fill', 'click'] },
     P09: { mode: 'reversible', routes: ['/parent-tools/access'], actions: ['fill', 'select', 'click'] },
-    P10: { mode: 'readOnly', routes: ['/home', '/parent-tools/*'], actions: [] },
+    P10: { mode: 'readOnly', routes: ['/home', '/parent-tools/*'], actions: ['clickAndExpectRoute'] },
     P11: { mode: 'readOnly', routes: ['/teams/{TEAM_ID}', '/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
     P12: { mode: 'reversible', routes: ['/profile/settings'], actions: ['rememberControl', 'fill', 'click', 'restoreControl'] },
     P13: { mode: 'reversible', routes: ['/profile/settings'], actions: ['click', 'uploadSyntheticImage'] },
@@ -74,7 +78,7 @@ const workflowCapabilities = new Map(Object.entries({
     P25: { mode: 'reversible', routes: ['/home', '/profile/settings'], actions: ['rememberControl', 'check', 'uncheck', 'click', 'restoreControl'] },
     P26: { mode: 'reversible', routes: ['/home', '/people/*', '/messages/*'], actions: ['fill', 'click'] },
     P27: { mode: 'lifecycle', routes: ['/parent-tools/household', '/accept-invite'], actions: ['fill', 'click', 'openLatestMailboxLink'] },
-    P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click'] },
+    P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
     P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['clickAndExpectDownload'] },
     P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
     P31: { mode: 'readOnly', routes: ['/parent-tools/registrations', '/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}'], actions: ['clickAndExpectStripeCheckout'] },
@@ -82,39 +86,263 @@ const workflowCapabilities = new Map(Object.entries({
     P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
-    P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
+    P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage', 'uploadSyntheticDocument'] },
     P37: { mode: 'lifecycle', routes: ['/profile/settings'], actions: ['fill', 'fillActorPassword', 'click'] }
 }));
 const stateChangingActions = new Set([
     'click', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck',
-    'select', 'restoreControl', 'uploadSyntheticImage'
+    'select', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const reversibleMutationActions = new Set([
-    'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'uploadSyntheticImage'
+    'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const controlMutationActions = new Set(['fill', 'check', 'uncheck', 'select']);
 const workflowCoverageRequirements = new Map(Object.entries({
-    P01: ['goto', 'expectVisible'], P02: ['fillActorEmail', 'fillActorPassword', 'click'],
-    P03: ['openLatestMailboxLink', 'click'], P04: ['login', 'click'],
-    P05: ['openLatestMailboxLink', 'fillActorPassword', 'click'], P06: ['login', 'logout'],
-    P07: ['goto', 'expectVisible'], P08: ['fill', 'click'], P09: ['fill', 'click'],
-    P10: ['goto', 'expectVisible'], P11: ['goto', 'expectVisible'],
-    P12: ['rememberControl', 'fill', 'restoreControl'], P13: ['uploadSyntheticImage', 'click'],
-    P14: ['rememberControl', 'fill', 'restoreControl'], P15: ['goto', 'expectVisible'],
-    P16: ['rememberControl', 'select', 'restoreControl'], P17: ['rememberControl', 'fill', 'restoreControl'],
-    P18: ['goto', 'expectVisible'], P19: ['rememberControl', 'check', 'restoreControl'],
-    P20: ['click'], P21: ['fill', 'click'], P22: ['click'], P23: ['fill', 'click'],
-    P24: ['uploadSyntheticImage', 'click'], P25: ['rememberControl', 'check', 'restoreControl'],
-    P26: ['click'], P27: ['openLatestMailboxLink', 'click'], P28: ['fill', 'click'],
-    P29: ['clickAndExpectDownload'], P30: ['clickAndExpectStripeCheckout'],
-    P31: ['clickAndExpectStripeCheckout'], P32: ['clickAndExpectDownload'],
-    P33: ['uploadSyntheticImage', 'click'], P34: ['fill', 'click'], P35: ['fill', 'click'],
-    P36: ['uploadSyntheticImage', 'click'], P37: ['fillActorPassword', 'click']
-}));
-const workflowCoverageActorRequirements = new Map(Object.entries({
-    P20: ['primary', 'peer'], P22: ['primary', 'peer'], P23: ['primary', 'peer'],
-    P24: ['primary', 'peer'], P25: ['primary', 'peer'], P26: ['primary', 'peer'],
-    P27: ['primary', 'lifecycle'], P28: ['primary', 'anonymous']
+    P01: [
+        { action: 'goto', actor: 'anonymous', route: /^\/accept-invite/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'anonymous', target: /invite|code|sign in/i }
+    ],
+    P02: [
+        { action: 'fillActorEmail', actor: 'lifecycle', target: /email/i },
+        { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
+        { action: 'click', actor: 'lifecycle', target: /create account|sign up/i },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /verify|email/i, route: /verify-pending/ }
+    ],
+    P03: [
+        { action: 'click', actor: 'lifecycle', target: /resend verification/i },
+        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'verifyEmail' },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /verified|continue/i, route: /verify-pending|auth/ }
+    ],
+    P04: [
+        { action: 'login', actor: 'lifecycle' },
+        { action: 'click', actor: 'lifecycle', target: /continue|get started|finish/i },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /home|welcome|action/i, route: /home/ }
+    ],
+    P05: [
+        { action: 'click', actor: 'lifecycle', target: /forgot password/i },
+        { action: 'fillActorEmail', actor: 'lifecycle', target: /email/i },
+        { action: 'click', actor: 'lifecycle', target: /send reset/i },
+        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'resetPassword' },
+        { action: 'fillActorPassword', actor: 'lifecycle', target: /new password|password/i },
+        { action: 'click', actor: 'lifecycle', target: /reset password/i },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /sign in|login|password.*reset/i, route: /auth|reset-password/ }
+    ],
+    P06: [
+        { action: 'login', actor: 'primary' },
+        { action: 'reload', actor: 'primary' },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'primary', target: /home|account|profile/i, route: /home/ },
+        { action: 'logout', actor: 'primary' }
+    ],
+    P07: [
+        { action: 'goto', actor: 'anonymous', route: /^\/auth/ },
+        { action: 'clickAndExpectGoogleAuth', actor: 'anonymous', target: /google/i },
+        { action: 'expectRoute', actor: 'anonymous', route: /^\/auth/ }
+    ],
+    P08: [
+        { action: 'fill', actor: 'lifecycle', target: /join code|invite code|access code/i, value: /\{LIFECYCLE_INVITE_CODE\}/ },
+        { action: 'click', actor: 'lifecycle', target: /redeem|join|apply code|accept invite/i },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /team|access|joined/i, route: /parent-tools\/access|accept-invite/ }
+    ],
+    P09: [
+        { action: 'fill', actor: 'primary', target: /player search|search/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /request access|send request/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /pending|request.*sent|cancel request/i }
+    ],
+    P10: [
+        { action: 'goto', actor: 'primary', route: /^\/home/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /action|upcoming|task|schedule/i },
+        { action: 'clickAndExpectRoute', actor: 'primary', target: /schedule|task|ride|notification/i, route: /parent-tools|schedule|messages|profile/ }
+    ],
+    P11: [
+        { action: 'goto', actor: 'primary', route: /^\/teams\/\{TEAM_ID\}/ },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /admin|manager|coach|roster edit/i },
+        { action: 'goto', actor: 'primary', route: /^\/players\/\{TEAM_ID\}\/\{PLAYER_ID\}/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /player|athlete|parent/i }
+    ],
+    P12: [
+        { action: 'rememberControl', actor: 'primary', target: /name/i },
+        { action: 'rememberControl', actor: 'primary', target: /phone/i },
+        { action: 'fill', actor: 'primary', target: /name/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /save|update profile/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /name/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /phone/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|update profile/i }
+    ],
+    P13: [
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /remove image|remove photo/i },
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /profile image|profile photo|image|photo/i },
+        { action: 'click', actor: 'primary', target: /save|upload/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /remove image|remove photo|uploaded/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /remove image|remove photo/i }
+    ],
+    P14: [
+        { action: 'rememberControl', actor: 'primary', target: /name|details/i },
+        { action: 'fill', actor: 'primary', target: /name|details/i, value: /\{RUN_MARKER\}/ },
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /image|photo/i },
+        { action: 'click', actor: 'primary', target: /save|save changes/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /name|details/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|save changes/i }
+    ],
+    P15: [
+        { action: 'goto', actor: 'primary', route: /^\/players\/\{TEAM_ID\}\/\{PLAYER_ID\}/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /incentive|award|achievement/i },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /edit roster|remove player|manager/i }
+    ],
+    P16: [
+        { action: 'goto', actor: 'primary', route: /^\/schedule/ },
+        { action: 'select', actor: 'primary', target: /team|filter|calendar|date/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /event|game|practice|schedule/i },
+        { action: 'goto', actor: 'primary', route: /^\/schedule\/\{TEAM_ID\}\/\{EVENT_ID\}/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /event|game|practice/i }
+    ],
+    P17: [
+        { action: 'select', actor: 'primary', target: /rsvp|going|not going|maybe/i },
+        { action: 'fill', actor: 'primary', target: /note|sibling/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /save|update rsvp/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /rsvp|note|sibling/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|update rsvp/i }
+    ],
+    P18: [
+        { action: 'goto', actor: 'primary', route: /^\/schedule\/\{TEAM_ID\}\/\{EVENT_ID\}/ },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /attendance|present|absent|practice/i },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /edit attendance|take attendance|manager/i }
+    ],
+    P19: [
+        { action: 'rememberControl', actor: 'primary', target: /packet|form|complete|checklist/i },
+        { actions: ['check', 'uncheck'], actor: 'primary', target: /packet|form|complete|checklist/i },
+        { action: 'click', actor: 'primary', target: /save|submit/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|complete|submitted/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /packet|form|complete|checklist/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|submit/i }
+    ],
+    P20: [
+        { action: 'click', actor: 'primary', target: /claim/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /claimed|release|you/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /claimed|unavailable|primary/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /release/i }
+    ],
+    P21: [
+        { action: 'fill', actor: 'primary', target: /ride|seat|address|note/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /offer ride|create offer/i },
+        { action: 'click', actor: 'primary', target: /close offer/i },
+        { action: 'click', actor: 'primary', target: /reopen offer/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /open|available|\{RUN_MARKER\}/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /close offer|cancel/i }
+    ],
+    P22: [
+        { action: 'click', actor: 'peer', target: /request ride/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /ride request|pending|peer/i },
+        { action: 'click', actor: 'primary', target: /approve|accept|deny|decline/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /approved|accepted|denied|declined/i },
+        { action: 'click', phase: 'cleanup', actor: 'peer', target: /cancel/i }
+    ],
+    P23: [
+        { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /\{RUN_MARKER\}|message/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'peer', target: /mute/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /muted|unmute|read/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i },
+        { action: 'click', phase: 'cleanup', actor: 'peer', target: /unmute/i }
+    ],
+    P24: [
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /attachment|image|photo|upload/i },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /allplays-parent-census|attachment|image/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message|remove attachment/i }
+    ],
+    P25: [
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i },
+        { action: 'click', actor: 'peer', target: /notification|mark read/i },
+        { action: 'rememberControl', actor: 'primary', target: /email|push|sms|mute/i },
+        { actions: ['check', 'uncheck'], actor: 'primary', target: /email|push|sms|mute/i },
+        { action: 'click', actor: 'primary', target: /save/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /email|push|sms|mute/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /save/i }
+    ],
+    P26: [
+        { action: 'click', actor: 'primary', target: /add friend/i },
+        { action: 'click', actor: 'peer', target: /accept/i },
+        { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /\{RUN_MARKER\}|message/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /remove friend|delete message/i }
+    ],
+    P27: [
+        { action: 'fill', actor: 'primary', target: /email/i, value: /\{LIFECYCLE_EMAIL\}/ },
+        { action: 'click', actor: 'primary', target: /send invite/i },
+        { action: 'openLatestMailboxLink', actor: 'lifecycle', option: 'invite' },
+        { action: 'click', actor: 'lifecycle', target: /accept invite/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /\{LIFECYCLE_EMAIL\}|household/i },
+        { action: 'click', actor: 'primary', target: /revoke.*\{LIFECYCLE_EMAIL\}/i }
+    ],
+    P28: [
+        { action: 'fill', actor: 'primary', target: /share|family|email/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /create share/i },
+        { action: 'openRunScopedShareLink', actor: 'anonymous', option: 'primary' },
+        { actions: ['expectVisible', 'expectText'], actor: 'anonymous', target: /family|shared|privacy/i },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'anonymous', target: /private|email|phone|edit/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /revoke share/i }
+    ],
+    P29: [
+        { action: 'clickAndExpectDownload', actor: 'primary', target: /calendar|ics|export/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /calendar|feed|download/i }
+    ],
+    P30: [
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /fee|balance|payment/i },
+        { action: 'clickAndExpectStripeCheckout', actor: 'primary', target: /pay|checkout/i }
+    ],
+    P31: [
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /registration|form|browse/i },
+        { action: 'clickAndExpectStripeCheckout', actor: 'primary', target: /register|checkout|pay/i }
+    ],
+    P32: [
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /award|certificate/i },
+        { action: 'clickAndExpectDownload', actor: 'primary', target: /download|certificate|award/i }
+    ],
+    P33: [
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /media|member|album/i },
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /photo|image|upload/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|uploaded|media/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /remove media|delete media/i }
+    ],
+    P34: [
+        { action: 'fill', actor: 'primary', target: /post|social|caption/i, value: /\{RUN_MARKER\}/ },
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /image|photo|upload/i },
+        { action: 'click', actor: 'primary', target: /publish/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /\{RUN_MARKER\}|post/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'peer', target: /like|reaction/i },
+        { action: 'fill', actor: 'peer', target: /comment/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'peer', target: /send|publish/i },
+        { action: 'click', actor: 'primary', target: /moderate|hide post/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete post/i }
+    ],
+    P35: [
+        { action: 'fill', actor: 'primary', target: /prompt|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /parent|schedule|task|\{RUN_MARKER\}/i },
+        { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /manager|admin|coach tool/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i }
+    ],
+    P36: [
+        { action: 'uploadSyntheticImage', actor: 'primary', target: /attachment|image|upload/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|image|attachment/i },
+        { action: 'uploadSyntheticDocument', actor: 'primary', target: /attachment|document|upload/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|document|pdf/i },
+        { action: 'fill', actor: 'primary', target: /prompt|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /send/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /response|assistant|\{RUN_MARKER\}/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i }
+    ],
+    P37: [
+        { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
+        { action: 'fill', actor: 'lifecycle', target: /type delete to confirm/i, value: /^DELETE$/ },
+        { action: 'click', actor: 'lifecycle', target: /delete account|confirm deletion/i },
+        { actions: ['expectVisible', 'expectText', 'expectRoute'], actor: 'lifecycle', target: /deleted|sign in|goodbye/i, route: /auth/ }
+    ]
 }));
 const reversibleClickInversePairs = new Map(Object.entries({
     P09: [['request access', 'cancel request'], ['send request', 'cancel request']],
@@ -127,7 +355,7 @@ const reversibleClickInversePairs = new Map(Object.entries({
     P26: [['add friend', 'remove friend'], ['send', 'delete message']],
     P28: [['create share', 'revoke share']],
     P33: [['upload', 'remove media']], P34: [['publish', 'delete post'], ['send', 'delete comment'], ['like', 'unlike']],
-    P35: [['send', 'clear chat']], P36: [['send', 'clear chat'], ['upload', 'remove attachment']]
+    P35: [['send', 'delete message']], P36: [['send', 'delete message'], ['upload', 'remove attachment']]
 }));
 const forbiddenMutationTarget = /(?:delete|deactivate|remove)\s+(?:my\s+)?(?:account|profile)|(?:grant|make|promote).*(?:admin|coach|manager|staff)|(?:admin|coach|manager|staff).*(?:access|permission|role)/i;
 const mutationTargetCapabilities = new Map(Object.entries({
@@ -183,6 +411,8 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
 }));
 const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
+    P07: { clickAndExpectGoogleAuth: /^(?:continue with google|sign in with google|google)$/i },
+    P10: { clickAndExpectRoute: /^(?:schedule|tasks?|rideshare|notifications?|profile|view all)$/i },
     P29: { clickAndExpectDownload: /^(?:download calendar|download ics|calendar feed|export calendar)$/i },
     P30: { clickAndExpectStripeCheckout: /^(?:pay|pay fee|checkout|continue to checkout)$/i },
     P31: { clickAndExpectStripeCheckout: /^(?:register|start registration|checkout|continue to checkout|pay registration fee)$/i },
@@ -193,19 +423,23 @@ const stepKeysByAction = new Map([
     ['login', ['action', 'actor']],
     ['goto', ['action', 'actor', 'route']],
     ['reload', ['action', 'actor']],
-    ['click', ['action', 'actor', 'target', 'mutationId']],
+    ['click', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
+    ['clickAndExpectGoogleAuth', ['action', 'actor', 'target']],
+    ['clickAndExpectRoute', ['action', 'actor', 'target', 'route']],
     ['clickAndExpectDownload', ['action', 'actor', 'target']],
     ['clickAndExpectStripeCheckout', ['action', 'actor', 'target']],
-    ['fill', ['action', 'actor', 'target', 'value', 'mutationId']],
+    ['fill', ['action', 'actor', 'target', 'value', 'mutationId', 'scope', 'commitMutation']],
     ['fillActorEmail', ['action', 'actor', 'target']],
     ['fillActorPassword', ['action', 'actor', 'target']],
-    ['check', ['action', 'actor', 'target', 'mutationId']],
-    ['uncheck', ['action', 'actor', 'target', 'mutationId']],
-    ['select', ['action', 'actor', 'target', 'option', 'mutationId']],
+    ['check', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
+    ['uncheck', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
+    ['select', ['action', 'actor', 'target', 'option', 'mutationId', 'scope', 'commitMutation']],
     ['rememberControl', ['action', 'actor', 'target', 'option']],
-    ['restoreControl', ['action', 'actor', 'target', 'option', 'mutationId']],
+    ['restoreControl', ['action', 'actor', 'target', 'option', 'mutationId', 'scope']],
     ['openLatestMailboxLink', ['action', 'actor', 'option']],
-    ['uploadSyntheticImage', ['action', 'actor', 'target', 'mutationId']],
+    ['openRunScopedShareLink', ['action', 'actor', 'option']],
+    ['uploadSyntheticImage', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
+    ['uploadSyntheticDocument', ['action', 'actor', 'target', 'mutationId', 'scope', 'commitMutation']],
     ['expectVisible', ['action', 'actor', 'target']],
     ['expectHidden', ['action', 'actor', 'target']],
     ['expectText', ['action', 'actor', 'target', 'value']],
@@ -336,8 +570,10 @@ function sameTarget(left, right) {
 }
 
 function isTrustedClickInverse(workflowId, executionStep, cleanupStep) {
-    if (executionStep.action !== 'click' || cleanupStep.action !== 'click') return false;
-    const executionName = String(executionStep.target?.name || '').trim().toLowerCase();
+    if (!['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(executionStep.action) || cleanupStep.action !== 'click') return false;
+    const executionName = executionStep.action.startsWith('uploadSynthetic')
+        ? 'upload'
+        : String(executionStep.target?.name || '').trim().toLowerCase();
     const cleanupName = String(cleanupStep.target?.name || '').trim().toLowerCase();
     return (reversibleClickInversePairs.get(workflowId) || []).some(
         ([forward, inverse]) => executionName === forward && cleanupName === inverse
@@ -358,12 +594,21 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     }
     if (
         phase === 'cleanup' &&
-        ['fillActorEmail', 'fillActorPassword', 'openLatestMailboxLink', 'uploadSyntheticImage', 'clickAndExpectStripeCheckout'].includes(step.action)
+        ['fillActorEmail', 'fillActorPassword', 'openLatestMailboxLink', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'clickAndExpectStripeCheckout'].includes(step.action)
     ) {
         throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
     if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
         throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
+    }
+    if (step.action === 'clickAndExpectRoute' && !workflowRouteAllowed(workflowId, step.route)) {
+        throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
+    }
+    if (phase === 'execution' && step.action === 'restoreControl') {
+        throw new Error('restoreControl is restricted to cleanup');
+    }
+    if (phase === 'cleanup' && step.action === 'rememberControl') {
+        throw new Error('rememberControl is restricted to execution');
     }
     if (['rememberControl', 'restoreControl'].includes(step.action) && (
         !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
@@ -388,7 +633,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         )) {
             throw new Error(`${phase} click targets must be exact semantic buttons or links`);
         }
-        if (['fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'uploadSyntheticImage'].includes(step.action) && (
+        if (['fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action) && (
             !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
         )) {
             throw new Error(`${phase} control mutations must use exact label or testId targets`);
@@ -424,7 +669,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
             throw new Error(`${phase} lifecycle deletion confirmation must use the fixed disposable-fixture value`);
         }
     }
-    if (capability.mode === 'readOnly' && ['clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
+    if (capability.mode === 'readOnly' && ['clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
         const targetCapability = readOnlyInteractionTargetCapabilities.get(workflowId)?.[step.action];
         if (!targetCapability?.test(String(step.target?.name || ''))) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${step.action} capability`);
@@ -451,6 +696,17 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
             throw new Error(`${label} has unsupported mailbox action`);
         }
     }
+    if (step.action === 'openRunScopedShareLink' && (
+        workflowId !== 'P28' || actor !== 'anonymous' || step.option !== 'primary'
+    )) {
+        throw new Error(`${label} run-scoped share handoff is restricted to P28 anonymous from primary`);
+    }
+    if (step.action === 'clickAndExpectGoogleAuth' && workflowId !== 'P07') {
+        throw new Error(`${label} Google handoff assertions are restricted to P07`);
+    }
+    if (step.action === 'clickAndExpectRoute' && workflowId !== 'P10') {
+        throw new Error(`${label} route click assertions are restricted to P10`);
+    }
     if (step.action === 'clickAndExpectDownload' && !['P29', 'P32'].includes(workflowId)) {
         throw new Error(`${label} download assertions are restricted to P29 and P32`);
     }
@@ -458,7 +714,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         throw new Error(`${label} Stripe checkout assertions are restricted to P30 and P31`);
     }
 
-    if (step.action === 'goto' || step.action === 'expectRoute') {
+    if (step.action === 'goto' || step.action === 'expectRoute' || step.action === 'clickAndExpectRoute') {
         assertSafeText(step.route, `${label} route`, 300);
         validateTemplates(step.route, `${label} route`);
         if (!step.route.startsWith('/') || step.route.startsWith('//')) {
@@ -469,7 +725,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         }
     }
 
-    if (['click', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
+    if (['click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'expectVisible', 'expectHidden', 'expectText', 'expectNoText'].includes(step.action)) {
         validateLocator(step.target, `${label} target`);
     }
 
@@ -492,6 +748,19 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         if (!/^[a-z][a-z0-9-]*$/.test(step.mutationId)) {
             throw new Error(`${label} mutationId must be a stable lowercase mutation key`);
         }
+    }
+    if (step.scope !== undefined) {
+        assertSafeText(step.scope, `${label} scope`, 160);
+        validateTemplates(step.scope, `${label} scope`);
+    }
+    if (step.commitMutation !== undefined && step.commitMutation !== true) {
+        throw new Error(`${label} commitMutation may only be true`);
+    }
+    if (step.scope !== undefined && !step.mutationId) {
+        throw new Error(`${label} scope is valid only for a reversible mutation`);
+    }
+    if (step.commitMutation !== undefined && (!step.mutationId || phase !== 'execution')) {
+        throw new Error(`${label} commitMutation is valid only for an execution mutation`);
     }
     assertParentCoverageStepCapability(workflowId, step, phase, declaredActors[0]);
 }
@@ -522,7 +791,10 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             throw new Error(`contract actor ${actor} is not allowed for ${workflow.id}`);
         }
     }
-    for (const requiredActor of workflowCoverageActorRequirements.get(contract.workflowId) || []) {
+    const requiredCoverageActors = new Set((workflowCoverageRequirements.get(contract.workflowId) || [])
+        .map(({ actor }) => actor)
+        .filter(Boolean));
+    for (const requiredActor of requiredCoverageActors) {
         if (!contract.actors.includes(requiredActor)) {
             throw new Error(`contract must include the trusted ${contract.workflowId} ${requiredActor} coverage actor`);
         }
@@ -601,26 +873,103 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             if (cleanupGroup.some((step) => !['click', 'restoreControl'].includes(step.action))) {
                 throw new Error(`reversible mutation ${mutationId} cleanup must restore remembered state or invoke a bounded inverse action`);
             }
+            const commitSteps = executionGroup.filter((step) => step.commitMutation === true);
+            if (commitSteps.length !== 1 || !['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(commitSteps[0]?.action)) {
+                throw new Error(`reversible mutation ${mutationId} must declare exactly one trusted completed forward operation`);
+            }
+            if (cleanupGroup.some((step) => step.commitMutation !== undefined)) {
+                throw new Error(`reversible mutation ${mutationId} cleanup cannot declare a completed forward operation`);
+            }
+            const commitStep = commitSteps[0];
             for (const executionStep of executionGroup.filter((step) => controlMutationActions.has(step.action))) {
                 if (!cleanupGroup.some((step) => step.action === 'restoreControl' && sameTarget(step, executionStep))) {
                     throw new Error(`reversible mutation ${mutationId} must restore the exact mutated control`);
                 }
             }
-            for (const executionStep of executionGroup.filter((step) => ['click', 'uploadSyntheticImage'].includes(step.action))) {
-                const hasInverse = cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
+            for (const executionStep of executionGroup.filter((step) => ['click', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action))) {
+                const hasDirectInverse = cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
                     contract.workflowId,
                     executionStep,
                     cleanupStep
                 ));
+                const uploadCoveredByCreatedEntityInverse =
+                    ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(executionStep.action) &&
+                    commitStep !== executionStep &&
+                    commitStep.action === 'click' &&
+                    cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
+                        contract.workflowId,
+                        commitStep,
+                        cleanupStep
+                    ));
                 const isStateCommit = executionStep.action === 'click' &&
                     /^(?:save|save changes|update profile|update rsvp|submit)$/i.test(String(executionStep.target?.name || '')) &&
-                    executionGroup.some((step) => controlMutationActions.has(step.action)) &&
+                    executionGroup.some((step) =>
+                        controlMutationActions.has(step.action) ||
+                        ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)
+                    ) &&
                     cleanupGroup.some((step) => step.action === 'click' && sameTarget(step, executionStep)) &&
                     executionGroup.filter((step) => controlMutationActions.has(step.action)).every((step) =>
                         cleanupGroup.some((cleanupStep) => cleanupStep.action === 'restoreControl' && sameTarget(cleanupStep, step))
                     );
-                if (!hasInverse && !isStateCommit) {
+                if (!hasDirectInverse && !uploadCoveredByCreatedEntityInverse && !isStateCommit) {
                     throw new Error(`reversible mutation ${mutationId} must use a trusted target-specific inverse`);
+                }
+            }
+            const controlSteps = executionGroup.filter((step) => controlMutationActions.has(step.action));
+            if (controlSteps.length > 0) {
+                const commitIndex = contract.steps.indexOf(commitStep);
+                if (
+                    commitStep.action !== 'click' ||
+                    !/^(?:save|save changes|update profile|update rsvp|submit)$/i.test(String(commitStep.target?.name || '')) ||
+                    controlSteps.some((step) => contract.steps.indexOf(step) > commitIndex)
+                ) {
+                    throw new Error(`reversible mutation ${mutationId} must persist changed controls with one final trusted commit`);
+                }
+                const cleanupCommitIndex = cleanupGroup.findIndex((step) => step.action === 'click' && sameTarget(step, commitStep));
+                const restoreIndexes = cleanupGroup
+                    .map((step, index) => step.action === 'restoreControl' ? index : -1)
+                    .filter((index) => index >= 0);
+                if (
+                    cleanupCommitIndex < 0 ||
+                    restoreIndexes.length !== controlSteps.length ||
+                    restoreIndexes.some((index) => index > cleanupCommitIndex)
+                ) {
+                    throw new Error(`reversible mutation ${mutationId} must restore every control before the cleanup commit`);
+                }
+            }
+            const uploadSteps = executionGroup.filter((step) =>
+                ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)
+            );
+            if (uploadSteps.length > 0 && commitStep.action === 'click' && /^(?:save|save changes|update profile|submit)$/i.test(String(commitStep.target?.name || ''))) {
+                const commitIndex = contract.steps.indexOf(commitStep);
+                const cleanupCommitIndex = cleanupGroup.findIndex((step) => step.action === 'click' && sameTarget(step, commitStep));
+                const inverseIndexes = cleanupGroup
+                    .map((step, index) => step.action === 'click' && !sameTarget(step, commitStep) ? index : -1)
+                    .filter((index) => index >= 0);
+                if (
+                    uploadSteps.some((step) => contract.steps.indexOf(step) > commitIndex) ||
+                    cleanupCommitIndex < 0 ||
+                    inverseIndexes.length < uploadSteps.length ||
+                    inverseIndexes.some((index) => index > cleanupCommitIndex)
+                ) {
+                    throw new Error(`reversible mutation ${mutationId} must remove uploaded artifacts before the cleanup commit`);
+                }
+            }
+            const inverseClicks = cleanupGroup.filter((step) => step.action === 'click' && !sameTarget(step, commitStep));
+            for (const inverseStep of inverseClicks) {
+                if (!inverseStep.scope) {
+                    throw new Error(`reversible mutation ${mutationId} inverse cleanup must be bound to an exact entity scope`);
+                }
+                const createsRunEntity = executionGroup.some((step) =>
+                    step.value === '{RUN_MARKER}' ||
+                    ['uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action)
+                );
+                if (createsRunEntity) {
+                    if (inverseStep.scope !== '{RUN_MARKER}') {
+                        throw new Error(`reversible mutation ${mutationId} created-entity cleanup must be scoped to the run marker`);
+                    }
+                } else if (!commitStep.scope || commitStep.scope !== inverseStep.scope) {
+                    throw new Error(`reversible mutation ${mutationId} forward and inverse operations must share one exact entity scope`);
                 }
             }
         }
@@ -644,14 +993,34 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     if (remembered.size !== restored.size || [...remembered.keys()].some((key) => !restored.has(key))) {
         throw new Error('every remembered control must be restored exactly once during cleanup');
     }
-    const requiredActions = workflowCoverageRequirements.get(contract.workflowId) || [];
-    const actualActions = new Set([...contract.steps, ...cleanupSteps].map(({ action }) => action));
-    for (const action of requiredActions) {
-        if (!actualActions.has(action)) {
-            throw new Error(`contract must exercise the trusted ${contract.workflowId} ${action} workflow behavior`);
+    const phasedSteps = [
+        ...contract.steps.map((step) => ({ ...step, phase: 'execution' })),
+        ...cleanupSteps.map((step) => ({ ...step, phase: 'cleanup' }))
+    ];
+    const matchesCoverageRequirement = (step, requirement) => {
+        const acceptedActions = requirement.actions || [requirement.action];
+        if (!acceptedActions.includes(step.action)) return false;
+        if ((requirement.phase || 'execution') !== step.phase) return false;
+        if (requirement.actor && (step.actor || contract.actors[0]) !== requirement.actor) return false;
+        if (requirement.option && step.option !== requirement.option) return false;
+        const checks = [];
+        if (requirement.target && step.target?.name !== undefined) checks.push(requirement.target.test(String(step.target.name)));
+        if (requirement.route && step.route !== undefined) checks.push(requirement.route.test(String(step.route)));
+        if (requirement.value && step.value !== undefined) checks.push(requirement.value.test(String(step.value)));
+        if ((requirement.target || requirement.route || requirement.value) && checks.length === 0) return false;
+        return checks.every(Boolean);
+    };
+    let coverageCursor = 0;
+    for (const requirement of workflowCoverageRequirements.get(contract.workflowId) || []) {
+        const relativeIndex = phasedSteps.slice(coverageCursor).findIndex((step) => matchesCoverageRequirement(step, requirement));
+        if (relativeIndex < 0) {
+            const behavior = requirement.action || requirement.actions.join('|');
+            throw new Error(`contract must exercise ordered trusted ${contract.workflowId} ${requirement.actor || ''} ${behavior} workflow behavior`);
         }
+        coverageCursor += relativeIndex + 1;
     }
-    if (!['expectVisible', 'expectHidden', 'expectText', 'expectNoText', 'expectRoute'].some((action) => actualActions.has(action))) {
+    const executionActions = new Set(contract.steps.map(({ action }) => action));
+    if (!['expectVisible', 'expectHidden', 'expectText', 'expectNoText', 'expectRoute'].some((action) => executionActions.has(action))) {
         throw new Error(`contract must assert an observable trusted ${contract.workflowId} workflow outcome`);
     }
     return contract;

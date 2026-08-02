@@ -19,10 +19,13 @@ function mailboxMessage(text, {
         internalDate,
         payload: {
             headers: [
-                { name: 'From', value: from },
-                { name: 'To', value: to },
+                { name: 'Delivered-To', value: to },
+                { name: 'Return-Path', value: `<${from.match(/<([^>]+)>/)?.[1] || from}>` },
+                { name: 'Received', value: 'by mx.google.com with SMTP id redacted' },
+                { name: 'Received-SPF', value: 'pass (google.com: domain is allowed)' },
                 { name: 'Authentication-Results', value: authentication },
-                { name: 'Return-Path', value: `<${from.match(/<([^>]+)>/)?.[1] || from}>` }
+                { name: 'From', value: from },
+                { name: 'To', value: to }
             ],
             mimeType: 'text/html',
             body: { data: Buffer.from(text).toString('base64url') }
