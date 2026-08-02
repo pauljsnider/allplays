@@ -57,6 +57,14 @@ describe('parent coverage workflow trust boundary', () => {
         expect(fixtureAudits.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
         expect(fixtureAudits.map((step) => steps.indexOf(step))).toEqual([runIndex - 2, runIndex - 1]);
     });
+
+    it('runs P08 with its independently provisioned team and player target', () => {
+        const runStep = workflow.jobs['run-contract'].steps.find(
+            (step) => step.name === 'Run one parent workflow contract'
+        );
+        expect(runStep.env.PARENT_CENSUS_REDEMPTION_TEAM_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}');
+        expect(runStep.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}');
+    });
 });
 
 describe('parent coverage provisioning workflow trust boundary', () => {
@@ -87,5 +95,13 @@ describe('parent coverage provisioning workflow trust boundary', () => {
         );
         expect(fixtureSteps).toHaveLength(2);
         expect(fixtureSteps.every((step) => step.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT === 'true')).toBe(true);
+    });
+
+    it('provisions P08 against a separately configured team and player target', () => {
+        const inviteStep = provisionWorkflow.jobs.provision.steps.find(
+            (step) => step.name === 'Audit or repair lifecycle invite'
+        );
+        expect(inviteStep.env.PARENT_CENSUS_REDEMPTION_TEAM_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}');
+        expect(inviteStep.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}');
     });
 });

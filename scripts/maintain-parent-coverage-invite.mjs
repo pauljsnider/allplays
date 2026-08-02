@@ -25,11 +25,13 @@ function timestampMillis(fields, name) {
     return Date.parse(String(fields?.[name]?.timestampValue || '')) || 0;
 }
 
-export function matchesUsableInvite(document, recipient, purpose, now = Date.now()) {
+export function matchesUsableInvite(document, recipient, purpose, teamId, playerId, now = Date.now()) {
     const fields = document?.fields || {};
     return stringValue(fields, 'type') === 'parent_invite' &&
         stringValue(fields, 'email').toLowerCase() === recipient.toLowerCase() &&
         stringValue(fields, 'relation') === `Parent census ${purpose}` &&
+        stringValue(fields, 'teamId') === teamId &&
+        stringValue(fields, 'playerId') === playerId &&
         !boolValue(fields, 'used') &&
         timestampMillis(fields, 'expiresAt') > now + 60 * 60 * 1000;
 }
@@ -71,15 +73,34 @@ async function main() {
     const lifecycleEmail = String(process.env.PARENT_CENSUS_LIFECYCLE_EMAIL || '');
     const teamId = String(process.env.PARENT_CENSUS_TEAM_ID || '');
     const playerId = String(process.env.PARENT_CENSUS_PLAYER_ID || '');
-    if (!appBaseUrl || !adminEmail || !adminPassword || !lifecycleEmail || !teamId || !playerId) {
+    const redemptionTeamId = String(process.env.PARENT_CENSUS_REDEMPTION_TEAM_ID || '');
+    const redemptionPlayerId = String(process.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID || '');
+    if (
+        !appBaseUrl || !adminEmail || !adminPassword || !lifecycleEmail ||
+        !teamId || !playerId || !redemptionTeamId || !redemptionPlayerId
+    ) {
         throw new Error('protected parent census invite configuration is incomplete');
+    }
+    if (redemptionTeamId === teamId) {
+        throw new Error('team-redemption lifecycle invite must target a distinct team');
     }
     const session = await createFirebaseRestSession({ appBaseUrl, email: adminEmail, password: adminPassword });
     const invites = await findFirestoreDocumentsByStringField(session, 'accessCodes', 'generatedBy', session.localId);
-    for (const purpose of ['signup', 'team-redemption']) {
-        if (!invites.some((document) => matchesUsableInvite(document, lifecycleEmail, purpose))) {
+    const inviteTargets = [
+        { purpose: 'signup', teamId, playerId },
+        { purpose: 'team-redemption', teamId: redemptionTeamId, playerId: redemptionPlayerId }
+    ];
+    for (const target of inviteTargets) {
+        if (!invites.some((document) => matchesUsableInvite(
+            document,
+            lifecycleEmail,
+            target.purpose,
+            target.teamId,
+            target.playerId
+        ))) {
+            const { purpose } = target;
             if (mode !== 'repair') throw new Error(`no usable ${purpose} lifecycle parent invite is provisioned`);
-            await createInvite(session, lifecycleEmail, purpose, teamId, playerId);
+            await createInvite(session, lifecycleEmail, purpose, target.teamId, target.playerId);
         }
     }
     console.log(`Parent coverage purpose-bound lifecycle parent invites ${mode} passed.`);

@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     createParentCoverageMutationTracker,
     clickAndExpectGoogleAuth,
-    executeParentCoverageCleanup
+    executeParentCoverageCleanup,
+    resolveParentCoverageInvite
 } from '../smoke/helpers/parent-coverage-runner.js';
 
 const runnerSource = readFileSync('tests/smoke/helpers/parent-coverage-runner.js', 'utf8');
@@ -141,11 +142,33 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toMatch(/await page\.reload[\s\S]+toEqual\(restoration\.state\)/);
     });
 
-    it('resolves distinct schema-valid team parent invites through the protected admin fixture', () => {
-        expect(runnerSource).toContain("email: adminEmail, password: adminPassword");
-        expect(runnerSource).toContain("'type') === 'parent_invite'");
-        expect(runnerSource).toContain('Parent census ${purpose}');
-        expect(runnerSource).toContain("resolveInvite('signup')");
-        expect(runnerSource).toContain("resolveInvite('team-redemption')");
+    it('resolves an invite only for its exact purpose-bound team and player target', () => {
+        const document = {
+            fields: {
+                type: { stringValue: 'parent_invite' },
+                email: { stringValue: 'lifecycle@example.com' },
+                relation: { stringValue: 'Parent census team-redemption' },
+                teamId: { stringValue: 'redemption-team' },
+                playerId: { stringValue: 'redemption-player' },
+                code: { stringValue: 'P08-CODE' },
+                used: { booleanValue: false },
+                expiresAt: { timestampValue: '2026-08-10T00:00:00.000Z' }
+            }
+        };
+        const resolve = (teamId, playerId) => resolveParentCoverageInvite(
+            [document],
+            'lifecycle@example.com',
+            'team-redemption',
+            teamId,
+            playerId,
+            Date.parse('2026-08-02T00:00:00.000Z')
+        );
+
+        expect(resolve('redemption-team', 'redemption-player')).toBe(document);
+        expect(resolve('signup-team', 'redemption-player')).toBeUndefined();
+        expect(resolve('redemption-team', 'signup-player')).toBeUndefined();
+        expect(runnerSource).toContain('PARENT_CENSUS_REDEMPTION_TEAM_ID');
+        expect(runnerSource).toContain('PARENT_CENSUS_REDEMPTION_PLAYER_ID');
+        expect(runnerSource).toContain('redemptionTeamId === variables.TEAM_ID');
     });
 });

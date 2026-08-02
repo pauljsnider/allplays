@@ -58,6 +58,19 @@ export function getParentCoverageSecrets() {
     ].filter(Boolean);
 }
 
+export function resolveParentCoverageInvite(documents, recipient, purpose, teamId, playerId, now = Date.now()) {
+    return documents.find((document) => {
+        const fields = document?.fields || {};
+        return getFirestoreStringField(document, 'type') === 'parent_invite' &&
+            getFirestoreStringField(document, 'email').toLowerCase() === recipient.toLowerCase() &&
+            getFirestoreStringField(document, 'relation') === `Parent census ${purpose}` &&
+            getFirestoreStringField(document, 'teamId') === teamId &&
+            getFirestoreStringField(document, 'playerId') === playerId &&
+            fields.used?.booleanValue !== true &&
+            Date.parse(String(fields.expiresAt?.timestampValue || '')) > now;
+    });
+}
+
 function actorCredentials(actor) {
     const names = actorEnvironment[actor];
     if (!names) throw new Error(`actor ${actor} cannot sign in`);
@@ -231,16 +244,25 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             session.localId
         );
         const recipient = actorCredentials('lifecycle').email.toLowerCase();
-        const resolveInvite = (purpose) => documents.find((document) => {
-            const fields = document?.fields || {};
-            return getFirestoreStringField(document, 'type') === 'parent_invite' &&
-                getFirestoreStringField(document, 'email').toLowerCase() === recipient &&
-                getFirestoreStringField(document, 'relation') === `Parent census ${purpose}` &&
-                fields.used?.booleanValue !== true &&
-                Date.parse(String(fields.expiresAt?.timestampValue || '')) > Date.now();
-        });
-        variables.LIFECYCLE_SIGNUP_INVITE_CODE = getFirestoreStringField(resolveInvite('signup'), 'code');
-        variables.LIFECYCLE_TEAM_INVITE_CODE = getFirestoreStringField(resolveInvite('team-redemption'), 'code');
+        const redemptionTeamId = String(process.env.PARENT_CENSUS_REDEMPTION_TEAM_ID || '');
+        const redemptionPlayerId = String(process.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID || '');
+        if (!redemptionTeamId || !redemptionPlayerId || redemptionTeamId === variables.TEAM_ID) {
+            throw new Error('protected team-redemption invite target is unavailable or not independent');
+        }
+        variables.LIFECYCLE_SIGNUP_INVITE_CODE = getFirestoreStringField(resolveParentCoverageInvite(
+            documents,
+            recipient,
+            'signup',
+            variables.TEAM_ID,
+            variables.PLAYER_ID
+        ), 'code');
+        variables.LIFECYCLE_TEAM_INVITE_CODE = getFirestoreStringField(resolveParentCoverageInvite(
+            documents,
+            recipient,
+            'team-redemption',
+            redemptionTeamId,
+            redemptionPlayerId
+        ), 'code');
         if (
             JSON.stringify(contract).includes('{LIFECYCLE_SIGNUP_INVITE_CODE}') && !variables.LIFECYCLE_SIGNUP_INVITE_CODE ||
             JSON.stringify(contract).includes('{LIFECYCLE_TEAM_INVITE_CODE}') && !variables.LIFECYCLE_TEAM_INVITE_CODE
