@@ -146,6 +146,11 @@ async function clickButton(container, text) {
     await act(async () => {
         button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
+    if (text === 'More') {
+        await act(async () => {
+            await vi.dynamicImportSettled();
+        });
+    }
     await flush();
 }
 
