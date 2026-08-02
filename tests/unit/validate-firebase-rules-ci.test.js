@@ -223,9 +223,11 @@ concurrency:
               --non-interactive
             )
             retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
+            retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
             retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets"
-              && "$deploy_targets" != "$retry_enabled_inventory_producer_target" ]]; then
+              && "$deploy_targets" != "$retry_enabled_inventory_producer_target"
+              && "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
             deploy_args+=(--force)
@@ -284,7 +286,7 @@ concurrency:
           }
           retry_firebase_deploy "functions:indexCertificateLegacySignaturesOnDefaultsWrite" "certificate-signature-inventory-producer" 3 15
           node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
-          retry_firebase_deploy "functions:cleanupCertificateSignature" "certificate-signature-cleanup-compatibility" 3 15
+          retry_firebase_deploy "$retry_enabled_cleanup_compatibility_target" "certificate-signature-cleanup-compatibility" 3 15 true
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             if [[ "$native_callable_ready" == "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
               FIRESTORE_CONFIG_CHANGED="true"
@@ -349,6 +351,18 @@ concurrency:
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('"retry-enabled-functions" 3 15 true', '"retry-enabled-functions" 3 15')
         )).toThrow('Production retry-enabled function failure-policy acknowledgement call');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('if [[ "$deploy_targets" != "$retry_enabled_function_targets"', 'if [[ "disabled" == "true"')
+        )).toThrow('Production force-deploy scoped function-group allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_inventory_producer_target"', '&& "disabled" == "true"')
+        )).toThrow('Production force-deploy scoped inventory-producer allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then', '&& "disabled" == "true" ]]; then')
+        )).toThrow('Production force-deploy scoped cleanup allowlist guard');
+        expect(() => validateProductionDeployCommand(
+            validDeployCommand.replace('"certificate-signature-cleanup-compatibility" 3 15 true', '"certificate-signature-cleanup-compatibility" 3 15')
+        )).toThrow('Production retry-enabled cleanup compatibility failure-policy acknowledgement call');
         expect(() => validateProductionDeployCommand(
             validDeployCommand.replace('              --project game-flow-c6311\n', '')
         )).toThrow('Production Firebase deploy project');
