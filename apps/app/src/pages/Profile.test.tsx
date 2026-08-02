@@ -653,6 +653,33 @@ describe('Profile', () => {
     expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
   });
 
+  it('blocks phone-only friend invites and guides the user to email', async () => {
+    renderProfile('/profile?section=invites');
+
+    const phoneInput = await screen.findByLabelText('Recipient phone');
+    expect(screen.getByText("Phone-only invites aren't available. Enter the recipient's email to target the invite.")).toBeTruthy();
+
+    fireEvent.change(phoneInput, { target: { value: '555-0100' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    expect(await screen.findByText("Phone-only invites aren't available because sign-in can't verify phone ownership. Enter the recipient's email instead.")).toBeTruthy();
+    expect(profileServiceMocks.createProfileAccessCode).not.toHaveBeenCalled();
+    expect(screen.queryByText('Invite code')).toBeNull();
+  });
+
+  it('continues to create email-targeted friend invites', async () => {
+    renderProfile('/profile?section=invites');
+
+    fireEvent.change(await screen.findByLabelText('Recipient email'), { target: { value: ' friend@example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    await waitFor(() => {
+      expect(profileServiceMocks.createProfileAccessCode).toHaveBeenCalledWith('user-1', 'friend@example.com', '');
+    });
+    expect(await screen.findByText('Invite code generated.')).toBeTruthy();
+    expect(screen.getAllByText('CODE1234')).toHaveLength(2);
+  });
+
   it('renders alerts team controls before the first team preferences finish loading', async () => {
     const preferencesRequest = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);

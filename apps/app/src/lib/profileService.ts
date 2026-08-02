@@ -19,6 +19,7 @@ import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { captureHandledAppError, createAppTimer } from './telemetry';
+import { getFriendInviteTargetError } from './friendInviteCapabilities';
 
 export {
   acquireProfilePhoto,
@@ -631,8 +632,9 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
   const normalizedEmail = String(email || '').trim();
   const normalizedPhone = String(phone || '').trim();
-  if (!normalizedEmail && !normalizedPhone) {
-    throw new Error('Enter an email or phone number for the invite.');
+  const targetError = getFriendInviteTargetError(normalizedEmail, normalizedPhone);
+  if (targetError) {
+    throw new Error(targetError);
   }
 
   const code = generateAccessCode();
