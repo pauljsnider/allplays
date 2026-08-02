@@ -488,9 +488,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(profileImageWorkflow.indexOf('patchFirestoreDocumentFields(')).toBeLessThan(
             profileImageWorkflow.indexOf('uploadFirebaseStorageObject(')
         );
-        expect(profileImageWorkflow).toMatch(
-            /restoreImageFieldsIfUnchanged\(documentState, \['photoUrl'\]\)[\s\S]*deleteFirebaseStorageObject\([\s\S]*restoreImageFieldsIfUnchanged\(documentState, \['photoPath'\]\)/
+        expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(documentState)')).toBeLessThan(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
         );
+        expect(profileImageWorkflow.slice(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        )).not.toContain('restoreImageFieldsIfUnchanged(documentState)');
         expect(profileImageWorkflow).toContain(
             'const safeDocumentPhotoUrl = `https://allplays.ai/img/logo_small.png?smoke=${attemptNonce}`;'
         );

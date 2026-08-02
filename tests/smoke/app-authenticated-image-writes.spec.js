@@ -85,28 +85,24 @@ async function openRoute(page, route) {
 }
 
 async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.keys(documentState.expectedFields)) {
-    const currentDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
-    if (!currentDocument) return;
     const expectedEntries = Object.entries(documentState.expectedFields)
         .filter(([fieldName]) => fieldNames.includes(fieldName));
     if (!expectedEntries.length) return;
-    const stillOwnsTestValues = expectedEntries.every(
-        ([fieldName, fieldValue]) => getFirestoreStringField(currentDocument, fieldName) === fieldValue.stringValue
-    );
-    if (!stillOwnsTestValues) return;
 
-    await restoreFirestoreDocumentFields(
-        documentState.restSession,
-        documentState.documentPath,
-        documentState.originalDocument,
-        expectedEntries.map(([fieldName]) => fieldName),
-        { updateTime: currentDocument.updateTime }
-    );
-    const restoredDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
-    for (const [fieldName] of expectedEntries) {
-        expect(restoredDocument?.fields?.[fieldName]).toEqual(
-            documentState.originalDocument?.fields?.[fieldName]
-        );
+    for (const [fieldName, fieldValue] of expectedEntries) {
+        const currentDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
+        if (!currentDocument) continue;
+        if (getFirestoreStringField(currentDocument, fieldName) === fieldValue.stringValue) {
+            await restoreFirestoreDocumentFields(
+                documentState.restSession,
+                documentState.documentPath,
+                documentState.originalDocument,
+                [fieldName],
+                { updateTime: currentDocument.updateTime }
+            );
+        }
+        const restoredDocument = await getFirestoreDocument(documentState.restSession, documentState.documentPath);
+        expect(getFirestoreStringField(restoredDocument, fieldName)).not.toBe(fieldValue.stringValue);
     }
 }
 
@@ -125,6 +121,8 @@ async function clearAbandonedField(restSession, documentPath, fieldName, expecte
         [fieldName],
         { updateTime: currentDocument.updateTime }
     );
+    const restoredDocument = await getFirestoreDocument(restSession, documentPath);
+    expect(getFirestoreStringField(restoredDocument, fieldName)).not.toBe(expectedValue);
     return true;
 }
 
@@ -153,9 +151,6 @@ async function reconcileDedicatedImageFixture(target) {
             await clearAbandonedField(target.restSession, documentTarget.documentPath, 'photoUrl', abandonedUrl);
         }
     }
-    for (const abandonedPath of [...new Set(abandonedPaths)]) {
-        await deleteFirebaseStorageObject(target.restSession, abandonedPath);
-    }
     for (const documentTarget of target.documents) {
         if (!Object.hasOwn(documentTarget.expectedFields, 'photoPath')) continue;
         const document = await getFirestoreDocument(target.restSession, documentTarget.documentPath);
@@ -170,6 +165,9 @@ async function reconcileDedicatedImageFixture(target) {
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
+    }
+    for (const abandonedPath of [...new Set(abandonedPaths)]) {
+        await deleteFirebaseStorageObject(target.restSession, abandonedPath);
     }
 }
 
@@ -266,12 +264,9 @@ test('profile image paths accept authenticated storage and document writes', asy
                 recordType: target.recordType,
                 cleanup: async () => {
                     for (const documentState of [...documentStates].reverse()) {
-                        await restoreImageFieldsIfUnchanged(documentState, ['photoUrl']);
+                        await restoreImageFieldsIfUnchanged(documentState);
                     }
                     await deleteFirebaseStorageObject(target.restSession, target.storagePath);
-                    for (const documentState of [...documentStates].reverse()) {
-                        await restoreImageFieldsIfUnchanged(documentState, ['photoPath']);
-                    }
                 }
             });
 
