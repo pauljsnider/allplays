@@ -69,6 +69,10 @@ const insightsTabLoaderMocks = vi.hoisted(() => ({
   loadInsightsTab: vi.fn(() => import('./team-detail/InsightsTab').then((module) => ({ default: module.InsightsTab })))
 }));
 
+const moreTabLoaderMocks = vi.hoisted(() => ({
+  loadMoreTab: vi.fn()
+}));
+
 const moreTabRenderMocks = vi.hoisted(() => ({
   render: vi.fn()
 }));
@@ -76,6 +80,7 @@ const moreTabRenderMocks = vi.hoisted(() => ({
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
+vi.mock('./team-detail/moreTabLoader', () => moreTabLoaderMocks);
 vi.mock('./team-detail/MoreTab', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./team-detail/MoreTab')>();
   return {
@@ -301,6 +306,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.loadTeamTrackingAdmin.mockResolvedValue([]);
+    moreTabLoaderMocks.loadMoreTab.mockReset().mockImplementation(() => import('./team-detail/MoreTab').then((module) => ({ default: module.MoreTab })));
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
     teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValue({ playerId: 'player-2' });
     teamDetailServiceMocks.archiveTeamTrackingItemForApp.mockResolvedValue(undefined);
@@ -406,7 +412,10 @@ describe('TeamDetail', () => {
     expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
   });
 
-  it('renders the extracted MoreTab module only when More is selected', async () => {
+  it('loads the extracted MoreTab module once, only after More is selected', async () => {
+    const moreTabModule = createDeferred<{ default: typeof import('./team-detail/MoreTab')['MoreTab'] }>();
+    moreTabLoaderMocks.loadMoreTab.mockReturnValue(moreTabModule.promise);
+
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
         <Routes>
@@ -416,16 +425,45 @@ describe('TeamDetail', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(moreTabLoaderMocks.loadMoreTab).not.toHaveBeenCalled();
     expect(moreTabRenderMocks.render).not.toHaveBeenCalled();
 
-    fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: 'More' }));
+    const teamTabs = within(screen.getByRole('navigation', { name: 'Team detail sections' }));
+    fireEvent.click(teamTabs.getByRole('button', { name: 'Schedule' }));
+    expect(await screen.findByText('Team schedule')).toBeTruthy();
+    expect(moreTabLoaderMocks.loadMoreTab).not.toHaveBeenCalled();
+    expect(moreTabRenderMocks.render).not.toHaveBeenCalled();
 
+    fireEvent.click(teamTabs.getByRole('button', { name: 'More' }));
+
+    expect(await screen.findByRole('status', { name: 'Loading more' })).toBeTruthy();
+    expect(moreTabLoaderMocks.loadMoreTab).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      moreTabModule.resolve({
+        default: (props) => {
+          moreTabRenderMocks.render(props);
+          return <div>Expected More controls</div>;
+        }
+      });
+      await moreTabModule.promise;
+    });
+
+    expect(await screen.findByText('Expected More controls')).toBeTruthy();
     await waitFor(() => expect(moreTabRenderMocks.render).toHaveBeenCalledWith(expect.objectContaining({
       model: expect.objectContaining({ team: expect.objectContaining({ id: 'team-1' }) }),
       auth,
       staffPermissionsLoading: false,
       staffPermissionsError: ''
     })));
+
+    const tabs = within(screen.getByRole('navigation', { name: 'Team detail sections' }));
+    fireEvent.click(tabs.getByRole('button', { name: 'Overview' }));
+    await waitFor(() => expect(screen.queryByText('Expected More controls')).toBeNull());
+    fireEvent.click(tabs.getByRole('button', { name: 'More' }));
+
+    expect(await screen.findByText('Expected More controls')).toBeTruthy();
+    expect(moreTabLoaderMocks.loadMoreTab).toHaveBeenCalledTimes(1);
   });
 
   it('shows a retryable team detail error state and reloads on retry', async () => {
@@ -2023,7 +2061,7 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
 
     expect(screen.queryByRole('button', { name: 'Manage staff' })).toBeNull();
-    fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
+    fireEvent.change(await screen.findByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     await waitFor(() => expect(teamDetailServiceMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com', auth.user));
@@ -2076,7 +2114,7 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Team detail sections' })).getByRole('button', { name: 'More' }));
-    fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
+    fireEvent.change(await screen.findByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
 
     expect(await screen.findByText('Unable to create an admin invite code. Try again.')).toBeTruthy();
