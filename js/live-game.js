@@ -15,13 +15,14 @@ import {
   getMyRsvp,
   subscribeGame,
   updateGame,
-  uploadGameClip
-} from './db.js?v=139';
+  uploadGameClip,
+  deleteUploadedMediaObjects
+} from './db.js?v=140';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=22';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=144';
+import { checkAuth } from './auth.js?v=145';
 import { isViewerChatEnabled } from './live-game-chat.js?v=2';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -1461,6 +1462,8 @@ async function submitAttachedClip(event) {
   if (els.attachClipError) els.attachClipError.textContent = '';
   if (els.attachClipSubmit) els.attachClipSubmit.disabled = true;
 
+  let newlyUploadedClip = null;
+  let clipPersisted = false;
   try {
     const file = els.attachClipFile?.files?.[0] || null;
     const externalUrl = String(els.attachClipUrl?.value || '').trim();
@@ -1468,6 +1471,9 @@ async function submitAttachedClip(event) {
     if (file) {
       validateGameClipFile(file);
       media = await uploadGameClip(state.teamId, state.gameId, file);
+      newlyUploadedClip = media?.path
+        ? { path: media.path, storage: media.storage }
+        : null;
     } else if (externalUrl) {
       media = { url: externalUrl, source: 'external' };
     } else {
@@ -1491,11 +1497,15 @@ async function submitAttachedClip(event) {
     ].slice(-24);
 
     await updateGame(state.teamId, state.gameId, { highlightClips: nextHighlights });
+    clipPersisted = true;
     state.game = { ...state.game, highlightClips: nextHighlights };
     refreshVideoPanel({ force: true });
     closeAttachClipModal();
     showToast('Clip attached to scored play.');
   } catch (error) {
+    if (newlyUploadedClip && !clipPersisted) {
+      await deleteUploadedMediaObjects([newlyUploadedClip]).catch(() => undefined);
+    }
     console.warn('Failed to attach scored play clip:', error);
     if (els.attachClipError) els.attachClipError.textContent = error?.message || 'Unable to attach clip.';
   } finally {

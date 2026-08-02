@@ -664,6 +664,7 @@ export async function uploadGameClip(teamId, gameId, file) {
         return {
             url,
             path: clipPath,
+            storage: 'image',
             name: file.name || null,
             type: file.type || null,
             size: Number.isFinite(file.size) ? file.size : null,
@@ -680,6 +681,7 @@ export async function uploadGameClip(teamId, gameId, file) {
             return {
                 url: fallbackUrl,
                 path: fallbackPath,
+                storage: 'primary',
                 name: file.name || null,
                 type: file.type || null,
                 size: Number.isFinite(file.size) ? file.size : null,
