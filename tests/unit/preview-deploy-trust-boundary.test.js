@@ -488,6 +488,9 @@ describe('preview deployment workflow trust boundary', () => {
         expect(profileImageWorkflow).toContain('createFirestoreDocument(');
         expect(imageWriteProductionSmoke).toContain('deleteFirestoreDocument(');
         expect(imageWriteProductionSmoke).toContain('Object.keys(createdDocument.fields || {})');
+        expect(reconciliationWorkflow).toContain("canonical private-profile baseline is missing");
+        expect(reconciliationWorkflow).toContain('Object.keys(cleanupDocument?.fields || {})');
+        expect(reconciliationWorkflow).toContain('updateTime: cleanupDocument.updateTime');
         expect(reconciliationWorkflow).not.toContain('deleteFirebaseStorageObject(');
         expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
         expect(profileImageWorkflow).toContain('await reconcileDedicatedImageFixture(target)');

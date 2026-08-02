@@ -176,6 +176,17 @@ async function reconcileDedicatedImageFixture(target) {
         for (const fieldName of Object.keys(documentTarget.expectedFields)) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
+        if (documentTarget.removeIfCreated) {
+            // This dedicated fixture's canonical private-profile baseline is missing.
+            // Remove only an authoritatively empty document left by an interrupted run.
+            const cleanupSession = documentTarget.cleanupRestSession || target.restSession;
+            const cleanupDocument = await getFirestoreDocument(cleanupSession, documentTarget.documentPath);
+            expect(Object.keys(cleanupDocument?.fields || {})).toEqual([]);
+            await deleteFirestoreDocument(cleanupSession, documentTarget.documentPath, {
+                updateTime: cleanupDocument.updateTime
+            });
+            expect(await getFirestoreDocument(cleanupSession, documentTarget.documentPath)).toBeNull();
+        }
     }
     // Path-only abandoned uploads are retained because their historical Storage
     // generation was not persisted and cannot be proven from current metadata.
