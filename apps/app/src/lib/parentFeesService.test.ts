@@ -89,6 +89,24 @@ describe('parentFeesService checkout destinations', () => {
         }));
     });
 
+    it('preserves due-date metadata while sanitizing the checkout destination', async () => {
+        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
+            payableFee({
+                dueDate: '2026-08-15',
+                checkoutUrl: 'https://attacker.example/checkout'
+            })
+        ]);
+
+        const [fee] = await loadParentFeesForApp(user);
+
+        expect(legacyParentToolsMocks.formatParentFeeDueDate).toHaveBeenCalledWith('2026-08-15');
+        expect(fee).toEqual(expect.objectContaining({
+            dueDate: '2026-08-15',
+            dueLabel: 'Aug 15, 2026',
+            checkoutUrl: ''
+        }));
+    });
+
     it.each(['checkoutURL', 'paymentLink', 'paymentLinkUrl', 'paymentUrl'])(
         'removes a rejected %s alias from the returned record',
         async (field) => {

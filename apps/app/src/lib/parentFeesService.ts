@@ -83,7 +83,7 @@ function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
         checkoutUrl: storedCheckoutUrl,
         checkoutStatus
     };
-    const parentFee = {
+    const parentFee: Record<string, any> = {
         ...omitParentFeeCheckoutDestinationFields(storedParentFee),
         checkoutUrl
     };
