@@ -12,6 +12,7 @@ import {
   query,
   setDoc,
   startAfter,
+  updateDoc,
   where
 } from 'firebase/firestore';
 
@@ -30,8 +31,12 @@ describe('public registration Firestore boundary', () => {
     );
     expect(helper).toContain("get(policyPath).data.get('mode', 'observe') != 'enforce'");
     expect(helper).toContain("data.get('submittedByUserId', '') == request.auth.uid");
-    expect(registrationBlock).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
+    expect(registrationBlock).toContain('hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);');
+    expect(registrationBlock).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
+    expect(registrationBlock).toContain('match /checkoutAttempts/{attemptId}');
+    expect(registrationBlock).toContain('allow read, create, update, delete: if false;');
     expect(registrationBlock).not.toContain('allow create: if request.auth == null');
+    expect(rules.match(/'checkoutAttemptToken'/g)).toHaveLength(4);
   });
 
   describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('rules engine coverage', () => {
@@ -84,6 +89,58 @@ describe('public registration Firestore boundary', () => {
         doc(anonymousDb, 'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'direct-write'),
         { guardian: { email: 'attacker@example.com' }, status: 'pending' }
       ));
+    });
+
+    it('lets team owners review registrations without letting clients forge checkout reservations', async () => {
+      const ownerDb = testEnv.authenticatedContext('owner-1', {
+        email: 'owner@example.com',
+        email_verified: true
+      }).firestore();
+      const existingRef = doc(
+        ownerDb,
+        'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned'
+      );
+
+      await assertSucceeds(updateDoc(existingRef, { decisionNote: 'Reviewed by coach' }));
+      await assertFails(updateDoc(existingRef, {
+        checkoutCreationReservationId: 'forged-reservation',
+        checkoutCreationRequest: { idempotencyKey: 'forged' }
+      }));
+      await assertFails(updateDoc(existingRef, {
+        checkoutAttemptToken: 'forgedcheckouttoken123'
+      }));
+      await assertFails(setDoc(
+        doc(ownerDb, 'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'forged-checkout'),
+        {
+          status: 'pending',
+          checkoutCreationReservationId: 'forged-reservation',
+          checkoutCreationRequest: { idempotencyKey: 'forged' }
+        }
+      ));
+
+      const attemptRef = doc(existingRef, 'checkoutAttempts', 'current');
+      await assertFails(getDoc(attemptRef));
+      await assertFails(setDoc(attemptRef, {
+        reservationId: 'forged-reservation',
+        checkoutCreationRequest: { idempotencyKey: 'forged' }
+      }));
+    });
+
+    it('denies guardians access to private provider checkout attempts', async () => {
+      const guardianDb = testEnv.authenticatedContext('guardian-1', {
+        email: 'victim@example.com',
+        email_verified: true
+      }).firestore();
+      const attemptRef = doc(
+        guardianDb,
+        'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'email-owned',
+        'checkoutAttempts', 'current'
+      );
+      await assertFails(getDoc(attemptRef));
+      await assertFails(setDoc(attemptRef, {
+        reservationId: 'forged-reservation',
+        checkoutCreationRequest: { idempotencyKey: 'forged' }
+      }));
     });
 
     it('preserves current guardian reads until enforcement is explicitly enabled', async () => {

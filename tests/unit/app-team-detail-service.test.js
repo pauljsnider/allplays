@@ -609,8 +609,11 @@ describe('React app team detail model', () => {
                 sortOrder: 3
             }
         ]);
-        uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
-        applyRosterCsvImportOperations.mockResolvedValue([{ type: 'add', playerId: 'player-1' }]);
+        uploadPlayerPhoto.mockResolvedValue({
+            url: 'https://img.example.test/player-1.png',
+            path: 'profile-photos/teams/team-1/players/player-1/player.png'
+        });
+        applyRosterCsvImportOperations.mockImplementation(async (_teamId, operations) => operations);
 
         const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
         const result = await addRosterPlayerForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -625,13 +628,21 @@ describe('React app team detail model', () => {
             }
         });
 
-        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
-        expect(applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', [{
+        const reservedPlayerId = uploadPlayerPhoto.mock.calls[0][1].playerId;
+        expect(reservedPlayerId).toEqual(expect.any(String));
+        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile, {
+            returnUpload: true,
+            teamId: 'team-1',
+            playerId: reservedPlayerId
+        });
+        expect(applyRosterCsvImportOperations).toHaveBeenNthCalledWith(1, 'team-1', [{
             type: 'add',
+            playerId: reservedPlayerId,
             payload: {
                 name: 'Pat Star',
                 number: '9',
-                photoUrl: 'https://img.example.test/player-1.png',
+                photoUrl: null,
+                photoPath: null,
                 position: 'Forward',
                 profile: {
                     customFields: {
@@ -643,12 +654,21 @@ describe('React app team detail model', () => {
             },
             privateRosterFields: { medical_notes: 'Peanut allergy' }
         }]);
+        expect(applyRosterCsvImportOperations).toHaveBeenNthCalledWith(2, 'team-1', [{
+            type: 'update',
+            playerId: reservedPlayerId,
+            payload: {
+                photoUrl: 'https://img.example.test/player-1.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/player.png'
+            }
+        }]);
         expect(result).toEqual({
-            playerId: 'player-1',
+            playerId: reservedPlayerId,
             player: {
                 name: 'Pat Star',
                 number: '9',
                 photoUrl: 'https://img.example.test/player-1.png',
+                photoPath: 'profile-photos/teams/team-1/players/player-1/player.png',
                 position: 'Forward',
                 profile: {
                     customFields: {
@@ -661,7 +681,7 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('rolls back a browser roster photo when the atomic player create fails', async () => {
+    it('creates the browser owner before upload and rolls back a photo when final persistence fails', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -669,17 +689,28 @@ describe('React app team detail model', () => {
         getRosterFieldDefinitions.mockResolvedValue([]);
         uploadPlayerPhoto.mockResolvedValue({
             url: 'https://img.example.test/new-player.png',
-            path: 'player-photos/new-player.png'
+            path: 'profile-photos/teams/team-1/players/new-player/new-player.png'
         });
-        applyRosterCsvImportOperations.mockRejectedValueOnce(new Error('player create denied'));
+        applyRosterCsvImportOperations
+            .mockImplementationOnce(async (_teamId, operations) => operations)
+            .mockRejectedValueOnce(Object.assign(
+                new Error('player photo save denied'),
+                { code: 'permission-denied' }
+            ));
 
         await expect(addRosterPlayerForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
             name: 'Pat Star',
             photoFile: new File(['abc'], 'player.png', { type: 'image/png' }),
             rosterFieldValues: {}
-        })).rejects.toThrow('player create denied');
+        })).resolves.toMatchObject({
+            player: { photoUrl: null },
+            photoWarning: expect.stringContaining('player photo save denied')
+        });
 
-        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('player-photos/new-player.png');
+        expect(applyRosterCsvImportOperations.mock.invocationCallOrder[0]).toBeLessThan(uploadPlayerPhoto.mock.invocationCallOrder[0]);
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith(
+            'profile-photos/teams/team-1/players/new-player/new-player.png'
+        );
     });
 
     it('validates required roster fields before creating a roster player', async () => {
@@ -1947,7 +1978,10 @@ describe('React app team detail model', () => {
         getGames.mockResolvedValue([]);
         getConfigs.mockResolvedValue([]);
         updateTeam.mockResolvedValue(undefined);
-        uploadTeamPhoto.mockResolvedValue('https://img.example.test/updated.png');
+        uploadTeamPhoto.mockResolvedValue({
+            url: 'https://img.example.test/updated.png',
+            path: 'profile-photos/teams/team-1/team/team.png'
+        });
 
         const photoFile = new File(['abc'], 'team.png', { type: 'image/png' });
         await updateTeamSettingsForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -1958,13 +1992,14 @@ describe('React app team detail model', () => {
             photoFile
         });
 
-        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
+        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true, teamId: 'team-1' });
         expect(updateTeam).toHaveBeenCalledWith('team-1', {
             name: 'Lady Bears',
             sport: 'Soccer',
             zip: '662101234',
             isPublic: false,
             photoUrl: 'https://img.example.test/updated.png',
+            photoPath: 'profile-photos/teams/team-1/team/team.png',
             leagueUrl: null,
             twitchChannel: null,
             streamEmbedUrl: null,
@@ -1985,9 +2020,9 @@ describe('React app team detail model', () => {
         getConfigs.mockResolvedValue([]);
         uploadTeamPhoto.mockResolvedValue({
             url: 'https://img.example.test/updated.png',
-            path: 'team-photos/new-team.png'
+            path: 'profile-photos/teams/team-1/team/team.png'
         });
-        updateTeam.mockRejectedValueOnce(new Error('team save denied'));
+        updateTeam.mockRejectedValueOnce(Object.assign(new Error('team save denied'), { code: 'permission-denied' }));
 
         await expect(updateTeamSettingsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
             name: 'Bears',
@@ -1997,7 +2032,7 @@ describe('React app team detail model', () => {
             photoFile: new File(['abc'], 'team.png', { type: 'image/png' })
         })).rejects.toThrow('team save denied');
 
-        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('team-photos/new-team.png');
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.png');
     });
 
     it('rejects empty team names and non-staff team setting edits', async () => {

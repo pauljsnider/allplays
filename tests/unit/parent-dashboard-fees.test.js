@@ -278,10 +278,10 @@ describe('parent dashboard team fees', () => {
             { title: 'Online collection', collectionMode: 'online_stripe', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
         ]);
         const checkoutHtml = renderParentTeamFees([
-            { title: 'Online collection', collectionMode: 'online_stripe', amountCents: 1000, checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment' }
+            { title: 'Online collection', collectionMode: 'online_stripe', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000, checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment' }
         ]);
         const partialPaymentLinkHtml = renderParentTeamFees([
-            { title: 'Partial collection', collectionMode: 'online_stripe', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://checkout.stripe.com/c/pay/cs_test_remaining' }
+            { title: 'Partial collection', collectionMode: 'online_stripe', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://checkout.stripe.com/c/pay/cs_test_remaining' }
         ]);
         const paidHtml = renderParentTeamFees([
             { title: 'Paid collection', collectionMode: 'online_stripe', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
@@ -302,10 +302,10 @@ describe('parent dashboard team fees', () => {
         expect(onlineCheckoutHtml).toContain('data-batch-id="batch-1"');
         expect(onlineCheckoutHtml).toContain('data-recipient-id="recipient-1"');
         expect(onlineCheckoutHtml).toContain('>Pay online</button>');
-        expect(checkoutHtml).toContain('>Pay online</a>');
-        expect(checkoutHtml).toContain('https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment');
-        expect(partialPaymentLinkHtml).toContain('>Pay online</a>');
-        expect(partialPaymentLinkHtml).toContain('https://checkout.stripe.com/c/pay/cs_test_remaining');
+        expect(checkoutHtml).toContain('>Pay online</button>');
+        expect(checkoutHtml).not.toContain('https://checkout.stripe.com/c/pay/cs_test_checkout?source=parent#payment');
+        expect(partialPaymentLinkHtml).toContain('>Pay online</button>');
+        expect(partialPaymentLinkHtml).not.toContain('https://checkout.stripe.com/c/pay/cs_test_remaining');
         expect(paidHtml).not.toContain('Pay online');
         expect(adjustedHtml).not.toContain('Pay online');
         expect(missingContextHtml).not.toContain('data-team-fee-checkout="true"');
@@ -426,6 +426,41 @@ describe('parent dashboard team fees', () => {
         expect(button.disabled).toBe(false);
         expect(button.textContent).toBe('Pay online');
         expect(errorEl.textContent).toBe('Stripe is unavailable.');
+        expect(classes.has('hidden')).toBe(false);
+    });
+
+    it('refuses an untrusted fresh checkout destination before browser navigation', async () => {
+        const classes = new Set(['hidden']);
+        const errorEl = {
+            textContent: '',
+            classList: {
+                add: (value) => classes.add(value),
+                remove: (value) => classes.delete(value)
+            }
+        };
+        const card = { querySelector: () => errorEl };
+        const button = {
+            dataset: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            disabled: false,
+            textContent: 'Pay online',
+            closest: (selector) => selector === '.team-fee-card' ? card : null
+        };
+        const event = {
+            target: {
+                closest: (selector) => selector === '[data-team-fee-checkout="true"]' ? button : null
+            }
+        };
+        const locationTarget = { href: '' };
+
+        await handleParentTeamFeeCheckoutClick(event, {
+            initiateCheckout: async () => 'https://checkout.stripe.com.attacker.example/c/pay/team-fee',
+            locationTarget
+        });
+
+        expect(locationTarget.href).toBe('');
+        expect(button.disabled).toBe(false);
+        expect(button.textContent).toBe('Pay online');
+        expect(errorEl.textContent).toBe('Stripe returned an invalid checkout destination.');
         expect(classes.has('hidden')).toBe(false);
     });
 });

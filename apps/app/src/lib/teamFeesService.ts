@@ -1,4 +1,5 @@
-import { createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, initiateTeamFeeCheckout, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
+import { createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
+import { appendAppRouteParams, buildAppUrl, getPublicAppOrigin } from './appLinks';
 import type { AuthUser } from './types';
 
 export type TeamFeeBatchSummary = {
@@ -544,27 +545,22 @@ export async function recordOfflineTeamFeeRefund({ teamId, batchId, recipient, r
   return updates;
 }
 
-export async function initiateStaffTeamFeeCheckout({ teamId, batchId, recipientId, user }: {
+export function buildTeamFeeFamilyPaymentUrl({ teamId, batchId, recipientId, origin = getPublicAppOrigin() }: {
   teamId: string;
   batchId: string;
   recipientId: string;
-  user: AuthUser | null;
+  origin?: string;
 }) {
   if (!teamId || !batchId || !recipientId) {
-    throw new Error('Missing required fields for team fee checkout.');
+    throw new Error('Missing required fields for the family payment link.');
   }
 
-  const team = await Promise.resolve(getTeam(teamId));
-  if (!hasFullTeamAccess(user, team)) {
-    throw new Error('You do not have access to generate team fee checkout links.');
-  }
-
-  const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
-  if (!checkoutUrl) {
-    throw new Error('Failed to get checkout URL.');
-  }
-
-  return { success: true as const, checkoutUrl };
+  const nextRoute = appendAppRouteParams('/parent-tools/fees', {
+    teamId,
+    batchId,
+    recipientId
+  });
+  return buildAppUrl('/auth', { next: nextRoute }, origin);
 }
 
 function toBatchSummary(batch: any): TeamFeeBatchSummary {
@@ -588,7 +584,10 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
     parentEmail: normalizeString(recipient?.parentEmail),
     status: normalizeString(recipient?.status) || 'unpaid',
     collectionMode: normalizeString(recipient?.collectionMode || recipient?.paymentMode),
-    checkoutUrl: normalizeString(recipient?.checkoutUrl || recipient?.paymentLink || recipient?.paymentUrl),
+    // Active checkout destinations are caller-bound bearer state. Always ask
+    // the callable to resolve the current principal instead of exposing a
+    // legacy URL read from the recipient document.
+    checkoutUrl: '',
     checkoutStatus: normalizeString(recipient?.checkoutStatus),
     amountDueCents,
     amountPaidCents,

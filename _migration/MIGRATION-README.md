@@ -72,3 +72,15 @@ See the header comment in each script for usage:
 
 `backfill-admin-user-search-index.js` is also applied automatically by the
 production deployment when its migration or index-building logic changes.
+`backfill-team-fee-checkout-attempts.js` is applied automatically by the
+production deployment when its migration logic changes. It atomically moves
+legacy parent-readable Stripe checkout URLs, session IDs, payer/request state,
+and attempt tokens into each recipient's server-private `checkoutAttempts/current`
+document before scrubbing those fields from the recipient. Run it manually
+without arguments for a read-only dry run; pass `--apply` only when executing
+the migration against the intended Firebase project.
+`backfill-registration-checkout-attempts.js` follows the same automatic,
+dry-run-by-default contract for registration checkout URLs, capabilities,
+provider IDs, exact requests, and nested payment-reminder retry URLs. It gives
+an existing private checkout attempt precedence, moves any remaining legacy
+state, and scrubs every readable bearer field transactionally.

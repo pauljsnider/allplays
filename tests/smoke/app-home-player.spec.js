@@ -798,6 +798,20 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export function getTrustedStripeCheckoutUrl(value) {
+                    try {
+                        const parsed = new URL(String(value || '').trim());
+                        return parsed.protocol === 'https:'
+                            && parsed.hostname === 'checkout.stripe.com'
+                            && !parsed.username
+                            && !parsed.password
+                            && !parsed.port
+                            ? String(value || '').trim()
+                            : '';
+                    } catch {
+                        return '';
+                    }
+                }
                 const fee = {
                     id: 'fee-1',
                     teamId: 'team-1',
@@ -828,7 +842,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                 }
 
                 export async function initiateParentTeamFeeCheckout() {
-                    return { success: true, checkoutUrl: 'https://checkout.example.test/session' };
+                    return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/session' };
                 }
 
                 export function isParentTeamFeePayActionAllowed() { return false; }

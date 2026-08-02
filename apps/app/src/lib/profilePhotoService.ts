@@ -1,16 +1,17 @@
 import { Camera, CameraResultType, CameraSource, type CameraPhoto } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
 import { isNativeRuntime } from './nativeRuntime';
-import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
-import { uploadNativeUserProfilePhoto } from './nativeStorageUpload';
+import { deleteUserPhoto, uploadUserPhoto, type ProfilePhotoUploadResult } from './adapters/legacyProfilePhotoDb';
+import { deleteNativePrimaryStorageFile, uploadNativeUserProfilePhoto } from './nativeStorageUpload';
 
 const profileTimeoutMs = 8000;
-const nativeImageUploadTimeoutMs = 20000;
 const profilePhotoMaxDimensionPx = 1024;
 const profilePhotoMaxBytes = 512 * 1024;
+const profilePhotoUploadMaxBytes = 10 * 1024 * 1024;
 const profilePhotoQuality = 0.82;
 
 export type ProfilePhotoSource = 'camera' | 'photos';
+export type { ProfilePhotoUploadResult };
 
 export class ProfilePhotoAcquireError extends Error {
   code: 'permission-denied' | 'cancelled' | 'unavailable' | 'failed';
@@ -19,6 +20,18 @@ export class ProfilePhotoAcquireError extends Error {
     super(message);
     this.name = 'ProfilePhotoAcquireError';
     this.code = code;
+  }
+}
+
+export function validateProfilePhotoFile(file: File) {
+  if (!(file instanceof File) || !String(file.type || '').startsWith('image/')) {
+    throw new Error('Choose an image file.');
+  }
+  if (!Number.isFinite(file.size) || file.size <= 0) {
+    throw new Error('Choose a valid profile photo.');
+  }
+  if (file.size > profilePhotoUploadMaxBytes) {
+    throw new Error('Profile photos must be 10 MB or smaller.');
   }
 }
 
@@ -126,7 +139,8 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
 }
 
 export async function normalizeProfilePhoto(file: File): Promise<File> {
-  if (!(file instanceof File) || !file.type.startsWith('image/') || typeof document === 'undefined') {
+  validateProfilePhotoFile(file);
+  if (typeof document === 'undefined') {
     return file;
   }
 
@@ -223,8 +237,19 @@ export async function nativeUploadProfilePhoto(file: File, uid = '') {
 }
 
 export async function uploadProfilePhoto(file: File, uid = '') {
+  validateProfilePhotoFile(file);
   if (isNativeRuntime()) {
     return nativeUploadProfilePhoto(file, uid);
   }
-  return withTimeout(uploadUserPhoto(file, uid) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
+  return uploadUserPhoto(file, uid);
+}
+
+export async function deleteProfilePhoto(path: string) {
+  const normalizedPath = String(path || '').trim();
+  if (!normalizedPath) return;
+  if (isNativeRuntime()) {
+    await deleteNativePrimaryStorageFile(normalizedPath);
+    return;
+  }
+  await deleteUserPhoto(normalizedPath);
 }

@@ -211,14 +211,16 @@ function AddPlayerCard({ teamId, authUser, onCreated }: {
     setSubmitting(true);
     setStatus(null);
     try {
-      await addRosterPlayerForApp(teamId, authUser || null, {
+      const result = await addRosterPlayerForApp(teamId, authUser || null, {
         name,
         number,
         photoFile,
         rosterFieldValues
       });
       await onCreated();
-      setStatus({ success: true, message: `${name.trim() || 'Player'} added to roster.` });
+      setStatus(result.photoWarning
+        ? { success: false, message: result.photoWarning }
+        : { success: true, message: `${name.trim() || 'Player'} added to roster.` });
       resetForm();
       setOpen(false);
     } catch (error: any) {

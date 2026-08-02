@@ -1,4 +1,5 @@
 import { isNativeRuntime } from './nativeRuntime';
+import { createSecureUploadToken } from './secureUploadToken';
 import {
   canAccessTeamChat,
   canModerateChat,
@@ -1271,7 +1272,7 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^%\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
   const safeUserId = String(userId).replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
-  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
+  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${createSecureUploadToken()}_${safeName}`;
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
   const abortController = new AbortController();
   let uploadTimeoutId: number | undefined;
@@ -1281,36 +1282,43 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
       reject(new Error('Chat media upload timed out. Check your connection and try again.'));
     }, chatUploadTimeoutMs);
   });
-  const uploadRequest = fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': file.type || 'application/octet-stream'
-    }, requestUrl),
-    body: file,
-    signal: abortController.signal
-  });
-  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
-    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
-  }
-  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-  const url = token
-    ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
-    : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
+  try {
+    const uploadRequest = fetch(requestUrl, {
+      method: 'POST',
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': file.type || 'application/octet-stream'
+      }, requestUrl),
+      body: file,
+      signal: abortController.signal
+    });
+    const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
+      if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
+    }
+    const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+    const url = token
+      ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+      : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
 
-  return {
-    type: isVideo ? 'video' : 'image',
-    url,
-    path,
-    name: file.name || null,
-    mimeType: file.type || null,
-    size: Number.isFinite(file.size) ? file.size : null,
-    thumbnailUrl: null
-  };
+    return {
+      type: isVideo ? 'video' : 'image',
+      url,
+      path,
+      name: file.name || null,
+      mimeType: file.type || null,
+      size: Number.isFinite(file.size) ? file.size : null,
+      thumbnailUrl: null
+    };
+  } catch (error) {
+    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    await deleteNativePrimaryStorageFile(path).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {

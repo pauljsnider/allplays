@@ -39,7 +39,7 @@ describe('parentFeesService checkout destinations', () => {
         legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
     });
 
-    it('reuses a trusted stored HTTPS Stripe Checkout destination', async () => {
+    it('regenerates even a trusted stored Stripe destination through the same-payer callable', async () => {
         const checkoutUrl = 'https://checkout.stripe.com/c/pay/session-1';
         legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
             payableFee({ checkoutUrl })
@@ -48,10 +48,10 @@ describe('parentFeesService checkout destinations', () => {
         const [fee] = await loadParentFeesForApp(user);
 
         expect(fee).toEqual(expect.objectContaining({
-            checkoutUrl,
+            checkoutUrl: '',
             canPay: true,
-            checkoutInitiatable: false,
-            paymentAction: 'checkoutUrl'
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout'
         }));
     });
 

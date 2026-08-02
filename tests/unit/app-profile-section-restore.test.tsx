@@ -135,7 +135,10 @@ describe('Profile section restore from URL', () => {
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
-    profileServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+    profileServiceMocks.uploadProfilePhoto.mockResolvedValue({
+      url: 'https://example.test/avatar.png',
+      path: 'profile-photos/users/user-1/avatar.png'
+    });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([
       { id: 'team-1', name: 'Blue Team' },
       { id: 'team-2', name: 'Gold Team' }

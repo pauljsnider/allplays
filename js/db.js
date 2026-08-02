@@ -36,8 +36,15 @@ import {
 } from './firebase.js?v=23';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
-import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=3';
+import { createSecureUploadToken } from './secure-upload-token.js?v=1';
+import {
+    buildPlayerProfilePhotoPath,
+    buildTeamProfilePhotoPath,
+    buildUserProfilePhotoPath,
+    validateProfilePhotoFile
+} from './profile-photo-paths.js?v=3';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -117,6 +124,7 @@ import {
     buildFriendshipId,
     getDisplayName
 } from './friend-invite.js?v=1';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=1';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
@@ -239,7 +247,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -248,7 +256,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -478,10 +486,6 @@ export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
     return mapSnapshot(await getDocs(q));
 }
 
-function formatLegacyImageUploadResult(url, path, options = {}) {
-    return options?.returnUpload === true ? { url, path } : url;
-}
-
 async function getDownloadUrlOrDeleteUpload(storageRef) {
     try {
         return await getDownloadURL(storageRef);
@@ -491,9 +495,22 @@ async function getDownloadUrlOrDeleteUpload(storageRef) {
     }
 }
 
+async function uploadStorageCandidateOrDelete(storageRef, file, metadata = {}) {
+    try {
+        return await uploadBytes(storageRef, file, metadata);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
 export async function deleteLegacyImageUpload(path) {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath) return;
+    if (normalizedPath.startsWith('profile-photos/')) {
+        await deleteObject(ref(storage, normalizedPath));
+        return;
+    }
     if (!/^(team-photos|player-photos|user-photos)\//.test(normalizedPath)) {
         throw new Error('Invalid legacy image upload path.');
     }
@@ -508,21 +525,23 @@ export async function uploadTeamPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
-
-    const path = `team-photos/${Date.now()}_${file.name}`;
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildTeamProfilePhotoPath(options?.teamId, file.name);
     console.log('Upload path:', path);
 
-    const storageRef = ref(imageStorage, path);
+    const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     console.log('Upload complete, getting download URL...');
 
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Download URL obtained:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 export async function uploadPlayerPhoto(file, options = {}) {
@@ -532,16 +551,18 @@ export async function uploadPlayerPhoto(file, options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
+    const storageRef = ref(storage, path);
 
-    const path = `player-photos/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 export async function uploadUserPhoto(file, uid = '', options = {}) {
@@ -551,17 +572,21 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    const userId = getRequiredSignedInUserId();
+    if (uid && String(uid).trim() !== userId) {
+        throw new Error('The signed-in account does not match this profile photo upload.');
+    }
+    const path = buildUserProfilePhotoPath(userId, file.name);
+    const storageRef = ref(storage, path);
 
-    const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
-    const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 function getRequiredSignedInUserId() {
@@ -570,6 +595,16 @@ function getRequiredSignedInUserId() {
         throw new Error('You must be signed in to upload team media.');
     }
     return userId;
+}
+
+async function canUseLegacyImageStorage(label) {
+    try {
+        await requireImageAuth();
+        return true;
+    } catch (error) {
+        console.warn(`Image authentication unavailable for ${label}; using main storage:`, error?.message || error);
+        return false;
+    }
 }
 
 const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
@@ -598,9 +633,15 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
         storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
         storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
     }
-    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    }));
+    let snapshot;
+    try {
+        snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+            contentType: file.type || 'application/octet-stream'
+        }));
+    } catch (error) {
+        await withChatMediaTimeout(deleteObject(storageRef)).catch(() => undefined);
+        throw error;
+    }
     let url;
     try {
         url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
@@ -650,46 +691,46 @@ export async function deleteUploadedChatAttachments(attachments = []) {
 }
 
 export async function uploadGameClip(teamId, gameId, file) {
-    await requireImageAuth();
-
     const ts = Date.now();
+    const nonce = createSecureUploadToken();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
-    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+    const clipPath = `team-videos/${ts}_${nonce}_game-clip_${teamId}_${gameId}_${safeName}`;
 
-    try {
-        const storageRef = ref(imageStorage, clipPath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        return {
-            url,
-            path: clipPath,
-            storage: 'image',
-            name: file.name || null,
-            type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null,
-            source: 'upload'
-        };
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
-            const fallbackRef = ref(storage, fallbackPath);
-            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    if (await canUseLegacyImageStorage('game clip upload')) {
+        try {
+            const storageRef = ref(imageStorage, clipPath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return {
-                url: fallbackUrl,
-                path: fallbackPath,
-                storage: 'primary',
+                url,
+                path: clipPath,
+                storage: 'image',
                 name: file.name || null,
                 type: file.type || null,
                 size: Number.isFinite(file.size) ? file.size : null,
                 source: 'upload'
             };
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
     }
+
+    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
+    const fallbackRef = ref(storage, fallbackPath);
+    const fallbackSnapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    return {
+        url: fallbackUrl,
+        path: fallbackPath,
+        storage: 'primary',
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null,
+        source: 'upload'
+    };
 }
 
 export async function uploadStatSheetPhoto(teamId, file, options = {}) {
@@ -699,39 +740,38 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         fileType: file.type
     });
 
-    await requireImageAuth();
-
-    const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
-    try {
-        const storageRef = ref(imageStorage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        console.log('Stat sheet URL (image storage):', downloadURL);
-        return options?.returnUpload === true
-            ? { url: downloadURL, path, storage: 'image' }
-            : downloadURL;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-            const userId = auth.currentUser?.uid;
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
-            }
-            const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, Date.now());
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
+    const userId = getRequiredSignedInUserId();
+    if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
+    const ts = Date.now();
+    const nonce = createSecureUploadToken();
+    const path = `team-photos/${ts}_${nonce}_stat-sheet_${file.name}`;
+    if (await canUseLegacyImageStorage('stat sheet upload')) {
+        try {
+            const storageRef = ref(imageStorage, path);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
             const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            console.log('Stat sheet URL (main storage):', downloadURL);
+            console.log('Stat sheet URL (image storage):', downloadURL);
             return options?.returnUpload === true
-                ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+                ? { url: downloadURL, path, storage: 'image' }
                 : downloadURL;
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
     }
+
+    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce);
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    console.log('Stat sheet URL (main storage):', downloadURL);
+    return options?.returnUpload === true
+        ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+        : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=22'; // Import resolveZip
+import { resolveZip } from './utils.js?v=29'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1475,7 +1515,7 @@ function buildMovedTeamMediaStoragePath(teamId, targetFolderId, item = {}) {
     const parsedPath = parseTeamMediaStoragePath(item.storagePath);
     const userId = parsedPath?.userId || String(item.uploadedBy || auth.currentUser?.uid || '').trim() || getRequiredSignedInUserId();
     const fileName = parsedPath?.fileName
-        || `${Date.now()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
+        || `${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
     return `team-media/${teamId}/${targetFolderId}/${userId}/${fileName}`;
 }
 
@@ -1561,26 +1601,25 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
     if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
     try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
         const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
         const mediaItem = {
@@ -1615,26 +1654,25 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
     if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
     try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
         const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
         const mediaItem = {
@@ -2730,7 +2768,8 @@ function assertNoSensitivePlayerFields(playerData) {
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
-        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'photoPath'
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
@@ -2915,12 +2954,18 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                // Cleanup paths can contain authorization-sensitive storage
+                // coordinates. Merge them only after this privileged read.
+                photoPath: privateProfile?.photoPath || player?.photoPath || null,
+                photoOwnershipLoaded: true,
                 privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
         } catch (error) {
-            if (error?.code === 'permission-denied') return player;
+            if (error?.code === 'permission-denied') {
+                return { ...player, photoOwnershipLoaded: false };
+            }
             throw error;
         }
     }));
@@ -3039,9 +3084,30 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
-    assertNoSensitivePlayerFields(playerData);
-    playerData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
+    const updatedAt = Timestamp.now();
+    if (!hasPhotoPath) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            ...publicPlayerData,
+            updatedAt
+        });
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...publicPlayerData,
+        photoPath: deleteField(),
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
@@ -3057,19 +3123,28 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
     if (Array.isArray(extraData?.contacts)) {
         privateProfileUpdate.contacts = extraData.contacts;
     }
+    if (Object.prototype.hasOwnProperty.call(extraData || {}, 'photoPath')) {
+        privateProfileUpdate.photoPath = extraData.photoPath || null;
+    }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
 export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
-    assertNoSensitivePlayerFields(playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
     const updatedAt = Timestamp.now();
     const batch = writeBatch(db);
     batch.update(doc(db, `teams/${teamId}/players`, playerId), {
-        ...playerData,
+        ...publicPlayerData,
+        ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
         updatedAt
     });
     batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
         rosterFields: rosterFields || {},
+        ...(hasPhotoPath ? { photoPath } : {}),
         updatedAt
     }, { merge: true });
     await batch.commit();
@@ -3096,6 +3171,9 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
+        const hasPhotoPath = Object.prototype.hasOwnProperty.call(payload, 'photoPath');
+        const photoPath = hasPhotoPath ? (payload.photoPath || null) : undefined;
+        delete payload.photoPath;
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
         if (type !== 'add' && !existingPlayerId) {
@@ -3109,7 +3187,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
-            batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
+            batch.update(playerRef, {
+                ...payload,
+                ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
+                updatedAt: Timestamp.now()
+            });
         } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
@@ -3131,10 +3213,13 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             });
         }
 
-        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts || hasPhotoPath)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };
+            if (hasPhotoPath) {
+                privateProfileUpdate.photoPath = photoPath;
+            }
             if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
                 privateProfileUpdate.rosterFields = operation.privateRosterFields;
             }
@@ -6732,23 +6817,43 @@ export async function getParentDashboardData(userId) {
 export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents.
     // SECURITY: sensitive fields must never live on the public player doc.
-    assertNoSensitivePlayerFields(data || {});
+    const publicInput = { ...(data || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicInput, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicInput.photoPath || null) : undefined;
+    delete publicInput.photoPath;
+    assertNoSensitivePlayerFields(publicInput);
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    // Public player doc: allow the display URL and non-sensitive roster profile
+    // fields. The cleanup path is stored in the linked private profile because
+    // Firebase download URLs expose encoded object paths.
     const publicUpdate = {};
-    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
-        publicUpdate.photoUrl = data.photoUrl || null;
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'photoUrl')) {
+        publicUpdate.photoUrl = publicInput.photoUrl || null;
     }
-    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
-        publicUpdate.profile = data.profile || {};
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'profile')) {
+        publicUpdate.profile = publicInput.profile || {};
     }
-    if (Object.keys(publicUpdate).length > 0) {
-        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+    if (!hasPhotoPath) {
+        if (Object.keys(publicUpdate).length > 0) {
+            await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+                ...publicUpdate,
+                updatedAt: now
+            });
+        }
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
             ...publicUpdate,
+            photoPath: deleteField(),
             updatedAt: now
-        });
-    }
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt: now
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function updatePlayerPrivateProfile(teamId, playerId, data) {
@@ -6758,6 +6863,9 @@ export async function updatePlayerPrivateProfile(teamId, playerId, data) {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
         privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
+        privateUpdate.photoPath = data.photoPath || null;
     }
     if (Object.keys(privateUpdate).length > 0) {
         privateUpdate.updatedAt = Timestamp.now();
@@ -6943,9 +7051,9 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
-    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
+    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${createSecureUploadToken()}_${kind}_${safeName}`;
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
     const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     const mimeType = String(file.type || '').trim();
     const mediaType = kind === 'profile-photo'
@@ -7225,15 +7333,7 @@ export async function getCertificateDefaults(teamId) {
 }
 
 export async function setCertificateDefaults(teamId, defaults = {}) {
-    if (!teamId) throw new Error('Missing team for certificate defaults');
-    const actor = getCertificateActor();
-    const payload = {
-        ...defaults,
-        updatedAt: Timestamp.now(),
-        updatedBy: actor.actorId
-    };
-    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
-    return payload;
+    return commitCertificateDefaults(teamId, defaults);
 }
 
 export async function listCertificateAssets(teamId) {
@@ -9068,28 +9168,28 @@ export async function deleteDrill(drillId) {
 // ============================================
 
 export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
-    await ensureImageAuth();
     const userId = auth.currentUser?.uid;
-    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
-    try {
-        const storageRef = ref(imageStorage, imagePath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
-            // Match fallback behavior used by chat/stat-sheet uploads.
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped drill fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
-            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
-        }
-        throw error;
+    if (!teamId || !userId) {
+        throw new Error('Team-scoped drill upload requires a signed-in team user.');
     }
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
+    if (await canUseLegacyImageStorage('drill upload')) {
+        try {
+            const storageRef = ref(imageStorage, imagePath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
+        } catch (error) {
+            const code = error?.code || '';
+            if (!['storage/unauthorized', 'storage/unauthenticated', 'storage/unknown'].includes(code)) throw error;
+            console.warn('Image storage denied drill upload, falling back to main storage:', error?.message || error);
+        }
+    }
+
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
 }
 
 // ============================================

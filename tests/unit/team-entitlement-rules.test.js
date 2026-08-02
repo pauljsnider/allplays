@@ -28,6 +28,7 @@ describe('team entitlement Firestore rules', () => {
     it('allows client management only when the resulting entitlement is not active', () => {
         expect(rules).toContain("request.resource.data.status in ['inactive', 'expired', 'cancelled']");
         expect(rules).not.toContain("request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled']");
+        expect(rules).toMatch(/match \/teamPassCheckoutAttempts\/\{attemptId\} \{\s*allow read, write: if false;/);
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('emulator authorization coverage', () => {
@@ -51,6 +52,17 @@ describe('team entitlement Firestore rules', () => {
                 await setDoc(
                     doc(firestore, 'teams/team-a/entitlements/server-active'),
                     entitlementPayload({ provider: 'stripe' })
+                );
+                await setDoc(
+                    doc(firestore, 'teams/team-a/teamPassCheckoutAttempts/private-attempt'),
+                    {
+                        teamId: 'team-a',
+                        purchaserUid: 'owner-a',
+                        checkoutCreationRequest: {
+                            idempotencyKey: 'private-key',
+                            stripeParams: { customer_email: 'private@example.com' }
+                        }
+                    }
                 );
             });
         });
@@ -93,6 +105,18 @@ describe('team entitlement Firestore rules', () => {
                 doc(unrelatedDb, 'teams/team-a/entitlements/unrelated-staged'),
                 entitlementPayload({ status: 'inactive' })
             ));
+        });
+
+        it('keeps exact team-pass provider requests private from every client role', async () => {
+            const ownerDb = testEnv.authenticatedContext('owner-a').firestore();
+            const adminDb = testEnv.authenticatedContext('admin-a', { email: 'admin-a@example.com' }).firestore();
+            const publicDb = testEnv.unauthenticatedContext().firestore();
+            const attemptPath = 'teams/team-a/teamPassCheckoutAttempts/private-attempt';
+
+            await assertFails(getDoc(doc(ownerDb, attemptPath)));
+            await assertFails(getDoc(doc(adminDb, attemptPath)));
+            await assertFails(getDoc(doc(publicDb, attemptPath)));
+            await assertFails(setDoc(doc(ownerDb, attemptPath), { status: 'completed' }, { merge: true }));
         });
     });
 });

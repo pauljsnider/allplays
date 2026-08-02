@@ -1,6 +1,35 @@
 
 import { getFunctions, httpsCallable } from './firebase.js?v=22';
 
+export function getCanonicalStripeCheckoutUrl(value) {
+    if (typeof value !== 'string' || !value || value !== value.trim()) return '';
+
+    try {
+        const destination = new URL(value);
+        if (
+            destination.protocol === 'https:' &&
+            destination.hostname === 'checkout.stripe.com' &&
+            !destination.username &&
+            !destination.password &&
+            !destination.port &&
+            destination.pathname &&
+            destination.pathname !== '/'
+        ) {
+            return value;
+        }
+    } catch {
+        // Invalid destinations use the same fail-closed result.
+    }
+
+    return '';
+}
+
+function requireStripeCheckoutUrl(value) {
+    const checkoutUrl = getCanonicalStripeCheckoutUrl(value);
+    if (!checkoutUrl) throw new Error('Stripe returned an invalid checkout destination.');
+    return checkoutUrl;
+}
+
 export async function initiateStripeCheckout(params) {
     try {
         const functions = getFunctions();
@@ -8,7 +37,7 @@ export async function initiateStripeCheckout(params) {
         const result = await createCheckoutSession(params);
 
         if (result && result.data && result.data.checkoutUrl) {
-            return result.data.checkoutUrl;
+            return requireStripeCheckoutUrl(result.data.checkoutUrl);
         } else {
             console.error('StripeService: Invalid response from createStripeRegistrationCheckout', result);
             throw new Error('Failed to get Stripe checkout URL.');
@@ -38,7 +67,7 @@ export async function initiateTeamFeeCheckout(params) {
         const result = await createCheckoutSession(params);
 
         if (result && result.data && result.data.checkoutUrl) {
-            return result.data.checkoutUrl;
+            return requireStripeCheckoutUrl(result.data.checkoutUrl);
         }
 
         console.error('StripeService: Invalid response from createStripeTeamFeeCheckout', result);

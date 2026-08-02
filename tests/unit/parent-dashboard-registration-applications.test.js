@@ -243,7 +243,7 @@ describe('parent dashboard registration application statuses', () => {
         expect(html).toContain('registration-applications-list');
         expect(html).toContain('offer-extended');
         expect(html).toContain('Status is read-only and controlled by the team admin.');
-        expect(html).toContain("from './js/db.js?v=140';");
+        expect(html).toContain("from './js/db.js?v=151';");
     });
 
     it('shows a registration-specific error without replacing successful applications', () => {
@@ -327,7 +327,8 @@ describe('parent dashboard registration application statuses', () => {
         expect(rules).toContain('isCurrentUserRegistrationGuardian(resource.data)');
         const registrationRules = rules.match(/match \/registrations\/\{registrationId\} \{[\s\S]*?allow create:/)[0];
         expect(registrationRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
-        expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
+        expect(registrationRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) &&');
+        expect(registrationRules).toContain('hasNoChangedServerOwnedRegistrationCheckoutFields();');
         expect(registrationRules).not.toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);');
     });
 

@@ -47,7 +47,7 @@ export async function copySelectedPlayersForTeamRollover() {
 }
 
 export async function uploadTeamPhoto() {
-    return null;
+    return { url: '', path: '' };
 }
 
 export async function deleteLegacyImageUpload() {}

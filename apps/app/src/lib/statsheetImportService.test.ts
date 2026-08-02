@@ -20,7 +20,11 @@ const firebaseMocks = vi.hoisted(() => {
 
 const dbMocks = vi.hoisted(() => ({
   deleteUploadedMediaObjects: vi.fn(async () => undefined),
-  uploadStatSheetPhoto: vi.fn(async () => 'https://img.test/statsheet.png'),
+  uploadStatSheetPhoto: vi.fn(async () => ({
+    url: 'https://img.test/statsheet.png',
+    path: 'team-photos/statsheet.png',
+    storage: 'image'
+  })),
   getConfigs: vi.fn(),
   getGame: vi.fn(),
   getPlayers: vi.fn(),

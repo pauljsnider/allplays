@@ -381,8 +381,13 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return '${mockAvatarUrl}';
+                    return {
+                        url: '${mockAvatarUrl}',
+                        path: 'profile-photos/users/user-1/profile/avatar.png'
+                    };
                 }
+
+                export async function deleteProfilePhoto() {}
             `
         });
     });

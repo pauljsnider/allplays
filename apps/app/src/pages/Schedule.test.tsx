@@ -1832,7 +1832,9 @@ describe('Schedule', () => {
     expect(await screen.findByText('Showing 10 of 16 events')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Manage schedule with AI' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show 6 more' }));
-    expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Go family schedule' }));
 

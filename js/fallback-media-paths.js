@@ -1,3 +1,5 @@
+import { createSecureUploadToken, requireSecureUploadToken } from './secure-upload-token.js?v=1';
+
 function sanitizePathSegment(value, fallback, { allowPercent = false } = {}) {
     const pattern = allowPercent ? /[^%\w.\-]+/g : /[^\w.\-]+/g;
     const sanitized = String(value || fallback || '')
@@ -7,37 +9,37 @@ function sanitizePathSegment(value, fallback, { allowPercent = false } = {}) {
     return sanitized || fallback;
 }
 
-export function buildChatAttachmentFallbackPath(teamId, conversationId, userId, fileName, ts = Date.now()) {
+export function buildChatAttachmentFallbackPath(teamId, conversationId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeConversationId = sanitizePathSegment(conversationId, 'team', { allowPercent: true });
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'attachment');
 
-    return `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${ts}_${safeName}`;
+    return `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
 }
 
-export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.now()) {
+export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'stat-sheet');
 
-    return `stat-sheets/team-games/${safeTeamId}/${safeUserId}/${ts}_${safeName}`;
+    return `stat-sheets/team-games/${safeTeamId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
 }
 
-export function buildDrillDiagramFallbackPath(teamId, drillId, userId, fileName, ts = Date.now()) {
+export function buildDrillDiagramFallbackPath(teamId, drillId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeDrillId = sanitizePathSegment(drillId, 'unknown-drill');
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'diagram');
 
-    return `stat-sheets/drills/${safeTeamId}/${safeDrillId}/${safeUserId}/${ts}_${safeName}`;
+    return `stat-sheets/drills/${safeTeamId}/${safeDrillId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
 }
 
-export function buildGameClipFallbackPath(teamId, gameId, userId, fileName, ts = Date.now()) {
+export function buildGameClipFallbackPath(teamId, gameId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeGameId = sanitizePathSegment(gameId, 'unknown-game');
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'clip');
 
-    return `game-clips/${safeTeamId}/${safeGameId}/${safeUserId}/${ts}_${safeName}`;
+    return `game-clips/${safeTeamId}/${safeGameId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
 }

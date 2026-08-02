@@ -580,11 +580,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=140';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=151';
+        import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=22';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=145';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=29';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=154';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=4';
@@ -601,6 +602,7 @@
         let currentUser = null;
         let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
+        let currentPhotoPath = '';
         let currentUserProfile = null;
         let adminEmails = [];
         let streamVolunteerEmails = [];
@@ -1593,6 +1595,7 @@
 
                 if (team.photoUrl) {
                     currentPhotoUrl = team.photoUrl;
+                    currentPhotoPath = String(team.photoPath || '').trim();
                     document.getElementById('photo-preview').innerHTML = `<img src="${escapeHtml(team.photoUrl)}" class="w-full h-full object-cover">`;
                 }
 
@@ -1696,16 +1699,10 @@
         document.getElementById('photo-upload').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
-                // Validate file type
-                if (!file.type.startsWith('image/')) {
-                    alert('Please select an image file');
-                    e.target.value = '';
-                    return;
-                }
-
-                // Validate file size (max 5MB)
-                if (file.size > 5 * 1024 * 1024) {
-                    alert('Image size must be less than 5MB');
+                try {
+                    validateProfilePhotoFile(file, { maxBytes: 5 * 1024 * 1024 });
+                } catch (error) {
+                    alert(error.message);
                     e.target.value = '';
                     return;
                 }
@@ -1960,6 +1957,9 @@
             btn.textContent = 'Saving...';
             let newlyUploadedTeamPhotoPath = '';
             let teamPhotoPersisted = false;
+            let teamPhotoWriteAttempted = false;
+            const previousTeamPhotoUrl = currentPhotoUrl;
+            const previousTeamPhotoPath = currentPhotoPath;
 
             try {
                 const createMode = currentTeamId ? 'manual' : getSelectedCreateMode();
@@ -1970,14 +1970,34 @@
                     return;
                 }
 
-                // Handle photo upload
                 const fileInput = document.getElementById('photo-upload');
-                if (fileInput.files.length > 0) {
+                const pendingTeamPhotoFile = fileInput.files.length > 0 ? fileInput.files[0] : null;
+                if (pendingTeamPhotoFile) {
+                    try {
+                        validateProfilePhotoFile(pendingTeamPhotoFile, { maxBytes: 5 * 1024 * 1024 });
+                    } catch (error) {
+                        alert(error.message);
+                        btn.disabled = false;
+                        btn.textContent = 'Save Team';
+                        return;
+                    }
+                }
+                // Existing teams already have an authorization boundary, so a
+                // replacement can be uploaded before the document update. New
+                // teams are created first and upload only to their final path.
+                if (pendingTeamPhotoFile && currentTeamId) {
                     try {
                         btn.textContent = 'Uploading photo...';
-                        const uploadedPhoto = await uploadTeamPhoto(fileInput.files[0], { returnUpload: true });
-                        currentPhotoUrl = typeof uploadedPhoto === 'string' ? uploadedPhoto : uploadedPhoto.url;
-                        newlyUploadedTeamPhotoPath = typeof uploadedPhoto === 'string' ? '' : uploadedPhoto.path;
+                        const uploadedPhoto = await uploadTeamPhoto(pendingTeamPhotoFile, {
+                            returnUpload: true,
+                            teamId: currentTeamId
+                        });
+                        if (!uploadedPhoto?.url || !uploadedPhoto?.path) {
+                            throw new Error('Team photo upload did not return its owned Storage path.');
+                        }
+                        currentPhotoUrl = uploadedPhoto.url;
+                        currentPhotoPath = uploadedPhoto.path;
+                        newlyUploadedTeamPhotoPath = uploadedPhoto.path;
                         btn.textContent = 'Saving...';
                     } catch (uploadError) {
                         console.error('Photo upload failed:', uploadError);
@@ -2043,6 +2063,7 @@
                         secondary: normalizeHexColor(document.getElementById('teamColorSecondary').value, '#d32f3a')
                     },
                     photoUrl: currentPhotoUrl,
+                    photoPath: currentPhotoPath || null,
                     isPublic: document.getElementById('isPublic').checked,
                     teamPassConfig: {
                         ...currentTeamPassConfig,
@@ -2106,16 +2127,87 @@
                         }
                     }
 
-                    await updateTeam(currentTeamId, teamData);
-                    teamPhotoPersisted = true;
+                    teamPhotoWriteAttempted = Boolean(newlyUploadedTeamPhotoPath);
+                    try {
+                        await updateTeam(currentTeamId, teamData);
+                        teamPhotoPersisted = true;
+                    } catch (saveError) {
+                        const persistenceState = newlyUploadedTeamPhotoPath && !isDefinitiveFirestoreWriteFailure(saveError)
+                            ? await getTeamPhotoPersistenceState(currentTeamId, newlyUploadedTeamPhotoPath)
+                            : 'not-committed';
+                        if (persistenceState === 'committed') {
+                            teamPhotoPersisted = true;
+                        } else {
+                            if (persistenceState === 'not-committed' && newlyUploadedTeamPhotoPath) {
+                                await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);
+                                newlyUploadedTeamPhotoPath = '';
+                                currentPhotoUrl = previousTeamPhotoUrl;
+                                currentPhotoPath = previousTeamPhotoPath;
+                            }
+                            throw saveError;
+                        }
+                    }
+                    if (newlyUploadedTeamPhotoPath && previousTeamPhotoPath && previousTeamPhotoPath !== newlyUploadedTeamPhotoPath) {
+                        await deleteLegacyImageUpload(previousTeamPhotoPath).catch((cleanupError) => {
+                            console.warn('Failed to remove the replaced team photo:', cleanupError);
+                        });
+                    }
                     currentTeamSport = teamData.sport;
                 } else {
                     const newTeamId = await createTeam(teamData);
-                    teamPhotoPersisted = true;
                     currentTeamId = newTeamId;
                     updateTeamIdPanel(newTeamId);
                     console.log('Created team with ID:', newTeamId);
                     console.log('Team sport:', teamData.sport);
+
+                    if (pendingTeamPhotoFile) {
+                        try {
+                            btn.textContent = 'Uploading photo...';
+                            const uploadedPhoto = await uploadTeamPhoto(pendingTeamPhotoFile, {
+                                returnUpload: true,
+                                teamId: newTeamId
+                            });
+                            if (!uploadedPhoto?.url || !uploadedPhoto?.path) {
+                                throw new Error('Team photo upload did not return its owned Storage path.');
+                            }
+                            newlyUploadedTeamPhotoPath = uploadedPhoto.path;
+                            currentPhotoUrl = uploadedPhoto.url;
+                            currentPhotoPath = uploadedPhoto.path;
+                            teamPhotoWriteAttempted = true;
+                            await updateTeam(newTeamId, {
+                                photoUrl: uploadedPhoto.url,
+                                photoPath: uploadedPhoto.path
+                            });
+                            teamPhotoPersisted = true;
+                            btn.textContent = 'Saving...';
+                        } catch (photoError) {
+                            const definitiveNonCommit = !teamPhotoWriteAttempted || isDefinitiveFirestoreWriteFailure(photoError);
+                            const persistenceState = newlyUploadedTeamPhotoPath && !definitiveNonCommit
+                                ? await getTeamPhotoPersistenceState(newTeamId, newlyUploadedTeamPhotoPath)
+                                : 'not-committed';
+                            if (persistenceState === 'committed') {
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.warn('Team photo save response was ambiguous, but the uploaded path is authoritative.', photoError);
+                            } else if (newlyUploadedTeamPhotoPath && persistenceState === 'not-committed') {
+                                await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);
+                                newlyUploadedTeamPhotoPath = '';
+                                currentPhotoUrl = null;
+                                currentPhotoPath = '';
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.error('Team was created, but its photo was not saved:', photoError);
+                                alert(`Team created, but its photo could not be saved. Open the team and try the photo again.\n\nError: ${photoError.message}`);
+                            } else {
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.error('Team was created, but its photo save did not complete cleanly:', photoError);
+                                alert(`Team created. The photo save state could not be confirmed, so its uploaded file was preserved. Open the team to confirm before trying again.\n\nError: ${photoError.message}`);
+                            }
+                        }
+                    } else {
+                        teamPhotoPersisted = true;
+                    }
 
                     // Auto-create standard config based on sport
                     const defaultStatConfig = getDefaultStatConfigForSport(teamData.sport);
@@ -2175,15 +2267,46 @@
 
                 window.location.href = 'dashboard.html';
             } catch (error) {
-                if (newlyUploadedTeamPhotoPath && !teamPhotoPersisted) {
+                const definitiveNonCommit = !teamPhotoWriteAttempted || isDefinitiveFirestoreWriteFailure(error);
+                if (newlyUploadedTeamPhotoPath && !teamPhotoPersisted && definitiveNonCommit) {
                     await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);
                 }
                 console.error(error);
-                alert('Error saving team: ' + error.message);
+                alert(!definitiveNonCommit && newlyUploadedTeamPhotoPath
+                    ? `The team save may have completed, so the uploaded photo was preserved. Reload the team before trying again.\n\nError: ${error.message}`
+                    : 'Error saving team: ' + error.message);
                 btn.disabled = false;
                 btn.textContent = 'Save Team';
             }
         });
+
+        function isDefinitiveFirestoreWriteFailure(error) {
+            const code = String(error?.code || '').trim().toLowerCase().split('/').pop();
+            return new Set([
+                'already-exists',
+                'failed-precondition',
+                'invalid-argument',
+                'not-found',
+                'out-of-range',
+                'permission-denied',
+                'resource-exhausted',
+                'unauthenticated',
+                'unimplemented'
+            ]).has(code);
+        }
+
+        async function getTeamPhotoPersistenceState(teamId, expectedPhotoPath) {
+            if (!teamId || !expectedPhotoPath) return 'not-committed';
+            try {
+                const savedTeam = await getTeam(teamId, { includeInactive: true });
+                return String(savedTeam?.photoPath || '').trim() === expectedPhotoPath
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (readError) {
+                console.warn('Could not confirm the authoritative team photo path after an ambiguous save.', readError);
+                return 'unknown';
+            }
+        }
     </script>
 </body>
 

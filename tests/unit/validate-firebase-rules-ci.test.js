@@ -106,6 +106,9 @@ concurrency:
         deployments: read
         deployments: write
       outputs:
+        certificate_defaults_lockdown_needed: \${{ steps.firestore_config.outputs.certificate_defaults_lockdown_needed }}
+        firestore_baseline_sha: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
+        firestore_baseline_mode: \${{ steps.firestore_config.outputs.firestore_baseline_mode }}
         storage_changed: \${{ steps.firestore_config.outputs.storage_changed }}
       - name: Detect Firebase rules changes
         id: firestore_config
@@ -120,24 +123,82 @@ concurrency:
             baseline_branch="master"
           fi
           lookup_max_attempts=3
+          latest_prior_run_id="$latest_prior_run_id"
+          run_history_lookup_succeeded="true"
+          jq 'select((.id | tostring) != $current)'
+          echo "The production run history lookup failed; the active Firestore release mode is unknown."
           for ((lookup_attempt = 1; lookup_attempt <= lookup_max_attempts; lookup_attempt += 1)); do
-            if last_success_sha="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
+            if last_success_run_json="$(gh api --method GET "repos/\${GITHUB_REPOSITORY}/actions/workflows/deploy-prod.yml/runs" -f branch="$baseline_branch" -f status=success)"; then
               lookup_succeeded="true"
             fi
           done
           if [[ "$lookup_succeeded" != "true" ]]; then
             echo "The successful production deploy lookup failed; forcing authorization rules-first ordering."
+            echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+            echo "firestore_baseline_sha=unknown" >> "$GITHUB_OUTPUT"
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "storage_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore
+          component_page=1
+          gh api --method GET "repos/\${GITHUB_REPOSITORY}/deployments" -f environment=production-firestore -F per_page=100 -F page="$component_page"
+          deployment_page_count=100
+          jq '[.[] | select(.state == "success")][0] // empty'
+          if (( deployment_page_count < 100 )); then break; fi
+          component_page=$((component_page + 1))
+          component_marker_found="true"
+          deployment_log_url="$deployment_log_url"
+          echo "The latest prior production run identity is missing or did not produce the active component marker; forcing live mode classification."
+          if [[ ! "$latest_prior_run_id" =~ ^[0-9]+$ ]] \
+            || [[ ! "$firestore_success_run_id" =~ ^[0-9]+$ ]] \
+            || [[ "$firestore_success_run_id" != "$latest_prior_run_id" ]]; then
+            firestore_success_mode="ambiguous"
+          fi
+          echo "No valid successful production deploy baseline was found; conservatively enabling every non-Firestore migration."
+          if [[ "$component_marker_found" == "true" ]]; then
+            echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
+            echo "Preserving the durable Firestore component baseline despite unavailable successful workflow history."
+          fi
+          echo "The last successful production deploy commit is unavailable locally; conservatively enabling every non-Firestore migration."
+          echo "The Firestore component deployment lookup failed; the active release mode is unknown."
+          firestore_success_mode="unmarked"
+          firestore_success_mode="ambiguous"
+          echo "forcing live exact-source classification"
+          if [[ "$deployment_description" == *"compatibility rules"* ]]; then firestore_success_mode="compatibility"; fi
           firestore_success_sha="$deployment_sha"
+          git show "\${firestore_success_sha}:firestore.rules" | grep -Fq 'allow create, update, delete: if false;'
+          echo "certificate_defaults_lockdown_needed=false" >> "$GITHUB_OUTPUT"
+          if [[ "$component_lookup_succeeded" != "true" ]]; then
+              echo "certificate_defaults_lockdown_needed=unknown" >> "$GITHUB_OUTPUT"
+          fi
+          echo "firestore_baseline_sha=$firestore_success_sha" >> "$GITHUB_OUTPUT"
+          echo "firestore_baseline_mode=$firestore_success_mode" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$firestore_success_sha" "$last_success_sha"
+          git diff --quiet "$firestore_success_sha" "$last_success_sha" -- firestore.rules firestore.indexes.json
+          echo "advancing its SHA and forcing live mode classification"
+          echo "The protected native-readiness gate can finalize the same"
           firestore_success_sha="$last_success_sha"
           echo "The Firestore component and complete production baselines diverged; forcing authorization rules-first ordering."
           git diff --quiet "$firestore_success_sha" "$GITHUB_SHA" -- firestore.rules firestore.indexes.json
           git diff --quiet "$last_success_sha" "$GITHUB_SHA" -- storage.rules
+      - name: Stage exact Firestore baseline variants
+        env:
+          FIRESTORE_BASELINE_MODE: \${{ steps.firestore_config.outputs.firestore_baseline_mode }}
+          FIRESTORE_BASELINE_SHA: \${{ steps.firestore_config.outputs.firestore_baseline_sha }}
+        run: |
+          baseline_checkout="$(mktemp -d "$RUNNER_TEMP/firestore-baseline-checkout.XXXXXX")"
+          git archive "$FIRESTORE_BASELINE_SHA" | tar -x -C "$baseline_checkout"
+          baseline_compactor="$baseline_checkout/scripts/compact-firestore-rules.mjs"
+          baseline_transformer="$baseline_checkout/scripts/build-certificate-defaults-compat-rules.mjs"
+          baseline_node_major="$(awk baseline-node "$baseline_checkout/.github/workflows/deploy-prod.yml")"
+          current_node_major="$(node -p baseline-node)"
+          cd "$baseline_checkout"
+          node "scripts/compact-firestore-rules.mjs" "$baseline_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.rules"
+          node "scripts/build-certificate-defaults-compat-rules.mjs" "$baseline_source" "$baseline_compatibility_source"
+          node "scripts/compact-firestore-rules.mjs" "$baseline_compatibility_source" "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline-compat.rules"
+          echo "A trusted final component marker cannot reference legacy client-writable certificate defaults rules."
+          FIRESTORE_BASELINE_MODE="compatibility"
+          printf '%s\\n' final > "$FIREBASE_PRODUCTION_BUNDLE/firestore-baseline.mode"
       - name: Deploy Firebase Storage rules when available
         env:
           STORAGE_RULES_CHANGED: \${{ needs.prepare-deploy.outputs.storage_changed }}
@@ -148,6 +209,7 @@ concurrency:
           exit "$storage_status"
             transient_pattern='HTTP Error:[[:space:]]*409,[[:space:]]*Requested entity already exists'
             firestore_indexes_config="$FIREBASE_PRODUCTION_BUNDLE/firebase-indexes.generated.json"
+            firestore_component_description="Firestore compatibility rules at \${GITHUB_SHA}; packaged native clients still use direct writes."
             jq 'del(.firestore.rules)' "$firebase_config" > "$firestore_indexes_config"
             jq -e 'and (.firestore | has("rules") | not)' "$firestore_indexes_config"
             deploy_config="$firebase_config"
@@ -160,13 +222,15 @@ concurrency:
               --config "$deploy_config"
               --non-interactive
             )
-            retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+            retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then
               echo "Refusing --force outside the reviewed retry-enabled function allowlist."
             fi
             deploy_args+=(--force)
             node "$firebase_cli" deploy "\${deploy_args[@]}"
           env:
+            CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY: \${{ vars.CERTIFICATE_DEFAULTS_NATIVE_CALLABLE_READY }}
+            CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED: \${{ needs.prepare-deploy.outputs.certificate_defaults_lockdown_needed }}
             FIRESTORE_CONFIG_CHANGED: \${{ needs.prepare-deploy.outputs.firestore_changed }}
           retry_delay_seconds=$((base_delay_seconds * (2 ** (attempt - 1))))
           retry_jitter_seconds=$((RANDOM % 16))
@@ -177,6 +241,7 @@ concurrency:
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
             curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            return 2
           }
           find_recent_matching_firestore_ruleset() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
@@ -206,19 +271,47 @@ concurrency:
           }
           write_firestore_configuration_blocked_summary() {
             {
-              echo '| Guaranteed not deployed | \`hosting\`, \`functions\` |'
+              echo '| Guaranteed not deployed | Full \`hosting\`, \`functions\` application |'
               echo "Exact rules and indexes were not both verified."
-              echo "Application deployment remains fail-closed, so Hosting and Functions were not deployed."
+              echo "The full application deployment remains fail-closed."
               echo "Recovery: \${GITHUB_SERVER_URL}/\${GITHUB_REPOSITORY}/blob/master/docs/observability-runbook.md#firestore-rules-api-retry-exhaustion"
             } >> "$GITHUB_STEP_SUMMARY"
           }
+          write_firestore_finalization_blocked_summary() {
+            echo "No client outage was introduced."
+          }
+          retry_firebase_deploy "functions:indexCertificateLegacySignaturesOnDefaultsWrite" "certificate-signature-inventory-producer" 3 15
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
+          retry_firebase_deploy "functions:cleanupCertificateSignature" "certificate-signature-cleanup-compatibility" 3 15
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
-            if verify_active_firestore_rules; then
+            if [[ "$native_callable_ready" == "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
+              FIRESTORE_CONFIG_CHANGED="true"
+            fi
+            if verify_active_firestore_rules "$final_firestore_rules"; then
               echo "The active Firestore rules exactly match this commit; skipping a redundant ruleset write."
             else
+              active_rules_variant="baseline-\${baseline_firestore_mode}"
+              if [[ "$baseline_firestore_mode" == "ambiguous" ]]; then active_rules_variant="baseline-final"; fi
+              active_rules_variant="baseline-compatibility"
+              if (( active_rules_status == 2 )); then exit 2; fi
+              if [[ "$active_rules_variant" == *-final ]]; then
+                ensure_exact_firestore_ruleset "$final_firestore_rules"
+              fi
+              retry_firebase_deploy "functions:commitCertificateDefaults" "certificate-defaults-writer-compatibility" 3 15
+              node scripts/build-certificate-defaults-compat-rules.mjs
+              test -f "$bundle/firestore-certificate-defaults-compat.rules"
+              ensure_exact_firestore_ruleset "$compatibility_firestore_rules"
+              activate_firestore_ruleset_with_retry "$compatibility_ruleset_name" "$compatibility_firestore_rules"
+              echo "certificate-defaults-rules-compatibility"
+              ensure_exact_firestore_ruleset "$final_firestore_rules"
+              if [[ "$native_callable_ready" == "true" ]]; then
+                finalize_firestore_rules="true"
+              else
+                echo "Keeping certificate-defaults compatibility rules until supported installed native versions use the callable."
+              fi
               echo "currently unavailable projects:test request"
-              ensure_exact_firestore_ruleset
-              activate_firestore_ruleset_with_retry
+              ensure_exact_firestore_ruleset "$final_firestore_rules"
+              activate_firestore_ruleset_with_retry "$final_ruleset_name" "$final_firestore_rules"
               echo "Created or reused and activated the exact staged Firestore ruleset."
             fi
             retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15
@@ -231,6 +324,7 @@ concurrency:
           record_component_deployment "production-firestore"
           retry_firebase_deploy "$retry_enabled_function_targets" "retry-enabled-functions" 3 15 true
           retry_firebase_deploy "hosting,functions" "application"
+          echo "certificate-defaults-rules-final"
         `;
 
         expect(() => validateProductionDeployCommand(validDeployCommand)).not.toThrow();
@@ -290,8 +384,8 @@ concurrency:
             'git diff --quiet "\${{ github.event.before }}" "\${{ github.sha }}" -- firestore.rules firestore.indexes.json'
         ))).toThrow('Production Firestore component change detection is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'if last_success_sha="$(gh api',
-            'last_success_sha="$(gh api'
+            'if last_success_run_json="$(gh api',
+            'last_success_run_json="$(gh api'
         ))).toThrow('Production successful deploy guarded lookup is missing');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'echo "changed=true" >> "$GITHUB_OUTPUT"',
@@ -306,7 +400,7 @@ concurrency:
             '(^|[^[:alnum:]])409([^[:alnum:]]|$)'
         ))).toThrow('Production Firestore release-race retry');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            'echo \'| Guaranteed not deployed | `hosting`, `functions` |\'',
+            'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'',
             'echo "Deployment blocked"'
         ))).toThrow('Production Firestore retry-exhaustion blocked application surfaces');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
@@ -321,7 +415,7 @@ concurrency:
             `ensure_exact_firestore_ruleset`,
             `retry_firebase_deploy "hosting,functions" "application"
             ensure_exact_firestore_ruleset`
-        ))).toThrow('Production Firestore deploy and component marker must run first when its configuration changed');
+        ))).toThrow('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'

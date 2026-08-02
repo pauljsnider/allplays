@@ -774,6 +774,164 @@ service cloud.firestore {
              isParentForPlayer(teamId, playerId);
     }
 
+    function certificateSignerImageUrls(data) {
+      let signers = data.get('signers', []);
+      return signers is list && signers.size() <= 4
+        ? [
+            (signers.size() > 0 && signers[0] is map) ? signers[0].get('signatureImageUrl', null) : null,
+            (signers.size() > 1 && signers[1] is map) ? signers[1].get('signatureImageUrl', null) : null,
+            (signers.size() > 2 && signers[2] is map) ? signers[2].get('signatureImageUrl', null) : null,
+            (signers.size() > 3 && signers[3] is map) ? signers[3].get('signatureImageUrl', null) : null
+          ]
+        : ['invalid-certificate-signers'];
+    }
+
+    function certificateSignerImagePaths(data) {
+      let signers = data.get('signers', []);
+      return signers is list && signers.size() <= 4
+        ? [
+            (signers.size() > 0 && signers[0] is map) ? signers[0].get('signatureImagePath', null) : null,
+            (signers.size() > 1 && signers[1] is map) ? signers[1].get('signatureImagePath', null) : null,
+            (signers.size() > 2 && signers[2] is map) ? signers[2].get('signatureImagePath', null) : null,
+            (signers.size() > 3 && signers[3] is map) ? signers[3].get('signatureImagePath', null) : null
+          ]
+        : ['invalid-certificate-signers'];
+    }
+
+    function certificateBatchSignerImageUrls(data) {
+      let shared = data.get('shared', {});
+      return shared is map
+        ? certificateSignerImageUrls(shared)
+        : ['invalid-certificate-batch-shared-state'];
+    }
+
+    function certificateBatchSignerImagePaths(data) {
+      let shared = data.get('shared', {});
+      return shared is map
+        ? certificateSignerImagePaths(shared)
+        : ['invalid-certificate-batch-shared-state'];
+    }
+
+    function certificateSignerHasCanonicalImagePath(teamId, signer) {
+      let imageUrl = signer is map ? signer.get('signatureImageUrl', null) : null;
+      let imagePath = signer is map ? signer.get('signatureImagePath', null) : null;
+      return imageUrl == null ||
+             (imageUrl is string &&
+               (imageUrl.size() == 0 ||
+                 (imagePath is string &&
+                   imagePath.matches('^certificate-signatures/teams/' + teamId + '/[^/]+$')) ||
+                 certificateSignerUsesCurrentImage(teamId, signer)));
+    }
+
+    function certificateSignersHaveCanonicalImagePaths(teamId, data) {
+      let signers = data.get('signers', []);
+      return signers is list &&
+             signers.size() <= 4 &&
+             (signers.size() < 1 || certificateSignerHasCanonicalImagePath(teamId, signers[0])) &&
+             (signers.size() < 2 || certificateSignerHasCanonicalImagePath(teamId, signers[1])) &&
+             (signers.size() < 3 || certificateSignerHasCanonicalImagePath(teamId, signers[2])) &&
+             (signers.size() < 4 || certificateSignerHasCanonicalImagePath(teamId, signers[3]));
+    }
+
+    function certificateSignerImageMatches(candidate, imageUrl, imagePath) {
+      return candidate is map &&
+             candidate.get('signatureImageUrl', null) == imageUrl &&
+             candidate.get('signatureImagePath', null) == imagePath;
+    }
+
+    function certificateSignerUsesCurrentImage(teamId, signer) {
+      let imageUrl = signer is map ? signer.get('signatureImageUrl', null) : null;
+      let imagePath = signer is map ? signer.get('signatureImagePath', null) : null;
+      let defaultsPath = /databases/$(database)/documents/teams/$(teamId)/settings/certificateDefaults;
+      let currentSigners = exists(defaultsPath) ? get(defaultsPath).data.get('signers', []) : [];
+      return imageUrl == null ||
+             (imageUrl is string && imageUrl.size() == 0) ||
+             (currentSigners is list &&
+               ((currentSigners.size() > 0 && certificateSignerImageMatches(currentSigners[0], imageUrl, imagePath)) ||
+                (currentSigners.size() > 1 && certificateSignerImageMatches(currentSigners[1], imageUrl, imagePath)) ||
+                (currentSigners.size() > 2 && certificateSignerImageMatches(currentSigners[2], imageUrl, imagePath)) ||
+                (currentSigners.size() > 3 && certificateSignerImageMatches(currentSigners[3], imageUrl, imagePath))));
+    }
+
+    function certificateSignersUseCurrentImages(teamId, data) {
+      let signers = data.get('signers', []);
+      return signers is list &&
+             signers.size() <= 4 &&
+             (signers.size() < 1 || certificateSignerUsesCurrentImage(teamId, signers[0])) &&
+             (signers.size() < 2 || certificateSignerUsesCurrentImage(teamId, signers[1])) &&
+             (signers.size() < 3 || certificateSignerUsesCurrentImage(teamId, signers[2])) &&
+             (signers.size() < 4 || certificateSignerUsesCurrentImage(teamId, signers[3]));
+    }
+
+    function certificateBatchSignersHaveCanonicalImagePaths(teamId, data) {
+      let shared = data.get('shared', {});
+      return shared is map && certificateSignersHaveCanonicalImagePaths(teamId, shared);
+    }
+
+    function certificateBatchSignersUseCurrentImages(teamId, data) {
+      let shared = data.get('shared', {});
+      return shared is map && certificateSignersUseCurrentImages(teamId, shared);
+    }
+
+    function hasNoRetiredCertificateSignaturePaths(teamId, signerImagePaths) {
+      let defaultsPath = /databases/$(database)/documents/teams/$(teamId)/settings/certificateDefaults;
+      let retiredPaths = exists(defaultsPath)
+        ? get(defaultsPath).data.get('retiredSignatureImagePaths', [])
+        : [];
+      return retiredPaths is list &&
+             retiredPaths.size() <= 1000 &&
+             !retiredPaths.hasAny(signerImagePaths);
+    }
+
+    function isLegacyCertificateDefaultsCreateSafe(data) {
+      return !data.keys().hasAny(['retiredSignatureImageObjectKeys', 'retiredSignatureImagePaths']) &&
+             certificateSignerImageUrls(data) == [null, null, null, null] &&
+             certificateSignerImagePaths(data) == [null, null, null, null];
+    }
+
+    function isLegacyCertificateDefaultsUpdateSafe() {
+      return request.resource.data.get('retiredSignatureImageObjectKeys', []) ==
+               resource.data.get('retiredSignatureImageObjectKeys', []) &&
+             request.resource.data.get('retiredSignatureImagePaths', []) ==
+               resource.data.get('retiredSignatureImagePaths', []) &&
+             certificateSignerImageUrls(request.resource.data) ==
+               certificateSignerImageUrls(resource.data) &&
+             certificateSignerImagePaths(request.resource.data) ==
+               certificateSignerImagePaths(resource.data);
+    }
+
+    function isCertificateOutputCreateSafe(teamId, data) {
+      return certificateSignersHaveCanonicalImagePaths(teamId, data) &&
+             certificateSignersUseCurrentImages(teamId, data) &&
+             hasNoRetiredCertificateSignaturePaths(teamId, certificateSignerImagePaths(data));
+    }
+
+    function isCertificateOutputUpdateSafe(teamId) {
+      let nextUrls = certificateSignerImageUrls(request.resource.data);
+      let nextPaths = certificateSignerImagePaths(request.resource.data);
+      return (nextUrls == certificateSignerImageUrls(resource.data) &&
+                nextPaths == certificateSignerImagePaths(resource.data)) ||
+             (certificateSignersHaveCanonicalImagePaths(teamId, request.resource.data) &&
+                certificateSignersUseCurrentImages(teamId, request.resource.data) &&
+                hasNoRetiredCertificateSignaturePaths(teamId, nextPaths));
+    }
+
+    function isCertificateBatchCreateSafe(teamId, data) {
+      return certificateBatchSignersHaveCanonicalImagePaths(teamId, data) &&
+             certificateBatchSignersUseCurrentImages(teamId, data) &&
+             hasNoRetiredCertificateSignaturePaths(teamId, certificateBatchSignerImagePaths(data));
+    }
+
+    function isCertificateBatchUpdateSafe(teamId) {
+      let nextUrls = certificateBatchSignerImageUrls(request.resource.data);
+      let nextPaths = certificateBatchSignerImagePaths(request.resource.data);
+      return (nextUrls == certificateBatchSignerImageUrls(resource.data) &&
+                nextPaths == certificateBatchSignerImagePaths(resource.data)) ||
+             (certificateBatchSignersHaveCanonicalImagePaths(teamId, request.resource.data) &&
+                certificateBatchSignersUseCurrentImages(teamId, request.resource.data) &&
+                hasNoRetiredCertificateSignaturePaths(teamId, nextPaths));
+    }
+
     function isPlayerSelf(teamId, playerId) {
       let playerPath = /databases/$(database)/documents/teams/$(teamId)/players/$(playerId);
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
@@ -838,7 +996,8 @@ service cloud.firestore {
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
-        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'photoPath'
       ];
       let profile = data.get('profile', {});
       return data.keys().hasAny(restrictedKeys) ||
@@ -862,7 +1021,7 @@ service cloud.firestore {
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
         'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
-        'rosterFieldValues', 'customFields', 'profileFields', 'extraFields', 'profile'
+        'rosterFieldValues', 'customFields', 'profileFields', 'extraFields', 'profile', 'photoPath'
       ];
       return hasRestrictedRosterFieldValues(resource.data) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(restrictedContainers);
@@ -1103,6 +1262,11 @@ service cloud.firestore {
                'checkoutAttemptToken',
                'checkoutAmountCents',
                'checkoutCreatedAt',
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationPayerUid',
+               'checkoutCreationAmountCents',
+               'checkoutCreationRequest',
                'paymentProvider',
                'stripePaymentStatus',
                'stripePaymentAmountCents',
@@ -1123,12 +1287,57 @@ service cloud.firestore {
                'checkoutAttemptToken',
                'checkoutAmountCents',
                'checkoutCreatedAt',
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationPayerUid',
+               'checkoutCreationAmountCents',
+               'checkoutCreationRequest',
                'paymentProvider',
                'stripePaymentStatus',
                'stripePaymentAmountCents',
                'stripeCheckoutSessionId',
                'checkoutSessionId',
                'lastPaidStripeCheckoutSessionId'
+             ]);
+    }
+
+    function hasNoServerOwnedRegistrationCheckoutFields(data) {
+      return !data.keys().hasAny([
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationRequest',
+               'retryCapacityReservationId',
+               'checkoutUrl',
+               'paymentLink',
+               'checkoutStatus',
+               'paymentProvider',
+               'stripeCheckoutSessionId',
+               'stripePaymentStatus',
+               'checkoutAmountCents',
+               'checkoutCurrency',
+               'checkoutCreatedAt',
+               'checkoutAttemptToken',
+               'publicCheckoutCapabilityHash'
+             ]);
+    }
+
+    function hasNoChangedServerOwnedRegistrationCheckoutFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+               'checkoutCreationReservationId',
+               'checkoutCreationStartedAt',
+               'checkoutCreationRequest',
+               'retryCapacityReservationId',
+               'checkoutUrl',
+               'paymentLink',
+               'checkoutStatus',
+               'paymentProvider',
+               'stripeCheckoutSessionId',
+               'stripePaymentStatus',
+               'checkoutAmountCents',
+               'checkoutCurrency',
+               'checkoutCreatedAt',
+               'checkoutAttemptToken',
+               'publicCheckoutCapabilityHash'
              ]);
     }
 
@@ -3275,7 +3484,7 @@ service cloud.firestore {
 	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
 	        // Limited write access for parents (only their linked player):
-	        // - Public player doc: photo only
+	        // - Public player doc: display URL only. Cleanup paths are private.
 	        allow update: if isParentForPlayer(teamId, playerId) &&
 	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
         // Private player profile (sensitive fields)
@@ -3288,9 +3497,23 @@ service cloud.firestore {
           // Parents can write their own sensitive fields. Household contacts are
           // managed by staff or server-authoritative invite redemption callables.
           allow create: if isParentForPlayer(teamId, playerId) &&
-                           request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+                           request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'photoPath', 'updatedAt']) &&
+                           (!request.resource.data.keys().hasAny(['photoPath']) ||
+                            request.resource.data.get('photoPath', null) == null ||
+                            (request.resource.data.get('photoPath', null) is string &&
+                             request.resource.data.get('photoPath', '').size() <= 512 &&
+                             request.resource.data.get('photoPath', '').matches(
+                               '^profile-photos/teams/' + teamId + '/players/' + playerId + '/[^/]+$'
+                             )));
           allow update: if isParentForPlayer(teamId, playerId) &&
-                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'photoPath', 'updatedAt']) &&
+                           (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['photoPath']) ||
+                            request.resource.data.get('photoPath', null) == null ||
+                            (request.resource.data.get('photoPath', null) is string &&
+                             request.resource.data.get('photoPath', '').size() <= 512 &&
+                             request.resource.data.get('photoPath', '').matches(
+                               '^profile-photos/teams/' + teamId + '/players/' + playerId + '/[^/]+$'
+                             )));
 
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
@@ -3315,8 +3538,11 @@ service cloud.firestore {
       }
 
       match /settings/{settingId} {
-        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
-                                            isTeamOwnerOrAdmin(teamId);
+        allow read: if settingId == 'certificateDefaults' &&
+                       isTeamOwnerOrAdmin(teamId);
+        // Certificate defaults can retire legacy uploader-owned Storage paths.
+        // All writes must cross the callable's trusted provenance/tombstone checks.
+        allow create, update, delete: if false;
       }
 
       match /certificateAssets/{assetId} {
@@ -3324,7 +3550,11 @@ service cloud.firestore {
       }
 
       match /certificateBatches/{batchId} {
-        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow read, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateBatchCreateSafe(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateBatchUpdateSafe(teamId);
 
         match /audit/{eventId} {
           allow read: if isTeamOwnerOrAdmin(teamId);
@@ -3336,7 +3566,10 @@ service cloud.firestore {
       match /certificates/{certificateId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        isPublishedLinkedCertificate(teamId, resource.data);
-        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateOutputCreateSafe(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                         isCertificateOutputUpdateSafe(teamId);
         allow delete: if isGlobalAdmin();
 
         match /audit/{eventId} {
@@ -3358,9 +3591,19 @@ service cloud.firestore {
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
-          allow update: if isTeamOwnerOrAdmin(teamId);
+          allow update: if isTeamOwnerOrAdmin(teamId) &&
+                        hasNoChangedServerOwnedRegistrationCheckoutFields();
           allow delete: if isTeamOwnerOrAdmin(teamId);
-          allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';
+          allow create: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.status == 'pending' &&
+                        hasNoServerOwnedRegistrationCheckoutFields(request.resource.data);
+
+          // Exact provider requests contain guardian identity, bearer capability,
+          // and payment metadata. They are Admin SDK-only even for team managers
+          // and the guardian who can read the parent registration.
+          match /checkoutAttempts/{attemptId} {
+            allow read, create, update, delete: if false;
+          }
         }
       }
 
@@ -3427,6 +3670,12 @@ service cloud.firestore {
           request.resource.data.tier == 'team-pass' &&
           request.resource.data.status in ['inactive', 'expired', 'cancelled'];
         allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Exact Stripe request snapshots can contain billing email and private
+      // provider idempotency data. Only trusted Admin SDK code may access them.
+      match /teamPassCheckoutAttempts/{attemptId} {
+        allow read, write: if false;
       }
 
       match /membershipRequests/{requestId} {
@@ -4035,6 +4284,13 @@ service cloud.firestore {
 
           match /adminBilling/{billingId} {
             allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+          }
+
+          // Exact Stripe requests include payer identity and provider
+          // parameters. They are Admin-SDK-only even for team managers and
+          // parents assigned to this fee recipient.
+          match /checkoutAttempts/{attemptId} {
+            allow read, create, update, delete: if false;
           }
 
           match /audit/{auditId} {
