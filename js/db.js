@@ -483,10 +483,6 @@ export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
     return mapSnapshot(await getDocs(q));
 }
 
-function formatLegacyImageUploadResult(url, path, options = {}) {
-    return options?.returnUpload === true ? { url, path } : url;
-}
-
 async function getDownloadUrlOrDeleteUpload(storageRef) {
     try {
         return await getDownloadURL(storageRef);
@@ -532,7 +528,7 @@ export async function uploadTeamPhoto(file, options = {}) {
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Download URL obtained:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 export async function uploadPlayerPhoto(file, options = {}) {
@@ -552,7 +548,7 @@ export async function uploadPlayerPhoto(file, options = {}) {
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 export async function uploadUserPhoto(file, uid = '', options = {}) {
@@ -575,7 +571,7 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
-    return formatLegacyImageUploadResult(downloadURL, path, options);
+    return { url: downloadURL, path };
 }
 
 function getRequiredSignedInUserId() {

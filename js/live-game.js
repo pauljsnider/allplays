@@ -17,7 +17,7 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=146';
+} from './db.js?v=147';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=25';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';

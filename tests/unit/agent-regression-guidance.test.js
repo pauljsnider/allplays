@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const guidance = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
+const legacyDbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 const pathAwareUploadConsumers = [
     '../../player.html',
     '../../edit-roster.html',
@@ -9,6 +10,15 @@ const pathAwareUploadConsumers = [
     '../../apps/app/src/lib/playerService.ts',
     '../../apps/app/src/lib/teamDetailService.ts',
     '../../apps/app/src/lib/nativeStorageUpload.ts'
+].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'));
+const pathAwareUploadMocks = [
+    '../smoke/team-fallback-regressions.spec.js',
+    '../smoke/track-statsheet-apply.spec.js',
+    '../smoke/edit-roster-xss-escaping.spec.js',
+    '../smoke/player-game-context.spec.js',
+    '../smoke/edit-roster-bulk-ai-reset.spec.js',
+    '../smoke/profile-legacy-notifications.spec.js',
+    '../smoke/admin-invite-redemption.spec.js'
 ].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'));
 
 describe('agent regression guidance', () => {
@@ -35,6 +45,11 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('Reconcile a removal after an ambiguous write even though it has no new upload path');
         pathAwareUploadConsumers.forEach((source) => {
             expect(source).not.toMatch(/typeof\s+uploaded(?:Photo)?\s*===\s*['"]string['"]/);
+        });
+        expect(legacyDbSource).not.toContain('formatLegacyImageUploadResult');
+        expect(legacyDbSource.match(/return \{ url: downloadURL, path \};/g)).toHaveLength(3);
+        pathAwareUploadMocks.forEach((source) => {
+            expect(source).toMatch(/upload(?:Team|Player|User)Photo[\s\S]*?return\s+\{\s*url:[\s\S]*?path:/);
         });
     });
 });

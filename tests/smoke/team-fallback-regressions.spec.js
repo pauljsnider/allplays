@@ -208,7 +208,7 @@ export async function getGames() {
     return [];
 }
 export async function uploadPlayerPhoto() {
-    return '';
+    return { url: '', path: '' };
 }
 export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}

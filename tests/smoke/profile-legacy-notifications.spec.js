@@ -108,7 +108,7 @@ export async function getUserProfile() {
 export async function updateUserProfile() {}
 export async function createAccessCode() { return { code: 'CODE123' }; }
 export async function createAccountMergeRequest() {}
-export async function uploadUserPhoto() { return 'https://example.test/photo.png'; }
+export async function uploadUserPhoto() { return { url: 'https://example.test/photo.png', path: 'profile-photos/users/user-1/photo.png' }; }
 export async function upsertNotificationDeviceToken() {}
 
 export async function getUserAccessCodes() {

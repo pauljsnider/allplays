@@ -40,7 +40,7 @@ export async function applyRosterCsvImportOperations(_teamId, operations) {
 export async function deactivatePlayer() {}
 export async function reactivatePlayer() {}
 export async function getGames() { return []; }
-export async function uploadPlayerPhoto() { return 'https://example.test/photo.png'; }
+export async function uploadPlayerPhoto() { return { url: 'https://example.test/photo.png', path: 'profile-photos/teams/team-1/players/player-1/photo.png' }; }
 export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields() {}
