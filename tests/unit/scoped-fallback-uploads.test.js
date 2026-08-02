@@ -89,10 +89,15 @@ describe('scoped fallback uploads', () => {
         imageAuthMocks.ensureImageAuth.mockResolvedValue({ uid: 'image-user' });
         imageAuthMocks.requireImageAuth.mockResolvedValue({ uid: 'image-user' });
         vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+        let secureTokenSequence = 0;
+        vi.stubGlobal('crypto', {
+            randomUUID: () => (++secureTokenSequence).toString(16).padStart(32, '0')
+        });
     });
 
     afterEach(() => {
         vi.useRealTimers();
+        vi.unstubAllGlobals();
     });
 
     it('uploads chat attachments directly to the primary scoped path without image-project auth', async () => {
@@ -107,10 +112,10 @@ describe('scoped fallback uploads', () => {
         expect(imageAuthMocks.requireImageAuth).not.toHaveBeenCalled();
         expect(uploadState.calls).toEqual([expect.objectContaining({
             targetStorage: 'main-storage',
-            fullPath: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_family_photo_1_.png'
+            fullPath: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_00000000000000000000000000000001_family_photo_1_.png'
         })]);
         expect(result).toEqual(expect.objectContaining({
-            path: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_family_photo_1_.png'
+            path: 'stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user-42/1700000000000_00000000000000000000000000000001_family_photo_1_.png'
         }));
     });
 
@@ -143,7 +148,7 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.deletions).toEqual([
             expect.objectContaining({
                 targetStorage: 'main-storage',
-                fullPath: 'stat-sheets/team-chat/team-1/team/user-42/1700000000000_photo.jpg'
+                fullPath: 'stat-sheets/team-chat/team-1/team/user-42/1700000000000_00000000000000000000000000000001_photo.jpg'
             })
         ]);
     });
@@ -184,12 +189,12 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.calls[0]).toEqual(expect.objectContaining({ targetStorage: 'main-storage' }));
 
         await deleteLegacyImageUpload(uploaded.path);
-        expect(uploadState.deletions).toEqual([
+        expect(uploadState.deletions).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 targetStorage: 'main-storage',
                 fullPath: uploaded.path
             })
-        ]);
+        ]));
     });
 
     it('deletes a completed browser team photo when its download URL lookup fails', async () => {
@@ -220,6 +225,24 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.deletions).toHaveLength(1);
         expect(uploadState.deletions[0]).toEqual(expect.objectContaining({ targetStorage: 'main-storage' }));
         expect(uploadState.deletions[0].fullPath).toMatch(new RegExp(`^${expectedPrefix}1700000000000_[a-f0-9]{32}_profile-photo\\.jpg$`));
+    });
+
+    it.each([
+        ['chat attachment', async (db) => db.uploadChatImage('team-1', { name: 'photo.jpg', size: 123, type: 'image/jpeg' }), 'stat-sheets/team-chat/team-1/team/user-42/'],
+        ['stat sheet', async (db) => db.uploadStatSheetPhoto('team-1', { name: 'sheet.jpg', size: 123, type: 'image/jpeg' }, { returnUpload: true }), 'stat-sheets/team-games/team-1/user-42/'],
+        ['drill diagram', async (db) => db.uploadDrillDiagram('team-1', 'drill-1', { name: 'diagram.jpg', size: 123, type: 'image/jpeg' }, { returnUpload: true }), 'stat-sheets/drills/team-1/drill-1/user-42/'],
+        ['game clip', async (db) => db.uploadGameClip('team-1', 'game-1', { name: 'clip.mp4', size: 123, type: 'video/mp4' }), 'game-clips/team-1/game-1/user-42/'],
+        ['athlete media', async (db) => db.uploadAthleteProfileMedia('user-42', 'profile-1', { name: 'headshot.jpg', size: 123, type: 'image/jpeg' }, { kind: 'profile-photo' }), 'athlete-profile-media/user-42/profile-1/']
+    ])('compensates a rejected %s upload at its reserved primary path', async (_surface, upload, expectedPrefix) => {
+        uploadState.rejectPrimaryUpload = true;
+        imageAuthMocks.requireImageAuth.mockRejectedValue(new Error('secondary unavailable'));
+        const db = await import('../../js/db.js?v=150-rejected-media-upload');
+
+        await expect(upload(db)).rejects.toThrow('upload response lost');
+
+        expect(uploadState.deletions).toHaveLength(1);
+        expect(uploadState.deletions[0]).toEqual(expect.objectContaining({ targetStorage: 'main-storage' }));
+        expect(uploadState.deletions[0].fullPath).toContain(expectedPrefix);
     });
 
     it('does not let a failed same-millisecond upload delete a concurrent successful candidate', async () => {
@@ -294,20 +317,20 @@ describe('scoped fallback uploads', () => {
         }, { returnUpload: true });
 
         expect(uploadState.calls).toHaveLength(2);
-        expect(uploadState.calls[1].fullPath).toBe('stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png');
+        expect(uploadState.calls[1].fullPath).toBe('stat-sheets/team-games/team_alpha/user-42/1700000000000_00000000000000000000000000000001_box_score_1_.png');
         expect(uploaded).toEqual({
-            url: 'https://cdn.example.test/stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png',
-            path: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score_1_.png',
+            url: 'https://cdn.example.test/stat-sheets/team-games/team_alpha/user-42/1700000000000_00000000000000000000000000000001_box_score_1_.png',
+            path: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_00000000000000000000000000000001_box_score_1_.png',
             storage: 'primary'
         });
 
         await deleteUploadedMediaObjects([uploaded]);
-        expect(uploadState.deletions).toEqual([
+        expect(uploadState.deletions).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 targetStorage: 'main-storage',
                 fullPath: uploaded.path
             })
-        ]);
+        ]));
     });
 
     it('falls back to primary stat sheet storage when image-project authentication fails', async () => {
@@ -323,7 +346,7 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.calls).toHaveLength(1);
         expect(uploadState.calls[0]).toEqual(expect.objectContaining({
             targetStorage: 'main-storage',
-            fullPath: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score.png'
+            fullPath: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_00000000000000000000000000000001_box_score.png'
         }));
         expect(uploaded.storage).toBe('primary');
     });
@@ -342,8 +365,8 @@ describe('scoped fallback uploads', () => {
         }, { returnUpload: true });
 
         expect(uploaded).toEqual({
-            url: 'https://cdn.example.test/team-photos/1700000000000_stat-sheet_box score.png',
-            path: 'team-photos/1700000000000_stat-sheet_box score.png',
+            url: 'https://cdn.example.test/team-photos/1700000000000_00000000000000000000000000000001_stat-sheet_box score.png',
+            path: 'team-photos/1700000000000_00000000000000000000000000000001_stat-sheet_box score.png',
             storage: 'image'
         });
 
@@ -366,20 +389,20 @@ describe('scoped fallback uploads', () => {
         }, { returnUpload: true });
 
         expect(uploadState.calls).toHaveLength(2);
-        expect(uploadState.calls[1].fullPath).toBe('stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png');
+        expect(uploadState.calls[1].fullPath).toBe('stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_00000000000000000000000000000001_diagram_1.png');
         expect(uploaded).toEqual({
-            url: 'https://cdn.example.test/stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png',
-            path: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram_1.png',
+            url: 'https://cdn.example.test/stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_00000000000000000000000000000001_diagram_1.png',
+            path: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_00000000000000000000000000000001_diagram_1.png',
             storage: 'primary'
         });
 
         await deleteUploadedMediaObjects([uploaded]);
-        expect(uploadState.deletions).toEqual([
+        expect(uploadState.deletions).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 targetStorage: 'main-storage',
                 fullPath: uploaded.path
             })
-        ]);
+        ]));
     });
 
     it('deletes a drill diagram from image storage when that upload must be rolled back', async () => {
@@ -396,8 +419,8 @@ describe('scoped fallback uploads', () => {
         }, { returnUpload: true });
 
         expect(uploaded).toEqual({
-            url: 'https://cdn.example.test/drill-diagrams/drill_7/1700000000000_diagram.png',
-            path: 'drill-diagrams/drill_7/1700000000000_diagram.png',
+            url: 'https://cdn.example.test/drill-diagrams/drill_7/1700000000000_00000000000000000000000000000001_diagram.png',
+            path: 'drill-diagrams/drill_7/1700000000000_00000000000000000000000000000001_diagram.png',
             storage: 'image'
         });
 
@@ -423,7 +446,7 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.calls).toHaveLength(1);
         expect(uploadState.calls[0]).toEqual(expect.objectContaining({
             targetStorage: 'main-storage',
-            fullPath: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram.png'
+            fullPath: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_00000000000000000000000000000001_diagram.png'
         }));
         expect(uploaded.storage).toBe('primary');
     });
@@ -442,7 +465,7 @@ describe('scoped fallback uploads', () => {
         });
 
         expect(uploaded).toEqual(expect.objectContaining({
-            path: 'team-videos/1700000000000_game-clip_team/alpha_game 7_winning_shot.mp4',
+            path: 'team-videos/1700000000000_00000000000000000000000000000001_game-clip_team/alpha_game 7_winning_shot.mp4',
             storage: 'image'
         }));
 
@@ -465,17 +488,17 @@ describe('scoped fallback uploads', () => {
         });
 
         expect(uploaded).toEqual(expect.objectContaining({
-            path: 'game-clips/team_alpha/game_7/user-42/1700000000000_winning_shot.mp4',
+            path: 'game-clips/team_alpha/game_7/user-42/1700000000000_00000000000000000000000000000001_winning_shot.mp4',
             storage: 'primary'
         }));
 
         await deleteUploadedMediaObjects([uploaded]);
-        expect(uploadState.deletions).toEqual([
+        expect(uploadState.deletions).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 targetStorage: 'main-storage',
                 fullPath: uploaded.path
             })
-        ]);
+        ]));
     });
 
     it('falls back to primary game-clip storage when image-project authentication fails', async () => {
@@ -491,7 +514,7 @@ describe('scoped fallback uploads', () => {
         expect(uploadState.calls).toHaveLength(1);
         expect(uploadState.calls[0]).toEqual(expect.objectContaining({
             targetStorage: 'main-storage',
-            fullPath: 'game-clips/team_alpha/game_7/user-42/1700000000000_winning_shot.mp4'
+            fullPath: 'game-clips/team_alpha/game_7/user-42/1700000000000_00000000000000000000000000000001_winning_shot.mp4'
         }));
         expect(uploaded.storage).toBe('primary');
     });

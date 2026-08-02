@@ -28,6 +28,7 @@ import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.j
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
 import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
+import { certificateDefaultsMatch } from './defaultsReconciliation.js?v=1';
 import {
     CERTIFICATE_DESCRIPTION_CHAR_LIMIT,
     generateCertificateDescription,
@@ -83,13 +84,11 @@ async function persistCertificateDefaults() {
     } catch (error) {
         const persistenceError = error instanceof Error ? error : new Error(String(error || 'Unable to save certificate defaults.'));
         const authoritativeDefaults = await getCertificateDefaults(state.teamId).catch(() => null);
-        const expectedSigners = normalizeSigners(state.shared?.signers || []);
-        const authoritativeSigners = normalizeSigners(authoritativeDefaults?.signers || []);
         if (!authoritativeDefaults) {
             persistenceError.certificateDefaultsPersistenceState = 'unknown';
             throw persistenceError;
         }
-        if (JSON.stringify(authoritativeSigners) !== JSON.stringify(expectedSigners)) {
+        if (!certificateDefaultsMatch(state.shared, authoritativeDefaults)) {
             persistenceError.certificateDefaultsPersistenceState = 'not-committed';
             throw persistenceError;
         }
@@ -927,7 +926,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=6');
+                const { uploadCertificateAsset } = await import('./assets.js?v=7');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -972,7 +971,7 @@ function bindSetupEvents() {
             const index = Number(input.dataset.signatureUpload);
             const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=6');
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=7');
                 const result = await uploadSignatureImage(state.teamId, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;

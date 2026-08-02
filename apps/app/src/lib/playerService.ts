@@ -32,6 +32,7 @@ import {
   type LegacyPlayerRecord,
   type LegacyTeamRecord
 } from './adapters/legacyPlayerDb';
+import { createSecureUploadToken } from './secureUploadToken';
 import {
   buildAthleteProfileShareUrl,
   buildPlayerLeaderboardSnapshot,
@@ -1305,10 +1306,7 @@ export function normalizeAthleteProfileHighlightClipUrl(value: unknown) {
 }
 
 function createLocalId(prefix: string) {
-  if (globalThis.crypto?.randomUUID) {
-    return `${prefix}_${globalThis.crypto.randomUUID()}`;
-  }
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}_${createSecureUploadToken()}`;
 }
 
 function buildHighlightClipUploadRequests(

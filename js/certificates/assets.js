@@ -10,6 +10,7 @@ import {
     getDownloadURL,
     deleteObject
 } from '../firebase.js?v=23';
+import { createSecureUploadToken } from '../secure-upload-token.js?v=1';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;
 const ALLOWED_CERTIFICATE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
@@ -58,11 +59,12 @@ function getCertificateImageExtension(file) {
     return '.jpg';
 }
 
-function buildCertificateUploadToken() {
-    if (globalThis.crypto?.randomUUID) {
-        return globalThis.crypto.randomUUID().replace(/-/g, '');
+export function buildCertificateUploadToken() {
+    try {
+        return createSecureUploadToken();
+    } catch {
+        throw new Error('Secure randomness is required to upload certificate images.');
     }
-    return `${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
 export function buildCertificateAssetStoragePath(teamId, file) {

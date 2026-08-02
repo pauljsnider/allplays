@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     uploadBytes: vi.fn(),
@@ -25,6 +25,25 @@ vi.mock('../../js/firebase.js?v=23', () => ({
 describe('certificate asset validation', () => {
     beforeEach(() => {
         Object.values(mocks).forEach((mock) => mock.mockClear());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('uses secure random bytes when randomUUID is unavailable and fails closed without secure randomness', async () => {
+        const { buildCertificateUploadToken } = await import('../../js/certificates/assets.js');
+        const getRandomValues = vi.fn((bytes) => {
+            bytes.set(Array.from({ length: 16 }, (_value, index) => index));
+            return bytes;
+        });
+        vi.stubGlobal('crypto', { getRandomValues });
+
+        expect(buildCertificateUploadToken()).toBe('000102030405060708090a0b0c0d0e0f');
+        expect(getRandomValues).toHaveBeenCalledOnce();
+
+        vi.stubGlobal('crypto', {});
+        expect(() => buildCertificateUploadToken()).toThrow('Secure randomness is required');
     });
 
     it('rejects unsafe storage IDs before auth or upload', async () => {

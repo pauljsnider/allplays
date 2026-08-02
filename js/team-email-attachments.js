@@ -13,6 +13,7 @@ import {
     getDownloadURL,
     deleteObject
 } from './firebase.js?v=22';
+import { createSecureUploadToken } from './secure-upload-token.js?v=1';
 
 export const TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024;
 
@@ -118,12 +119,10 @@ export async function uploadTeamEmailAttachment(teamId, file, { draftId = 'draft
     assertTeamEmailAttachmentLimit([{ size: file.size }]);
 
     const ts = Date.now();
-    const path = `team-email-attachments/${cleanTeamId}/${cleanString(draftId) || 'draft'}/${user.uid}/${ts}_${safeFileName(file.name)}`;
-    let uploadedRef = null;
+    const path = `team-email-attachments/${cleanTeamId}/${cleanString(draftId) || 'draft'}/${user.uid}/${ts}_${createSecureUploadToken()}_${safeFileName(file.name)}`;
+    const uploadedRef = ref(storage, path);
     try {
-        const storageRef = ref(storage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        uploadedRef = snapshot.ref;
+        const snapshot = await uploadBytes(uploadedRef, file);
         const downloadUrl = await getDownloadURL(snapshot.ref);
 
         return {
@@ -137,9 +136,7 @@ export async function uploadTeamEmailAttachment(teamId, file, { draftId = 'draft
             uploadedAt: Timestamp.now()
         };
     } catch (error) {
-        if (uploadedRef) {
-            await deleteObject(uploadedRef).catch(() => undefined);
-        }
+        await deleteObject(uploadedRef).catch(() => undefined);
         console.error('Error uploading team email attachment:', error);
         throw error;
     }

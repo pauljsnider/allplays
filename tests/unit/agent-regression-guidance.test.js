@@ -46,6 +46,9 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('Deploy the old/new-compatible server-only inventory producer first, backfill every authoritative active legacy reference, deploy the superset cleanup worker, and only then deploy a writer that emits new tombstones');
         expect(guidance).toContain('cleanup authorization requires a nonempty canonical object key, and equality between two missing keys is never proof');
         expect(guidance).toContain('current Storage metadata cannot reconstruct a generation omitted by an old path-only tombstone');
+        expect(guidance).toContain('compare the complete normalized writable payload—not only signers—before reporting success');
+        expect(guidance).toContain('must use `crypto.randomUUID` or `crypto.getRandomValues`; never fall back to `Math.random`');
+        expect(guidance).toContain('Every durable upload attempt token must come from `crypto.randomUUID` or `crypto.getRandomValues`');
         expect(guidance).toContain('Make the worker hydrate and safely process every old and new tombstone schema it can observe');
         expect(guidance).toContain('A failed read of the previous cleanup path is `unknown`');
         expect(guidance).toContain('Reconcile a removal after an ambiguous write even though it has no new upload path');

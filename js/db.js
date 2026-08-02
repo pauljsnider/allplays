@@ -36,8 +36,9 @@ import {
 } from './firebase.js?v=23';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
-import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=3';
+import { createSecureUploadToken } from './secure-upload-token.js?v=1';
 import {
     buildPlayerProfilePhotoPath,
     buildTeamProfilePhotoPath,
@@ -246,7 +247,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -255,7 +256,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -494,11 +495,9 @@ async function getDownloadUrlOrDeleteUpload(storageRef) {
     }
 }
 
-async function uploadProfilePhotoOrDeleteCandidate(storageRef, file) {
+async function uploadStorageCandidateOrDelete(storageRef, file, metadata = {}) {
     try {
-        return await uploadBytes(storageRef, file, {
-            contentType: file.type || 'application/octet-stream'
-        });
+        return await uploadBytes(storageRef, file, metadata);
     } catch (error) {
         await deleteObject(storageRef).catch(() => undefined);
         throw error;
@@ -534,7 +533,9 @@ export async function uploadTeamPhoto(file, options = {}) {
     const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     console.log('Upload complete, getting download URL...');
 
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
@@ -555,7 +556,9 @@ export async function uploadPlayerPhoto(file, options = {}) {
     const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
     const storageRef = ref(storage, path);
 
-    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
@@ -577,7 +580,9 @@ export async function uploadUserPhoto(file, uid = '', options = {}) {
     const path = buildUserProfilePhotoPath(userId, file.name);
     const storageRef = ref(storage, path);
 
-    const snapshot = await uploadProfilePhotoOrDeleteCandidate(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
@@ -628,9 +633,15 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
         storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
         storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
     }
-    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    }));
+    let snapshot;
+    try {
+        snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+            contentType: file.type || 'application/octet-stream'
+        }));
+    } catch (error) {
+        await withChatMediaTimeout(deleteObject(storageRef)).catch(() => undefined);
+        throw error;
+    }
     let url;
     try {
         url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
@@ -681,14 +692,15 @@ export async function deleteUploadedChatAttachments(attachments = []) {
 
 export async function uploadGameClip(teamId, gameId, file) {
     const ts = Date.now();
+    const nonce = createSecureUploadToken();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
-    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+    const clipPath = `team-videos/${ts}_${nonce}_game-clip_${teamId}_${gameId}_${safeName}`;
 
     if (await canUseLegacyImageStorage('game clip upload')) {
         try {
             const storageRef = ref(imageStorage, clipPath);
-            const snapshot = await uploadBytes(storageRef, file);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
             const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return {
                 url,
@@ -706,9 +718,9 @@ export async function uploadGameClip(teamId, gameId, file) {
         }
     }
 
-    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
+    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
     const fallbackRef = ref(storage, fallbackPath);
-    const fallbackSnapshot = await uploadBytes(fallbackRef, file);
+    const fallbackSnapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
     const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
     return {
         url: fallbackUrl,
@@ -730,11 +742,13 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
 
     const userId = getRequiredSignedInUserId();
     if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
-    const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
+    const ts = Date.now();
+    const nonce = createSecureUploadToken();
+    const path = `team-photos/${ts}_${nonce}_stat-sheet_${file.name}`;
     if (await canUseLegacyImageStorage('stat sheet upload')) {
         try {
             const storageRef = ref(imageStorage, path);
-            const snapshot = await uploadBytes(storageRef, file);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
             const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             console.log('Stat sheet URL (image storage):', downloadURL);
             return options?.returnUpload === true
@@ -747,9 +761,9 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         }
     }
 
-    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, Date.now());
+    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce);
     const fallbackRef = ref(storage, fallbackPath);
-    const snapshot = await uploadBytes(fallbackRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Stat sheet URL (main storage):', downloadURL);
     return options?.returnUpload === true
@@ -1501,7 +1515,7 @@ function buildMovedTeamMediaStoragePath(teamId, targetFolderId, item = {}) {
     const parsedPath = parseTeamMediaStoragePath(item.storagePath);
     const userId = parsedPath?.userId || String(item.uploadedBy || auth.currentUser?.uid || '').trim() || getRequiredSignedInUserId();
     const fileName = parsedPath?.fileName
-        || `${Date.now()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
+        || `${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
     return `team-media/${teamId}/${targetFolderId}/${userId}/${fileName}`;
 }
 
@@ -1587,26 +1601,25 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
     if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
     try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
         const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
         const mediaItem = {
@@ -1641,26 +1654,25 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
     if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
     try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
         const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
         const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
         const mediaItem = {
@@ -7039,9 +7051,9 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
-    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
+    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${createSecureUploadToken()}_${kind}_${safeName}`;
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
     const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     const mimeType = String(file.type || '').trim();
     const mediaType = kind === 'profile-photo'
@@ -9164,7 +9176,7 @@ export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
     if (await canUseLegacyImageStorage('drill upload')) {
         try {
             const storageRef = ref(imageStorage, imagePath);
-            const snapshot = await uploadBytes(storageRef, file);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
             const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
         } catch (error) {
@@ -9175,7 +9187,7 @@ export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
     }
 
     const fallbackRef = ref(storage, fallbackPath);
-    const snapshot = await uploadBytes(fallbackRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
     const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
 }
