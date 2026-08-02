@@ -324,16 +324,15 @@ export function TeamFees({ auth }: { auth: AuthState }) {
 
   const resolveCheckoutUrl = async (recipient: TeamFeeRecipientSummary) => {
     const existingUrl = getActiveCheckoutUrl(recipient);
-    if (existingUrl) return { checkoutUrl: existingUrl, created: false };
-
     const result = await initiateStaffTeamFeeCheckout({
       teamId,
       batchId: selectedBatchId,
       recipientId: recipient.id,
       user: auth.user
     });
+    const checkoutUrl = getTrustedStripeCheckoutUrl(result.checkoutUrl);
 
-    return { checkoutUrl: result.checkoutUrl, created: true };
+    return { checkoutUrl, created: existingUrl !== checkoutUrl };
   };
 
   const shareCheckoutLink = async (recipient: TeamFeeRecipientSummary) => {
@@ -668,6 +667,26 @@ function getActiveCheckoutUrl(recipient: TeamFeeRecipientSummary) {
   return String(recipient.checkoutStatus || '').trim().toLowerCase() === 'open' && String(recipient.checkoutUrl || '').trim()
     ? String(recipient.checkoutUrl || '').trim()
     : '';
+}
+
+function getTrustedStripeCheckoutUrl(value: unknown) {
+  const checkoutUrl = String(value || '').trim();
+  try {
+    const parsed = new URL(checkoutUrl);
+    if (
+      parsed.protocol === 'https:'
+      && parsed.hostname === 'checkout.stripe.com'
+      && !parsed.username
+      && !parsed.password
+      && !parsed.port
+    ) {
+      return checkoutUrl;
+    }
+  } catch {
+    // Fall through to the same recoverable error for every invalid destination.
+  }
+
+  throw new Error('Unable to get a trusted Stripe checkout link. Try again.');
 }
 
 function getCheckoutStatusLabel(recipient: TeamFeeRecipientSummary) {
