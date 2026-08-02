@@ -39,6 +39,7 @@ import {
     getImmediateAppTeamSearchResults,
     getKnownAppSearchTeams,
     getSearchHelpRoles,
+    loadAppSearchHelpResults,
     loadAppSearchTeams,
     resetAppSearchCache,
     scoreSearchText,
@@ -225,7 +226,7 @@ describe('React app search service', () => {
         ]);
     });
 
-    it('translates help role filters without affecting non-help search results', () => {
+    it('translates help role filters without affecting non-help search results', async () => {
         expect(getSearchHelpRoles(auth, 'All')).toEqual(['parent', 'coach', 'admin', 'platformAdmin', 'member']);
         expect(getSearchHelpRoles(auth, 'Coach')).toEqual(['coach']);
         expect(getSearchHelpRoles(auth, 'Member')).toEqual(['member']);
@@ -252,18 +253,28 @@ describe('React app search service', () => {
             teamId: 'team-1',
             playerId: 'player-1'
         }];
+        const withoutFilterHelp = await loadAppSearchHelpResults({
+            queryText: 'schedule',
+            auth
+        });
+        const withCoachFilterHelp = await loadAppSearchHelpResults({
+            queryText: 'schedule',
+            auth,
+            helpRoleFilter: 'Coach'
+        });
         const withoutFilter = computeAppSearchResults({
             queryText: 'schedule',
             auth,
             teams,
-            players
+            players,
+            helpResults: withoutFilterHelp
         });
         const withCoachFilter = computeAppSearchResults({
             queryText: 'schedule',
             auth,
             teams,
             players,
-            helpRoleFilter: 'Coach'
+            helpResults: withCoachFilterHelp
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
@@ -280,7 +291,7 @@ describe('React app search service', () => {
         });
     });
 
-    it('adds limited help results for meaningful queries without changing app result ordering', () => {
+    it('adds limited help results for meaningful queries without changing app result ordering', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([{
             id: 'account-password-reset',
             title: 'Reset a password',
@@ -292,15 +303,18 @@ describe('React app search service', () => {
             score: 42
         }]);
 
+        const shortHelpResults = await loadAppSearchHelpResults({ queryText: 'p', auth });
         const shortResults = computeAppSearchResults({
             queryText: 'p',
             auth,
             teams: [{ id: 'team-1', name: 'Panthers', sport: 'Basketball', isPublic: true }],
-            players: []
+            players: [],
+            helpResults: shortHelpResults
         });
         expect(shortResults.help).toEqual([]);
         expect(helpMocks.searchHelpKnowledge).not.toHaveBeenCalled();
 
+        const helpResults = await loadAppSearchHelpResults({ queryText: 'password reset', auth });
         const results = computeAppSearchResults({
             queryText: 'password reset',
             auth,
@@ -313,7 +327,8 @@ describe('React app search service', () => {
                 route: '/players/team-1/player-1',
                 teamId: 'team-1',
                 playerId: 'player-1'
-            }]
+            }],
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
@@ -356,7 +371,7 @@ describe('React app search service', () => {
         expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
     });
 
-    it('passes the optional help role filter only to help search results', () => {
+    it('passes the optional help role filter only to help search results', async () => {
         const helpDocs = [{
             id: 'parent-guide',
             title: 'Parent guide',
@@ -395,8 +410,10 @@ describe('React app search service', () => {
             }]
         };
 
-        const allResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'all' });
-        const coachResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'coach' });
+        const allHelpResults = await loadAppSearchHelpResults({ queryText: 'guide', auth, helpRoleFilter: 'all' });
+        const coachHelpResults = await loadAppSearchHelpResults({ queryText: 'guide', auth, helpRoleFilter: 'coach' });
+        const allResults = computeAppSearchResults({ ...baseSearchInput, helpResults: allHelpResults });
+        const coachResults = computeAppSearchResults({ ...baseSearchInput, helpResults: coachHelpResults });
         const nonHelpByKind = (results) => ({
             action: results.flat.filter((item) => item.kind === 'action'),
             team: results.flat.filter((item) => item.kind === 'team'),
@@ -418,7 +435,7 @@ describe('React app search service', () => {
 
     });
 
-    it('maps platform admin help searches to admin help docs', () => {
+    it('maps platform admin help searches to admin help docs', async () => {
         const adminDoc = {
             id: 'admin-guide',
             title: 'Admin guide',
@@ -433,16 +450,22 @@ describe('React app search service', () => {
             roleFilter === 'admin' ? [adminDoc] : []
         ));
 
+        const platformAdminAuth = {
+            ...auth,
+            user: { ...auth.user, roles: ['platformAdmin'] },
+            isPlatformAdmin: true
+        };
+        const helpResults = await loadAppSearchHelpResults({
+            queryText: 'guide',
+            auth: platformAdminAuth,
+            helpRoleFilter: 'platformAdmin'
+        });
         const results = computeAppSearchResults({
             queryText: 'guide',
-            auth: {
-                ...auth,
-                user: { ...auth.user, roles: ['platformAdmin'] },
-                isPlatformAdmin: true
-            },
+            auth: platformAdminAuth,
             teams: [],
             players: [],
-            helpRoleFilter: 'platformAdmin'
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
@@ -454,7 +477,7 @@ describe('React app search service', () => {
         expect(results.help.map((item) => item.title)).toEqual(['Admin guide']);
     });
 
-    it('passes selected help roles and excludes nonmatching help results', () => {
+    it('passes selected help roles and excludes nonmatching help results', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
                 id: 'live-tracker-coach-guide',
@@ -478,12 +501,17 @@ describe('React app search service', () => {
             }
         ]);
 
+        const helpResults = await loadAppSearchHelpResults({
+            queryText: 'live tracker',
+            auth,
+            helpRoleFilter: 'member'
+        });
         const results = computeAppSearchResults({
             queryText: 'live tracker',
             auth,
             teams: [],
             players: [],
-            helpRoleFilter: 'member'
+            helpResults
         });
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
