@@ -1738,12 +1738,20 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
       await updateTeam(normalizedTeamId, payload);
     }
   } catch (error) {
-    if (nativePhotoPath && (error as { commitStateUnknown?: boolean })?.commitStateUnknown !== true) {
-      await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
-    } else if (webPhotoPath && isDefinitiveFirestoreWriteFailure(error)) {
-      await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+    const uploadedPhotoPath = nativePhotoPath || webPhotoPath;
+    const persistenceState = uploadedPhotoPath
+      ? isDefinitiveFirestoreWriteFailure(error)
+        ? 'not-committed' as const
+        : await getTeamPhotoPersistenceState(normalizedTeamId, uploadedPhotoPath)
+      : 'unknown' as const;
+    if (persistenceState !== 'committed') {
+      if (persistenceState === 'not-committed' && nativePhotoPath) {
+        await import('./nativeStorageUpload').then((module) => module.deleteNativePrimaryStorageFile(nativePhotoPath)).catch(() => undefined);
+      } else if (persistenceState === 'not-committed' && webPhotoPath) {
+        await Promise.resolve(deleteLegacyImageUpload(webPhotoPath)).catch(() => undefined);
+      }
+      throw error;
     }
-    throw error;
   }
 
   if (previousPhotoPath && previousPhotoPath !== photoPath) {
@@ -3072,6 +3080,18 @@ async function getPlayerPhotoPersistenceState(teamId: string, playerId: string, 
   try {
     const privateProfile = await getPlayerPrivateProfile(teamId, playerId);
     return cleanString(privateProfile?.photoPath) === expectedPhotoPath
+      ? 'committed' as const
+      : 'not-committed' as const;
+  } catch {
+    return 'unknown' as const;
+  }
+}
+
+async function getTeamPhotoPersistenceState(teamId: string, expectedPhotoPath: string) {
+  if (!expectedPhotoPath) return 'not-committed' as const;
+  try {
+    const team = await getTeam(teamId, { includeInactive: true });
+    return cleanString(team?.photoPath) === expectedPhotoPath
       ? 'committed' as const
       : 'not-committed' as const;
   } catch {

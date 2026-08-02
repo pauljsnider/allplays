@@ -36,6 +36,7 @@ describe('public registration Firestore boundary', () => {
     expect(registrationBlock).toContain('match /checkoutAttempts/{attemptId}');
     expect(registrationBlock).toContain('allow read, create, update, delete: if false;');
     expect(registrationBlock).not.toContain('allow create: if request.auth == null');
+    expect(rules.match(/'checkoutAttemptToken'/g)).toHaveLength(4);
   });
 
   describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('rules engine coverage', () => {
@@ -104,6 +105,9 @@ describe('public registration Firestore boundary', () => {
       await assertFails(updateDoc(existingRef, {
         checkoutCreationReservationId: 'forged-reservation',
         checkoutCreationRequest: { idempotencyKey: 'forged' }
+      }));
+      await assertFails(updateDoc(existingRef, {
+        checkoutAttemptToken: 'forgedcheckouttoken123'
       }));
       await assertFails(setDoc(
         doc(ownerDb, 'teams', 'team-1', 'registrationForms', 'published-form', 'registrations', 'forged-checkout'),

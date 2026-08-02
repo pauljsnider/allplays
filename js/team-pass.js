@@ -40,11 +40,29 @@ export async function createTeamPassCheckout({ teamId, seasonId, tier = 'team-pa
 
 export async function redirectToTeamPassCheckout(options) {
     const result = await createTeamPassCheckout(options);
-    if (!result.checkoutUrl) {
-        throw new Error('Checkout URL was not returned.');
+    const checkoutUrl = getCanonicalStripeCheckoutUrl(result.checkoutUrl);
+    if (!checkoutUrl) throw new Error('Stripe returned an invalid checkout destination.');
+    window.location.href = checkoutUrl;
+    return { ...result, checkoutUrl };
+}
+
+export function getCanonicalStripeCheckoutUrl(value) {
+    if (typeof value !== 'string' || !value || value !== value.trim()) return '';
+    try {
+        const destination = new URL(value);
+        if (
+            destination.protocol === 'https:' &&
+            destination.hostname === 'checkout.stripe.com' &&
+            !destination.username &&
+            !destination.password &&
+            !destination.port &&
+            destination.pathname &&
+            destination.pathname !== '/'
+        ) return value;
+    } catch {
+        // Invalid destinations use the same fail-closed result.
     }
-    window.location.href = result.checkoutUrl;
-    return result;
+    return '';
 }
 
 function escapeTeamPassHtml(value) {

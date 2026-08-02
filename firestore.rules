@@ -1158,6 +1158,7 @@ service cloud.firestore {
                'checkoutAmountCents',
                'checkoutCurrency',
                'checkoutCreatedAt',
+               'checkoutAttemptToken',
                'publicCheckoutCapabilityHash'
              ]);
     }
@@ -1177,6 +1178,7 @@ service cloud.firestore {
                'checkoutAmountCents',
                'checkoutCurrency',
                'checkoutCreatedAt',
+               'checkoutAttemptToken',
                'publicCheckoutCapabilityHash'
              ]);
     }

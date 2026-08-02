@@ -149,7 +149,7 @@ async function mockRegistrationModules(page, {
         });
     });
 
-    await page.route(/\/js\/stripe-service\.js$/, async (route) => {
+    await page.route(/\/js\/stripe-service\.js(?:\?v=\d+)?$/, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/javascript',

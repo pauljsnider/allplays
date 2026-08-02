@@ -50,6 +50,8 @@ const parentFeesServiceMock = `
             id: 'fee-1',
             title: 'Team dues',
             teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
             teamName: 'Bears',
             playerName: 'Pat Star',
             status: 'open',
@@ -64,7 +66,8 @@ const parentFeesServiceMock = `
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
         }];
     }
-    export async function initiateParentTeamFeeCheckout() {
+    export async function initiateParentTeamFeeCheckout(teamId, batchId, recipientId) {
+        window.__teamFeeCheckoutCalls.push({ teamId, batchId, recipientId });
         return { success: true, checkoutUrl: 'https://checkout.stripe.com/c/pay/created-fee' };
     }
 `;
@@ -216,6 +219,7 @@ async function mockParentToolsModules(page, { paymentsEnabled = false } = {}) {
             };
         }
         window.__openedPublicUrls = [];
+        window.__teamFeeCheckoutCalls = [];
         window.__sharedUrls = [];
         window.__accessRequests = [];
         window.__publicTeamLoads = 0;
@@ -587,7 +591,12 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'View details' }).click();
     await expect(page.getByText('Line items')).toBeVisible();
     await page.getByRole('button', { name: /Pay fee/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/fee');
+    await expect.poll(() => page.evaluate(() => window.__teamFeeCheckoutCalls)).toEqual([{
+        teamId: 'team-1',
+        batchId: 'batch-1',
+        recipientId: 'recipient-1'
+    }]);
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://checkout.stripe.com/c/pay/created-fee');
 
     await page.getByRole('navigation', { name: 'Family tools' }).getByRole('link', { name: 'Calendar' }).click();
     await expect(page.getByText('Calendar tools')).toBeVisible();

@@ -735,6 +735,68 @@ function buildTeamFeeCheckoutAttemptRef(recipientRef) {
   return recipientRef.collection('checkoutAttempts').doc('current');
 }
 
+function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
+  return [
+    'checkoutUrl',
+    'paymentLink',
+    'stripeCheckoutSessionId',
+    'checkoutAttemptToken',
+    'checkoutAmountCents',
+    'checkoutCreationPayerUid',
+    'checkoutCreationAmountCents',
+    'checkoutCreationRequest'
+  ].some((field) => recipient[field] !== undefined && recipient[field] !== null && recipient[field] !== '');
+}
+
+async function migrateLegacyReadableTeamFeeCheckoutState(recipientRef) {
+  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [recipientSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(recipientRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
+    if (!recipientSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const recipient = recipientSnap.data() || {};
+    const existingAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    if (!hasLegacyReadableTeamFeeCheckoutState(recipient)) return existingAttempt;
+    const existingAuthoritativeAttempt = Object.fromEntries(
+      Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    );
+    const privateAttempt = {
+      version: 1,
+      ...(recipient.checkoutUrl || recipient.paymentLink ? { checkoutUrl: recipient.checkoutUrl || recipient.paymentLink } : {}),
+      ...(recipient.checkoutStatus ? { checkoutStatus: recipient.checkoutStatus } : {}),
+      ...(recipient.stripeCheckoutSessionId ? { stripeCheckoutSessionId: recipient.stripeCheckoutSessionId } : {}),
+      ...(recipient.checkoutAttemptToken ? { checkoutAttemptToken: recipient.checkoutAttemptToken } : {}),
+      ...(recipient.checkoutAmountCents ? { checkoutAmountCents: recipient.checkoutAmountCents } : {}),
+      ...(recipient.checkoutCreationReservationId ? { reservationId: recipient.checkoutCreationReservationId } : {}),
+      ...(recipient.checkoutCreationPayerUid ? { payerUid: recipient.checkoutCreationPayerUid } : {}),
+      ...(recipient.checkoutCreationAmountCents ? { amountCents: recipient.checkoutCreationAmountCents } : {}),
+      ...(recipient.checkoutCreationRequest ? { checkoutCreationRequest: recipient.checkoutCreationRequest } : {}),
+      createdAt: recipient.checkoutCreatedAt || now,
+      updatedAt: now,
+      ...existingAuthoritativeAttempt
+    };
+    transaction.set(checkoutAttemptRef, privateAttempt, { merge: true });
+    transaction.set(recipientRef, {
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
+      checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return privateAttempt;
+  });
+}
+
 function buildTeamFeeCheckoutIdempotencyKey(input, checkoutCreationReservationId) {
   const hash = crypto.createHash('sha256')
     .update([
@@ -843,22 +905,32 @@ async function getTeamFeeCheckoutPersistenceState({
   recipientRef,
   reservationId,
   session,
-  amountCents
+  amountCents,
+  payerUid
 }) {
   try {
-    const recipientSnap = await recipientRef.get();
+    const attemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+    const [recipientSnap, attemptSnap] = await Promise.all([recipientRef.get(), attemptRef.get()]);
     if (!recipientSnap.exists) return 'not-committed';
     const recipient = recipientSnap.data() || {};
-    const persistedSessionId = String(recipient.stripeCheckoutSessionId || '').trim();
+    const attempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+    const persistedSessionId = String(attempt.stripeCheckoutSessionId || '').trim();
     if (
       persistedSessionId === String(session?.id || '').trim()
-      && recipient.checkoutUrl === session?.url
-      && recipient.checkoutStatus === 'open'
+      && attempt.checkoutUrl === session?.url
+      && attempt.checkoutStatus === 'open'
+      && String(attempt.payerUid || '').trim() === payerUid
+      && Math.round(Number(attempt.checkoutAmountCents || attempt.amountCents || 0)) === amountCents
+      && String(recipient.checkoutCreationReservationId || '').trim() === reservationId
       && getTeamFeeBalanceCents(recipient) === amountCents
     ) {
       return 'committed';
     }
-    if (String(recipient.checkoutCreationReservationId || '').trim() === reservationId) {
+    if (
+      String(recipient.checkoutCreationReservationId || '').trim() === reservationId
+      && String(attempt.reservationId || '').trim() === reservationId
+      && !persistedSessionId
+    ) {
       return 'not-committed';
     }
     return 'unknown';
@@ -903,14 +975,15 @@ async function reserveTeamFeeCheckoutCreation({
       throw new functions.https.HttpsError('permission-denied', 'You no longer have access to pay this team fee.');
     }
 
-    const latestSessionId = String(latestRecipient.stripeCheckoutSessionId || '').trim();
+    const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+    const latestSessionId = String(latestAttempt.stripeCheckoutSessionId || '').trim();
     if (latestSessionId !== String(observedSessionId || '').trim()) {
       throw new functions.https.HttpsError('aborted', 'The team fee checkout changed. Retry to use the current session.');
     }
 
     const existingReservationId = String(latestRecipient.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
-      const existingAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      const existingAttempt = latestAttempt;
       const existingPayerUid = String(existingAttempt.payerUid || '').trim();
       const existingAmountCents = Math.round(Number(existingAttempt.amountCents || 0));
       if (existingPayerUid !== uid || existingAmountCents !== amountCents) {
@@ -953,6 +1026,11 @@ async function reserveTeamFeeCheckoutCreation({
     transaction.set(recipientRef, {
       checkoutCreationReservationId: proposedReservationId,
       checkoutCreationStartedAt: now,
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
       checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
       checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
       checkoutCreationRequest: admin.firestore.FieldValue.delete(),
@@ -986,6 +1064,11 @@ async function clearTeamFeeCheckoutCreationReservation(recipientRef, reservation
     transaction.set(recipientRef, {
       checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
       checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
       checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
       checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
       checkoutCreationRequest: admin.firestore.FieldValue.delete(),
@@ -1566,10 +1649,6 @@ function buildPublicPendingRegistrationRecord({
     record.submittedByUserId = submittedByUid;
   }
 
-  if (input.checkoutAttemptToken) {
-    record.checkoutAttemptToken = input.checkoutAttemptToken;
-  }
-
   if (form.backgroundCheck?.enabled === true) {
     record.screeningRequired = true;
     record.screeningStatus = form.backgroundCheck.initialScreeningStatus;
@@ -1865,6 +1944,14 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     });
 
     transaction.set(registrationRef, registrationRecord);
+    if (input.checkoutAttemptToken) {
+      transaction.set(buildRegistrationCheckoutAttemptRef(registrationRef), {
+        version: 1,
+        checkoutAttemptToken: input.checkoutAttemptToken,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
     result = {
       success: true,
       status,
@@ -2068,45 +2155,54 @@ function getRegistrationCustomerEmail(registration = {}) {
     .find(Boolean) || undefined;
 }
 
-function getRegistrationCheckoutAttemptToken(registration = {}) {
-  return normalizeCheckoutAttemptToken(registration.checkoutAttemptToken);
+function getRegistrationCheckoutAuthorityState(registration = {}, checkoutAttempt = {}) {
+  return {
+    ...registration,
+    ...checkoutAttempt,
+    checkoutAttemptToken: checkoutAttempt.checkoutAttemptToken || registration.checkoutAttemptToken || '',
+    publicCheckoutCapabilityHash: checkoutAttempt.publicCheckoutCapabilityHash || registration.publicCheckoutCapabilityHash || ''
+  };
 }
 
-function registrationCheckoutAttemptMatches(registration = {}, input = {}) {
-  const registrationToken = getRegistrationCheckoutAttemptToken(registration);
+function getRegistrationCheckoutAttemptToken(checkoutAuthority = {}) {
+  return normalizeCheckoutAttemptToken(checkoutAuthority.checkoutAttemptToken);
+}
+
+function registrationCheckoutAttemptMatches(checkoutAuthority = {}, input = {}) {
+  const registrationToken = getRegistrationCheckoutAttemptToken(checkoutAuthority);
   const inputToken = normalizeCheckoutAttemptToken(input.checkoutAttemptToken);
   return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
-function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {}) {
-  const registrationToken = getRegistrationCheckoutAttemptToken(registration);
+function registrationCheckoutAttemptStrictlyMatches(checkoutAuthority = {}, input = {}) {
+  const registrationToken = getRegistrationCheckoutAttemptToken(checkoutAuthority);
   const inputToken = normalizeCheckoutAttemptToken(input.checkoutAttemptToken);
   return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
-function registrationPublicCheckoutCapabilityMatches(registration = {}, input = {}) {
-  const registrationCapabilityHash = String(registration.publicCheckoutCapabilityHash || '').trim();
+function registrationPublicCheckoutCapabilityMatches(checkoutAuthority = {}, input = {}) {
+  const registrationCapabilityHash = String(checkoutAuthority.publicCheckoutCapabilityHash || '').trim();
   const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
   return Boolean(registrationCapabilityHash && inputCapabilityHash && registrationCapabilityHash === inputCapabilityHash);
 }
 
-function registrationCheckoutAuthorityMatches(registration = {}, input = {}) {
-  return registrationPublicCheckoutCapabilityMatches(registration, input)
-    || registrationCheckoutAttemptMatches(registration, input);
+function registrationCheckoutAuthorityMatches(checkoutAuthority = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)
+    || registrationCheckoutAttemptMatches(checkoutAuthority, input);
 }
 
-function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input = {}) {
-  return registrationPublicCheckoutCapabilityMatches(registration, input)
-    || registrationCheckoutAttemptStrictlyMatches(registration, input);
+function registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(checkoutAuthority, input)
+    || registrationCheckoutAttemptStrictlyMatches(checkoutAuthority, input);
 }
 
-function canReuseRegistrationCheckoutSession(registration = {}, amountCents, input = {}) {
+function canReuseRegistrationCheckoutSession(checkoutAuthority = {}, amountCents, input = {}) {
   return Boolean(
-    isCanonicalStripeCheckoutUrl(registration.checkoutUrl)
-    && registration.stripeCheckoutSessionId
-    && registration.checkoutStatus === 'open'
-    && Number(registration.checkoutAmountCents || 0) === amountCents
-    && registrationCheckoutAuthorityMatches(registration, input)
+    isCanonicalStripeCheckoutUrl(checkoutAuthority.checkoutUrl)
+    && checkoutAuthority.stripeCheckoutSessionId
+    && checkoutAuthority.checkoutStatus === 'open'
+    && Number(checkoutAuthority.checkoutAmountCents || 0) === amountCents
+    && registrationCheckoutAuthorityMatches(checkoutAuthority, input)
   );
 }
 
@@ -2248,20 +2344,29 @@ async function resolveRegistrationCheckoutInput(input = {}) {
   }
 
   const capabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
-  const querySnap = await firestore.collectionGroup('registrations')
+  let querySnap = await firestore.collectionGroup('checkoutAttempts')
     .where('publicCheckoutCapabilityHash', '==', capabilityHash)
     .limit(2)
     .get();
+
+  let legacyRegistrationLookup = false;
+  if (querySnap.empty) {
+    querySnap = await firestore.collectionGroup('registrations')
+      .where('publicCheckoutCapabilityHash', '==', capabilityHash)
+      .limit(2)
+      .get();
+    legacyRegistrationLookup = true;
+  }
 
   if (querySnap.empty || querySnap.size !== 1) {
     throw buildPublicCheckoutCapabilityError();
   }
 
-  const registrationSnap = querySnap.docs[0];
-  const pathParts = registrationSnap.ref.path.split('/');
+  const checkoutAttemptSnap = querySnap.docs[0];
+  const pathParts = checkoutAttemptSnap.ref.path.split('/');
   const resolvedTeamId = pathParts[1] || '';
   const resolvedFormId = pathParts[3] || '';
-  const resolvedRegistrationId = pathParts[5] || registrationSnap.id;
+  const resolvedRegistrationId = pathParts[5] || '';
   if ((input.teamId && input.teamId !== resolvedTeamId) || (input.formId && input.formId !== resolvedFormId)) {
     throw buildPublicCheckoutCapabilityError();
   }
@@ -2271,7 +2376,8 @@ async function resolveRegistrationCheckoutInput(input = {}) {
     teamId: resolvedTeamId,
     formId: resolvedFormId,
     registrationId: resolvedRegistrationId,
-    registrationRef: registrationSnap.ref,
+    registrationRef: firestore.doc(pathParts.slice(0, 6).join('/')),
+    checkoutAttemptRef: legacyRegistrationLookup ? null : checkoutAttemptSnap.ref,
     resolvedPublicCheckoutCapabilityHash: capabilityHash
   };
 }
@@ -2357,12 +2463,17 @@ const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNT
 
 async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
   const registrationRef = docSnap.ref;
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   let result = null;
   await firestore.runTransaction(async (transaction) => {
-    const freshSnap = await transaction.get(registrationRef);
+    const [freshSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
     if (!freshSnap.exists) return;
 
     const registration = freshSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
     const reminder = registration.paymentReminder || {};
     const nextReminderAt = String(reminder.nextReminderAt || '').trim();
     if (!nextReminderAt || nextReminderAt > nowIso) return;
@@ -2403,7 +2514,10 @@ async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIs
       eventId: reminder.lastEventId || 'manual',
       sequence: `followup_${reminderNumber}`
     });
-    const retryUrl = String(reminder.retryUrl || '').trim() || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
+    const legacyRetryUrl = String(reminder.retryUrl || '').trim();
+    const retryUrl = String(checkoutAttempt.paymentRetryUrl || '').trim()
+      || legacyRetryUrl
+      || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
     const form = {
       programName: registration.programName || 'Program registration'
     };
@@ -2424,10 +2538,16 @@ async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIs
     });
 
     transaction.set(buildRegistrationReminderMailRef(mailDocId), mailJob);
+    if (retryUrl && (!checkoutAttempt.paymentRetryUrl || legacyRetryUrl)) {
+      transaction.set(checkoutAttemptRef, {
+        paymentRetryUrl: retryUrl,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
     transaction.update(registrationRef, {
+      'paymentReminder.retryUrl': admin.firestore.FieldValue.delete(),
       'paymentReminder.status': 'active',
       'paymentReminder.recipientEmail': recipientEmail,
-      'paymentReminder.retryUrl': retryUrl,
       'paymentReminder.reminderCount': reminderNumber,
       'paymentReminder.lastQueuedAt': nowIso,
       'paymentReminder.lastMailId': mailDocId,
@@ -2490,13 +2610,15 @@ async function queueDueRegistrationFailedPaymentReminders(now = new Date()) {
 async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
   const retryCapacityReservationId = String(options.retryCapacityReservationId || '').trim();
 
   return firestore.runTransaction(async (transaction) => {
-    const [formSnap, registrationSnap] = await Promise.all([
+    const [formSnap, registrationSnap, checkoutAttemptSnap] = await Promise.all([
       transaction.get(formRef),
-      transaction.get(registrationRef)
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
     ]);
     if (!formSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -2507,10 +2629,14 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
 
     const form = formSnap.data() || {};
     const registration = registrationSnap.data() || {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(
+      registration,
+      checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {}
+    );
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
-    if (!registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (!registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to retry this payment.');
     }
     if (registration.registrationCapacityReleased !== true) {
@@ -2571,6 +2697,8 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     }
 
     const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
@@ -2583,19 +2711,18 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
     if (registration.paymentStatus === 'paid') {
       throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
     }
-    if (!registrationCheckoutAuthorityMatches(registration, input)) {
+    if (!registrationCheckoutAuthorityMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
     }
-    if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
+    if (canReuseRegistrationCheckoutSession(checkoutAuthority, amountCents, input)) {
       return {
         reserved: false,
-        checkoutUrl: registration.checkoutUrl,
-        sessionId: registration.stripeCheckoutSessionId
+        checkoutUrl: checkoutAuthority.checkoutUrl,
+        sessionId: checkoutAuthority.stripeCheckoutSessionId
       };
     }
     const existingReservationId = String(registration.checkoutCreationReservationId || '').trim();
     if (existingReservationId) {
-      const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
       if (
         String(checkoutAttempt.reservationId || '').trim() === existingReservationId
         && isReusableRegistrationCheckoutCreationRequest(checkoutAttempt.checkoutCreationRequest, checkoutCreationRequest)
@@ -2614,6 +2741,13 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       checkoutCreationReservationId,
       checkoutCreationStartedAt: now,
       checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCurrency: admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
     transaction.set(checkoutAttemptRef, {
@@ -2621,9 +2755,11 @@ async function reserveRegistrationCheckoutCreation(input, options = {}) {
       reservationId: checkoutCreationReservationId,
       amountCents,
       checkoutCreationRequest,
+      checkoutAttemptToken: input.checkoutAttemptToken || checkoutAuthority.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: checkoutAuthority.publicCheckoutCapabilityHash || admin.firestore.FieldValue.delete(),
       createdAt: now,
       updatedAt: now
-    });
+    }, { merge: true });
     return {
       reserved: true,
       reservationId: checkoutCreationReservationId,
@@ -2656,9 +2792,82 @@ async function clearRegistrationCheckoutCreationReservation(input, checkoutCreat
       checkoutAttemptSnap.exists
       && String(checkoutAttemptSnap.data()?.reservationId || '').trim() === checkoutCreationReservationId
     ) {
-      transaction.delete(checkoutAttemptRef);
+      transaction.set(checkoutAttemptRef, {
+        reservationId: admin.firestore.FieldValue.delete(),
+        amountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        checkoutStatus: admin.firestore.FieldValue.delete(),
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: admin.firestore.FieldValue.delete(),
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
     }
     return true;
+  });
+}
+
+function hasLegacyReadableRegistrationCheckoutState(registration = {}) {
+  return [
+    'checkoutAttemptToken',
+    'publicCheckoutCapabilityHash',
+    'checkoutUrl',
+    'paymentLink',
+    'stripeCheckoutSessionId',
+    'checkoutAmountCents',
+    'checkoutCurrency',
+    'checkoutCreationRequest'
+  ].some((field) => registration[field] !== undefined && registration[field] !== null && registration[field] !== '');
+}
+
+async function migrateLegacyReadableRegistrationCheckoutState(registrationRef) {
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  return firestore.runTransaction(async (transaction) => {
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
+    ]);
+    if (!registrationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+    const registration = registrationSnap.data() || {};
+    const existingAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    if (!hasLegacyReadableRegistrationCheckoutState(registration)) return existingAttempt;
+    const existingAuthoritativeAttempt = Object.fromEntries(
+      Object.entries(existingAttempt).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    );
+    const privateAttempt = {
+      version: 1,
+      ...(registration.checkoutAttemptToken ? { checkoutAttemptToken: registration.checkoutAttemptToken } : {}),
+      ...(registration.publicCheckoutCapabilityHash ? { publicCheckoutCapabilityHash: registration.publicCheckoutCapabilityHash } : {}),
+      ...(registration.checkoutUrl || registration.paymentLink ? { checkoutUrl: registration.checkoutUrl || registration.paymentLink } : {}),
+      ...(registration.checkoutStatus ? { checkoutStatus: registration.checkoutStatus } : {}),
+      ...(registration.stripeCheckoutSessionId ? { stripeCheckoutSessionId: registration.stripeCheckoutSessionId } : {}),
+      ...(registration.stripePaymentStatus ? { stripePaymentStatus: registration.stripePaymentStatus } : {}),
+      ...(registration.checkoutAmountCents ? { checkoutAmountCents: registration.checkoutAmountCents } : {}),
+      ...(registration.checkoutCurrency ? { checkoutCurrency: registration.checkoutCurrency } : {}),
+      ...(registration.checkoutCreationReservationId ? { reservationId: registration.checkoutCreationReservationId } : {}),
+      ...(registration.checkoutCreationRequest ? { checkoutCreationRequest: registration.checkoutCreationRequest } : {}),
+      createdAt: registration.checkoutCreatedAt || now,
+      updatedAt: now,
+      ...existingAuthoritativeAttempt
+    };
+    transaction.set(checkoutAttemptRef, privateAttempt, { merge: true });
+    transaction.set(registrationRef, {
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCurrency: admin.firestore.FieldValue.delete(),
+      checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+    return privateAttempt;
   });
 }
 
@@ -2670,19 +2879,27 @@ async function getRegistrationCheckoutPersistenceState({
   currency
 }) {
   try {
-    const registrationSnap = await registrationRef.get();
+    const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
+    const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+      registrationRef.get(),
+      checkoutAttemptRef.get()
+    ]);
     if (!registrationSnap.exists) return 'not-committed';
     const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
     if (
-      String(registration.stripeCheckoutSessionId || '').trim() === String(session?.id || '').trim()
-      && registration.checkoutUrl === session?.url
-      && registration.checkoutStatus === 'open'
-      && Number(registration.checkoutAmountCents || 0) === amountCents
-      && String(registration.checkoutCurrency || '').toLowerCase() === currency
+      String(checkoutAttempt.stripeCheckoutSessionId || '').trim() === String(session?.id || '').trim()
+      && checkoutAttempt.checkoutUrl === session?.url
+      && checkoutAttempt.checkoutStatus === 'open'
+      && Number(checkoutAttempt.checkoutAmountCents || 0) === amountCents
+      && String(checkoutAttempt.checkoutCurrency || '').toLowerCase() === currency
     ) {
       return 'committed';
     }
-    if (String(registration.checkoutCreationReservationId || '').trim() === reservationId) {
+    if (
+      String(registration.checkoutCreationReservationId || '').trim() === reservationId
+      && String(checkoutAttempt.reservationId || '').trim() === reservationId
+    ) {
       return 'not-committed';
     }
     return 'unknown';
@@ -2698,12 +2915,14 @@ async function getRegistrationCheckoutPersistenceState({
 async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
+  const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   return firestore.runTransaction(async (transaction) => {
-    const [formSnap, registrationSnap] = await Promise.all([
+    const [formSnap, registrationSnap, checkoutAttemptSnap] = await Promise.all([
       transaction.get(formRef),
-      transaction.get(registrationRef)
+      transaction.get(registrationRef),
+      transaction.get(checkoutAttemptRef)
     ]);
     if (!formSnap.exists) {
       throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -2714,12 +2933,14 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
 
     const form = formSnap.data() || {};
     const registration = registrationSnap.data() || {};
+    const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+    const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
-    if (registration.publicCheckoutCapabilityHash) {
+    if (checkoutAuthority.publicCheckoutCapabilityHash) {
       const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
-      if (!inputCapabilityHash || inputCapabilityHash !== String(registration.publicCheckoutCapabilityHash || '')) {
+      if (!inputCapabilityHash || inputCapabilityHash !== String(checkoutAuthority.publicCheckoutCapabilityHash || '')) {
         throw buildPublicCheckoutCapabilityError();
       }
     }
@@ -2745,6 +2966,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     const registrationUpdate = {
       ...statusUpdate,
       retryCapacityReservationId: admin.firestore.FieldValue.delete(),
+      checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+      publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+      checkoutUrl: admin.firestore.FieldValue.delete(),
+      paymentLink: admin.firestore.FieldValue.delete(),
+      stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+      checkoutAmountCents: admin.firestore.FieldValue.delete(),
+      checkoutCurrency: admin.firestore.FieldValue.delete(),
       updatedAt: now
     };
 
@@ -2761,13 +2989,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     if (!checkoutIsOpen && !canReleasePreCheckoutReservation && !canReleaseRetryCapacityReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
-    if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (canReleaseRetryCapacityReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+    if (canReleaseRetryCapacityReservation && !registrationCheckoutAuthorityStrictlyMatches(checkoutAuthority, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(registration, input)) {
+    if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(checkoutAuthority, input)) {
       if (!canReleaseRetryCapacityReservation) {
         throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability does not match.');
       }
@@ -2802,10 +3030,27 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     let nextPublicCheckoutCapability = '';
     if (options.suppressPublicCheckoutCapabilityRotation !== true) {
       nextPublicCheckoutCapability = createRawPublicCheckoutCapability();
-      capacityReleaseUpdate.publicCheckoutCapabilityHash = hashPublicCheckoutCapability(nextPublicCheckoutCapability);
     }
 
     transaction.set(registrationRef, capacityReleaseUpdate, { merge: true });
+    if (checkoutAttemptSnap.exists || nextPublicCheckoutCapability) {
+      transaction.set(checkoutAttemptRef, {
+        checkoutAttemptToken: checkoutAuthority.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: nextPublicCheckoutCapability
+          ? hashPublicCheckoutCapability(nextPublicCheckoutCapability)
+          : checkoutAuthority.publicCheckoutCapabilityHash || admin.firestore.FieldValue.delete(),
+        reservationId: admin.firestore.FieldValue.delete(),
+        amountCents: admin.firestore.FieldValue.delete(),
+        checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        checkoutStatus: admin.firestore.FieldValue.delete(),
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        stripePaymentStatus: admin.firestore.FieldValue.delete(),
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true });
+    }
 
     return { released, nextPublicCheckoutCapability };
   });
@@ -5541,8 +5786,20 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
 
   const amountCents = getTeamFeeBalanceCents(recipient);
   const stripe = createStripeClient();
-  const persistedSessionId = String(recipient.stripeCheckoutSessionId || '').trim();
+  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
+  let checkoutAttemptSnap = await checkoutAttemptRef.get();
+  let checkoutAttempt = hasLegacyReadableTeamFeeCheckoutState(recipient)
+    ? await migrateLegacyReadableTeamFeeCheckoutState(recipientRef)
+    : (checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {});
+  let persistedSessionId = String(checkoutAttempt.stripeCheckoutSessionId || '').trim();
   if (persistedSessionId) {
+    const storedPayerUid = String(checkoutAttempt.payerUid || '').trim();
+    if (storedPayerUid && storedPayerUid !== context.auth.uid) {
+      throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+    }
+    if (Math.round(Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents || 0)) !== amountCents) {
+      throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+    }
     let existingSession;
     try {
       existingSession = await stripe.checkout.sessions.retrieve(persistedSessionId);
@@ -5554,11 +5811,30 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     }
 
     if (existingSession) {
+      const providerPayerUid = String(existingSession.metadata?.payerUid || '').trim();
+      if (storedPayerUid && providerPayerUid && storedPayerUid !== providerPayerUid) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout has conflicting payer metadata.');
+      }
+      const authoritativePayerUid = storedPayerUid || providerPayerUid;
+      if (!authoritativePayerUid) {
+        throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout is missing payer ownership.');
+      }
+      if (!storedPayerUid) {
+        await checkoutAttemptRef.set({
+          payerUid: authoritativePayerUid,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        checkoutAttempt = { ...checkoutAttempt, payerUid: authoritativePayerUid };
+      }
+      if (authoritativePayerUid !== context.auth.uid) {
+        throw new functions.https.HttpsError('failed-precondition', 'An active checkout belongs to another payer or balance.');
+      }
       const reuseFailure = getTeamFeeCheckoutReuseFailure({
-        recipient,
+        recipient: checkoutAttempt,
         session: existingSession,
         input,
-        amountCents
+        amountCents,
+        payerUid: context.auth.uid
       });
       if (!reuseFailure) {
         return { checkoutUrl: existingSession.url, sessionId: existingSession.id };
@@ -5569,6 +5845,14 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
         throw new functions.https.HttpsError('failed-precondition', 'The existing team fee checkout could not be safely reused.');
       }
     }
+
+    const existingReservationId = String(checkoutAttempt.reservationId || recipient.checkoutCreationReservationId || '').trim();
+    if (existingReservationId) {
+      await clearTeamFeeCheckoutCreationReservation(recipientRef, existingReservationId);
+    }
+    checkoutAttemptSnap = await checkoutAttemptRef.get();
+    checkoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+    persistedSessionId = String(checkoutAttempt.stripeCheckoutSessionId || '').trim();
   }
 
   const { appUrl } = getStripeConfig();
@@ -5604,7 +5888,8 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     session,
     input,
     checkoutAttemptToken,
-    amountCents
+    amountCents,
+    payerUid: context.auth.uid
   });
   if (newSessionFailure) {
     const expired = await expireStripeCheckoutSessionForRollback(stripe, session, 'team-fee-validation');
@@ -5616,7 +5901,6 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
 
   const changedAt = admin.firestore.FieldValue.serverTimestamp();
   const checkoutAuditRef = buildTeamFeeAuditRef(recipientRef, `stripe_checkout_${session.id}`);
-  const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
   try {
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
@@ -5626,10 +5910,12 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       }
 
       const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
-      const latestSessionId = String(latestRecipient.stripeCheckoutSessionId || '').trim();
+      const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
+      const latestSessionId = String(latestAttempt.stripeCheckoutSessionId || '').trim();
       if (
         latestSessionId === session.id
-        && latestRecipient.checkoutUrl === session.url
+        && latestAttempt.checkoutUrl === session.url
+        && String(latestAttempt.payerUid || '').trim() === context.auth.uid
         && getTeamFeeBalanceCents(latestRecipient) === amountCents
       ) {
         return;
@@ -5637,7 +5923,6 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       if (String(latestRecipient.checkoutCreationReservationId || '').trim() !== checkoutCreationReservationId) {
         throw new functions.https.HttpsError('aborted', 'Team fee checkout creation reservation was lost.');
       }
-      const latestAttempt = attemptSnap.exists ? (attemptSnap.data() || {}) : {};
       if (
         String(latestAttempt.reservationId || '').trim() !== checkoutCreationReservationId ||
         String(latestAttempt.payerUid || '').trim() !== context.auth.uid ||
@@ -5662,18 +5947,16 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       }
 
       const recipientUpdate = {
-        checkoutUrl: session.url,
-        paymentLink: session.url,
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        paymentLink: admin.firestore.FieldValue.delete(),
         checkoutStatus: 'open',
         paymentProvider: 'stripe',
-        stripeCheckoutSessionId: session.id,
-        checkoutAttemptToken,
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+        checkoutAttemptToken: admin.firestore.FieldValue.delete(),
         stripePaymentStatus: session.payment_status || 'unpaid',
-        checkoutAmountCents: amountCents,
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
         balanceDueCents: amountCents,
         checkoutCreatedAt: changedAt,
-        checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
-        checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
         checkoutCreationPayerUid: admin.firestore.FieldValue.delete(),
         checkoutCreationAmountCents: admin.firestore.FieldValue.delete(),
         checkoutCreationRequest: admin.firestore.FieldValue.delete(),
@@ -5687,7 +5970,15 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       } : recipientUpdate;
 
       transaction.set(recipientRef, auditedUpdate, { merge: true });
-      transaction.delete(checkoutAttemptRef);
+      transaction.set(checkoutAttemptRef, {
+        checkoutUrl: session.url,
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken,
+        checkoutAmountCents: amountCents,
+        payerUid: context.auth.uid,
+        updatedAt: changedAt
+      }, { merge: true });
       if (changedFields.length > 0) {
         transaction.set(checkoutAuditRef, {
           teamId: input.teamId,
@@ -5705,7 +5996,8 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
       recipientRef,
       reservationId: checkoutCreationReservationId,
       session,
-      amountCents
+      amountCents,
+      payerUid: context.auth.uid
     });
     if (persistenceState === 'committed') {
       return { checkoutUrl: session.url, sessionId: session.id };
@@ -5982,9 +6274,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
   await applyStagedPublicRegistrationLookupRateLimit(context, 'create-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
 
-  const [formSnap, registrationSnap] = await Promise.all([
+  const registrationCheckoutAttemptRef = resolvedInput.checkoutAttemptRef
+    || buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+  const [formSnap, registrationSnap, registrationCheckoutAttemptSnap] = await Promise.all([
     firestore.doc(`teams/${resolvedInput.teamId}/registrationForms/${resolvedInput.formId}`).get(),
-    resolvedInput.registrationRef.get()
+    resolvedInput.registrationRef.get(),
+    registrationCheckoutAttemptRef.get()
   ]);
   if (!formSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -5995,10 +6290,17 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
 
   const form = formSnap.data() || {};
   const registration = registrationSnap.data() || {};
-  if (registration.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
+  let checkoutAttempt = registrationCheckoutAttemptSnap.exists
+    ? registrationCheckoutAttemptSnap.data() || {}
+    : {};
+  if (hasLegacyReadableRegistrationCheckoutState(registration)) {
+    checkoutAttempt = await migrateLegacyReadableRegistrationCheckoutState(resolvedInput.registrationRef);
+  }
+  const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
+  if (checkoutAuthority.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
     throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability is required.');
   }
-  if (resolvedInput.publicCheckoutCapability && String(registration.publicCheckoutCapabilityHash || '') !== String(resolvedInput.resolvedPublicCheckoutCapabilityHash || '')) {
+  if (resolvedInput.publicCheckoutCapability && String(checkoutAuthority.publicCheckoutCapabilityHash || '') !== String(resolvedInput.resolvedPublicCheckoutCapabilityHash || '')) {
     throw buildPublicCheckoutCapabilityError();
   }
   if (form.published !== true && form.status !== 'published') {
@@ -6029,12 +6331,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
     throw new functions.https.HttpsError('failed-precondition', 'This registration does not have a payment due.');
   }
   const currency = getRegistrationCheckoutCurrency(registration, form);
-  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+  if (!registrationCheckoutAuthorityMatches(checkoutAuthority, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
   await applyStagedPublicRegistrationRateLimits(resolvedInput, context, 'create-checkout');
-  if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)) {
-    return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
+  if (canReuseRegistrationCheckoutSession(checkoutAuthority, amountCents, resolvedInput)) {
+    return { checkoutUrl: checkoutAuthority.checkoutUrl, sessionId: checkoutAuthority.stripeCheckoutSessionId };
   }
 
   const stripe = createStripeClient();
@@ -6178,25 +6480,33 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data, c
         throw new functions.https.HttpsError('failed-precondition', 'Rejected registrations cannot be paid online.');
       }
       transaction.set(resolvedInput.registrationRef, {
-        checkoutUrl: session.url,
-        paymentLink: session.url,
+        checkoutUrl: admin.firestore.FieldValue.delete(),
+        paymentLink: admin.firestore.FieldValue.delete(),
         checkoutStatus: 'open',
         paymentProvider: 'stripe',
         paymentStatus: 'checkout_open',
-        stripeCheckoutSessionId: session.id,
+        stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
         stripePaymentStatus: session.payment_status || 'unpaid',
-        checkoutAmountCents: amountCents,
-        checkoutCurrency: currency,
-        checkoutAttemptToken: input.checkoutAttemptToken || null,
-        publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+        checkoutAmountCents: admin.firestore.FieldValue.delete(),
+        checkoutCurrency: admin.firestore.FieldValue.delete(),
+        checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
         checkoutCreatedAt: now,
-        checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
-        checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
         checkoutCreationRequest: admin.firestore.FieldValue.delete(),
         retryCapacityReservationId: admin.firestore.FieldValue.delete(),
         updatedAt: now
       }, { merge: true });
-      transaction.delete(checkoutAttemptRef);
+      transaction.set(checkoutAttemptRef, {
+        checkoutUrl: session.url,
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: session.id,
+        stripePaymentStatus: session.payment_status || 'unpaid',
+        checkoutAmountCents: amountCents,
+        checkoutCurrency: currency,
+        checkoutAttemptToken: input.checkoutAttemptToken || checkoutAttempt.checkoutAttemptToken || admin.firestore.FieldValue.delete(),
+        publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
+        updatedAt: now
+      }, { merge: true });
     });
   } catch (error) {
     const persistenceState = await getRegistrationCheckoutPersistenceState({
@@ -6243,13 +6553,25 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data, c
 
   await applyStagedPublicRegistrationLookupRateLimit(context, 'cancel-checkout');
   const resolvedInput = await resolveRegistrationCheckoutInput(input);
-  const registrationSnap = await resolvedInput.registrationRef.get();
+  const checkoutAttemptRef = resolvedInput.checkoutAttemptRef
+    || buildRegistrationCheckoutAttemptRef(resolvedInput.registrationRef);
+  const [registrationSnap, checkoutAttemptSnap] = await Promise.all([
+    resolvedInput.registrationRef.get(),
+    checkoutAttemptRef.get()
+  ]);
   if (!registrationSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration not found.');
   }
 
   const registration = registrationSnap.data() || {};
-  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+  const checkoutAttempt = hasLegacyReadableRegistrationCheckoutState(registration)
+    ? await migrateLegacyReadableRegistrationCheckoutState(resolvedInput.registrationRef)
+    : (checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {});
+  const checkoutAuthority = getRegistrationCheckoutAuthorityState(
+    registration,
+    checkoutAttempt
+  );
+  if (!registrationCheckoutAuthorityMatches(checkoutAuthority, resolvedInput)) {
     throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
 
@@ -6297,6 +6619,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const { appUrl } = getStripeConfig();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const registrationRef = buildRegistrationRefFromStripeSession(session);
+      const checkoutAttemptRef = buildRegistrationCheckoutAttemptRef(registrationRef);
       const registrationInput = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
       const formRef = buildRegistrationFormRef(registrationInput);
 
@@ -6304,9 +6627,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
-        const [registrationSnap, formSnap] = await Promise.all([
+        const [registrationSnap, formSnap, checkoutAttemptSnap] = await Promise.all([
           transaction.get(registrationRef),
-          transaction.get(formRef)
+          transaction.get(formRef),
+          transaction.get(checkoutAttemptRef)
         ]);
         if (!registrationSnap.exists) {
           throw new Error('Registration not found for Stripe webhook.');
@@ -6317,11 +6641,14 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
 
         const form = formSnap.data() || {};
         const registration = registrationSnap.data() || {};
+        const checkoutAttempt = checkoutAttemptSnap.exists ? checkoutAttemptSnap.data() || {} : {};
+        const checkoutAuthority = getRegistrationCheckoutAuthorityState(registration, checkoutAttempt);
         if (shouldMarkRegistrationPaidFromEvent(event)) {
           const paidCheckoutGuardFailure = getRegistrationPaidCheckoutGuardFailure({
             registration,
+            checkoutAttempt,
             session,
-            authorityMatches: registrationCheckoutAuthorityMatches(registration, registrationInput),
+            authorityMatches: registrationCheckoutAuthorityMatches(checkoutAuthority, registrationInput),
             expectedCurrency: getRegistrationCheckoutCurrency(registration, form)
           });
           if (paidCheckoutGuardFailure) {
@@ -6348,11 +6675,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               paidAt: receivedAt,
               balanceDueCents: installmentState.remainingBalanceCents,
               nextPaymentDueDate: installmentState.nextDueDate || null,
-              stripeCheckoutSessionId: session.id || null,
-              stripePaymentIntentId: session.payment_intent || null,
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
-              lastPaidStripeCheckoutSessionId: session.id,
+              lastPaidStripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+              checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               paymentPlan: {
                 ...registration.paymentPlan,
                 totalBalanceDueCents: installmentState.totalBalanceDueCents,
@@ -6373,17 +6708,38 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               paidAt: receivedAt,
               balanceDueCents: 0,
               nextPaymentDueDate: null,
-              stripeCheckoutSessionId: session.id || null,
-              stripePaymentIntentId: session.payment_intent || null,
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
               stripePaymentStatus: session.payment_status || 'paid',
               stripeEventId: event.id,
-              lastPaidStripeCheckoutSessionId: session.id,
+              lastPaidStripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+              checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
               updatedAt: receivedAt
             }, { merge: true });
             transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
           }
+          transaction.set(checkoutAttemptRef, {
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            checkoutStatus: 'complete',
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentIntentId: session.payment_intent || null,
+            stripePaymentStatus: session.payment_status || 'paid',
+            stripeEventId: event.id,
+            lastPaidStripeCheckoutSessionId: session.id,
+            reservationId: admin.firestore.FieldValue.delete(),
+            amountCents: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
+            updatedAt: receivedAt
+          }, { merge: true });
         } else {
-          if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {
+          if (!registrationCheckoutAuthorityMatches(checkoutAuthority, registrationInput)) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'registration',
@@ -6401,6 +6757,20 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             transaction.set(registrationRef, {
               checkoutStatus: 'async_pending',
               paymentStatus: 'pending_payment',
+              checkoutUrl: admin.firestore.FieldValue.delete(),
+              paymentLink: admin.firestore.FieldValue.delete(),
+              stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+              stripePaymentIntentId: admin.firestore.FieldValue.delete(),
+              stripePaymentStatus: session.payment_status || 'open',
+              stripeEventId: event.id,
+              checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+              publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+              checkoutAmountCents: admin.firestore.FieldValue.delete(),
+              checkoutCurrency: admin.firestore.FieldValue.delete(),
+              updatedAt: receivedAt
+            }, { merge: true });
+            transaction.set(checkoutAttemptRef, {
+              checkoutStatus: 'async_pending',
               stripeCheckoutSessionId: session.id || null,
               stripePaymentIntentId: session.payment_intent || null,
               stripePaymentStatus: session.payment_status || 'open',
@@ -6430,13 +6800,34 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           transaction.set(registrationRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
             paymentStatus: event.type === 'checkout.session.expired' ? 'checkout_expired' : 'payment_failed',
-            stripeCheckoutSessionId: session.id || null,
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            paymentLink: admin.firestore.FieldValue.delete(),
+            stripeCheckoutSessionId: admin.firestore.FieldValue.delete(),
+            stripePaymentIntentId: admin.firestore.FieldValue.delete(),
             stripePaymentStatus: session.payment_status || 'unpaid',
             stripeEventId: event.id,
+            checkoutAttemptToken: admin.firestore.FieldValue.delete(),
+            publicCheckoutCapabilityHash: admin.firestore.FieldValue.delete(),
+            checkoutAmountCents: admin.firestore.FieldValue.delete(),
+            checkoutCurrency: admin.firestore.FieldValue.delete(),
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             ...(shouldReleaseCapacity ? {
               registrationCapacityReleased: true,
               capacityReleasedAt: receivedAt
             } : {}),
+            updatedAt: receivedAt
+          }, { merge: true });
+          transaction.set(checkoutAttemptRef, {
+            checkoutUrl: admin.firestore.FieldValue.delete(),
+            checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentIntentId: session.payment_intent || null,
+            stripePaymentStatus: session.payment_status || 'unpaid',
+            stripeEventId: event.id,
+            reservationId: admin.firestore.FieldValue.delete(),
+            amountCents: admin.firestore.FieldValue.delete(),
+            checkoutCreationRequest: admin.firestore.FieldValue.delete(),
             updatedAt: receivedAt
           }, { merge: true });
 
@@ -6458,10 +6849,11 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
                 queuedAtIso,
                 mailDocId
               });
+              const { retryUrl, ...publicReminderState } = reminderState;
               transaction.set(buildRegistrationReminderMailRef(mailDocId), buildRegistrationReminderMailJob({
                 registration,
                 form,
-                retryUrl: reminderState.retryUrl,
+                retryUrl,
                 reminderLabel: 'We could not process your registration payment.',
                 metadata: {
                   recipientEmail,
@@ -6475,9 +6867,13 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
               }));
               transaction.set(registrationRef, {
                 paymentReminder: {
-                  ...reminderState,
+                  ...publicReminderState,
                   recipientEmail
                 }
+              }, { merge: true });
+              transaction.set(checkoutAttemptRef, {
+                paymentRetryUrl: retryUrl || admin.firestore.FieldValue.delete(),
+                updatedAt: receivedAt
               }, { merge: true });
             } else {
               transaction.set(registrationRef, {
@@ -6522,25 +6918,29 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const recipientRef = buildTeamFeeRecipientRef({ teamId, batchId, recipientId });
+      const checkoutAttemptRef = buildTeamFeeCheckoutAttemptRef(recipientRef);
 
       await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
         const recipientSnap = await transaction.get(recipientRef);
+        const checkoutAttemptSnap = await transaction.get(checkoutAttemptRef);
         if (!recipientSnap.exists) {
           throw new Error('Team fee recipient not found for Stripe webhook.');
         }
 
         const recipient = recipientSnap.data() || {};
-        const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, session });
+        const checkoutAttempt = checkoutAttemptSnap.exists ? (checkoutAttemptSnap.data() || {}) : {};
+        const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, checkoutAttempt, session });
         const ignoredReason = shouldApplyCheckoutEvent
           ? null
-          : getTeamFeeCheckoutGuardFailure({ recipient, session });
+          : getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session });
 
         if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
           const { adminBilling, ...recipientUpdate } = buildTeamFeePaidUpdate({
             recipient,
+            checkoutAttempt,
             session,
             eventId: event.id,
             receivedAt
@@ -6549,6 +6949,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           const changedFields = getChangedTeamFeeFinancialFields(recipient, recipientUpdate);
           transaction.set(recipientRef, {
             ...withTeamFeeParentBillingClears(recipientUpdate),
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             latestAuditId: paymentAuditRef.id,
             latestAuditAt: receivedAt
           }, { merge: true });
@@ -6565,9 +6967,12 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), adminBilling, { merge: true });
           }
+          transaction.delete(checkoutAttemptRef);
         } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            checkoutCreationReservationId: admin.firestore.FieldValue.delete(),
+            checkoutCreationStartedAt: admin.firestore.FieldValue.delete(),
             stripeCheckoutSessionId: null,
             stripePaymentIntentId: null,
             stripeCustomerId: null,
@@ -6578,6 +6983,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             checkoutAmountCents: null,
             updatedAt: receivedAt
           }, { merge: true });
+          transaction.delete(checkoutAttemptRef);
           transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), {
             type: event.type,
             provider: 'stripe',

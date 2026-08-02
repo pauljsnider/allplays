@@ -24,18 +24,20 @@ function normalizePositiveInteger(value) {
  */
 function getRegistrationPaidCheckoutGuardFailure({
     registration = {},
+    checkoutAttempt = {},
     session = {},
     authorityMatches = false,
     expectedCurrency = ''
 } = {}) {
-    const activeSessionId = normalizeString(registration.stripeCheckoutSessionId);
+    const authoritativeCheckout = Object.keys(checkoutAttempt).length > 0 ? checkoutAttempt : registration;
+    const activeSessionId = normalizeString(authoritativeCheckout.stripeCheckoutSessionId);
     const sessionId = normalizeString(session.id);
     if (!activeSessionId || !sessionId || activeSessionId !== sessionId) {
         return 'checkout_session_mismatch';
     }
 
-    const lastPaidSessionId = normalizeString(registration.lastPaidStripeCheckoutSessionId);
-    if (lastPaidSessionId === sessionId || registration.checkoutStatus === 'complete' || registration.paymentStatus === 'paid') {
+    const lastPaidSessionId = normalizeString(authoritativeCheckout.lastPaidStripeCheckoutSessionId);
+    if (lastPaidSessionId === sessionId || authoritativeCheckout.checkoutStatus === 'complete' || registration.paymentStatus === 'paid') {
         return 'checkout_session_already_processed';
     }
 
@@ -43,13 +45,13 @@ function getRegistrationPaidCheckoutGuardFailure({
         return 'checkout_attempt_mismatch';
     }
 
-    const expectedAmountCents = normalizePositiveInteger(registration.checkoutAmountCents);
+    const expectedAmountCents = normalizePositiveInteger(authoritativeCheckout.checkoutAmountCents);
     const paidAmountCents = normalizePositiveInteger(session.amount_total);
     if (!expectedAmountCents || !paidAmountCents || paidAmountCents !== expectedAmountCents) {
         return 'checkout_amount_mismatch';
     }
 
-    const storedCurrency = normalizeCurrency(registration.checkoutCurrency || expectedCurrency);
+    const storedCurrency = normalizeCurrency(authoritativeCheckout.checkoutCurrency || expectedCurrency);
     const paidCurrency = normalizeCurrency(session.currency);
     if (!storedCurrency || !paidCurrency || storedCurrency !== paidCurrency) {
         return 'checkout_currency_mismatch';

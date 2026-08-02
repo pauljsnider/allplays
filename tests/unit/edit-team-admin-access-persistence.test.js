@@ -1072,6 +1072,117 @@ describe('edit team admin access persistence', () => {
 
     it('preserves an uploaded replacement when an existing team save outcome is uncertain', async () => {
         const deletedPaths = [];
+        let teamReads = 0;
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async getTeam() {
+                    teamReads += 1;
+                    if (teamReads === 1) return deepClone(initialState.team);
+                    throw new Error('confirmation read unavailable');
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual([]);
+            expect(env.alerts.at(-1)).toContain('team save may have completed');
+            expect(env.alerts.at(-1)).toContain('uploaded photo was preserved');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('accepts an ambiguous existing-team save only after the new photo path is authoritative', async () => {
+        const deletedPaths = [];
+        let teamReads = 0;
+        const oldTeam = {
+            id: 'team-1',
+            ownerId: 'owner-1',
+            name: 'Photo Sharks',
+            description: '',
+            sport: 'Basketball',
+            notificationEmail: '',
+            leagueUrl: '',
+            standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+            zip: '66209',
+            isPublic: true,
+            photoUrl: 'https://cdn.example.test/old.jpg',
+            photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+        };
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: oldTeam,
+            updateCalls: []
+        }, undefined, {
+            db: {
+                async getTeam() {
+                    teamReads += 1;
+                    return teamReads === 1
+                        ? deepClone(oldTeam)
+                        : { ...deepClone(oldTeam), photoUrl: 'https://cdn.example.test/new.jpg', photoPath: 'profile-photos/teams/team-1/team/new.jpg' };
+                },
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
+            expect(env.window.location.href).toMatch(/\/dashboard\.html$/);
+            expect(env.alerts.some((message) => message.includes('may have completed'))).toBe(false);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('deletes an uploaded replacement when an authoritative re-read shows it was not committed', async () => {
+        const deletedPaths = [];
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1111,9 +1222,9 @@ describe('edit team admin access persistence', () => {
 
             await env.elements.get('team-form').requestSubmit();
 
-            expect(deletedPaths).toEqual([]);
-            expect(env.alerts.at(-1)).toContain('team save may have completed');
-            expect(env.alerts.at(-1)).toContain('uploaded photo was preserved');
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/new.jpg']);
+            expect(env.window.location.href).not.toBe('dashboard.html');
+            expect(env.alerts.at(-1)).toContain('Error saving team');
         } finally {
             env.cleanup();
         }
@@ -1139,6 +1250,9 @@ describe('edit team admin access persistence', () => {
                 async updateTeam() {
                     throw Object.assign(new Error('network unavailable'), { code: 'unavailable' });
                 },
+                async getTeam() {
+                    throw new Error('confirmation read unavailable');
+                },
                 async deleteLegacyImageUpload(path) {
                     deletedPaths.push(path);
                 }
@@ -1152,7 +1266,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(deletedPaths).toEqual([]);
-            expect(env.alerts.some((message) => message.includes('photo save may also have completed'))).toBe(true);
+            expect(env.alerts.some((message) => message.includes('photo save state could not be confirmed'))).toBe(true);
             expect(env.window.location.href).toContain('teamId=team-created');
         } finally {
             env.cleanup();

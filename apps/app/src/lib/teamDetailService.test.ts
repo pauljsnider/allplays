@@ -431,6 +431,14 @@ describe('updateTeamSettingsForApp', () => {
 
   it('keeps a native team photo when the settings commit outcome is uncertain', async () => {
     nativeRuntimeState.isNative = true;
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockRejectedValueOnce(new Error('confirmation read unavailable'));
     nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
       url: 'https://primary.example/team.jpg',
       path: 'profile-photos/teams/team-1/team/team.jpg'
@@ -447,7 +455,69 @@ describe('updateTeamSettingsForApp', () => {
     expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
   });
 
+  it('accepts an ambiguous native team save only after the new path is authoritative', async () => {
+    nativeRuntimeState.isNative = true;
+    const newPath = 'profile-photos/teams/team-1/team/team.jpg';
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', photoPath: newPath });
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: newPath
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).resolves.toBeUndefined();
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes an uncommitted native team photo after an authoritative re-read', async () => {
+    nativeRuntimeState.isNative = true;
+    const oldTeam = {
+      id: 'team-1',
+      ownerId: 'owner-1',
+      photoUrl: 'https://img.example.test/team.png',
+      photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+    };
+    dbMocks.getTeam.mockResolvedValueOnce(oldTeam).mockResolvedValueOnce(oldTeam);
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.jpg');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+  });
+
   it('keeps a browser team photo when the document save outcome is uncertain', async () => {
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockRejectedValueOnce(new Error('confirmation read unavailable'));
     dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
       url: 'https://primary.example/team.jpg',
       path: 'profile-photos/teams/team-1/team/team.jpg'
@@ -460,6 +530,31 @@ describe('updateTeamSettingsForApp', () => {
     })).rejects.toThrow('network unavailable');
 
     expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ambiguous browser team save only after the new path is authoritative', async () => {
+    const newPath = 'profile-photos/teams/team-1/team/team.jpg';
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', photoPath: newPath });
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: newPath
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('network unavailable'), { code: 'unavailable' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).resolves.toBeUndefined();
+
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
   });
 
   it('removes a browser team photo when the document save definitely failed', async () => {

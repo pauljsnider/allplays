@@ -220,7 +220,7 @@ function isCanonicalStripeCheckoutUrl(value) {
     return Boolean(getCanonicalStripeCheckoutUrl(value));
 }
 
-function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = {}, amountCents = 0 } = {}) {
+function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = {}, amountCents = 0, payerUid = '' } = {}) {
     const recipientUrl = getCanonicalStripeCheckoutUrl(recipient.checkoutUrl);
     if (!recipientUrl) return 'checkout_url_invalid';
 
@@ -262,11 +262,14 @@ function getTeamFeeCheckoutReuseFailure({ recipient = {}, session = {}, input = 
     if (normalizeString(metadata.teamId) !== normalizeString(input.teamId)) return 'checkout_team_mismatch';
     if (normalizeString(metadata.batchId) !== normalizeString(input.batchId)) return 'checkout_batch_mismatch';
     if (normalizeString(metadata.recipientId) !== normalizeString(input.recipientId)) return 'checkout_recipient_mismatch';
+    const expectedPayerUid = normalizeString(payerUid);
+    if (expectedPayerUid && normalizeString(recipient.payerUid) !== expectedPayerUid) return 'checkout_payer_mismatch';
+    if (expectedPayerUid && normalizeString(metadata.payerUid) !== expectedPayerUid) return 'checkout_payer_mismatch';
 
     return '';
 }
 
-function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkoutAttemptToken = '', amountCents = 0 } = {}) {
+function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkoutAttemptToken = '', amountCents = 0, payerUid = '' } = {}) {
     if (!normalizeString(session.id)) return 'checkout_session_missing';
     if (!isCanonicalStripeCheckoutUrl(session.url)) return 'checkout_url_invalid';
 
@@ -276,11 +279,13 @@ function getNewTeamFeeCheckoutSessionFailure({ session = {}, input = {}, checkou
             stripeCheckoutSessionId: session.id,
             checkoutAttemptToken,
             checkoutStatus: 'open',
-            checkoutAmountCents: amountCents
+            checkoutAmountCents: amountCents,
+            payerUid
         },
         session,
         input,
-        amountCents
+        amountCents,
+        payerUid
     });
 }
 
@@ -294,22 +299,22 @@ function canReuseTeamFeeCheckoutSession(recipient = {}, amountCents = 0) {
     );
 }
 
-function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
-    const activeSessionId = normalizeString(recipient.stripeCheckoutSessionId);
+function getTeamFeeCheckoutGuardFailure({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
+    const activeSessionId = normalizeString(checkoutAttempt.stripeCheckoutSessionId);
     const sessionId = normalizeString(session.id);
     if (!activeSessionId || !sessionId || activeSessionId !== sessionId) {
         return 'checkout_session_mismatch';
     }
 
-    const recipientToken = getValidCheckoutAttemptToken(recipient.checkoutAttemptToken);
+    const recipientToken = getValidCheckoutAttemptToken(checkoutAttempt.checkoutAttemptToken);
     const sessionToken = getValidCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
     const isLegacyCheckoutSession = !recipientToken && !sessionToken;
     if (!isLegacyCheckoutSession && (!recipientToken || !sessionToken || recipientToken !== sessionToken)) {
         return 'checkout_attempt_mismatch';
     }
 
-    const sessionAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
-    const expectedCheckoutAmountCents = Math.round(Number(recipient.checkoutAmountCents || 0));
+    const sessionAmountCents = getTeamFeeStripePaidAmountCents({ checkoutAttempt, session });
+    const expectedCheckoutAmountCents = Math.round(Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents || 0));
     if (!Number.isFinite(sessionAmountCents) || sessionAmountCents <= 0) {
         return 'checkout_amount_missing';
     }
@@ -323,8 +328,8 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
     return '';
 }
 
-function shouldApplyTeamFeeCheckoutSession({ recipient = {}, session = {} } = {}) {
-    return !getTeamFeeCheckoutGuardFailure({ recipient, session });
+function shouldApplyTeamFeeCheckoutSession({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
+    return !getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session });
 }
 
 function shouldMarkTeamFeePaidFromEvent(event = {}) {
@@ -347,14 +352,14 @@ function shouldRecordTeamFeeCheckoutNotPaidFromEvent(event = {}) {
         Boolean(metadata.teamId && metadata.batchId && metadata.recipientId);
 }
 
-function getTeamFeeStripePaidAmountCents({ recipient = {}, session = {} } = {}) {
+function getTeamFeeStripePaidAmountCents({ recipient = {}, checkoutAttempt = recipient, session = {} } = {}) {
     const sessionAmount = Number(session.amount_total ?? session.amount_paid ?? session.amount_subtotal);
     if (Number.isFinite(sessionAmount) && sessionAmount > 0) {
         return Math.round(sessionAmount);
     }
 
-    if (recipient.stripeCheckoutSessionId && session.id && recipient.stripeCheckoutSessionId === session.id) {
-        const checkoutAmount = Number(recipient.checkoutAmountCents);
+    if (checkoutAttempt.stripeCheckoutSessionId && session.id && checkoutAttempt.stripeCheckoutSessionId === session.id) {
+        const checkoutAmount = Number(checkoutAttempt.checkoutAmountCents || checkoutAttempt.amountCents);
         if (Number.isFinite(checkoutAmount) && checkoutAmount > 0) {
             return Math.round(checkoutAmount);
         }
@@ -469,9 +474,9 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     };
 }
 
-function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receivedAt }) {
+function buildTeamFeePaidUpdate({ recipient = {}, checkoutAttempt = recipient, session = {}, eventId, receivedAt }) {
     const existingPaidCents = getTeamFeePaidCents(recipient);
-    const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
+    const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, checkoutAttempt, session });
     const paidAmountCents = existingPaidCents + stripePaidAmountCents;
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
 

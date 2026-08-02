@@ -153,6 +153,7 @@ describe('team fee checkout function helpers', () => {
             checkoutAttemptToken: 'tok_current_123456',
             checkoutStatus: 'open',
             checkoutAmountCents: 7500,
+            payerUid: 'payer-1',
             amountDueCents: 7500,
             paidAmountCents: 0
         };
@@ -166,12 +167,14 @@ describe('team fee checkout function helpers', () => {
             metadata: {
                 product: 'team_fee',
                 ...input,
+                payerUid: 'payer-1',
                 checkoutAttemptToken: 'tok_current_123456',
                 checkoutAmountCents: '7500'
             }
         };
 
-        expect(getTeamFeeCheckoutReuseFailure({ recipient, session, input, amountCents: 7500 })).toBe('');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session, input, amountCents: 7500, payerUid: 'payer-1' })).toBe('');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session, input, amountCents: 7500, payerUid: 'payer-2' })).toBe('checkout_payer_mismatch');
         expect(getTeamFeeCheckoutReuseFailure({ recipient: { ...recipient, checkoutUrl: 'http://checkout.stripe.com/c/pay/cs_test_current' }, session, input, amountCents: 7500 })).toBe('checkout_url_invalid');
         expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, url: 'https://checkout.stripe.com/c/pay/cs_test_other' }, input, amountCents: 7500 })).toBe('checkout_url_mismatch');
         expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, id: 'cs_test_other' }, input, amountCents: 7500 })).toBe('checkout_session_mismatch');
@@ -198,6 +201,7 @@ describe('team fee checkout function helpers', () => {
             metadata: {
                 product: 'team_fee',
                 ...input,
+                payerUid: 'payer-1',
                 checkoutAttemptToken,
                 checkoutAmountCents: '7500'
             }
@@ -206,7 +210,8 @@ describe('team fee checkout function helpers', () => {
             session: candidate,
             input,
             checkoutAttemptToken,
-            amountCents: 7500
+            amountCents: 7500,
+            payerUid: 'payer-1'
         });
 
         expect(validate(session)).toBe('');
@@ -215,6 +220,7 @@ describe('team fee checkout function helpers', () => {
         expect(validate({ ...session, status: 'complete' })).toBe('checkout_session_not_open');
         expect(validate({ ...session, amount_total: 1 })).toBe('checkout_amount_mismatch');
         expect(validate({ ...session, metadata: { ...session.metadata, recipientId: 'other' } })).toBe('checkout_recipient_mismatch');
+        expect(validate({ ...session, metadata: { ...session.metadata, payerUid: 'payer-2' } })).toBe('checkout_payer_mismatch');
     });
 
     it('rejects stale team fee checkout sessions when session, token, or balance drifted', () => {
@@ -587,8 +593,9 @@ describe('team fee checkout function helpers', () => {
 
         expect(functionsSource).toContain('checkoutAttemptToken');
         expect(functionsSource).toContain('checkoutAmountCents: amountCents');
-        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, session })');
-        expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, session })');
+        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, checkoutAttempt, session })');
+        expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session })');
+        expect(functionsSource).toContain('transaction.delete(checkoutAttemptRef)');
         expect(functionsSource).toContain("ignoredReason");
         expect(functionsSource).toContain("recipientRef.collection('adminBilling').doc");
         expect(dbSource).toContain("updatePayload.checkoutStatus = 'stale'");

@@ -13,12 +13,15 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 function currentCheckout(overrides = {}) {
     return {
         registration: {
+            paymentStatus: 'checkout_open',
+            ...overrides.registration
+        },
+        checkoutAttempt: {
             stripeCheckoutSessionId: 'cs_current',
             checkoutStatus: 'open',
-            paymentStatus: 'checkout_open',
             checkoutAmountCents: 7500,
             checkoutCurrency: 'usd',
-            ...overrides.registration
+            ...overrides.checkoutAttempt
         },
         session: {
             id: 'cs_current',
@@ -44,10 +47,10 @@ describe('registration paid webhook guard', () => {
 
     it('rejects replayed sessions before another installment can be advanced', () => {
         expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
-            registration: { lastPaidStripeCheckoutSessionId: 'cs_current' }
+            checkoutAttempt: { lastPaidStripeCheckoutSessionId: 'cs_current' }
         }))).toBe('checkout_session_already_processed');
         expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
-            registration: { checkoutStatus: 'complete' }
+            checkoutAttempt: { checkoutStatus: 'complete' }
         }))).toBe('checkout_session_already_processed');
     });
 
@@ -65,7 +68,7 @@ describe('registration paid webhook guard', () => {
             session: { amount_total: 7500.5 }
         }))).toBe('checkout_amount_mismatch');
         expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
-            registration: { checkoutAmountCents: null }
+            checkoutAttempt: { checkoutAmountCents: null }
         }))).toBe('checkout_amount_mismatch');
     });
 
@@ -77,7 +80,7 @@ describe('registration paid webhook guard', () => {
             session: { currency: null }
         }))).toBe('checkout_currency_mismatch');
         expect(getRegistrationPaidCheckoutGuardFailure(currentCheckout({
-            registration: { checkoutCurrency: null },
+            checkoutAttempt: { checkoutCurrency: null },
             expectedCurrency: 'USD'
         }))).toBe('');
         expect(normalizeRegistrationCheckoutCurrency(' USD ')).toBe('usd');

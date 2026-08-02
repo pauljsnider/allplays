@@ -159,12 +159,14 @@ function makeFirestore(seed = {}, options = {}) {
                 set: (ref, value, writeOptions) => {
                     if (
                         options.failTransactionSetField
+                        && (!options.failTransactionSetPath || options.failTransactionSetPath === ref.path)
                         && Object.prototype.hasOwnProperty.call(value || {}, options.failTransactionSetField)
                     ) {
                         throw new Error('Forced Firestore transaction failure.');
                     }
                     if (
                         options.failTransactionAfterSetField
+                        && (!options.failTransactionAfterSetPath || options.failTransactionAfterSetPath === ref.path)
                         && Object.prototype.hasOwnProperty.call(value || {}, options.failTransactionAfterSetField)
                     ) {
                         matchedPostCommitField = true;
@@ -291,6 +293,7 @@ function loadCheckoutHandler({ seed, stripeCreateImpl, stripeExpireImpl, firesto
 }
 
 function buildSeedState(overrides = {}) {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     return {
         'teams/team-1/registrationForms/form-1': {
             published: true,
@@ -304,12 +307,11 @@ function buildSeedState(overrides = {}) {
                 }
             }
         },
-        'teams/team-1/registrationForms/form-1/registrations/reg-1': {
+        [registrationPath]: {
             teamId: 'team-1',
             formId: 'form-1',
             status: 'pending',
             registrationCapacityReleased: true,
-            checkoutAttemptToken: 'attempttoken12345',
             selectedOption: {
                 id: 'u10',
                 countKey: 'u10',
@@ -319,6 +321,10 @@ function buildSeedState(overrides = {}) {
                 email: 'parent@example.com'
             },
             ...overrides
+        },
+        [`${registrationPath}/checkoutAttempts/current`]: {
+            version: 1,
+            checkoutAttemptToken: 'attempttoken12345'
         }
     };
 }
@@ -404,6 +410,42 @@ test('rejecting a registration prevents a later public checkout from charging re
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus'), false);
 });
 
+test('does not return private checkout state to a different public checkout principal', async () => {
+    let stripeCreateCalls = 0;
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    const attemptPath = `${registrationPath}/checkoutAttempts/current`;
+    const seed = buildSeedState({
+        registrationCapacityReleased: false,
+        checkoutStatus: 'open',
+        paymentStatus: 'checkout_open'
+    });
+    Object.assign(seed[attemptPath], {
+        checkoutUrl: 'https://checkout.stripe.com/c/private_registration_session',
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: 'cs_private_registration_session',
+        checkoutAmountCents: 5000,
+        checkoutCurrency: 'usd'
+    });
+    const { createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed,
+        stripeCreateImpl: async () => {
+            stripeCreateCalls += 1;
+            throw new Error('Stripe must not be called for the wrong principal.');
+        }
+    });
+
+    await assert.rejects(
+        createStripeRegistrationCheckout({
+            ...checkoutInput,
+            checkoutAttemptToken: 'differenttoken12345',
+            retryPayment: false
+        }),
+        (error) => error?.code === 'failed-precondition'
+            && error?.message === 'Current public checkout capability is required.'
+    );
+    assert.equal(stripeCreateCalls, 0);
+});
+
 test('checkout reserves the registration before Stripe creation so concurrent rejection cannot release capacity', async () => {
     const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
     let firestore = null;
@@ -453,7 +495,7 @@ test('checkout reserves the registration before Stripe creation so concurrent re
     const completedRegistration = firestore.snapshot(registrationPath);
     assert.equal(completedRegistration.checkoutStatus, 'open');
     assert.equal(completedRegistration.paymentStatus, 'checkout_open');
-    assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationReservationId'), false);
+    assert.match(completedRegistration.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
 });
 
 test('checkout fails closed for an incomplete prior creation reservation regardless of age', async () => {
@@ -582,7 +624,8 @@ test('retry checkout preserves an early-bird discount captured at submission tim
 
     assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 7500);
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
-    assert.equal(registration.checkoutAmountCents, 7500);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current').checkoutAmountCents, 7500);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutAmountCents'), false);
 });
 
 test('retry checkout does not grant an early-bird discount added after submission', async () => {
@@ -623,7 +666,8 @@ test('retry checkout does not grant an early-bird discount added after submissio
 
     assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 10000);
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
-    assert.equal(registration.checkoutAmountCents, 10000);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current').checkoutAmountCents, 10000);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutAmountCents'), false);
 });
 
 test('legacy retry checkout ignores stored and current discounts without a captured rule scope', async () => {
@@ -665,7 +709,8 @@ test('legacy retry checkout ignores stored and current discounts without a captu
 
     assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 10000);
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
-    assert.equal(registration.checkoutAmountCents, 10000);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current').checkoutAmountCents, 10000);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutAmountCents'), false);
 });
 
 test('rolls back reserved capacity when Stripe checkout creation fails', async () => {
@@ -697,7 +742,10 @@ test('expires a created checkout and releases reservations when Firestore persis
     let stripeIdempotencyKey = '';
     const { firestore, stripeExpireCalls, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),
-        firestoreOptions: { failTransactionSetField: 'checkoutUrl' },
+        firestoreOptions: {
+            failTransactionSetField: 'checkoutUrl',
+            failTransactionSetPath: 'teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current'
+        },
         stripeCreateImpl: async (_params, options) => {
             stripeIdempotencyKey = String(options?.idempotencyKey || '');
             return {
@@ -727,7 +775,10 @@ test('expires a created checkout and releases reservations when Firestore persis
 test('returns a committed registration checkout without expiring or releasing it when the transaction response fails', async () => {
     const { firestore, stripeExpireCalls, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),
-        firestoreOptions: { failTransactionAfterSetField: 'checkoutUrl' },
+        firestoreOptions: {
+            failTransactionAfterSetField: 'checkoutUrl',
+            failTransactionAfterSetPath: 'teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current'
+        },
         stripeCreateImpl: async () => ({
             id: 'cs_registration_committed',
             url: 'https://checkout.stripe.com/c/registration_committed',
@@ -749,6 +800,8 @@ test('returns a committed registration checkout without expiring or releasing it
     assert.equal(registration.registrationCapacityReleased, false);
     assert.equal(registration.checkoutStatus, 'open');
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutCreationRequest'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    assert.equal(firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current').checkoutUrl, 'https://checkout.stripe.com/c/registration_committed');
 });
 
 test('retries an uncertain Stripe creation with the exact persisted request and idempotency key', async () => {
@@ -807,7 +860,11 @@ test('retries an uncertain Stripe creation with the exact persisted request and 
     assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
     assert.equal(completedRegistration.registrationCapacityReleased, false);
     assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutCreationRequest'), false);
-    assert.equal(firestore.snapshot(checkoutAttemptPath), undefined);
+    const committedAttempt = firestore.snapshot(checkoutAttemptPath);
+    assert.equal(committedAttempt.checkoutUrl, 'https://checkout.stripe.com/c/registration_idempotent_retry');
+    assert.equal(committedAttempt.stripeCheckoutSessionId, 'cs_registration_idempotent_retry');
+    assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(completedRegistration, 'stripeCheckoutSessionId'), false);
 });
 
 test('checkout owner adopts and releases an overlapping retry reservation when Stripe creation fails', async () => {
@@ -914,8 +971,8 @@ test('restores capacity after retrying a previously failed session when Stripe c
     assert.equal(registration.registrationCapacityReleased, true);
     assert.equal(registration.checkoutStatus, 'payment_failed');
     assert.equal(registration.paymentStatus, 'payment_failed');
-    assert.equal(registration.checkoutUrl, 'https://checkout.stripe.com/c/old_session');
-    assert.equal(registration.stripeCheckoutSessionId, 'cs_old_failed');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
 });
 
@@ -981,8 +1038,11 @@ test('reserves capacity exactly once after a failed retry is retried successfull
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt'), false);
     assert.equal(registration.checkoutStatus, 'open');
     assert.equal(registration.paymentStatus, 'checkout_open');
-    assert.equal(registration.stripeCheckoutSessionId, 'cs_test_123');
-    assert.equal(registration.checkoutAmountCents, 5000);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'stripeCheckoutSessionId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutAmountCents'), false);
+    const checkoutAttempt = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1/checkoutAttempts/current');
+    assert.equal(checkoutAttempt.stripeCheckoutSessionId, 'cs_test_123');
+    assert.equal(checkoutAttempt.checkoutAmountCents, 5000);
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
 });
 

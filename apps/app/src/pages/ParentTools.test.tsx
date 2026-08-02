@@ -1128,12 +1128,14 @@ describe('ParentTools access', () => {
         expect(screen.getByText('https://allplays.ai/app/#/family/token-9')).toBeTruthy();
     });
 
-    it('opens trusted reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
+    it('regenerates trusted stored team fee links through the same-payer callable', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
                 id: 'fee-1',
                 title: 'Team dues',
                 teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
                 teamName: 'Bears',
                 playerName: 'Sam Player',
                 status: 'open',
@@ -1150,6 +1152,10 @@ describe('ParentTools access', () => {
                 ledgerEntries: []
             }
         ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/regenerated'
+        });
 
         renderParentTools(['/parent-tools/fees'], false, linkedAuth);
 
@@ -1157,9 +1163,10 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
 
         await waitFor(() => {
-            expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/legacy');
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
         });
-        expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+        expect(openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/regenerated');
+        expect(openPublicUrl).not.toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/legacy');
     });
 
     it.each([

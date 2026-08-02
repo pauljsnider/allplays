@@ -1963,6 +1963,7 @@
             let newlyUploadedTeamPhotoPath = '';
             let teamPhotoPersisted = false;
             let teamPhotoWriteAttempted = false;
+            const previousTeamPhotoUrl = currentPhotoUrl;
             const previousTeamPhotoPath = currentPhotoPath;
 
             try {
@@ -2122,8 +2123,25 @@
                     }
 
                     teamPhotoWriteAttempted = Boolean(newlyUploadedTeamPhotoPath);
-                    await updateTeam(currentTeamId, teamData);
-                    teamPhotoPersisted = true;
+                    try {
+                        await updateTeam(currentTeamId, teamData);
+                        teamPhotoPersisted = true;
+                    } catch (saveError) {
+                        const persistenceState = newlyUploadedTeamPhotoPath && !isDefinitiveFirestoreWriteFailure(saveError)
+                            ? await getTeamPhotoPersistenceState(currentTeamId, newlyUploadedTeamPhotoPath)
+                            : 'not-committed';
+                        if (persistenceState === 'committed') {
+                            teamPhotoPersisted = true;
+                        } else {
+                            if (persistenceState === 'not-committed' && newlyUploadedTeamPhotoPath) {
+                                await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);
+                                newlyUploadedTeamPhotoPath = '';
+                                currentPhotoUrl = previousTeamPhotoUrl;
+                                currentPhotoPath = previousTeamPhotoPath;
+                            }
+                            throw saveError;
+                        }
+                    }
                     if (newlyUploadedTeamPhotoPath && previousTeamPhotoPath && previousTeamPhotoPath !== newlyUploadedTeamPhotoPath) {
                         await deleteLegacyImageUpload(previousTeamPhotoPath).catch((cleanupError) => {
                             console.warn('Failed to remove the replaced team photo:', cleanupError);
@@ -2159,18 +2177,28 @@
                             btn.textContent = 'Saving...';
                         } catch (photoError) {
                             const definitiveNonCommit = !teamPhotoWriteAttempted || isDefinitiveFirestoreWriteFailure(photoError);
-                            if (newlyUploadedTeamPhotoPath && definitiveNonCommit) {
+                            const persistenceState = newlyUploadedTeamPhotoPath && !definitiveNonCommit
+                                ? await getTeamPhotoPersistenceState(newTeamId, newlyUploadedTeamPhotoPath)
+                                : 'not-committed';
+                            if (persistenceState === 'committed') {
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.warn('Team photo save response was ambiguous, but the uploaded path is authoritative.', photoError);
+                            } else if (newlyUploadedTeamPhotoPath && persistenceState === 'not-committed') {
                                 await deleteLegacyImageUpload(newlyUploadedTeamPhotoPath).catch(() => undefined);
                                 newlyUploadedTeamPhotoPath = '';
                                 currentPhotoUrl = null;
                                 currentPhotoPath = '';
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.error('Team was created, but its photo was not saved:', photoError);
+                                alert(`Team created, but its photo could not be saved. Open the team and try the photo again.\n\nError: ${photoError.message}`);
+                            } else {
+                                teamPhotoPersisted = true;
+                                btn.textContent = 'Saving...';
+                                console.error('Team was created, but its photo save did not complete cleanly:', photoError);
+                                alert(`Team created. The photo save state could not be confirmed, so its uploaded file was preserved. Open the team to confirm before trying again.\n\nError: ${photoError.message}`);
                             }
-                            teamPhotoPersisted = true;
-                            btn.textContent = 'Saving...';
-                            console.error('Team was created, but its photo save did not complete cleanly:', photoError);
-                            alert(definitiveNonCommit
-                                ? `Team created, but its photo could not be saved. Open the team and try the photo again.\n\nError: ${photoError.message}`
-                                : `Team created. The photo save may also have completed, so its uploaded file was preserved. Open the team to confirm before trying again.\n\nError: ${photoError.message}`);
                         }
                     } else {
                         teamPhotoPersisted = true;
@@ -2260,6 +2288,19 @@
                 'unauthenticated',
                 'unimplemented'
             ]).has(code);
+        }
+
+        async function getTeamPhotoPersistenceState(teamId, expectedPhotoPath) {
+            if (!teamId || !expectedPhotoPath) return 'not-committed';
+            try {
+                const savedTeam = await getTeam(teamId, { includeInactive: true });
+                return String(savedTeam?.photoPath || '').trim() === expectedPhotoPath
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (readError) {
+                console.warn('Could not confirm the authoritative team photo path after an ambiguous save.', readError);
+                return 'unknown';
+            }
         }
     </script>
 </body>

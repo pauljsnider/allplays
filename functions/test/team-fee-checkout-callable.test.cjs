@@ -199,6 +199,28 @@ function makeSession(overrides = {}) {
     };
 }
 
+function seedWithPrivateCheckoutAttempt(session, { recipient = {}, attempt = {} } = {}) {
+    const reservationId = attempt.reservationId || 'reservation-current';
+    const seed = baseSeed({
+        checkoutStatus: 'open',
+        checkoutCreationReservationId: reservationId,
+        checkoutCreationStartedAt: Date.now(),
+        ...recipient
+    });
+    seed['teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1/checkoutAttempts/current'] = {
+        reservationId,
+        payerUid: session.metadata?.payerUid || 'owner-1',
+        amountCents: 7500,
+        checkoutUrl: session.url,
+        checkoutStatus: 'open',
+        checkoutAttemptToken: session.metadata?.checkoutAttemptToken,
+        checkoutAmountCents: 7500,
+        stripeCheckoutSessionId: session.id,
+        ...attempt
+    };
+    return seed;
+}
+
 function loadCallable({ seed, retrieve, create, expire, firestoreOptions, webhookEvent } = {}) {
     delete require.cache[repoIndexPath];
     const metrics = { retrieveCalls: [], createCalls: [], expireCalls: [] };
@@ -312,13 +334,7 @@ after(() => {
 test('reuses a valid current Stripe team-fee session without writing or creating', async () => {
     const session = makeSession();
     const { callable, metrics } = loadCallable({
-        seed: baseSeed({
-            checkoutUrl: session.url,
-            checkoutStatus: 'open',
-            checkoutAttemptToken: session.metadata.checkoutAttemptToken,
-            checkoutAmountCents: 7500,
-            stripeCheckoutSessionId: session.id
-        }),
+        seed: seedWithPrivateCheckoutAttempt(session),
         retrieve: async () => session
     });
 
@@ -331,16 +347,162 @@ test('reuses a valid current Stripe team-fee session without writing or creating
     assert.equal(metrics.writes.length, 0);
 });
 
+test('migrates and reuses a legacy readable team-fee checkout for its original payer', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+    const session = makeSession();
+    const { callable, firestore, metrics } = loadCallable({
+        seed: baseSeed({
+            checkoutUrl: session.url,
+            paymentLink: session.url,
+            checkoutStatus: 'open',
+            stripeCheckoutSessionId: session.id,
+            checkoutAttemptToken: session.metadata.checkoutAttemptToken,
+            checkoutAmountCents: 7500
+        }),
+        retrieve: async () => session
+    });
+
+    const result = await callable(input, context);
+
+    assert.deepEqual(result, { checkoutUrl: session.url, sessionId: session.id });
+    assert.deepEqual(metrics.retrieveCalls, [session.id]);
+    assert.equal(metrics.createCalls.length, 0);
+    const recipient = firestore._state.get(recipientPath);
+    for (const field of ['checkoutUrl', 'paymentLink', 'stripeCheckoutSessionId', 'checkoutAttemptToken', 'checkoutAmountCents']) {
+        assert.equal(Object.prototype.hasOwnProperty.call(recipient, field), false, `${field} must be scrubbed during migration`);
+    }
+    const privateAttempt = firestore._state.get(attemptPath);
+    assert.equal(privateAttempt.checkoutUrl, session.url);
+    assert.equal(privateAttempt.stripeCheckoutSessionId, session.id);
+    assert.equal(privateAttempt.payerUid, 'owner-1');
+});
+
+test('migrates but never returns a legacy readable checkout owned by another payer', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+    const session = makeSession({
+        metadata: {
+            ...makeSession().metadata,
+            payerUid: 'other-admin'
+        }
+    });
+    const seed = baseSeed({
+        checkoutUrl: session.url,
+        paymentLink: session.url,
+        checkoutStatus: 'open',
+        stripeCheckoutSessionId: session.id,
+        checkoutAttemptToken: session.metadata.checkoutAttemptToken,
+        checkoutAmountCents: 7500
+    });
+    seed['teams/team-1'].adminEmails = ['other-admin@example.com'];
+    seed['users/other-admin'] = { email: 'other-admin@example.com' };
+    const { callable, firestore, metrics } = loadCallable({ seed, retrieve: async () => session });
+
+    await assert.rejects(callable(input, context), (error) => (
+        error?.code === 'failed-precondition' && /belongs to another payer/i.test(error?.message || '')
+    ));
+
+    assert.deepEqual(metrics.retrieveCalls, [session.id]);
+    assert.equal(metrics.createCalls.length, 0);
+    const recipient = firestore._state.get(recipientPath);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'stripeCheckoutSessionId'), false);
+    assert.equal(firestore._state.get(attemptPath).payerUid, 'other-admin');
+});
+
+test('never returns an active checkout created by another eligible payer', async () => {
+    const session = makeSession();
+    const seed = seedWithPrivateCheckoutAttempt(session);
+    seed['teams/team-1'].adminEmails = ['other-admin@example.com'];
+    seed['users/other-admin'] = { email: 'other-admin@example.com' };
+    const { callable, metrics } = loadCallable({ seed, retrieve: async () => session });
+
+    await assert.rejects(
+        callable(input, {
+            auth: {
+                uid: 'other-admin',
+                token: { email: 'other-admin@example.com', email_verified: true }
+            }
+        }),
+        (error) => error?.code === 'failed-precondition'
+            && /belongs to another payer/i.test(error?.message || '')
+    );
+    assert.equal(metrics.retrieveCalls.length, 0);
+    assert.equal(metrics.createCalls.length, 0);
+    assert.equal(metrics.writes.length, 0);
+});
+
+test('stores checkout bearer data only in the server-private attempt document', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+    const { callable, firestore } = loadCallable();
+
+    const result = await callable(input, context);
+    const recipient = firestore._state.get(recipientPath);
+    const attempt = firestore._state.get(attemptPath);
+
+    for (const field of ['checkoutUrl', 'paymentLink', 'stripeCheckoutSessionId', 'checkoutAttemptToken', 'checkoutAmountCents', 'checkoutCreationRequest', 'checkoutCreationPayerUid']) {
+        assert.equal(Object.prototype.hasOwnProperty.call(recipient, field), false, `${field} must not be parent-readable`);
+    }
+    assert.match(recipient.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(attempt.checkoutUrl, result.checkoutUrl);
+    assert.equal(attempt.stripeCheckoutSessionId, result.sessionId);
+    assert.equal(attempt.payerUid, 'owner-1');
+    assert.equal(attempt.checkoutAmountCents, 7500);
+    assert.equal(attempt.checkoutCreationRequest.stripeParams.metadata.payerUid, 'owner-1');
+    assert.match(attempt.checkoutCreationRequest.idempotencyKey, /^team_fee_checkout_[a-f0-9]{64}$/);
+});
+
+test('validates a paid team-fee webhook against the private attempt and then deletes it', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
+    const attemptPath = `${recipientPath}/checkoutAttempts/current`;
+    const webhookEvent = {
+        id: 'evt_team_fee_paid',
+        type: 'checkout.session.completed',
+        data: { object: {} }
+    };
+    const loaded = loadCallable({
+        webhookEvent,
+        create: async (params) => {
+            const session = makeSession({
+                id: 'cs_team_fee_paid',
+                url: 'https://checkout.stripe.com/c/pay/cs_team_fee_paid',
+                metadata: clone(params.metadata)
+            });
+            webhookEvent.data.object = {
+                ...clone(session),
+                status: 'complete',
+                payment_status: 'paid',
+                payment_intent: 'pi_team_fee_paid'
+            };
+            return session;
+        }
+    });
+
+    await loaded.callable(input, context);
+    const response = makeWebhookResponse();
+    await loaded.teamPassWebhook({
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' },
+        ip: '127.0.0.3'
+    }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.body, { received: true, teamFeeUpdated: true });
+    assert.equal(loaded.firestore._state.get(recipientPath).status, 'paid');
+    assert.equal(loaded.firestore._state.has(attemptPath), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(
+        loaded.firestore._state.get(recipientPath),
+        'checkoutCreationReservationId'
+    ), false);
+});
+
 test('replaces a definitively expired persisted session with a validated fresh session', async () => {
     const expired = makeSession({ status: 'expired' });
     const { callable, metrics } = loadCallable({
-        seed: baseSeed({
-            checkoutUrl: expired.url,
-            checkoutStatus: 'open',
-            checkoutAttemptToken: expired.metadata.checkoutAttemptToken,
-            checkoutAmountCents: 7500,
-            stripeCheckoutSessionId: expired.id
-        }),
+        seed: seedWithPrivateCheckoutAttempt(expired),
         retrieve: async () => expired
     });
 
@@ -349,7 +511,7 @@ test('replaces a definitively expired persisted session with a validated fresh s
     assert.equal(result.sessionId, 'cs_test_new');
     assert.equal(metrics.retrieveCalls.length, 1);
     assert.equal(metrics.createCalls.length, 1);
-    assert.ok(metrics.writes.some(({ path, value }) => path.endsWith('/recipient-1') && value.checkoutUrl === result.checkoutUrl));
+    assert.ok(metrics.writes.some(({ path, value }) => path.endsWith('/checkoutAttempts/current') && value?.checkoutUrl === result.checkoutUrl));
 });
 
 test('replaces poisoned legacy destination metadata when no Stripe session can be reused', async () => {
@@ -366,7 +528,7 @@ test('replaces poisoned legacy destination metadata when no Stripe session can b
     assert.equal(result.checkoutUrl, 'https://checkout.stripe.com/c/pay/cs_test_new');
     assert.equal(metrics.retrieveCalls.length, 0);
     assert.equal(metrics.createCalls.length, 1);
-    assert.ok(metrics.writes.some(({ path, value }) => path.endsWith('/recipient-1') && value.checkoutUrl === result.checkoutUrl));
+    assert.ok(metrics.writes.some(({ path, value }) => path.endsWith('/checkoutAttempts/current') && value?.checkoutUrl === result.checkoutUrl));
 });
 
 for (const [label, checkoutUrl] of [
@@ -378,13 +540,7 @@ for (const [label, checkoutUrl] of [
     test(`fails closed for an active session with a ${label} persisted destination`, async () => {
         const session = makeSession();
         const { callable, metrics } = loadCallable({
-            seed: baseSeed({
-                checkoutUrl,
-                checkoutStatus: 'open',
-                checkoutAttemptToken: session.metadata.checkoutAttemptToken,
-                checkoutAmountCents: 7500,
-                stripeCheckoutSessionId: session.id
-            }),
+            seed: seedWithPrivateCheckoutAttempt(session, { attempt: { checkoutUrl } }),
             retrieve: async () => session
         });
 
@@ -397,13 +553,7 @@ for (const [label, checkoutUrl] of [
 test('fails closed when Stripe cannot determine whether the persisted session is reusable', async () => {
     const session = makeSession();
     const { callable, metrics } = loadCallable({
-        seed: baseSeed({
-            checkoutUrl: session.url,
-            checkoutStatus: 'open',
-            checkoutAttemptToken: session.metadata.checkoutAttemptToken,
-            checkoutAmountCents: 7500,
-            stripeCheckoutSessionId: session.id
-        }),
+        seed: seedWithPrivateCheckoutAttempt(session),
         retrieve: async () => { throw new Error('provider timeout'); }
     });
 
@@ -425,7 +575,7 @@ test('does not persist or return an unsafe destination from fresh Stripe creatio
     await assert.rejects(callable(input, context), (error) => error.code === 'internal');
     assert.equal(metrics.createCalls.length, 1);
     assert.deepEqual(metrics.expireCalls, ['cs_test_new']);
-    assert.equal(metrics.writes.some(({ value }) => Boolean(value?.checkoutUrl)), false);
+    assert.equal(metrics.writes.some(({ path, value }) => path === recipientPath && typeof value?.checkoutUrl === 'string'), false);
     const recipient = firestore._state.get(recipientPath);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationRequest'), false);
@@ -435,7 +585,7 @@ test('expires a new Stripe session and clears its reservation when Firestore per
     const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
     const { callable, firestore, metrics } = loadCallable({
         firestoreOptions: {
-            failTransactionWhen: ({ operations }) => operations.some(({ value }) => Boolean(value?.checkoutUrl))
+            failTransactionWhen: ({ operations }) => operations.some(({ value }) => typeof value?.checkoutUrl === 'string')
         }
     });
 
@@ -452,7 +602,7 @@ test('returns a committed team-fee checkout without expiring it when the transac
     const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1';
     const { callable, firestore, metrics } = loadCallable({
         firestoreOptions: {
-            failTransactionAfterCommitWhen: ({ operations }) => operations.some(({ value }) => Boolean(value?.checkoutUrl))
+            failTransactionAfterCommitWhen: ({ operations }) => operations.some(({ value }) => typeof value?.checkoutUrl === 'string')
         }
     });
 
@@ -465,9 +615,14 @@ test('returns a committed team-fee checkout without expiring it when the transac
     assert.deepEqual(metrics.expireCalls, []);
     const recipient = firestore._state.get(recipientPath);
     assert.equal(recipient.checkoutStatus, 'open');
-    assert.equal(recipient.stripeCheckoutSessionId, 'cs_test_new');
-    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationReservationId'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutUrl'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'stripeCheckoutSessionId'), false);
+    assert.match(recipient.checkoutCreationReservationId, /^[0-9a-f-]{36}$/i);
     assert.equal(Object.prototype.hasOwnProperty.call(recipient, 'checkoutCreationRequest'), false);
+    const privateAttempt = firestore._state.get(`${recipientPath}/checkoutAttempts/current`);
+    assert.equal(privateAttempt.checkoutUrl, result.checkoutUrl);
+    assert.equal(privateAttempt.stripeCheckoutSessionId, result.sessionId);
+    assert.equal(privateAttempt.payerUid, 'owner-1');
 });
 
 test('does not expire a shared idempotent team-fee session when one concurrent persistence response fails', async () => {
@@ -481,7 +636,7 @@ test('does not expire a shared idempotent team-fee session when one concurrent p
     const loaded = loadCallable({
         firestoreOptions: {
             failTransactionAfterCommitWhen: ({ operations }) => {
-                if (!operations.some(({ value }) => Boolean(value?.checkoutUrl))) return false;
+                if (!operations.some(({ value }) => typeof value?.checkoutUrl === 'string')) return false;
                 checkoutPersistenceResponses += 1;
                 return checkoutPersistenceResponses === 1;
             }
@@ -607,7 +762,10 @@ test('replays the exact team-fee Stripe request after an uncertain provider resp
         loaded.firestore._state.get(recipientPath),
         'checkoutCreationRequest'
     ), false);
-    assert.equal(loaded.firestore._state.has(attemptPath), false);
+    const completedAttempt = loaded.firestore._state.get(attemptPath);
+    assert.equal(completedAttempt.checkoutUrl, result.checkoutUrl);
+    assert.equal(completedAttempt.stripeCheckoutSessionId, result.sessionId);
+    assert.equal(completedAttempt.payerUid, 'owner-1');
 });
 
 test('does not replay one eligible payer exact request to another eligible payer', async () => {

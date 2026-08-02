@@ -588,7 +588,10 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
     parentEmail: normalizeString(recipient?.parentEmail),
     status: normalizeString(recipient?.status) || 'unpaid',
     collectionMode: normalizeString(recipient?.collectionMode || recipient?.paymentMode),
-    checkoutUrl: normalizeString(recipient?.checkoutUrl || recipient?.paymentLink || recipient?.paymentUrl),
+    // Active checkout destinations are caller-bound bearer state. Always ask
+    // the callable to resolve the current principal instead of exposing a
+    // legacy URL read from the recipient document.
+    checkoutUrl: '',
     checkoutStatus: normalizeString(recipient?.checkoutStatus),
     amountDueCents,
     amountPaidCents,

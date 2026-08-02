@@ -64,7 +64,6 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
 export function canInitiateParentTeamFeeCheckout(fee: any) {
     return Boolean(
         isParentTeamFeePayActionAllowed(fee)
-        && !hasReusableParentTeamFeeCheckoutUrl(fee)
         && compactString(fee?.teamId)
         && compactString(fee?.batchId)
         && compactString(fee?.recipientId)
@@ -74,30 +73,27 @@ export function canInitiateParentTeamFeeCheckout(fee: any) {
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
     const normalized = normalizeParentFeeRecord(fee);
     const collectionMode = compactString(normalized.collectionMode);
-    const storedCheckoutUrl = compactString(normalized.checkoutUrl);
-    const checkoutUrl = getTrustedStripeCheckoutUrl(storedCheckoutUrl);
     const checkoutStatus = compactString(normalized.checkoutStatus);
     const storedParentFee = {
         ...normalized,
         collectionMode,
-        checkoutUrl: storedCheckoutUrl,
+        checkoutUrl: '',
         checkoutStatus
     };
     const parentFee: Record<string, any> = {
         ...omitParentFeeCheckoutDestinationFields(storedParentFee),
-        checkoutUrl
+        checkoutUrl: ''
     };
     const meta = getParentFeeStatusMeta(normalized.status);
-    const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(storedParentFee) && hasReusableParentTeamFeeCheckoutUrl(storedParentFee);
     const checkoutInitiatable = canInitiateParentTeamFeeCheckout(storedParentFee);
     return {
         ...parentFee,
         amountLabel: formatParentFeeAmount(parentFee),
         dueLabel: formatParentFeeDueDate(parentFee.dueDate),
         statusLabel: meta.label,
-        canPay: canOpenCheckoutUrl || checkoutInitiatable,
+        canPay: checkoutInitiatable,
         checkoutInitiatable,
-        paymentAction: canOpenCheckoutUrl ? 'checkoutUrl' : checkoutInitiatable ? 'createCheckout' : '',
+        paymentAction: checkoutInitiatable ? 'createCheckout' : '',
         lineItems: getArrayField(normalized, ['lineItems', 'invoiceLineItems', 'invoiceItems', 'items']),
         installments: getArrayField(normalized, ['installments', 'installmentSchedule', 'paymentSchedule', 'scheduledPayments']),
         ledgerEntries: getArrayField(normalized, ['ledgerEntries', 'paymentLedger', 'activity', 'receipts', 'payments', 'adjustments'])
@@ -111,13 +107,6 @@ function isOnlineParentTeamFeeCollection(fee: any) {
     }
 
     return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
-}
-
-function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
-    if (!getTrustedStripeCheckoutUrl(fee?.checkoutUrl)) return false;
-
-    const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
-    return !checkoutStatus || checkoutStatus === 'open';
 }
 
 export function getTrustedStripeCheckoutUrl(value: unknown) {

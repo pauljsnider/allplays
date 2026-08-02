@@ -273,6 +273,8 @@ beforeEach(() => {
         id: 'fee-1',
         title: 'Team dues',
         teamId: 'team-1',
+        batchId: 'batch-1',
+        recipientId: 'recipient-1',
         teamName: 'Bears',
         playerName: 'Pat Star',
         status: 'open',
@@ -376,8 +378,8 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'View details');
         expect(container.textContent).toContain('Line items');
         await clickButton(container, 'Pay fee');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/fee');
-        expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+        expect(serviceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/created-fee');
 
         await clickLink(container, 'Calendar');
         await waitForText(container, 'Calendar tools');
@@ -627,11 +629,13 @@ describe('React app parent tools integration', () => {
         expect(revokeButton?.disabled).toBe(false);
     });
 
-    it('renders fee notes and offline payment guidance without changing checkout', async () => {
+    it('renders fee notes and offline guidance while regenerating checkout server-side', async () => {
         serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
             id: 'fee-2',
             title: 'Tournament fee',
             teamId: 'team-1',
+            batchId: 'batch-2',
+            recipientId: 'recipient-2',
             teamName: 'Bears',
             playerName: 'Pat Star',
             status: 'unpaid',
@@ -662,8 +666,8 @@ describe('React app parent tools integration', () => {
         expect(container.textContent).toContain('Uniform deposit is included.');
 
         await clickButton(container, 'Pay fee');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/tournament');
-        expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+        expect(serviceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-2', 'recipient-2');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay/created-fee');
     });
 
     it('creates a team fee checkout session when no checkout URL exists', async () => {

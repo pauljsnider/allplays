@@ -81,6 +81,8 @@ describe('scoped fallback uploads', () => {
         uploadState.hangPrimaryUpload = false;
         vi.restoreAllMocks();
         vi.clearAllMocks();
+        imageAuthMocks.ensureImageAuth.mockResolvedValue({ uid: 'image-user' });
+        imageAuthMocks.requireImageAuth.mockResolvedValue({ uid: 'image-user' });
         vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
     });
 
@@ -268,6 +270,24 @@ describe('scoped fallback uploads', () => {
         ]);
     });
 
+    it('falls back to primary stat sheet storage when image-project authentication fails', async () => {
+        imageAuthMocks.requireImageAuth.mockRejectedValueOnce(new Error('image auth unavailable'));
+        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=145-scoped-fallback-uploads');
+
+        const uploaded = await uploadStatSheetPhoto('team/alpha', {
+            name: 'box score.png',
+            size: 123,
+            type: 'image/png'
+        }, { returnUpload: true });
+
+        expect(uploadState.calls).toHaveLength(1);
+        expect(uploadState.calls[0]).toEqual(expect.objectContaining({
+            targetStorage: 'main-storage',
+            fullPath: 'stat-sheets/team-games/team_alpha/user-42/1700000000000_box_score.png'
+        }));
+        expect(uploaded.storage).toBe('primary');
+    });
+
     it('deletes a statsheet from image storage when that upload must be rolled back', async () => {
         firebaseMocks.uploadBytes.mockImplementationOnce(async (storageRef, file) => {
             uploadState.calls.push({ targetStorage: storageRef.targetStorage, fullPath: storageRef.fullPath, file });
@@ -350,6 +370,24 @@ describe('scoped fallback uploads', () => {
         ]);
     });
 
+    it('falls back to primary drill storage when image-project authentication fails', async () => {
+        imageAuthMocks.requireImageAuth.mockRejectedValueOnce(new Error('image auth unavailable'));
+        const { uploadDrillDiagram } = await import('../../js/db.js?v=145-scoped-fallback-uploads');
+
+        const uploaded = await uploadDrillDiagram('team/alpha', 'drill 7', {
+            name: 'diagram.png',
+            size: 456,
+            type: 'image/png'
+        }, { returnUpload: true });
+
+        expect(uploadState.calls).toHaveLength(1);
+        expect(uploadState.calls[0]).toEqual(expect.objectContaining({
+            targetStorage: 'main-storage',
+            fullPath: 'stat-sheets/drills/team_alpha/drill_7/user-42/1700000000000_diagram.png'
+        }));
+        expect(uploaded.storage).toBe('primary');
+    });
+
     it('deletes a game clip from image storage when its game update fails', async () => {
         firebaseMocks.uploadBytes.mockImplementationOnce(async (storageRef, file) => {
             uploadState.calls.push({ targetStorage: storageRef.targetStorage, fullPath: storageRef.fullPath, file });
@@ -398,5 +436,23 @@ describe('scoped fallback uploads', () => {
                 fullPath: uploaded.path
             })
         ]);
+    });
+
+    it('falls back to primary game-clip storage when image-project authentication fails', async () => {
+        imageAuthMocks.requireImageAuth.mockRejectedValueOnce(new Error('image auth unavailable'));
+        const { uploadGameClip } = await import('../../js/db.js?v=145-scoped-fallback-uploads');
+
+        const uploaded = await uploadGameClip('team/alpha', 'game 7', {
+            name: 'winning shot.mp4',
+            size: 456,
+            type: 'video/mp4'
+        });
+
+        expect(uploadState.calls).toHaveLength(1);
+        expect(uploadState.calls[0]).toEqual(expect.objectContaining({
+            targetStorage: 'main-storage',
+            fullPath: 'game-clips/team_alpha/game_7/user-42/1700000000000_winning_shot.mp4'
+        }));
+        expect(uploaded.storage).toBe('primary');
     });
 });

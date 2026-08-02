@@ -391,7 +391,7 @@ describe('React app team fee offline payment service', () => {
             playerName: 'Pat Star',
             remainingBalanceCents: 7500,
             collectionMode: 'online_stripe',
-            checkoutUrl: 'https://pay.example.test/team-fee',
+            checkoutUrl: '',
             checkoutStatus: 'open'
         });
     });

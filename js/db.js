@@ -586,6 +586,16 @@ function getRequiredSignedInUserId() {
     return userId;
 }
 
+async function canUseLegacyImageStorage(label) {
+    try {
+        await requireImageAuth();
+        return true;
+    } catch (error) {
+        console.warn(`Image authentication unavailable for ${label}; using main storage:`, error?.message || error);
+        return false;
+    }
+}
+
 const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
 
 async function withChatMediaTimeout(operation) {
@@ -664,46 +674,45 @@ export async function deleteUploadedChatAttachments(attachments = []) {
 }
 
 export async function uploadGameClip(teamId, gameId, file) {
-    await requireImageAuth();
-
     const ts = Date.now();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
     const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
 
-    try {
-        const storageRef = ref(imageStorage, clipPath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        return {
-            url,
-            path: clipPath,
-            storage: 'image',
-            name: file.name || null,
-            type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null,
-            source: 'upload'
-        };
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
-            const fallbackRef = ref(storage, fallbackPath);
-            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    if (await canUseLegacyImageStorage('game clip upload')) {
+        try {
+            const storageRef = ref(imageStorage, clipPath);
+            const snapshot = await uploadBytes(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return {
-                url: fallbackUrl,
-                path: fallbackPath,
-                storage: 'primary',
+                url,
+                path: clipPath,
+                storage: 'image',
                 name: file.name || null,
                 type: file.type || null,
                 size: Number.isFinite(file.size) ? file.size : null,
                 source: 'upload'
             };
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
     }
+
+    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
+    const fallbackRef = ref(storage, fallbackPath);
+    const fallbackSnapshot = await uploadBytes(fallbackRef, file);
+    const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    return {
+        url: fallbackUrl,
+        path: fallbackPath,
+        storage: 'primary',
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null,
+        source: 'upload'
+    };
 }
 
 export async function uploadStatSheetPhoto(teamId, file, options = {}) {
@@ -713,36 +722,33 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         fileType: file.type
     });
 
-    await requireImageAuth();
-
+    const userId = getRequiredSignedInUserId();
+    if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
     const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
-    try {
-        const storageRef = ref(imageStorage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        console.log('Stat sheet URL (image storage):', downloadURL);
-        return options?.returnUpload === true
-            ? { url: downloadURL, path, storage: 'image' }
-            : downloadURL;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-            const userId = auth.currentUser?.uid;
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
-            }
-            const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, Date.now());
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
+    if (await canUseLegacyImageStorage('stat sheet upload')) {
+        try {
+            const storageRef = ref(imageStorage, path);
+            const snapshot = await uploadBytes(storageRef, file);
             const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            console.log('Stat sheet URL (main storage):', downloadURL);
+            console.log('Stat sheet URL (image storage):', downloadURL);
             return options?.returnUpload === true
-                ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+                ? { url: downloadURL, path, storage: 'image' }
                 : downloadURL;
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
     }
+
+    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, Date.now());
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadBytes(fallbackRef, file);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    console.log('Stat sheet URL (main storage):', downloadURL);
+    return options?.returnUpload === true
+        ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+        : downloadURL;
 }
 
 import { resolveZip } from './utils.js?v=25'; // Import resolveZip
@@ -9149,28 +9155,28 @@ export async function deleteDrill(drillId) {
 // ============================================
 
 export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
-    await ensureImageAuth();
     const userId = auth.currentUser?.uid;
-    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
-    try {
-        const storageRef = ref(imageStorage, imagePath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-        return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
-            // Match fallback behavior used by chat/stat-sheet uploads.
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped drill fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
-            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
-        }
-        throw error;
+    if (!teamId || !userId) {
+        throw new Error('Team-scoped drill upload requires a signed-in team user.');
     }
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
+    if (await canUseLegacyImageStorage('drill upload')) {
+        try {
+            const storageRef = ref(imageStorage, imagePath);
+            const snapshot = await uploadBytes(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
+        } catch (error) {
+            const code = error?.code || '';
+            if (!['storage/unauthorized', 'storage/unauthenticated', 'storage/unknown'].includes(code)) throw error;
+            console.warn('Image storage denied drill upload, falling back to main storage:', error?.message || error);
+        }
+    }
+
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadBytes(fallbackRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
 }
 
 // ============================================
