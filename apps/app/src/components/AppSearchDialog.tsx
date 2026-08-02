@@ -11,10 +11,12 @@ import {
   computeAppSearchResults,
   getImmediateAppTeamSearchResults,
   getKnownAppSearchTeams,
+  loadAppSearchHelpResults,
   loadAppSearchTeams,
   searchAppTeams,
   searchAppPlayers,
   type AppSearchItem,
+  type AppSearchHelp,
   type AppSearchPlayer,
   type AppSearchTeam
 } from '../lib/searchService';
@@ -41,10 +43,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [playersRetrying, setPlayersRetrying] = useState(false);
+  const [helpResults, setHelpResults] = useState<AppSearchHelp[]>([]);
+  const [helpLoading, setHelpLoading] = useState(false);
   const [searchAttempt, setSearchAttempt] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const helpSearchRequestId = useRef(0);
   const playerSearchGenerationRef = useRef(0);
   const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -56,11 +61,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const helpRoleFilter = derivePrimaryHelpRole(auth);
 
   const results = useMemo(
-    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
-    [auth, helpRoleFilter, players, query, teams]
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpResults }),
+    [auth, helpResults, players, query, teams]
   );
-  const helpResults = results.help ?? [];
-  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
+  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...results.help, ...results.players];
 
   useEffect(() => {
     if (!open) return;
@@ -83,6 +87,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersError('');
     setPlayersLoading(false);
     setPlayersRetrying(false);
+    setHelpResults([]);
+    setHelpLoading(false);
     clearScheduledPlayerSearch();
     const knownTeams = getKnownAppSearchTeams(auth.user);
     baseTeamsRef.current = knownTeams;
@@ -92,6 +98,31 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setTeamsError('');
     setTeamsRetrying(false);
   }, [auth.user, open]);
+
+  useEffect(() => {
+    const requestId = ++helpSearchRequestId.current;
+    const trimmedQuery = query.trim();
+
+    if (!open || trimmedQuery.length < 2) {
+      setHelpResults([]);
+      setHelpLoading(false);
+      return;
+    }
+
+    setHelpResults([]);
+    setHelpLoading(true);
+    void loadAppSearchHelpResults({ queryText: query, auth, helpRoleFilter })
+      .then((nextHelpResults) => {
+        if (requestId !== helpSearchRequestId.current) return;
+        setHelpResults(nextHelpResults);
+        setHelpLoading(false);
+      })
+      .catch(() => {
+        if (requestId !== helpSearchRequestId.current) return;
+        setHelpResults([]);
+        setHelpLoading(false);
+      });
+  }, [auth, helpRoleFilter, open, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -381,8 +412,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           ? 'No matching teams'
           : ''
     : teamsError;
-  const helpStatus = hasRealQuery && helpResults.length === 0
-    ? 'No matching help articles'
+  const helpStatus = hasRealQuery && helpLoading
+    ? 'Searching help...'
+    : hasRealQuery && results.help.length === 0
+      ? 'No matching help articles'
     : '';
   const playersStatus = !hasRealQuery
     ? 'Type at least 2 characters to search players'
@@ -487,7 +520,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
             <SearchSection
               title="Help"
-              items={helpResults}
+              items={results.help}
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
@@ -513,7 +546,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               title="Players"
               items={results.players}
               activeIndex={activeIndex}
-              offset={results.actions.length + results.teams.length + helpResults.length}
+              offset={results.actions.length + results.teams.length + results.help.length}
               status={playersStatus}
               statusTone={playersError && !playersRetrying ? 'error' : 'neutral'}
               onRetry={playersError ? () => retrySearch('players') : undefined}

@@ -216,25 +216,10 @@ async function mockSearchModules(page) {
                     return false;
                 }
 
-                export function computeAppSearchResults({ queryText, auth, teams, players, helpRoleFilter = 'all' }) {
+                export async function loadAppSearchHelpResults({ queryText, helpRoleFilter = 'all' }) {
                     const q = String(queryText || '').trim().toLowerCase();
-                    const actions = [
-                        { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', route: '/teams/browse' },
-                        { id: 'dashboard', kind: 'action', title: 'Dashboard', subtitle: 'Go to your ALL PLAYS home', route: '/home' },
-                        { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Choose or switch teams', route: '/teams' },
-                        { id: 'schedule', kind: 'action', title: 'Schedule', subtitle: 'Games, practices, availability, rides, and packets', route: '/schedule' },
-                        { id: 'messages', kind: 'action', title: 'Messages', subtitle: 'Team chat and staff threads', route: '/messages' },
-                        { id: 'profile', kind: 'action', title: 'Profile', subtitle: 'Account settings and notifications', route: '/profile/settings' }
-                    ];
-                    const teamItems = teams.map((team) => ({
-                        id: 'team:' + team.id,
-                        kind: 'team',
-                        title: team.name,
-                        subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
-                        route: '/teams/' + encodeURIComponent(team.id)
-                    }));
-                    const matches = (item) => !q || (item.title + ' ' + item.subtitle).toLowerCase().includes(q);
-                    const helpItems = q.includes('live') || q.includes('tracker') ? [
+                    if (q.length < 2 || (!q.includes('live') && !q.includes('tracker'))) return [];
+                    const helpItems = [
                         {
                             id: 'help:live-tracker-coach-guide',
                             kind: 'help',
@@ -255,18 +240,37 @@ async function mockSearchModules(page) {
                             roles: ['parent', 'member'],
                             snippet: 'Parents and members can watch live game feeds.'
                         }
-                    ] : [];
-                    const roleMatches = (item) => helpRoleFilter === 'all' || item.roles.includes('all') || item.roles.includes(helpRoleFilter);
+                    ];
+                    return helpItems.filter((item) => helpRoleFilter === 'all' || item.roles.includes(helpRoleFilter));
+                }
+
+                export function computeAppSearchResults({ queryText, auth, teams, players, helpResults = [] }) {
+                    const q = String(queryText || '').trim().toLowerCase();
+                    const actions = [
+                        { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', route: '/teams/browse' },
+                        { id: 'dashboard', kind: 'action', title: 'Dashboard', subtitle: 'Go to your ALL PLAYS home', route: '/home' },
+                        { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Choose or switch teams', route: '/teams' },
+                        { id: 'schedule', kind: 'action', title: 'Schedule', subtitle: 'Games, practices, availability, rides, and packets', route: '/schedule' },
+                        { id: 'messages', kind: 'action', title: 'Messages', subtitle: 'Team chat and staff threads', route: '/messages' },
+                        { id: 'profile', kind: 'action', title: 'Profile', subtitle: 'Account settings and notifications', route: '/profile/settings' }
+                    ];
+                    const teamItems = teams.map((team) => ({
+                        id: 'team:' + team.id,
+                        kind: 'team',
+                        title: team.name,
+                        subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
+                        route: '/teams/' + encodeURIComponent(team.id)
+                    }));
+                    const matches = (item) => !q || (item.title + ' ' + item.subtitle).toLowerCase().includes(q);
                     const matchedActions = actions.filter(matches);
                     const matchedTeams = teamItems.filter(matches);
-                    const matchedHelp = helpItems.filter(roleMatches);
                     const matchedPlayers = players.filter(matches);
                     return {
                         actions: matchedActions,
                         teams: matchedTeams,
-                        help: matchedHelp,
+                        help: helpResults,
                         players: matchedPlayers,
-                        flat: [...matchedActions, ...matchedTeams, ...matchedHelp, ...matchedPlayers]
+                        flat: [...matchedActions, ...matchedTeams, ...helpResults, ...matchedPlayers]
                     };
                 }
             `
