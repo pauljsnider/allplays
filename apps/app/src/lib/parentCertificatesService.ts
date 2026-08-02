@@ -1,11 +1,11 @@
-import { getTeam, listCertificatesForPlayer } from './adapters/legacyParentTools';
+import { getCertificate, getTeam, listCertificatesForPlayer } from './adapters/legacyParentTools';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
 const DEFAULT_PUBLISHED_CERTIFICATE_LIMIT = 25;
-const TARGETED_PUBLISHED_CERTIFICATE_LIMIT = 250;
 
 export type ParentCertificateCard = Record<string, any> & {
+    id: string;
     teamId: string;
     teamName: string;
     playerId: string;
@@ -14,15 +14,11 @@ export type ParentCertificateCard = Record<string, any> & {
 };
 
 export type LoadParentCertificatesOptions = {
-    requestedTeamId?: string;
-    requestedCertificateId?: string;
+    includeCertificate?: ParentCertificateCard | null;
 };
 
 export async function loadParentCertificates(user: AuthUser | null, options: LoadParentCertificatesOptions = {}): Promise<ParentCertificateCard[]> {
     const children = normalizeFamilyChildren(user?.parentOf || []);
-    const requestedTeamId = compactString(options.requestedTeamId);
-    const requestedCertificateId = compactString(options.requestedCertificateId);
-    const hasTargetedCertificateRequest = Boolean(requestedTeamId && requestedCertificateId);
     const teamReads = new Map<string, Promise<any>>();
     const readTeam = (teamId: string) => {
         if (!teamReads.has(teamId)) {
@@ -31,12 +27,9 @@ export async function loadParentCertificates(user: AuthUser | null, options: Loa
         return teamReads.get(teamId)!;
     };
     const rows = await Promise.all(children.map(async (child: any) => {
-        const certificateLimit = hasTargetedCertificateRequest && child.teamId === requestedTeamId
-            ? TARGETED_PUBLISHED_CERTIFICATE_LIMIT
-            : DEFAULT_PUBLISHED_CERTIFICATE_LIMIT;
         const [team, certificates] = await Promise.all([
             readTeam(child.teamId),
-            Promise.resolve(listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: certificateLimit })).catch(() => [])
+            Promise.resolve(listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: DEFAULT_PUBLISHED_CERTIFICATE_LIMIT })).catch(() => [])
         ]);
         return (certificates || []).map((certificate: any) => ({
             ...certificate,
@@ -47,11 +40,52 @@ export async function loadParentCertificates(user: AuthUser | null, options: Loa
             url: getCertificateUrl(child.teamId, certificate.id)
         }));
     }));
-    return rows.flat().sort((a, b) => {
+    const cardsById = new Map<string, ParentCertificateCard>();
+    if (options.includeCertificate
+        && compactString(options.includeCertificate.status) === 'published'
+        && children.some((child) => child.teamId === options.includeCertificate?.teamId && child.playerId === options.includeCertificate?.playerId)) {
+        cardsById.set(getCertificateKey(options.includeCertificate), options.includeCertificate);
+    }
+    rows.flat().forEach((card) => {
+        cardsById.set(getCertificateKey(card), card);
+    });
+    return [...cardsById.values()].sort((a, b) => {
         const aTime = toMillis(a.updatedAt || a.createdAt);
         const bTime = toMillis(b.updatedAt || b.createdAt);
         return bTime - aTime;
     });
+}
+
+export async function loadParentCertificate(
+    user: AuthUser | null,
+    requestedTeamId: string,
+    requestedCertificateId: string
+): Promise<ParentCertificateCard | null> {
+    const teamId = compactString(requestedTeamId);
+    const certificateId = compactString(requestedCertificateId);
+    const linkedChildren = normalizeFamilyChildren(user?.parentOf || [])
+        .filter((child) => child.teamId === teamId);
+    if (!teamId || !certificateId || !linkedChildren.length) return null;
+
+    const certificate = await Promise.resolve(getCertificate(teamId, certificateId)).catch(() => null);
+    if (!certificate || compactString(certificate.status) !== 'published') return null;
+    if (compactString(certificate.id) !== certificateId) return null;
+    if (certificate.teamId && compactString(certificate.teamId) !== teamId) return null;
+    const child = linkedChildren.find((entry) => entry.playerId === compactString(certificate.playerId));
+    if (!child) return null;
+
+    return {
+        ...certificate,
+        teamId,
+        teamName: child.teamName || 'Team',
+        playerId: child.playerId,
+        playerName: child.playerName || certificate.recipientName || 'Player',
+        url: getCertificateUrl(teamId, certificateId)
+    };
+}
+
+function getCertificateKey(certificate: Pick<ParentCertificateCard, 'teamId' | 'id'>) {
+    return `${compactString(certificate.teamId)}::${compactString(certificate.id)}`;
 }
 
 function getLegacyUrl(path: string, hashParams: Record<string, string> = {}) {

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Award, ExternalLink, RefreshCw, Share2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { loadParentCertificates, type LoadParentCertificatesOptions, type ParentCertificateCard } from '../../lib/parentCertificatesService';
+import { loadParentCertificate, loadParentCertificates, type ParentCertificateCard } from '../../lib/parentCertificatesService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
@@ -9,39 +9,63 @@ import { EmptyState, LoadingBlock, RetryableStatus, ToolHeader, useParentToolAsy
 export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [searchParams] = useSearchParams();
     const [cards, setCards] = useState<ParentCertificateCard[]>([]);
+    const [requestedCard, setRequestedCard] = useState<ParentCertificateCard | null>(null);
     const [showAllAwards, setShowAllAwards] = useState(false);
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
+    const { loading: loadingAllAwards, error: allAwardsError, clearError: clearAllAwardsError, run: runAllAwardsLoad } = useParentToolAsyncOperation();
+    const allAwardsLoadStarted = useRef(false);
     const requestedTeamId = String(searchParams.get('teamId') || '').trim();
     const requestedCertificateId = String(searchParams.get('certificateId') || '').trim();
     const hasRequestedCertificate = Boolean(requestedTeamId && requestedCertificateId);
 
     const refresh = useCallback(async () => {
-        const loadOptions: LoadParentCertificatesOptions = hasRequestedCertificate
-            ? { requestedTeamId, requestedCertificateId }
-            : {};
+        allAwardsLoadStarted.current = false;
+        clearAllAwardsError();
+        setCards([]);
+        setRequestedCard(null);
+        setShowAllAwards(false);
         return runLoad(
-            () => loadParentCertificates(auth.user, loadOptions),
+            async () => {
+                if (!hasRequestedCertificate) {
+                    return { cards: await loadParentCertificates(auth.user), requestedCard: null };
+                }
+                const directCard = await loadParentCertificate(auth.user, requestedTeamId, requestedCertificateId);
+                if (directCard) {
+                    return { cards: [directCard], requestedCard: directCard };
+                }
+                return { cards: await loadParentCertificates(auth.user), requestedCard: null };
+            },
             'Unable to load awards.',
             {
                 onSuccess: (result) => {
-                    setCards(result);
+                    setCards(result.cards);
+                    setRequestedCard(result.requestedCard);
                 }
             }
         );
-    }, [auth.user, hasRequestedCertificate, requestedCertificateId, requestedTeamId, runLoad]);
+    }, [auth.user, clearAllAwardsError, hasRequestedCertificate, requestedCertificateId, requestedTeamId, runLoad]);
+
+    const loadAllAwards = useCallback(async () => {
+        if (!requestedCard || allAwardsLoadStarted.current) return;
+        allAwardsLoadStarted.current = true;
+        return runAllAwardsLoad(
+            () => loadParentCertificates(auth.user, { includeCertificate: requestedCard }),
+            'Unable to load all awards.',
+            {
+                onSuccess: (result) => {
+                    setCards(result);
+                    setShowAllAwards(true);
+                },
+                onError: () => {
+                    allAwardsLoadStarted.current = false;
+                }
+            }
+        );
+    }, [auth.user, requestedCard, runAllAwardsLoad]);
 
     useEffect(() => {
         void refresh();
     }, [auth.user?.uid, refresh, refreshVersion]);
-
-    useEffect(() => {
-        setShowAllAwards(false);
-    }, [requestedCertificateId, requestedTeamId]);
-
-    const requestedCard = useMemo(() => {
-        if (!hasRequestedCertificate) return null;
-        return cards.find((card) => String(card.teamId || '') === requestedTeamId && String(card.id || '') === requestedCertificateId) || null;
-    }, [cards, hasRequestedCertificate, requestedCertificateId, requestedTeamId]);
 
     const visibleCards = useMemo(() => {
         if (requestedCard && !showAllAwards) {
@@ -65,8 +89,8 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
                                 <div className="mt-1 text-xs leading-5 text-blue-800">Showing {requestedCard.playerName}&apos;s {requestedCard.title || requestedCard.awardTitle || 'award'} first.</div>
                             </div>
                             {!showAllAwards ? (
-                                <button type="button" className="ghost-button !min-h-8 !px-2 text-xs" onClick={() => setShowAllAwards(true)}>
-                                    Show all awards
+                                <button type="button" className="ghost-button !min-h-8 !px-2 text-xs" onClick={loadAllAwards} disabled={loadingAllAwards}>
+                                    {loadingAllAwards ? 'Loading awards' : 'Show all awards'}
                                 </button>
                             ) : null}
                         </div>
@@ -78,6 +102,7 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
                         <span>That award is no longer available. Showing all published awards instead.</span>
                     </div>
                 ) : null}
+                {allAwardsError ? <RetryableStatus error={allAwardsError} fallbackMessage="Unable to load all awards." onRetry={loadAllAwards} retrying={loadingAllAwards} /> : null}
             </section>
             {!error && (loading ? <LoadingBlock label="Loading awards" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
