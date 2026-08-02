@@ -9,7 +9,8 @@ import {
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
 import {
     createFirebaseRestSession,
-    patchFirestoreDocumentFields
+    patchFirestoreDocumentFields,
+    restoreFirestoreDocumentFields
 } from '../smoke/helpers/firebase-rest.js';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
@@ -190,6 +191,39 @@ describe('production officials smoke fixture maintenance', () => {
             fields: {
                 officiatingSlots: { arrayValue: { values: [] } },
                 officiatingSelfAssignmentEnabled: { booleanValue: true }
+            }
+        });
+    });
+
+    it('restores only named image fields and deletes fields absent from the original snapshot', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ fields: {} })
+        });
+
+        await restoreFirestoreDocumentFields(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'users/smoke-user',
+            {
+                fields: {
+                    photoUrl: { stringValue: 'https://example.test/original.png' },
+                    fullName: { stringValue: 'Concurrent edits must survive' }
+                }
+            },
+            ['photoUrl', 'photoPath'],
+            { updateTime: '2026-08-02T20:00:00.000Z' }
+        );
+
+        const [requestUrl, request] = fetchMock.mock.calls[0];
+        const url = new URL(requestUrl);
+        expect(url.searchParams.getAll('updateMask.fieldPaths')).toEqual(['photoPath', 'photoUrl']);
+        expect(url.searchParams.get('currentDocument.updateTime')).toBe('2026-08-02T20:00:00.000Z');
+        expect(JSON.parse(request.body)).toEqual({
+            fields: {
+                photoUrl: { stringValue: 'https://example.test/original.png' }
             }
         });
     });

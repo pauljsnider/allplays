@@ -37,6 +37,10 @@ const extendedProductionSmoke = fs.readFileSync(
     path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-extended.spec.js'),
     'utf8'
 );
+const imageWriteProductionSmoke = fs.readFileSync(
+    path.join(repoRoot, 'tests', 'smoke', 'app-authenticated-image-writes.spec.js'),
+    'utf8'
+);
 const trustBoundaryRunbook = fs.readFileSync(
     path.join(repoRoot, 'docs', 'preview-deploy-trust-boundary.md'),
     'utf8'
@@ -433,6 +437,51 @@ describe('preview deployment workflow trust boundary', () => {
         const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
         expect(notificationAssertion).toBeGreaterThanOrEqual(0);
         expect(cleanupCall).toBeGreaterThan(notificationAssertion);
+    });
+
+    it('keeps production image writes isolated and always schedules cleanup', () => {
+        const staffWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('staff smoke writes are deterministic and removed after validation'"
+        );
+        const imageWorkflowStart = imageWriteProductionSmoke.indexOf(
+            "test('staff image upload is persisted and removed after validation'"
+        );
+        const profileImageWorkflowStart = imageWriteProductionSmoke.indexOf(
+            "test('profile image paths accept authenticated storage and document writes'"
+        );
+        const parentWorkflowStart = extendedProductionSmoke.indexOf(
+            "test('parent smoke writes restore or remove every touched record'"
+        );
+        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, parentWorkflowStart);
+        const imageWorkflow = imageWriteProductionSmoke.slice(imageWorkflowStart, profileImageWorkflowStart);
+        const profileImageWorkflow = imageWriteProductionSmoke.slice(profileImageWorkflowStart);
+
+        expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(imageWorkflowStart).toBeGreaterThanOrEqual(0);
+        expect(profileImageWorkflowStart).toBeGreaterThan(imageWorkflowStart);
+        expect(staffWorkflow).toContain("getByRole('button', { name: /manage schedule/i }).click()");
+        expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
+        expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
+        expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
+        expect(imageWorkflow).toContain("recordType: 'team-media'");
+        expect(imageWorkflow).toContain('input[type="file"][accept="image/*"]');
+        expect(imageWorkflow).toContain("getByText('Uploaded', { exact: true })");
+        expect(imageWorkflow).toContain("getByText('Media item deleted.')");
+        expect(imageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
+        expect(profileImageWorkflow).toContain('profile-photos/users/${staffRestSession.localId}/');
+        expect(profileImageWorkflow).toContain('profile-photos/teams/${config.teamId}/players/${config.playerId}/');
+        expect(profileImageWorkflow).toContain('players/${config.playerId}/private/profile');
+        expect(profileImageWorkflow).toContain('uploadFirebaseStorageObject(');
+        expect(profileImageWorkflow).toContain('patchFirestoreDocumentFields(');
+        expect(profileImageWorkflow).toContain('restoreImageFieldsIfUnchanged(');
+        expect(imageWriteProductionSmoke).toContain('restoreFirestoreDocumentFields(');
+        expect(imageWriteProductionSmoke).toContain('{ updateTime: currentDocument.updateTime }');
+        expect(profileImageWorkflow).toContain('deleteFirebaseStorageObject(');
+        expect(profileImageWorkflow.indexOf('restoreImageFieldsIfUnchanged(')).toBeLessThan(
+            profileImageWorkflow.indexOf('deleteFirebaseStorageObject(')
+        );
+        expect(profileImageWorkflow).toContain('await runSmokeCleanup(runId, cleanupTasks)');
     });
 
     it('documents the keyless credential and exact-head operational contract', () => {

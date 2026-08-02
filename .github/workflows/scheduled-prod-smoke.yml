@@ -49,6 +49,7 @@ jobs:
           tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
           tests/smoke/legacy-authenticated-core.spec.js
+          tests/smoke/app-authenticated-image-writes.spec.js
           tests/smoke/app-authenticated-extended.spec.js
           --config=playwright.smoke.config.js
           --project=smoke

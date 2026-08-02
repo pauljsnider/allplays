@@ -13,7 +13,6 @@ import {
     deleteFirestoreDocument,
     deleteFirestoreDocumentsByStringField,
     deleteFirestoreDocumentsByStringFields,
-    deleteSmokeMediaByTitle,
     findFirestoreDocumentsByStringField,
     getFirestoreDocument,
     getFirestoreDocumentPath,
@@ -139,7 +138,6 @@ test('staff smoke writes are deterministic and removed after validation', async 
     const opponentName = `${smokePrefix}-opponent`;
     const chatText = `${smokePrefix}-chat`;
     const editedChatText = `${chatText}-edited`;
-    const mediaName = `${smokePrefix}-media.png`;
     const cleanupTasks = [
         {
             recordType: 'roster-player',
@@ -157,14 +155,6 @@ test('staff smoke writes are deterministic and removed after validation', async 
                 `teams/${config.teamId}/games`,
                 'opponent',
                 opponentName
-            )
-        },
-        {
-            recordType: 'team-media',
-            cleanup: () => deleteSmokeMediaByTitle(
-                staffRestSession,
-                `teams/${config.teamId}/mediaItems`,
-                mediaName
             )
         },
         {
@@ -192,8 +182,9 @@ test('staff smoke writes are deterministic and removed after validation', async 
 
             await openRoute(
                 page,
-                `/schedule?scope=staff&staffTools=1&staffSection=add&teamId=${encodeURIComponent(config.teamId)}`
+                `/schedule?scope=staff&teamId=${encodeURIComponent(config.teamId)}`
             );
+            await page.getByRole('button', { name: /manage schedule/i }).click();
             const createGame = page.locator('section[aria-label="Create game"]');
             await expect(createGame).toBeVisible({ timeout: 25_000 });
             await createGame.getByLabel('Opponent').fill(opponentName);
@@ -261,24 +252,6 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await page.getByRole('button', { name: 'Undo last' }).click();
             await expect(page.getByText(/^Undid /).first()).toBeVisible({ timeout: 20_000 });
 
-            await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
-            const photoButton = page.getByRole('button', { name: 'Photo' });
-            await expect(photoButton, 'The smoke team must have an existing writable media album').toBeVisible({ timeout: 25_000 });
-            const photoInput = page.locator('input[type="file"][accept="image/*"]');
-            await photoInput.setInputFiles({
-                name: mediaName,
-                mimeType: 'image/png',
-                buffer: Buffer.from(
-                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-                    'base64'
-                )
-            });
-            await expect(page.getByText('Uploaded', { exact: true })).toBeVisible({ timeout: 35_000 });
-            const deleteMedia = page.getByRole('button', { name: `Delete ${mediaName}` });
-            await expect(deleteMedia).toBeVisible({ timeout: 25_000 });
-            page.once('dialog', (dialog) => dialog.accept());
-            await deleteMedia.click();
-            await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
         });
 
         await withAuthenticatedPage(parentNotificationSession, async (page) => {
