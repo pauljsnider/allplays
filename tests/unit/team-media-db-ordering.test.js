@@ -249,6 +249,41 @@ describe('team media db ordering', () => {
         });
     });
 
+    it('deletes a completed photo upload when reserving its media order fails', async () => {
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('folder update denied'));
+        const { uploadTeamMediaPhoto } = await import('../../js/db.js');
+        const uploadPromise = uploadTeamMediaPhoto(
+            'team-1',
+            'folder-1',
+            new File(['photo'], 'tipoff.jpg', { type: 'image/jpeg' })
+        );
+
+        uploadTaskQueue.splice(0).forEach((complete) => complete());
+
+        await expect(uploadPromise).rejects.toThrow('folder update denied');
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
+            fullPath: expect.stringMatching(/^team-media\/team-1\/folder-1\/user-1\/.+-tipoff\.jpg$/)
+        }));
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
+    it('deletes a completed file upload when its media document cannot be saved', async () => {
+        firebaseMocks.addDoc.mockRejectedValueOnce(new Error('media create denied'));
+        const { uploadTeamMediaFile } = await import('../../js/db.js');
+        const uploadPromise = uploadTeamMediaFile(
+            'team-1',
+            'folder-1',
+            new File(['document'], 'lineup.pdf', { type: 'application/pdf' })
+        );
+
+        uploadTaskQueue.splice(0).forEach((complete) => complete());
+
+        await expect(uploadPromise).rejects.toThrow('media create denied');
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
+            fullPath: expect.stringMatching(/^team-media\/team-1\/folder-1\/user-1\/.+-lineup\.pdf$/)
+        }));
+    });
+
     it('re-resolves storage-backed media URLs and strips legacy cached url fields', async () => {
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{

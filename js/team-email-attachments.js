@@ -119,9 +119,11 @@ export async function uploadTeamEmailAttachment(teamId, file, { draftId = 'draft
 
     const ts = Date.now();
     const path = `team-email-attachments/${cleanTeamId}/${cleanString(draftId) || 'draft'}/${user.uid}/${ts}_${safeFileName(file.name)}`;
+    let uploadedRef = null;
     try {
         const storageRef = ref(storage, path);
         const snapshot = await uploadBytes(storageRef, file);
+        uploadedRef = snapshot.ref;
         const downloadUrl = await getDownloadURL(snapshot.ref);
 
         return {
@@ -135,6 +137,9 @@ export async function uploadTeamEmailAttachment(teamId, file, { draftId = 'draft
             uploadedAt: Timestamp.now()
         };
     } catch (error) {
+        if (uploadedRef) {
+            await deleteObject(uploadedRef).catch(() => undefined);
+        }
         console.error('Error uploading team email attachment:', error);
         throw error;
     }

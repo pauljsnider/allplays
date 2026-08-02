@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const legacyPlayerDbMocks = vi.hoisted(() => ({
   collectRosterParentContacts: vi.fn((): any[] => []),
   deleteAthleteProfileMediaByPath: vi.fn(),
+  deleteLegacyImageUpload: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAggregatedStatsDocumentForPlayer: vi.fn(),
   getAggregatedStatsForPlayer: vi.fn(),
@@ -705,6 +706,25 @@ describe('saveStaffPlayerRosterDetails', () => {
         photoUrl: 'https://cdn.example.com/photo.jpg'
       }
     });
+  });
+
+  it('rolls back a browser roster photo when the player update fails', async () => {
+    legacyPlayerDbMocks.uploadPlayerPhoto.mockResolvedValueOnce({
+      url: 'https://cdn.example.com/new-photo.jpg',
+      path: 'player-photos/new-photo.jpg'
+    });
+    legacyPlayerDbMocks.updatePlayer.mockRejectedValueOnce(new Error('player update denied'));
+
+    await expect(saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player' },
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('player update denied');
+
+    expect(legacyPlayerDbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('player-photos/new-photo.jpg');
   });
 
   it('rejects roster edits from parent-only users', async () => {

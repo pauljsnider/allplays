@@ -1,4 +1,4 @@
-import { getConfigs as legacyGetConfigs, getGame as legacyGetGame, getPlayers as legacyGetPlayers, getTeam as legacyGetTeam, uploadStatSheetPhoto as legacyUploadStatSheetPhoto } from '@legacy/db.js';
+import { deleteUploadedMediaObjects as legacyDeleteUploadedMediaObjects, getConfigs as legacyGetConfigs, getGame as legacyGetGame, getPlayers as legacyGetPlayers, getTeam as legacyGetTeam, uploadStatSheetPhoto as legacyUploadStatSheetPhoto } from '@legacy/db.js';
 import { collection as legacyCollection, db as legacyDb, deleteDoc as legacyDeleteDoc, doc as legacyDoc, getDocs as legacyGetDocs, writeBatch as legacyWriteBatch } from '@legacy/firebase.js';
 import { buildTrackStatsheetApplyPlan as legacyBuildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows as legacyValidateTrackStatsheetApplyRows } from '@legacy/track-statsheet-apply.js';
 import { addAggregatedStatsWritesToBatch as legacyAddAggregatedStatsWritesToBatch } from '@legacy/live-tracker-save-complete.js';
@@ -15,6 +15,7 @@ export const getGame = legacyGetGame as (...args: any[]) => Promise<any>
 export const getPlayers = legacyGetPlayers as (...args: any[]) => Promise<any>
 export const getTeam = legacyGetTeam as (...args: any[]) => Promise<any>
 export const uploadStatSheetPhoto = legacyUploadStatSheetPhoto as (...args: any[]) => Promise<any>
+export const deleteUploadedMediaObjects = legacyDeleteUploadedMediaObjects as (...args: any[]) => Promise<any>
 export const collection = legacyCollection as (...args: any[]) => any
 export const db: unknown = legacyDb
 export const deleteDoc = legacyDeleteDoc as (...args: any[]) => Promise<any>

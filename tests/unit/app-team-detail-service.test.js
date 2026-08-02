@@ -41,6 +41,7 @@ vi.mock('../../js/db.js', () => ({
     revokeTeamMediaManagerAccess: vi.fn(),
     revokeVideographerAccess: vi.fn(),
     deactivatePlayer: vi.fn(),
+    deleteLegacyImageUpload: vi.fn(),
     reactivatePlayer: vi.fn(),
     setPlayerPrivateRosterProfileFields: vi.fn(),
     uploadPlayerPhoto: vi.fn(),
@@ -92,7 +93,7 @@ vi.mock('../../apps/app/src/lib/profileService.ts', () => ({
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, applyRosterImportPlanForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, retryRosterParentInviteEmailForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, applyRosterCsvImportOperations, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
+import { addPlayer, applyRosterCsvImportOperations, deleteLegacyImageUpload, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
@@ -609,8 +610,7 @@ describe('React app team detail model', () => {
             }
         ]);
         uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
-        addPlayer.mockResolvedValue('player-1');
-        setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
+        applyRosterCsvImportOperations.mockResolvedValue([{ type: 'add', playerId: 'player-1' }]);
 
         const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
         const result = await addRosterPlayerForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -625,23 +625,24 @@ describe('React app team detail model', () => {
             }
         });
 
-        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile);
-        expect(addPlayer).toHaveBeenCalledWith('team-1', {
-            name: 'Pat Star',
-            number: '9',
-            photoUrl: 'https://img.example.test/player-1.png',
-            position: 'Forward',
-            profile: {
-                customFields: {
-                    position: 'Forward',
-                    grad_year: '2028',
-                    captain: true
+        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
+        expect(applyRosterCsvImportOperations).toHaveBeenCalledWith('team-1', [{
+            type: 'add',
+            payload: {
+                name: 'Pat Star',
+                number: '9',
+                photoUrl: 'https://img.example.test/player-1.png',
+                position: 'Forward',
+                profile: {
+                    customFields: {
+                        position: 'Forward',
+                        grad_year: '2028',
+                        captain: true
+                    }
                 }
-            }
-        });
-        expect(setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
-            medical_notes: 'Peanut allergy'
-        });
+            },
+            privateRosterFields: { medical_notes: 'Peanut allergy' }
+        }]);
         expect(result).toEqual({
             playerId: 'player-1',
             player: {
@@ -658,6 +659,27 @@ describe('React app team detail model', () => {
                 }
             }
         });
+    });
+
+    it('rolls back a browser roster photo when the atomic player create fails', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getRosterFieldDefinitions.mockResolvedValue([]);
+        uploadPlayerPhoto.mockResolvedValue({
+            url: 'https://img.example.test/new-player.png',
+            path: 'player-photos/new-player.png'
+        });
+        applyRosterCsvImportOperations.mockRejectedValueOnce(new Error('player create denied'));
+
+        await expect(addRosterPlayerForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
+            name: 'Pat Star',
+            photoFile: new File(['abc'], 'player.png', { type: 'image/png' }),
+            rosterFieldValues: {}
+        })).rejects.toThrow('player create denied');
+
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('player-photos/new-player.png');
     });
 
     it('validates required roster fields before creating a roster player', async () => {
@@ -1936,7 +1958,7 @@ describe('React app team detail model', () => {
             photoFile
         });
 
-        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile);
+        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile, { returnUpload: true });
         expect(updateTeam).toHaveBeenCalledWith('team-1', {
             name: 'Lady Bears',
             sport: 'Soccer',
@@ -1949,6 +1971,33 @@ describe('React app team detail model', () => {
             youtubeEmbedUrl: null,
             updatedAt: expect.any(Date)
         });
+    });
+
+    it('rolls back a browser team photo when the team document save fails', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            ownerId: 'owner-1',
+            name: 'Bears',
+            adminEmails: ['coach@example.com']
+        });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        uploadTeamPhoto.mockResolvedValue({
+            url: 'https://img.example.test/updated.png',
+            path: 'team-photos/new-team.png'
+        });
+        updateTeam.mockRejectedValueOnce(new Error('team save denied'));
+
+        await expect(updateTeamSettingsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }, {
+            name: 'Bears',
+            sport: 'Basketball',
+            zip: '66210',
+            isPublic: true,
+            photoFile: new File(['abc'], 'team.png', { type: 'image/png' })
+        })).rejects.toThrow('team save denied');
+
+        expect(deleteLegacyImageUpload).toHaveBeenCalledWith('team-photos/new-team.png');
     });
 
     it('rejects empty team names and non-staff team setting edits', async () => {

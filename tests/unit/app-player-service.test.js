@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const dbMocks = vi.hoisted(() => ({
     collectRosterParentContacts: vi.fn(() => []),
     deleteAthleteProfileMediaByPath: vi.fn(),
+    deleteLegacyImageUpload: vi.fn(),
     getAggregatedStatsForPlayer: vi.fn(),
     getGames: vi.fn(),
     getPlayerPrivateProfile: vi.fn(),
@@ -535,7 +536,7 @@ describe('React app parent player detail service', () => {
             photoFile: file
         });
 
-        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file);
+        expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, { returnUpload: true });
         expect(dbMocks.updatePlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1', {
             emergencyContact: { name: 'Alex Parent', phone: '555-0199' },
             medicalInfo: 'Inhaler'
@@ -560,6 +561,24 @@ describe('React app parent player detail service', () => {
             medicalInfo: 'Inhaler'
         });
         expect(dbMocks.updatePlayerProfile).not.toHaveBeenCalled();
+    });
+
+    it('rolls back a browser player photo when its public profile save fails', async () => {
+        const file = new File(['avatar'], 'avatar.png', { type: 'image/png' });
+        dbMocks.uploadPlayerPhoto.mockResolvedValueOnce({
+            url: 'https://example.test/new-photo.jpg',
+            path: 'player-photos/new-photo.jpg'
+        });
+        dbMocks.updatePlayerProfile.mockRejectedValueOnce(new Error('player photo save denied'));
+
+        await expect(updateParentPlayerEditableProfile({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            photoFile: file
+        })).rejects.toThrow('player photo save denied');
+
+        expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('player-photos/new-photo.jpg');
     });
 
     it('uses the legacy co-parent and athlete profile contracts from the app player page', async () => {

@@ -47,6 +47,7 @@ export async function getGames() {
 export async function uploadPlayerPhoto() {
     return 'https://example.test/photo.png';
 }
+export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, fields, contacts) {
     globalThis.__rosterCsvPrivateWrites = globalThis.__rosterCsvPrivateWrites || [];

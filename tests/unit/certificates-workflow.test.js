@@ -248,7 +248,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=138'");
+        expect(studio).toContain("from '../db.js?v=140'");
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
@@ -297,7 +297,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain('Uploaded for this run');
+        expect(studio).toContain("import('./assets.js?v=3')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');

@@ -58,6 +58,7 @@ export const revokeTeamMediaManagerAccess = (...args: any[]) => callLegacyDb('re
 export const revokeVideographerAccess = (...args: any[]) => callLegacyDb('revokeVideographerAccess', args);
 export const deactivatePlayer = (...args: any[]) => callLegacyDb('deactivatePlayer', args);
 export const reactivatePlayer = (...args: any[]) => callLegacyDb('reactivatePlayer', args);
+export const deleteLegacyImageUpload = (...args: any[]) => callLegacyDb('deleteLegacyImageUpload', args);
 export const setPlayerPrivateRosterProfileFields = (...args: any[]) => callLegacyDb('setPlayerPrivateRosterProfileFields', args);
 export const updateConfig = (...args: any[]) => callLegacyDb('updateConfig', args);
 export const uploadPlayerPhoto = (...args: any[]) => callLegacyDb('uploadPlayerPhoto', args);

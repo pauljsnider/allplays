@@ -210,6 +210,8 @@ async function installModuleMocks(page) {
             return '';
         }
 
+        export async function deleteLegacyImageUpload() {}
+
         export function collection(_db, path) {
             return { path };
         }
@@ -249,6 +251,8 @@ async function installModuleMocks(page) {
             saveStore(store);
             return 'https://img.test/statsheet.png';
         }
+
+        export async function deleteUploadedMediaObjects() {}
 
         export async function updateGame(_teamId, _gameId, patch) {
             const store = loadStore();

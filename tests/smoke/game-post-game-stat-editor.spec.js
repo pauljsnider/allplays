@@ -121,6 +121,8 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
             return '';
         }
 
+        export async function deleteUploadedMediaObjects() {}
+
         export async function getTeamStatsForGame() {
             return clone(loadStore().teamStats || {});
         }
