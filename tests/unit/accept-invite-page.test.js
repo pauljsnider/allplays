@@ -106,7 +106,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=145';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=146';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
