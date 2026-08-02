@@ -36,6 +36,17 @@ function messageHeaders(message) {
     return values;
 }
 
+function receiverAuthenticationResults(message) {
+    const headers = message?.payload?.headers || [];
+    const returnPathIndex = headers.findIndex((header) => String(header?.name || '').trim().toLowerCase() === 'return-path');
+    const boundary = returnPathIndex === -1 ? headers.length : returnPathIndex;
+    const receiverHeader = headers.slice(0, boundary).find((header) =>
+        String(header?.name || '').trim().toLowerCase() === 'authentication-results' &&
+        /^\s*mx\.google\.com\s*;/i.test(String(header?.value || ''))
+    );
+    return String(receiverHeader?.value || '').toLowerCase();
+}
+
 function extractAddress(value) {
     return String(value || '').toLowerCase().match(/<?([a-z0-9._%+-]+@[a-z0-9.-]+)>?/)?.[1] || '';
 }
@@ -45,7 +56,10 @@ function trustedMessageSource(message, recipient, afterEpoch) {
     const sender = extractAddress(headers.get('from'));
     if (!trustedSenderAddresses.has(sender)) return false;
     const senderDomain = sender.split('@')[1];
-    const authentication = `${headers.get('authentication-results') || ''} ${headers.get('arc-authentication-results') || ''}`.toLowerCase();
+    // Gmail prepends its receiver-authenticated result before Return-Path.  Do not
+    // concatenate sender-supplied Authentication-Results or trust ARC results:
+    // validating an ARC chain is outside this mailbox boundary.
+    const authentication = receiverAuthenticationResults(message);
     const alignedDkim = new RegExp(`dkim=pass\\b[^;]*(?:header\\.i|header\\.d)=@?${senderDomain.replaceAll('.', '\\.')}(?:\\s|;|$)`).test(authentication);
     const alignedSpf = new RegExp(`spf=pass\\b[^;]*smtp\\.mailfrom=[^;@\\s]*@${senderDomain.replaceAll('.', '\\.')}(?:\\s|;|$)`).test(authentication);
     const recipients = `${headers.get('delivered-to') || ''},${headers.get('to') || ''}`
@@ -130,7 +144,7 @@ export function validateParentMailboxActionUrl(value, action, { allowConsumed = 
         return url.toString();
     }
     const consumedRouteAllowed = action === 'verifyEmail'
-        ? ['/reset-password', '/verify-pending'].includes(route)
+        ? route === '/verify-pending'
         : route === '/reset-password';
     if (!consumedRouteAllowed) throw new Error('mailbox action URL does not match the expected app route');
     const mode = params.get('mode') || '';

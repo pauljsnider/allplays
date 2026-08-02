@@ -92,6 +92,43 @@ const stateChangingActions = new Set([
 const reversibleMutationActions = new Set([
     'click', 'fill', 'check', 'uncheck', 'select', 'restoreControl', 'uploadSyntheticImage'
 ]);
+const controlMutationActions = new Set(['fill', 'check', 'uncheck', 'select']);
+const workflowCoverageRequirements = new Map(Object.entries({
+    P01: ['goto', 'expectVisible'], P02: ['fillActorEmail', 'fillActorPassword', 'click'],
+    P03: ['openLatestMailboxLink', 'click'], P04: ['login', 'click'],
+    P05: ['openLatestMailboxLink', 'fillActorPassword', 'click'], P06: ['login', 'logout'],
+    P07: ['goto', 'expectVisible'], P08: ['fill', 'click'], P09: ['fill', 'click'],
+    P10: ['goto', 'expectVisible'], P11: ['goto', 'expectVisible'],
+    P12: ['rememberControl', 'fill', 'restoreControl'], P13: ['uploadSyntheticImage', 'click'],
+    P14: ['rememberControl', 'fill', 'restoreControl'], P15: ['goto', 'expectVisible'],
+    P16: ['rememberControl', 'select', 'restoreControl'], P17: ['rememberControl', 'fill', 'restoreControl'],
+    P18: ['goto', 'expectVisible'], P19: ['rememberControl', 'check', 'restoreControl'],
+    P20: ['click'], P21: ['fill', 'click'], P22: ['click'], P23: ['fill', 'click'],
+    P24: ['uploadSyntheticImage', 'click'], P25: ['rememberControl', 'check', 'restoreControl'],
+    P26: ['click'], P27: ['openLatestMailboxLink', 'click'], P28: ['fill', 'click'],
+    P29: ['clickAndExpectDownload'], P30: ['clickAndExpectStripeCheckout'],
+    P31: ['clickAndExpectStripeCheckout'], P32: ['clickAndExpectDownload'],
+    P33: ['uploadSyntheticImage', 'click'], P34: ['fill', 'click'], P35: ['fill', 'click'],
+    P36: ['uploadSyntheticImage', 'click'], P37: ['fillActorPassword', 'click']
+}));
+const workflowCoverageActorRequirements = new Map(Object.entries({
+    P20: ['primary', 'peer'], P22: ['primary', 'peer'], P23: ['primary', 'peer'],
+    P24: ['primary', 'peer'], P25: ['primary', 'peer'], P26: ['primary', 'peer'],
+    P27: ['primary', 'lifecycle'], P28: ['primary', 'anonymous']
+}));
+const reversibleClickInversePairs = new Map(Object.entries({
+    P09: [['request access', 'cancel request'], ['send request', 'cancel request']],
+    P13: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
+    P14: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
+    P20: [['claim', 'release']], P21: [['create offer', 'close offer'], ['close offer', 'reopen offer']],
+    P22: [['request ride', 'cancel'], ['approve', 'cancel'], ['accept', 'cancel']],
+    P23: [['send', 'delete message'], ['mute', 'unmute']],
+    P24: [['send', 'delete message'], ['upload', 'remove attachment']],
+    P26: [['add friend', 'remove friend'], ['send', 'delete message']],
+    P28: [['create share', 'revoke share']],
+    P33: [['upload', 'remove media']], P34: [['publish', 'delete post'], ['send', 'delete comment'], ['like', 'unlike']],
+    P35: [['send', 'clear chat']], P36: [['send', 'clear chat'], ['upload', 'remove attachment']]
+}));
 const forbiddenMutationTarget = /(?:delete|deactivate|remove)\s+(?:my\s+)?(?:account|profile)|(?:grant|make|promote).*(?:admin|coach|manager|staff)|(?:admin|coach|manager|staff).*(?:access|permission|role)/i;
 const mutationTargetCapabilities = new Map(Object.entries({
     P02: { lifecycle: /^(?:email|password|confirm password|join code|create account|sign up|continue)$/i },
@@ -99,7 +136,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P04: { lifecycle: /^(?:email|password|sign in|log in|continue|get started)$/i },
     P05: { lifecycle: /^(?:email|password|password reset email|forgot password\?|new password|confirm password|send reset email|reset password|continue to login)$/i },
     P08: { lifecycle: /^(?:join code|invite code|access code|redeem|join|apply code|continue with code|sign in to accept|create account with code|accept invite|continue)$/i },
-    P09: { primary: /^(?:player search|search|team|player|relationship|request access|send request)$/i },
+    P09: { primary: /^(?:player search|search|team|player|relationship|request access|send request|cancel request)$/i },
     P12: { primary: /^(?:name|phone|save|save changes|update profile)$/i },
     P13: { primary: /^(?:profile image|profile photo|image|photo|upload|upload image|remove image|remove photo|save|cancel)$/i },
     P14: { primary: /^(?:child|athlete|player|name|details|image|photo|upload|upload image|remove image|remove photo|save|save changes)$/i },
@@ -116,20 +153,20 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:ride|request ride|approve|deny|accept|decline|cancel)$/i
     },
     P23: {
-        primary: /^(?:message|chat|mute|unmute|send|mark read)$/i,
-        peer: /^(?:message|chat|mute|unmute|send|mark read)$/i
+        primary: /^(?:message|chat|mute|unmute|send|delete message|mark read)$/i,
+        peer: /^(?:message|chat|mute|unmute|send|delete message|mark read)$/i
     },
     P24: {
-        primary: /^(?:message|chat|attachment|image|photo|upload|send|remove attachment)$/i,
-        peer: /^(?:message|chat|attachment|image|photo|upload|send|remove attachment)$/i
+        primary: /^(?:message|chat|attachment|image|photo|upload|send|delete message|remove attachment)$/i,
+        peer: /^(?:message|chat|attachment|image|photo|upload|send|delete message|remove attachment)$/i
     },
     P25: {
         primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i,
         peer: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i
     },
     P26: {
-        primary: /^(?:friend|search|add friend|accept|remove friend|message|chat|send)$/i,
-        peer: /^(?:friend|search|add friend|accept|remove friend|message|chat|send)$/i
+        primary: /^(?:friend|search|add friend|accept|remove friend|message|chat|send|delete message)$/i,
+        peer: /^(?:friend|search|add friend|accept|remove friend|message|chat|send|delete message)$/i
     },
     P27: {
         primary: /^(?:household|invite|email|relation|send invite|revoke (?:invite|access) for \{LIFECYCLE_EMAIL\})$/i,
@@ -231,6 +268,9 @@ export function validateCatalog(catalog) {
     if (ids.size !== workflowCapabilities.size) {
         throw new Error('trusted workflow capability count must match the locked catalog');
     }
+    if (workflowCoverageRequirements.size !== ids.size || [...ids].some((id) => !workflowCoverageRequirements.has(id))) {
+        throw new Error('trusted workflow coverage requirements must match the locked catalog');
+    }
     for (const [workflowId, capability] of workflowCapabilities) {
         if (!ids.has(workflowId)) throw new Error(`trusted workflow capability ${workflowId} is not in the catalog`);
         if (!['readOnly', 'reversible', 'lifecycle'].includes(capability.mode)) {
@@ -289,6 +329,19 @@ function routeMatchesCapability(route, capabilityRoute, resolved = false) {
         return routePath.startsWith(capabilityRoute.slice(0, -1));
     }
     return routePath === capabilityRoute;
+}
+
+function sameTarget(left, right) {
+    return JSON.stringify(left?.target) === JSON.stringify(right?.target);
+}
+
+function isTrustedClickInverse(workflowId, executionStep, cleanupStep) {
+    if (executionStep.action !== 'click' || cleanupStep.action !== 'click') return false;
+    const executionName = String(executionStep.target?.name || '').trim().toLowerCase();
+    const cleanupName = String(cleanupStep.target?.name || '').trim().toLowerCase();
+    return (reversibleClickInversePairs.get(workflowId) || []).some(
+        ([forward, inverse]) => executionName === forward && cleanupName === inverse
+    );
 }
 
 export function workflowRouteAllowed(workflowId, route, resolved = false) {
@@ -469,6 +522,11 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             throw new Error(`contract actor ${actor} is not allowed for ${workflow.id}`);
         }
     }
+    for (const requiredActor of workflowCoverageActorRequirements.get(contract.workflowId) || []) {
+        if (!contract.actors.includes(requiredActor)) {
+            throw new Error(`contract must include the trusted ${contract.workflowId} ${requiredActor} coverage actor`);
+        }
+    }
     if (!viewportNames.has(contract.viewport)) throw new Error('contract viewport must be mobile or desktop');
     if (
         typeof contract.mutatesProduction !== 'boolean' ||
@@ -543,11 +601,26 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
             if (cleanupGroup.some((step) => !['click', 'restoreControl'].includes(step.action))) {
                 throw new Error(`reversible mutation ${mutationId} cleanup must restore remembered state or invoke a bounded inverse action`);
             }
-            if (executionGroup.some((step) => ['fill', 'check', 'uncheck', 'select'].includes(step.action))) {
-                const hasRestore = cleanupGroup.some((step) => step.action === 'restoreControl');
-                const hasBoundedInverse = cleanupGroup.some((step) => step.action === 'click');
-                if (!hasRestore && !hasBoundedInverse) {
-                    throw new Error(`reversible mutation ${mutationId} has no state restoration or bounded inverse action`);
+            for (const executionStep of executionGroup.filter((step) => controlMutationActions.has(step.action))) {
+                if (!cleanupGroup.some((step) => step.action === 'restoreControl' && sameTarget(step, executionStep))) {
+                    throw new Error(`reversible mutation ${mutationId} must restore the exact mutated control`);
+                }
+            }
+            for (const executionStep of executionGroup.filter((step) => ['click', 'uploadSyntheticImage'].includes(step.action))) {
+                const hasInverse = cleanupGroup.some((cleanupStep) => isTrustedClickInverse(
+                    contract.workflowId,
+                    executionStep,
+                    cleanupStep
+                ));
+                const isStateCommit = executionStep.action === 'click' &&
+                    /^(?:save|save changes|update profile|update rsvp|submit)$/i.test(String(executionStep.target?.name || '')) &&
+                    executionGroup.some((step) => controlMutationActions.has(step.action)) &&
+                    cleanupGroup.some((step) => step.action === 'click' && sameTarget(step, executionStep)) &&
+                    executionGroup.filter((step) => controlMutationActions.has(step.action)).every((step) =>
+                        cleanupGroup.some((cleanupStep) => cleanupStep.action === 'restoreControl' && sameTarget(cleanupStep, step))
+                    );
+                if (!hasInverse && !isStateCommit) {
+                    throw new Error(`reversible mutation ${mutationId} must use a trusted target-specific inverse`);
                 }
             }
         }
@@ -570,6 +643,16 @@ export function validateContract(contract, catalog, expectedWorkflowId = '') {
     }
     if (remembered.size !== restored.size || [...remembered.keys()].some((key) => !restored.has(key))) {
         throw new Error('every remembered control must be restored exactly once during cleanup');
+    }
+    const requiredActions = workflowCoverageRequirements.get(contract.workflowId) || [];
+    const actualActions = new Set([...contract.steps, ...cleanupSteps].map(({ action }) => action));
+    for (const action of requiredActions) {
+        if (!actualActions.has(action)) {
+            throw new Error(`contract must exercise the trusted ${contract.workflowId} ${action} workflow behavior`);
+        }
+    }
+    if (!['expectVisible', 'expectHidden', 'expectText', 'expectNoText', 'expectRoute'].some((action) => actualActions.has(action))) {
+        throw new Error(`contract must assert an observable trusted ${contract.workflowId} workflow outcome`);
     }
     return contract;
 }

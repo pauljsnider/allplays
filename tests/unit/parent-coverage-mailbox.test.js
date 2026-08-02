@@ -21,7 +21,8 @@ function mailboxMessage(text, {
             headers: [
                 { name: 'From', value: from },
                 { name: 'To', value: to },
-                { name: 'Authentication-Results', value: authentication }
+                { name: 'Authentication-Results', value: authentication },
+                { name: 'Return-Path', value: `<${from.match(/<([^>]+)>/)?.[1] || from}>` }
             ],
             mimeType: 'text/html',
             body: { data: Buffer.from(text).toString('base64url') }
@@ -111,6 +112,27 @@ describe('parent coverage protected mailbox boundary', () => {
         })).rejects.toThrow(/no recent verifyEmail message/);
     });
 
+    it('ignores injected authentication and ARC headers after the receiver boundary', async () => {
+        const link = 'https://game-flow-c6311.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=spoofed';
+        const forged = mailboxMessage(`<a href="${link}">verify</a>`, {
+            authentication: 'mx.google.com; dkim=fail header.i=@attacker.example header.from=mail.allplays.ai'
+        });
+        forged.payload.headers.push(
+            { name: 'Authentication-Results', value: 'mx.google.com; dkim=pass header.i=@mail.allplays.ai header.from=mail.allplays.ai' },
+            { name: 'ARC-Authentication-Results', value: 'i=1; mx.google.com; dkim=pass header.i=@mail.allplays.ai' }
+        );
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce(response({ access_token: 'temporary-token' }))
+            .mockResolvedValueOnce(response({ messages: [{ id: 'mail-1' }] }))
+            .mockResolvedValueOnce(response(forged));
+
+        await expect(findLatestParentMailboxActionLink({
+            action: 'verifyEmail', recipient: 'fixture@example.com', clientId: 'client',
+            clientSecret: 'secret', refreshToken: 'refresh', afterEpoch: 100,
+            maxAttempts: 1, fetchImpl
+        })).rejects.toThrow(/no recent verifyEmail message/);
+    });
+
     it('accepts only exact post-navigation routes for each mailbox action', () => {
         expect(() => validateParentMailboxActionUrl(
             'https://allplays.ai/app/#/reset-password',
@@ -128,6 +150,11 @@ describe('parent coverage protected mailbox boundary', () => {
         )).toThrow(/expected app route/);
         expect(() => validateParentMailboxActionUrl(
             'https://allplays.ai/app/#/auth',
+            'verifyEmail',
+            { allowConsumed: true }
+        )).toThrow(/expected app route/);
+        expect(() => validateParentMailboxActionUrl(
+            'https://allplays.ai/app/#/reset-password',
             'verifyEmail',
             { allowConsumed: true }
         )).toThrow(/expected app route/);

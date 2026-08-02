@@ -124,6 +124,7 @@ async function makeSyntheticImage() {
 export async function executeParentCoverageCleanup(runtime, cleanupSteps) {
     const failures = [];
     for (const step of cleanupSteps) {
+        if (step.mutationId && !runtime.shouldExecuteCleanup(step)) continue;
         try {
             await runtime.executeStep(step, 'cleanup');
         } catch (error) {
@@ -136,6 +137,7 @@ export async function executeParentCoverageCleanup(runtime, cleanupSteps) {
 export async function createParentCoverageRuntime(browser, contract, appBaseUrl) {
     const actors = new Map();
     const rememberedControls = new Map();
+    const completedMutationIds = new Set();
     const mailboxAfterEpoch = Math.floor(Date.now() / 1000) - 60;
     const variables = getParentCoverageVariables();
     const secrets = getParentCoverageSecrets();
@@ -177,6 +179,9 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         const actor = step.actor || contract.actors[0];
         const runtime = await actorRuntime(actor);
         const { page } = runtime;
+        const markMutationCompleted = () => {
+            if (phase === 'execution' && step.mutationId) completedMutationIds.add(step.mutationId);
+        };
         if (step.action === 'login') {
             const credentials = actorCredentials(actor);
             await signInToApp(page, { appBaseUrl, ...credentials, roleLabel: `parent-census-${actor}` });
@@ -234,6 +239,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         case 'click':
             await assertClickNavigationAllowed(target, page, appBaseUrl, contract.workflowId);
             await target.click();
+            markMutationCompleted();
             await assertAllowedPage(page, appBaseUrl, contract.workflowId);
             break;
         case 'clickAndExpectDownload': {
@@ -275,6 +281,7 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
         }
         case 'fill':
             await target.fill(interpolateTextTemplate(step.value, variables));
+            markMutationCompleted();
             break;
         case 'fillActorEmail':
             await target.fill(actorCredentials(actor).email);
@@ -284,12 +291,15 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             break;
         case 'check':
             await target.check();
+            markMutationCompleted();
             break;
         case 'uncheck':
             await target.uncheck();
+            markMutationCompleted();
             break;
         case 'select':
             await target.selectOption({ label: interpolateTextTemplate(step.option, variables) });
+            markMutationCompleted();
             break;
         case 'rememberControl': {
             const state = await target.evaluate((element) => {
@@ -316,10 +326,12 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
             } else {
                 await target.fill(state.value);
             }
+            markMutationCompleted();
             break;
         }
         case 'uploadSyntheticImage':
             await target.setInputFiles(await makeSyntheticImage());
+            markMutationCompleted();
             break;
         case 'expectVisible':
             await expect(target).toBeVisible({ timeout: 20_000 });
@@ -341,6 +353,9 @@ export async function createParentCoverageRuntime(browser, contract, appBaseUrl)
     return {
         actors,
         executeStep,
+        shouldExecuteCleanup(step) {
+            return !step.mutationId || completedMutationIds.has(step.mutationId);
+        },
         runtimeIssues() {
             return [...actors.values()].flatMap((runtime) => runtime.issues);
         },

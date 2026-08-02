@@ -16,7 +16,7 @@ describe('parent coverage cleanup execution', () => {
             { action: 'restoreControl', option: 'third' }
         ];
 
-        const failures = await executeParentCoverageCleanup({ executeStep }, steps);
+        const failures = await executeParentCoverageCleanup({ executeStep, shouldExecuteCleanup: () => true }, steps);
 
         expect(executeStep).toHaveBeenCalledTimes(3);
         expect(executeStep.mock.calls.every(([, phase]) => phase === 'cleanup')).toBe(true);
@@ -24,6 +24,20 @@ describe('parent coverage cleanup execution', () => {
             'restoreControl: first secret failure',
             'restoreControl: last secret failure'
         ]);
+    });
+
+    it('runs cleanup only for mutations that completed in execution', async () => {
+        const executeStep = vi.fn();
+        const steps = [
+            { action: 'restoreControl', option: 'completed', mutationId: 'completed' },
+            { action: 'restoreControl', option: 'not-started', mutationId: 'not-started' }
+        ];
+        await executeParentCoverageCleanup({
+            executeStep,
+            shouldExecuteCleanup: (step) => step.mutationId === 'completed'
+        }, steps);
+        expect(executeStep).toHaveBeenCalledTimes(1);
+        expect(executeStep).toHaveBeenCalledWith(steps[0], 'cleanup');
     });
 
     it('requires mailbox actions to finish on the workflow-scoped app route', () => {
