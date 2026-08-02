@@ -408,8 +408,8 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
-        'Production Firestore recent-ruleset exact-source comparison'
+        'firestore_ruleset_source_matches "$ruleset_file" "$ruleset_name" "$expected_rules_source"',
+        'Production Firestore recent-ruleset verified-source comparison'
     );
     assertMatches(
         deployProd,
@@ -417,6 +417,12 @@ export function validateProductionDeployCommand(deployProd) {
         'Production Firestore newest-ruleset-first lookup'
     );
     assertIncludes(deployProd, '--rawfile rules_source', 'Production Firestore ruleset source payload');
+    assertIncludes(deployProd, '--arg rules_fingerprint', 'Production Firestore ruleset source fingerprint payload');
+    assertIncludes(
+        deployProd,
+        'fingerprint:$rules_fingerprint',
+        'Production Firestore ruleset source fingerprint field'
+    );
     assertIncludes(
         deployProd,
         '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"',
@@ -431,6 +437,26 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         '[[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]',
         'Production Firestore created-ruleset exact-source comparison'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ "$created_fingerprint" == "$local_fingerprint" ]]',
+        'Production Firestore created-ruleset fingerprint comparison'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"',
+        'Production Firestore exact compatibility recovery ruleset'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]',
+        'Production Firestore compatibility recovery local-source proof'
+    );
+    assertIncludes(
+        deployProd,
+        '[[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]',
+        'Production Firestore compatibility recovery canonical-source proof'
     );
     assertIncludes(
         deployProd,
@@ -463,6 +489,16 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         '[[ "$(jq -r \'.rulesetName // ""\' "$response_file")" == "$ruleset_name" ]]',
         'Production Firestore release PATCH response validation'
+    );
+    assertIncludes(
+        deployProd,
+        'verify_active_firestore_release_name "$ruleset_name"',
+        'Production Firestore immutable release-name verification'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore_rules_api_error "Firestore release update"',
+        'Production Firestore structured release failure diagnostics'
     );
     assertIncludes(
         deployProd,

@@ -225,6 +225,9 @@ concurrency:
             retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
             retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
             retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"
+            certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
+            certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
+            certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets"
               && "$deploy_targets" != "$retry_enabled_inventory_producer_target"
               && "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then
@@ -245,20 +248,27 @@ concurrency:
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
             curl "https://firebaserules.googleapis.com/v1/\${ruleset_name}"
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            firestore_ruleset_source_matches "$ruleset_json" "$ruleset_name" "$expected_rules_source"
             return 2
+          }
+          firestore_ruleset_source_matches() {
+            jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            [[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]
+            [[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]
           }
           find_recent_matching_firestore_ruleset() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
             jq '(.rulesets // []) | sort_by(.createTime) | reverse | .[].name'
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
-            [[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]
+            firestore_ruleset_source_matches "$ruleset_file" "$ruleset_name" "$expected_rules_source"
           }
           create_firestore_ruleset_with_retry() {
-            jq --rawfile rules_source firestore.rules
+            jq --rawfile rules_source firestore.rules --arg rules_fingerprint fingerprint 'fingerprint:$rules_fingerprint'
             for attempt in 1 2 3; do
               curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"
               jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
               [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]
+              [[ "$created_fingerprint" == "$local_fingerprint" ]]
             done
           }
           ensure_exact_firestore_ruleset() {
@@ -266,12 +276,19 @@ concurrency:
             create_firestore_ruleset_with_retry
             find_recent_matching_firestore_ruleset
           }
+          firestore_rules_api_error() {
+            echo "structured Rules API error"
+          }
+          verify_active_firestore_release_name() {
+            curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
+          }
           activate_firestore_ruleset_with_retry() {
             [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
             curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
             jq 'updateMask:"rulesetName"'
             [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]
-            verify_active_firestore_rules
+            verify_active_firestore_release_name "$ruleset_name"
+            firestore_rules_api_error "Firestore release update"
           }
           write_firestore_configuration_blocked_summary() {
             {
@@ -437,18 +454,38 @@ concurrency:
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'
         ))).toThrow('Production Firestore exact-source indexes-only deploy');
-        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+        expect(() => validateProductionDeployCommand(validDeployCommand.replaceAll(
             'if length == 1 and .[0].name == "firestore.rules"',
             'if any(.[]; .name == "firestore.rules")'
         ))).toThrow('Production Firestore active, reused, and created sources must contain only firestore.rules');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
-            '[[ -n "$candidate_rules_b64" && "$candidate_rules_b64" == "$local_rules_b64" ]]',
-            '[[ -n "$candidate_rules_b64" ]]'
-        ))).toThrow('Production Firestore recent-ruleset exact-source comparison');
+            'firestore_ruleset_source_matches "$ruleset_file" "$ruleset_name" "$expected_rules_source"',
+            'true'
+        ))).toThrow('Production Firestore recent-ruleset verified-source comparison');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             '[[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]',
             '[[ -n "$created_rules_b64" ]]'
         ))).toThrow('Production Firestore created-ruleset exact-source comparison');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '[[ "$created_fingerprint" == "$local_fingerprint" ]]',
+            '[[ -n "$created_fingerprint" ]]'
+        ))).toThrow('Production Firestore created-ruleset fingerprint comparison');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'fingerprint:$rules_fingerprint',
+            'fingerprint:""'
+        ))).toThrow('Production Firestore ruleset source fingerprint field');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '[[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]',
+            '[[ -n "$local_rules_sha256" ]]'
+        ))).toThrow('Production Firestore compatibility recovery local-source proof');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            '[[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]',
+            '[[ -n "$remote_rules_sha256" ]]'
+        ))).toThrow('Production Firestore compatibility recovery canonical-source proof');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'verify_active_firestore_release_name "$ruleset_name"',
+            'verify_active_firestore_rules "$expected_rules_source"'
+        ))).toThrow('Production Firestore immutable release-name verification');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"',
             'curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases"'
