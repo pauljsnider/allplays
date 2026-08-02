@@ -259,6 +259,63 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
+        it('keeps certificate images on signed-in primary Storage with team, owner, MIME, and size boundaries', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
+            });
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const unverifiedOwnerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: false
+            }).storage();
+
+            const assetRef = ownerStorage.ref('certificate-assets/teams/team-a/background.png');
+            await assertSucceeds(assetRef.put(new Uint8Array([1]), { contentType: 'image/png' }));
+            await assertSucceeds(adminStorage.ref('certificate-assets/teams/team-a/background.png').getMetadata());
+            await assertFails(parentStorage.ref('certificate-assets/teams/team-a/member.png').put(
+                new Uint8Array([1]),
+                { contentType: 'image/png' }
+            ));
+            await assertFails(ownerStorage.ref('certificate-assets/teams/team-b/cross-team.png').put(
+                new Uint8Array([1]),
+                { contentType: 'image/png' }
+            ));
+            await assertFails(ownerStorage.ref('certificate-assets/teams/team-a/not-image.txt').put(
+                new Uint8Array([1]),
+                { contentType: 'text/plain' }
+            ));
+            await assertFails(ownerStorage.ref('certificate-assets/teams/team-a/too-large.png').put(
+                new Uint8Array((5 * 1024 * 1024) + 1),
+                { contentType: 'image/png' }
+            ));
+            await assertFails(unverifiedOwnerStorage.ref('certificate-assets/teams/team-a/unverified.png').put(
+                new Uint8Array([1]),
+                { contentType: 'image/png' }
+            ));
+            await assertSucceeds(adminStorage.ref('certificate-assets/teams/team-a/background.png').delete());
+
+            const signatureRef = ownerStorage.ref('certificate-signatures/users/owner-a/signature.webp');
+            await assertSucceeds(signatureRef.put(new Uint8Array([1]), { contentType: 'image/webp' }));
+            await assertSucceeds(signatureRef.getMetadata());
+            await assertFails(adminStorage.ref('certificate-signatures/users/owner-a/signature.webp').getMetadata());
+            await assertFails(adminStorage.ref('certificate-signatures/users/owner-a/spoofed.webp').put(
+                new Uint8Array([1]),
+                { contentType: 'image/webp' }
+            ));
+            await assertSucceeds(signatureRef.delete());
+        });
+
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });

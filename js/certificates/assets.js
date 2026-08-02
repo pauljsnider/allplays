@@ -1,6 +1,7 @@
-import { imageStorage, requireImageAuth } from '../firebase-images.js?v=11';
 import {
     db,
+    auth,
+    storage,
     collection,
     addDoc,
     Timestamp,
@@ -8,7 +9,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from '../firebase.js?v=22';
+} from '../firebase.js?v=23';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;
 const ALLOWED_CERTIFICATE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
@@ -40,9 +41,38 @@ export function validateCertificateImageFile(file) {
         throw new Error('Certificate images must be PNG, JPG, or WebP.');
     }
 
-    if (Number(file.size || 0) > MAX_CERTIFICATE_ASSET_BYTES) {
+    const size = Number(file.size || 0);
+    if (!Number.isFinite(size) || size <= 0) {
+        throw new Error('Choose a valid certificate image.');
+    }
+
+    if (size > MAX_CERTIFICATE_ASSET_BYTES) {
         throw new Error('Certificate images must be 5 MB or smaller.');
     }
+}
+
+function getCertificateImageExtension(file) {
+    const type = String(file?.type || '').toLowerCase();
+    if (type === 'image/png') return '.png';
+    if (type === 'image/webp') return '.webp';
+    return '.jpg';
+}
+
+function buildCertificateUploadToken() {
+    if (globalThis.crypto?.randomUUID) {
+        return globalThis.crypto.randomUUID().replace(/-/g, '');
+    }
+    return `${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+export function buildCertificateAssetStoragePath(teamId, file) {
+    const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
+    return `certificate-assets/teams/${safeTeamId}/${buildCertificateUploadToken()}${getCertificateImageExtension(file)}`;
+}
+
+export function buildCertificateSignatureStoragePath(userId, file) {
+    const safeUserId = validateCertificateStorageId(userId, 'user ID');
+    return `certificate-signatures/users/${safeUserId}/${buildCertificateUploadToken()}${getCertificateImageExtension(file)}`;
 }
 
 async function getCertificateAssetUrlOrDelete(storageRef) {
@@ -58,13 +88,17 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
     if (!teamId) throw new Error('Missing team for certificate asset upload.');
     const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
     validateCertificateImageFile(file);
-    await requireImageAuth();
+    const signedInUserId = String(auth.currentUser?.uid || '').trim();
+    if (!signedInUserId) throw new Error('A signed-in team admin is required to upload certificate images.');
+    if (uploaderId && String(uploaderId).trim() !== signedInUserId) {
+        throw new Error('The signed-in account does not match this certificate upload.');
+    }
 
     const normalizedKind = ['foreground', 'background', 'watermark', 'generic'].includes(kind) ? kind : 'generic';
     const safeName = sanitizeCertificateFilename(file.name);
-    const storagePath = `team-photos/${Date.now()}_certificate_${safeTeamId}_${normalizedKind}_${safeName}`;
-    const storageRef = ref(imageStorage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
+    const storagePath = buildCertificateAssetStoragePath(safeTeamId, file);
+    const storageRef = ref(storage, storagePath);
+    const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
     const url = await getCertificateAssetUrlOrDelete(snapshot.ref);
 
     const assetDoc = {
@@ -75,7 +109,8 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
         sizeBytes: Number.isFinite(file.size) ? file.size : null,
         uploaderId: uploaderId || null,
         uploadedAt: Timestamp.now(),
-        kind: normalizedKind
+        kind: normalizedKind,
+        storage: 'primary'
     };
     try {
         const docRef = await addDoc(collection(db, 'teams', safeTeamId, 'certificateAssets'), assetDoc);
@@ -90,17 +125,21 @@ export async function uploadSignatureImage(userId, file) {
     if (!userId) throw new Error('A signed-in user is required to upload a signature.');
     const safeUserId = validateCertificateStorageId(userId, 'user ID');
     validateCertificateImageFile(file);
-    await requireImageAuth();
+    const signedInUserId = String(auth.currentUser?.uid || '').trim();
+    if (!signedInUserId || signedInUserId !== safeUserId) {
+        throw new Error('The signed-in account does not match this signature upload.');
+    }
 
     const safeName = sanitizeCertificateFilename(file.name);
-    const storagePath = `user-photos/${Date.now()}_certificate-signature_${safeUserId}_${safeName}`;
-    const storageRef = ref(imageStorage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
+    const storagePath = buildCertificateSignatureStoragePath(safeUserId, file);
+    const storageRef = ref(storage, storagePath);
+    const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
     return {
         url: await getCertificateAssetUrlOrDelete(snapshot.ref),
         storagePath,
         originalFilename: file.name || safeName,
         contentType: file.type || null,
-        sizeBytes: Number.isFinite(file.size) ? file.size : null
+        sizeBytes: Number.isFinite(file.size) ? file.size : null,
+        storage: 'primary'
     };
 }

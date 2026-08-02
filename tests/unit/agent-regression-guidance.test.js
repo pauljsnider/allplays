@@ -15,4 +15,10 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('before creating that durable owner');
         expect(guidance).toContain('validation-before-owner and write-before-upload call-order tests');
     });
+
+    it('requires a repository-wide image upload inventory without mandatory secondary auth', () => {
+        expect(guidance).toContain('search all file inputs, native camera acquisition, direct `uploadBytes`/resumable calls, and `imageStorage` imports');
+        expect(guidance).toContain('including certificate assets and signatures');
+        expect(guidance).toContain('no production upload may hard-require its anonymous auth');
+    });
 });

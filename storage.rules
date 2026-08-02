@@ -175,6 +175,12 @@ service firebase.storage {
          contentType.matches('video/.*'));
     }
 
+    function isAllowedCertificateImageUpload(contentType, size) {
+      return size > 0 &&
+        size <= 5 * 1024 * 1024 &&
+        contentType in ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    }
+
     function athleteProfileMatchesPathOwner(userId, profileId) {
       let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
       return profileId.size() > 0 &&
@@ -212,6 +218,26 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
       allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
+    match /certificate-assets/teams/{teamId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
+    match /certificate-signatures/users/{userId}/{fileName} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
       allow update: if false;
     }
 

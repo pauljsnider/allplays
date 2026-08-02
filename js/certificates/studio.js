@@ -908,7 +908,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=3');
+                const { uploadCertificateAsset } = await import('./assets.js?v=4');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -948,7 +948,7 @@ function bindSetupEvents() {
             if (!file) return;
             const index = Number(input.dataset.signatureUpload);
             try {
-                const { uploadSignatureImage } = await import('./assets.js?v=3');
+                const { uploadSignatureImage } = await import('./assets.js?v=4');
                 const result = await uploadSignatureImage(state.user?.uid, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
