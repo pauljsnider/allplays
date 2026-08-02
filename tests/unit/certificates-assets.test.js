@@ -38,7 +38,7 @@ describe('certificate asset validation', () => {
         expect(validateCertificateStorageId('team_ABC-123', 'team ID')).toBe('team_ABC-123');
         expect(() => validateCertificateStorageId('../team', 'team ID')).toThrow('Invalid team ID format.');
         await expect(uploadCertificateAsset('../team', imageFile)).rejects.toThrow('Invalid team ID format.');
-        await expect(uploadSignatureImage('user/bad', imageFile)).rejects.toThrow('Invalid user ID format.');
+        await expect(uploadSignatureImage('team/bad', imageFile)).rejects.toThrow('Invalid team ID format.');
         expect(mocks.uploadBytes).not.toHaveBeenCalled();
     });
 
@@ -81,29 +81,27 @@ describe('certificate asset validation', () => {
         mocks.ref.mockClear();
         mocks.uploadBytes.mockClear();
         mocks.getDownloadURL.mockClear();
-        mocks.ref.mockReturnValue({ fullPath: 'certificate-signatures/users/user-1/random.png' });
-        mocks.uploadBytes.mockResolvedValue({ ref: { fullPath: 'certificate-signatures/users/user-1/random.png' } });
+        mocks.ref.mockReturnValue({ fullPath: 'certificate-signatures/teams/team-1/random.png' });
+        mocks.uploadBytes.mockResolvedValue({ ref: { fullPath: 'certificate-signatures/teams/team-1/random.png' } });
         mocks.getDownloadURL.mockResolvedValue('https://example.com/signature.png');
 
-        const signature = await uploadSignatureImage('user-1', imageFile);
+        const signature = await uploadSignatureImage('team-1', imageFile);
 
         expect(mocks.ref).toHaveBeenCalledWith(
             expect.objectContaining({ name: 'primary-storage' }),
-            expect.stringMatching(/^certificate-signatures\/users\/user-1\/[a-zA-Z0-9_]+\.png$/)
+            expect.stringMatching(/^certificate-signatures\/teams\/team-1\/[a-zA-Z0-9_]+\.png$/)
         );
         expect(mocks.ref.mock.calls[0][1]).not.toContain('private');
         expect(signature.storage).toBe('primary');
         expect(signature.path).toBe(signature.storagePath);
-        expect(signature.storagePath).toMatch(/^certificate-signatures\/users\/user-1\/[a-zA-Z0-9_]+\.png$/);
+        expect(signature.storagePath).toMatch(/^certificate-signatures\/teams\/team-1\/[a-zA-Z0-9_]+\.png$/);
     });
 
     it('rejects certificate uploads for a mismatched signed-in account before Storage', async () => {
-        const { uploadCertificateAsset, uploadSignatureImage } = await import('../../js/certificates/assets.js');
+        const { uploadCertificateAsset } = await import('../../js/certificates/assets.js');
         const imageFile = { type: 'image/png', size: 128, name: 'crest.png' };
 
         await expect(uploadCertificateAsset('team-1', imageFile, 'background', 'other-user'))
-            .rejects.toThrow('signed-in account does not match');
-        await expect(uploadSignatureImage('other-user', imageFile))
             .rejects.toThrow('signed-in account does not match');
         expect(mocks.uploadBytes).not.toHaveBeenCalled();
     });
@@ -144,28 +142,28 @@ describe('certificate asset validation', () => {
         expect(mocks.deleteObject).toHaveBeenCalledWith(storageRef);
     });
 
-    it('deletes only a signed-in user signature at an exact scoped cleanup path', async () => {
-        const storageRef = { fullPath: 'certificate-signatures/users/user-1/random.png' };
+    it('deletes only a signature at the exact requested team cleanup path', async () => {
+        const storageRef = { fullPath: 'certificate-signatures/teams/team-1/random.png' };
         mocks.ref.mockReturnValue(storageRef);
         const { deleteSignatureImage } = await import('../../js/certificates/assets.js');
 
-        await deleteSignatureImage('user-1', storageRef.fullPath);
+        await deleteSignatureImage('team-1', storageRef.fullPath);
 
         expect(mocks.ref).toHaveBeenCalledWith(expect.objectContaining({ name: 'primary-storage' }), storageRef.fullPath);
         expect(mocks.deleteObject).toHaveBeenCalledWith(storageRef);
-        await expect(deleteSignatureImage('user-1', 'certificate-signatures/users/other-user/random.png'))
+        await expect(deleteSignatureImage('team-1', 'certificate-signatures/teams/team-2/random.png'))
             .rejects.toThrow('Invalid certificate signature cleanup path.');
-        await expect(deleteSignatureImage('other-user', storageRef.fullPath))
-            .rejects.toThrow('signed-in account does not match');
+        await expect(deleteSignatureImage('team-2', storageRef.fullPath))
+            .rejects.toThrow('Invalid certificate signature cleanup path.');
     });
 
     it('attempts scoped cleanup when a certificate Storage upload rejects ambiguously', async () => {
-        const storageRef = { fullPath: 'certificate-signatures/users/user-1/random.png' };
+        const storageRef = { fullPath: 'certificate-signatures/teams/team-1/random.png' };
         mocks.ref.mockReturnValue(storageRef);
         mocks.uploadBytes.mockRejectedValue(new Error('deadline-exceeded'));
         const { uploadSignatureImage } = await import('../../js/certificates/assets.js');
 
-        await expect(uploadSignatureImage('user-1', {
+        await expect(uploadSignatureImage('team-1', {
             type: 'image/png',
             size: 128,
             name: 'signature.png'

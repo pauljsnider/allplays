@@ -37,6 +37,8 @@ describe('agent regression guidance', () => {
     it('requires a repository-wide image upload inventory without mandatory secondary auth', () => {
         expect(guidance).toContain('search all file inputs, native camera acquisition, direct `uploadBytes`/resumable calls, and `imageStorage` imports');
         expect(guidance).toContain('including certificate assets and signatures');
+        expect(guidance).toContain('signer images stored in shared team defaults as team-owned objects');
+        expect(guidance).toContain('allow every authorized team admin to replace and delete them');
         expect(guidance).toContain('no production upload may hard-require its anonymous auth');
         expect(guidance).toContain('Every upload helper must return both the display URL and exact cleanup path');
         expect(guidance).toContain('every adapter, native wrapper, normalizer, persisted nested object, and test mock must preserve that object');

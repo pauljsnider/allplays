@@ -232,12 +232,23 @@ service firebase.storage {
     }
 
     match /certificate-signatures/users/{userId}/{fileName} {
+      // Legacy user-scoped signatures remain readable/deletable by their uploader.
       allow get: if isSignedIn() && request.auth.uid == userId;
       allow list: if false;
       allow create: if isVerifiedForSensitiveWrite() &&
         request.auth.uid == userId &&
         isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
       allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /certificate-signatures/teams/{teamId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
       allow update: if false;
     }
 

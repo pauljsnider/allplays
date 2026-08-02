@@ -70,9 +70,9 @@ export function buildCertificateAssetStoragePath(teamId, file) {
     return `certificate-assets/teams/${safeTeamId}/${buildCertificateUploadToken()}${getCertificateImageExtension(file)}`;
 }
 
-export function buildCertificateSignatureStoragePath(userId, file) {
-    const safeUserId = validateCertificateStorageId(userId, 'user ID');
-    return `certificate-signatures/users/${safeUserId}/${buildCertificateUploadToken()}${getCertificateImageExtension(file)}`;
+export function buildCertificateSignatureStoragePath(teamId, file) {
+    const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
+    return `certificate-signatures/teams/${safeTeamId}/${buildCertificateUploadToken()}${getCertificateImageExtension(file)}`;
 }
 
 async function getCertificateAssetUrlOrDelete(storageRef) {
@@ -129,17 +129,15 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
     }
 }
 
-export async function uploadSignatureImage(userId, file) {
-    if (!userId) throw new Error('A signed-in user is required to upload a signature.');
-    const safeUserId = validateCertificateStorageId(userId, 'user ID');
+export async function uploadSignatureImage(teamId, file) {
+    if (!teamId) throw new Error('A team is required to upload a signature.');
+    const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
     validateCertificateImageFile(file);
     const signedInUserId = String(auth.currentUser?.uid || '').trim();
-    if (!signedInUserId || signedInUserId !== safeUserId) {
-        throw new Error('The signed-in account does not match this signature upload.');
-    }
+    if (!signedInUserId) throw new Error('A signed-in team admin is required to upload a signature.');
 
     const safeName = sanitizeCertificateFilename(file.name);
-    const storagePath = buildCertificateSignatureStoragePath(safeUserId, file);
+    const storagePath = buildCertificateSignatureStoragePath(safeTeamId, file);
     const storageRef = ref(storage, storagePath);
     try {
         const snapshot = await uploadBytes(storageRef, file, { contentType: file.type });
@@ -158,14 +156,12 @@ export async function uploadSignatureImage(userId, file) {
     }
 }
 
-export async function deleteSignatureImage(userId, storagePath) {
-    const safeUserId = validateCertificateStorageId(userId, 'user ID');
+export async function deleteSignatureImage(teamId, storagePath) {
+    const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
     const signedInUserId = String(auth.currentUser?.uid || '').trim();
-    if (!signedInUserId || signedInUserId !== safeUserId) {
-        throw new Error('The signed-in account does not match this signature cleanup.');
-    }
+    if (!signedInUserId) throw new Error('A signed-in team admin is required to delete a signature.');
     const normalizedPath = String(storagePath || '').trim();
-    const prefix = `certificate-signatures/users/${safeUserId}/`;
+    const prefix = `certificate-signatures/teams/${safeTeamId}/`;
     const objectName = normalizedPath.slice(prefix.length);
     if (!normalizedPath.startsWith(prefix) || !objectName || objectName.includes('/')) {
         throw new Error('Invalid certificate signature cleanup path.');

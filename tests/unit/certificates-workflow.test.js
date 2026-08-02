@@ -250,7 +250,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
         expect(studio).toContain("from './signers.js?v=2'");
         expect(studio).toContain("from '../db.js?v=148'");
-        expect(studio).toContain("import('./assets.js?v=5')");
+        expect(studio).toContain("import('./assets.js?v=6')");
         expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
         expect(studio).toContain(".map(({ signatureImagePath, ...signer }) => signer)");
         expect(studio).toContain('await persistCertificateDefaults();');
@@ -304,7 +304,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain("import('./assets.js?v=5')");
+        expect(studio).toContain("import('./assets.js?v=6')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');

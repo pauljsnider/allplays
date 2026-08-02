@@ -15,6 +15,7 @@ describe('profile photo Storage rule shape', () => {
         expect(storageRules).toContain('match /profile-photos/teams/{teamId}/team/{fileName} {');
         expect(storageRules).not.toContain('match /profile-photos/teams/{teamId}/players/{playerId}/{userId}/{fileName} {');
         expect(storageRules).not.toContain('match /profile-photos/teams/{teamId}/team/{userId}/{fileName} {');
+        expect(storageRules).toContain('match /certificate-signatures/teams/{teamId}/{fileName} {');
     });
 });
 
@@ -305,15 +306,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             ));
             await assertSucceeds(adminStorage.ref('certificate-assets/teams/team-a/background.png').delete());
 
-            const signatureRef = ownerStorage.ref('certificate-signatures/users/owner-a/signature.webp');
+            const signatureRef = ownerStorage.ref('certificate-signatures/teams/team-a/signature.webp');
             await assertSucceeds(signatureRef.put(new Uint8Array([1]), { contentType: 'image/webp' }));
             await assertSucceeds(signatureRef.getMetadata());
-            await assertFails(adminStorage.ref('certificate-signatures/users/owner-a/signature.webp').getMetadata());
-            await assertFails(adminStorage.ref('certificate-signatures/users/owner-a/spoofed.webp').put(
+            await assertSucceeds(adminStorage.ref('certificate-signatures/teams/team-a/signature.webp').getMetadata());
+            await assertSucceeds(adminStorage.ref('certificate-signatures/teams/team-a/admin.webp').put(
                 new Uint8Array([1]),
                 { contentType: 'image/webp' }
             ));
-            await assertSucceeds(signatureRef.delete());
+            await assertFails(parentStorage.ref('certificate-signatures/teams/team-a/parent.webp').put(
+                new Uint8Array([1]),
+                { contentType: 'image/webp' }
+            ));
+            await assertFails(ownerStorage.ref('certificate-signatures/teams/team-b/cross-team.webp').put(
+                new Uint8Array([1]),
+                { contentType: 'image/webp' }
+            ));
+            await assertSucceeds(adminStorage.ref('certificate-signatures/teams/team-a/signature.webp').delete());
         });
 
         it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {

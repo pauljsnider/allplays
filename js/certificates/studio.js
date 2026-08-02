@@ -94,9 +94,9 @@ async function cleanupUnreferencedSignatureImages() {
     const referencedPaths = getSignatureImagePaths();
     const cleanupPaths = [...state.pendingSignatureCleanupPaths].filter((path) => !referencedPaths.has(path));
     if (!cleanupPaths.length) return;
-    const { deleteSignatureImage } = await import('./assets.js?v=5');
+    const { deleteSignatureImage } = await import('./assets.js?v=6');
     const results = await Promise.allSettled(cleanupPaths.map((path) => (
-        deleteSignatureImage(state.user?.uid, path)
+        deleteSignatureImage(state.teamId, path)
     )));
     results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
@@ -958,7 +958,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=5');
+                const { uploadCertificateAsset } = await import('./assets.js?v=6');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -1004,8 +1004,8 @@ function bindSetupEvents() {
             const index = Number(input.dataset.signatureUpload);
             const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=5');
-                const result = await uploadSignatureImage(state.user?.uid, file);
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=6');
+                const result = await uploadSignatureImage(state.teamId, file);
                 queueSignatureCleanup(previousSigner);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
@@ -1018,7 +1018,7 @@ function bindSetupEvents() {
                         schedulePreviewRender();
                         throw new Error('The signature save status is unknown. Both images were preserved; refresh before retrying.');
                     }
-                    await deleteSignatureImage(state.user?.uid, result.path).catch(() => undefined);
+                    await deleteSignatureImage(state.teamId, result.path).catch(() => undefined);
                     state.shared.signers[index] = previousSigner;
                     state.pendingSignatureCleanupPaths.delete(String(previousSigner.signatureImagePath || '').trim());
                     throw persistenceError;
