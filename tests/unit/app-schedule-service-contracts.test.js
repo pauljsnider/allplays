@@ -70,6 +70,14 @@ const firebaseMocks = vi.hoisted(() => {
 
     return {
         db: {},
+        functions: { name: 'functions' },
+        httpsCallable: vi.fn((_functions, name) => async () => ({
+            data: {
+                items: name === 'listManagedTeams'
+                    ? [await dbMocks.getTeam('team-1')].filter(Boolean)
+                    : []
+            }
+        })),
         doc: vi.fn((...parts) => ({
             path: parts.filter((part) => typeof part === 'string').join('/')
         })),
@@ -539,10 +547,9 @@ describe('React app schedule service contract integration', () => {
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
         expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmail', '==', ownerEmail)");
-        expect(legacyScheduleDbSource).toContain('Promise.allSettled([');
-        expect(legacyScheduleDbSource).toContain('legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs)');
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
+        expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
+        expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {

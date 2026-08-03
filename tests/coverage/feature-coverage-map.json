@@ -786,6 +786,7 @@
                 "getPublicOpportunity",
                 "getPublicTeamCalendarProjection",
                 "getPublicTeamProfile",
+                "listManagedTeams",
                 "listManagedPublicOpportunityTeams",
                 "listMyPublicOpportunities",
                 "listOpportunityInquiries",
