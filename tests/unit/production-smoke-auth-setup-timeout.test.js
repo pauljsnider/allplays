@@ -12,7 +12,7 @@ describe('production smoke authenticated setup timeout', () => {
     it('uses an explicit bounded setup budget for every credentialed role suite', () => {
         expect(helper).toContain('export const AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS = 240_000;');
 
-        for (const source of [authenticatedCore, adminCore, authenticatedExtended, authenticatedImageWrites, legacyAuthenticatedCore]) {
+        for (const source of [authenticatedCore, adminCore, authenticatedExtended, legacyAuthenticatedCore]) {
             expect(source).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
             expect(source).toMatch(
                 /test\.beforeAll\(async \(\{ browser \}\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
@@ -25,6 +25,14 @@ describe('production smoke authenticated setup timeout', () => {
             expect(boundedSetup).toMatch(/createAuthenticatedAppSession(?:s)?\(browser,/);
             expect(source).toMatch(/test\.afterAll\(async \(\) => \{[\s\S]*?closeAuthenticatedAppSession\(/);
         }
+
+        expect(authenticatedImageWrites).toContain('AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS');
+        expect(authenticatedImageWrites).toMatch(
+            /test\.beforeAll\(async \(\) => \{\s+test\.setTimeout\(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS\);/
+        );
+        expect(authenticatedImageWrites).toContain('createFirebaseRestSession({');
+        expect(authenticatedImageWrites).not.toContain('createAuthenticatedAppSession');
+        expect(authenticatedImageWrites).not.toContain('closeAuthenticatedAppSession');
 
         for (const source of [authenticatedCore, authenticatedExtended]) {
             const boundedSetup = source.slice(
