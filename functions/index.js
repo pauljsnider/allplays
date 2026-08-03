@@ -17054,14 +17054,122 @@ async function listStaffTeamDocuments(caller) {
       .map((teamId) => String(teamId || '').trim())
       .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
   ));
-  const coachTeamSnaps = await Promise.all(
-    coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
-  );
+  const [coachTeamSnaps, acceptedAdminInviteSnap] = await Promise.all([
+    Promise.all(coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())),
+    coachTeamIds.length
+      ? firestore.collection('accessCodes').where('usedBy', '==', caller.uid).get()
+      : Promise.resolve({ docs: [] })
+  ]);
+  // coachOf predates reciprocal staff indexes, so preserve genuinely legacy
+  // coach-only grants. When an accepted admin invite exists, however, the
+  // current team document is authoritative: removing its admin email revokes
+  // discovery even if an older client left coachOf behind.
+  const acceptedAdminInviteTeamIds = new Set(acceptedAdminInviteSnap.docs
+    .filter((docSnap) => {
+      const invite = docSnap.data() || {};
+      return invite.type === 'admin_invite' && invite.used === true;
+    })
+    .map((docSnap) => String(docSnap.data()?.teamId || '').trim())
+    .filter(Boolean));
   coachTeamSnaps.forEach((teamSnap) => {
-    if (teamSnap.exists) teams.set(teamSnap.id, teamSnap);
+    if (!teamSnap.exists || teams.has(teamSnap.id)) return;
+    if (acceptedAdminInviteTeamIds.has(teamSnap.id)) return;
+    teams.set(teamSnap.id, teamSnap);
   });
   return teams;
 }
+
+exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}) => {
+  const caller = await getOpportunityCaller(context, { verified: true });
+  const teamId = normalizeOpportunityTeamId(data?.teamId);
+  const targetEmail = normalizeParentInviteEmail(data?.email);
+  if (!targetEmail) {
+    throwOpportunityError('invalid-argument', 'Admin email is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${caller.uid}`);
+  const teamInviteQuery = firestore.collection('accessCodes').where('teamId', '==', teamId);
+  const emailUserQuery = firestore.collection('users').where('email', '==', targetEmail).limit(100);
+  const profileEmailUserQuery = firestore.collection('users').where('profileEmail', '==', targetEmail).limit(100);
+  let removedUserCount = 0;
+
+  await firestore.runTransaction(async (transaction) => {
+    const [teamSnap, callerSnap, inviteSnap, emailUserSnap, profileEmailUserSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(callerRef),
+      transaction.get(teamInviteQuery),
+      transaction.get(emailUserQuery),
+      transaction.get(profileEmailUserQuery)
+    ]);
+    if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
+
+    const team = teamSnap.data() || {};
+    const currentCaller = {
+      ...caller,
+      user: callerSnap.exists ? callerSnap.data() || {} : {}
+    };
+    if (!hasOpportunityTeamAdminAccess(currentCaller, team)) {
+      throwOpportunityError('permission-denied', 'Only a team owner or admin can remove team staff.');
+    }
+
+    const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter(Boolean);
+    if (ownerEmails.includes(targetEmail)) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+
+    const matchingInviteSnaps = inviteSnap.docs.filter((docSnap) => {
+      const invite = docSnap.data() || {};
+      return invite.type === 'admin_invite'
+        && normalizeParentInviteEmail(invite.email) === targetEmail;
+    });
+    const targetUserRefs = new Map();
+    [...emailUserSnap.docs, ...profileEmailUserSnap.docs].forEach((docSnap) => {
+      targetUserRefs.set(docSnap.ref.path, docSnap.ref);
+    });
+    matchingInviteSnaps.forEach((docSnap) => {
+      const usedBy = String(docSnap.data()?.usedBy || '').trim();
+      if (usedBy && /^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) {
+        const userRef = firestore.doc(`users/${usedBy}`);
+        targetUserRefs.set(userRef.path, userRef);
+      }
+    });
+    const targetUserSnaps = await Promise.all(
+      [...targetUserRefs.values()].map((userRef) => transaction.get(userRef))
+    );
+    const now = admin.firestore.Timestamp.now();
+    const nextAdminEmails = Array.from(new Set(
+      (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter((email) => email && email !== targetEmail)
+    ));
+    transaction.update(teamRef, { adminEmails: nextAdminEmails, updatedAt: now });
+
+    removedUserCount = 0;
+    targetUserSnaps.forEach((userSnap) => {
+      if (!userSnap.exists) return;
+      const user = userSnap.data() || {};
+      const coachOf = Array.isArray(user.coachOf) ? user.coachOf.map(String) : [];
+      if (!coachOf.includes(teamId)) return;
+      transaction.update(userSnap.ref, {
+        coachOf: coachOf.filter((value) => value !== teamId),
+        updatedAt: now
+      });
+      removedUserCount += 1;
+    });
+    matchingInviteSnaps.forEach((inviteDocSnap) => transaction.update(inviteDocSnap.ref, {
+      revoked: true,
+      status: 'revoked',
+      revokedAt: now,
+      revokedBy: caller.uid,
+      updatedAt: now
+    }));
+  });
+
+  return { success: true, removedUserCount };
+});
 
 exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');

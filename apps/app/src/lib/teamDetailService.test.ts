@@ -39,8 +39,10 @@ const firebaseMocks = vi.hoisted(() => ({
   collection: vi.fn(),
   db: {},
   doc: vi.fn(),
+  functions: {},
   getDoc: vi.fn(),
   getDocs: vi.fn(),
+  httpsCallable: vi.fn(),
   query: vi.fn(),
   serverTimestamp: vi.fn(() => 'server-timestamp'),
   setDoc: vi.fn(),
@@ -270,6 +272,7 @@ describe('buildTeamAnalytics', () => {
 
 beforeEach(() => {
   nativeRuntimeState.isNative = false;
+  firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: { success: true } }));
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
   seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
@@ -1385,7 +1388,12 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
     await expect(
       revokeTeamAdminAccessForApp('team-1', 'someoneelse@example.com', teamAdminUser)
     ).resolves.toBeUndefined();
-    expect(dbMocks.updateTeam).toHaveBeenCalled();
+    expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'revokeTeamAdminAccess');
+    expect(firebaseMocks.httpsCallable.mock.results[firebaseMocks.httpsCallable.mock.results.length - 1]?.value).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      email: 'someoneelse@example.com'
+    });
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 
   it('denies a user who is neither owner, adminEmails member, isAdmin, isPlatformAdmin, nor admin-role', async () => {
@@ -1394,6 +1402,7 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
     await expect(
       revokeTeamAdminAccessForApp('team-1', 'teamadmin@example.com', randomUser)
     ).rejects.toThrow('You do not have permission to manage admins for this team.');
+    expect(firebaseMocks.httpsCallable).not.toHaveBeenCalled();
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 });

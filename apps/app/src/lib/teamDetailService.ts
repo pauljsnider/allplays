@@ -30,10 +30,12 @@ import {
   getTeam,
   getTeamScorePair,
   getVisiblePlayerTrackingSummary,
+  functions,
   grantScorekeeperAccess,
   grantTeamMediaManagerAccess,
   grantVideographerAccess,
   hasFullTeamAccess,
+  httpsCallable,
   inviteAdmin,
   inviteExistingTeamAdmin,
   inviteParent,
@@ -1231,16 +1233,18 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
     throw new Error('You do not have permission to manage admins for this team.');
   }
 
-  const ownerEmail = cleanString(team?.ownerEmail).toLowerCase();
-  if (ownerEmail && ownerEmail === normalizedEmail) {
+  const ownerEmails = [team?.ownerEmail, team?.ownerEmailLower]
+    .map((value) => cleanString(value).toLowerCase())
+    .filter(Boolean);
+  if (ownerEmails.includes(normalizedEmail)) {
     throw new Error('The team owner cannot be removed from staff access.');
   }
 
-  const nextAdminEmails = normalizeAdminEmailList(team?.adminEmails).filter((value: string) => value !== normalizedEmail);
-  await updateTeam(normalizedTeamId, {
-    adminEmails: nextAdminEmails,
-    updatedAt: new Date()
-  });
+  // Revocation must update the team grant, the user's coachOf index, and the
+  // accepted invite record together. A direct client update can leave a stale
+  // coachOf grant that continues to expose private team data.
+  const revokeTeamAdminAccess = httpsCallable(functions, 'revokeTeamAdminAccess');
+  await revokeTeamAdminAccess({ teamId: normalizedTeamId, email: normalizedEmail });
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 

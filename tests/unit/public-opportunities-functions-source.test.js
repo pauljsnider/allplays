@@ -22,6 +22,7 @@ describe('public opportunity callable wiring', () => {
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
       'listManagedTeams',
+      'revokeTeamAdminAccess',
       'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
       'getPublicTeamCalendarProjection',

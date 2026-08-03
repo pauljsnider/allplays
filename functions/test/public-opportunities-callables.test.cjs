@@ -443,6 +443,72 @@ test('managed-team callables return access fields only to current managers', asy
     assert.equal('privateBillingCustomerId' in stalePublicProfile.item, false);
 });
 
+test('team admin revocation atomically clears reciprocal coach access and accepted invites', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/coach-1': {
+            email: 'new-coach@example.com',
+            profileEmail: 'coach@example.com',
+            coachOf: ['team-1', 'other-team']
+        },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            ownerEmailLower: 'owner@example.com',
+            adminEmails: ['Coach@Example.com'],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach-1'
+        }
+    });
+
+    const result = await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: ' Coach@Example.com ' },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.deepEqual(result, { success: true, removedUserCount: 1 });
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
+    assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, ['other-team']);
+    assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, true);
+    assert.equal(firestore.snapshot('accessCodes/admin-invite-1').status, 'revoked');
+    assert.deepEqual(
+        (await callables.listManagedTeams({}, authContext('coach-1', { email: 'new-coach@example.com' }))).items,
+        []
+    );
+});
+
+test('managed-team discovery rejects an accepted invite whose team grant was removed by an older client', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach-1'
+        }
+    });
+
+    assert.deepEqual(
+        (await callables.listManagedTeams({}, authContext('coach-1', { email: 'coach@example.com' }))).items,
+        []
+    );
+});
+
 test('team opportunity publishing is server-authorized and returns a public-only projection', async () => {
     const input = {
         kind: 'coach_or_staff',
