@@ -16,6 +16,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
+    loadPublicTeamCalendarProjection,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -182,7 +184,20 @@ function buildServer(identity) {
 
     const run = (handler) => async (args) => {
         try {
-            const context = await resolveUserContext(db, identity);
+            let managedTeamResult;
+            try {
+                managedTeamResult = await loadManagedTeamsFromCallable({
+                    projectId: PROJECT_ID,
+                    idToken: identity.idToken
+                });
+            } catch (error) {
+                if (!(error instanceof DomainError) || error.code !== 'not_found') throw error;
+                managedTeamResult = { teams: null, isPartial: false };
+            }
+            if (managedTeamResult.isPartial) {
+                throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.');
+            }
+            const context = await resolveUserContext(db, identity, { managedTeams: managedTeamResult.teams });
             return toolResult(await handler(context, args));
         } catch (error) {
             return toolError(error);
@@ -204,14 +219,22 @@ function buildServer(identity) {
             endDate: z.string().optional().describe('ISO date, inclusive. Defaults to startDate + 7 days.')
         },
         annotations: { readOnlyHint: true }
-    }, run((context, args) => getFamilySchedule(db, context, args)));
+    }, run((context, args) => getFamilySchedule(db, context, args, new Date(), {
+        loadCalendarProjection: ({ teamId, startDate, endDate }) => loadPublicTeamCalendarProjection({
+            projectId: PROJECT_ID,
+            idToken: identity.idToken,
+            teamId,
+            startDate,
+            endDate
+        })
+    })));
 
     server.registerTool('get_game_summary', {
         title: 'Get game summary',
         description: 'Score, status, summary, and aggregated player statistics for one game on a team the user belongs to.',
         inputSchema: {
             teamId: z.string().describe('Team id from get_profile'),
-            gameId: z.string().describe('Game id from list_schedule')
+            gameId: z.string().describe('Non-imported gameId from list_schedule. Imported calendar events have no gameId and do not support game summaries.')
         },
         annotations: { readOnlyHint: true }
     }, run((context, args) => getGameSummary(db, context, args)));
