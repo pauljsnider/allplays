@@ -452,19 +452,36 @@ test('managed-team callables return access fields only to current managers', asy
     });
 
     const managed = await callables.listManagedTeams({}, authContext('owner-1', { email: 'owner@example.com' }));
-    assert.deepEqual(managed.items, [{
-        id: 'private-team',
-        name: 'Private Bears',
-        sport: 'Basketball',
-        active: true,
-        isPublic: false,
-        ownerId: 'owner-1',
-        availabilityPreferences: { defaultStatus: 'available' },
-        calendarUrls: ['https://calendar.example.test/private-team.ics'],
-        privateCalendarFeedUrl: 'https://calendar.example.test/private/private-team.ics'
-    }]);
-    assert.equal('privateBillingCustomerId' in managed.items[0], false);
-    assert.ok(!managed.items.some((team) => team.id === 'coach-team'));
+    assert.deepEqual(managed.items, [
+        {
+            id: 'coach-team',
+            name: 'Coach Bears',
+            sport: 'Basketball',
+            photoUrl: null,
+            description: null,
+            active: true,
+            archived: false,
+            status: null,
+            isPublic: false
+        },
+        {
+            id: 'private-team',
+            name: 'Private Bears',
+            sport: 'Basketball',
+            active: true,
+            isPublic: false,
+            ownerId: 'owner-1',
+            availabilityPreferences: { defaultStatus: 'available' },
+            calendarUrls: ['https://calendar.example.test/private-team.ics'],
+            privateCalendarFeedUrl: 'https://calendar.example.test/private/private-team.ics'
+        }
+    ]);
+    const coachTeam = managed.items.find((team) => team.id === 'coach-team');
+    const privateTeam = managed.items.find((team) => team.id === 'private-team');
+    assert.equal('ownerId' in coachTeam, false);
+    assert.equal('adminEmails' in coachTeam, false);
+    assert.equal('privateBillingCustomerId' in coachTeam, false);
+    assert.equal('privateBillingCustomerId' in privateTeam, false);
 
     const privateProfile = await callables.getPublicTeamProfile(
         { teamId: 'private-team' },
@@ -751,7 +768,7 @@ test('email-only team admins cannot revoke their own canonical access', async ()
     assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, undefined);
 });
 
-test('managed-team discovery rejects an accepted invite whose team grant was removed by an older client', async () => {
+test('managed-team discovery rejects an accepted invite whose canonical team grant was removed', async () => {
     const { callables } = loadCallables({
         'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
         'teams/team-1': {
@@ -802,6 +819,33 @@ test('managed-team discovery rejects an orphaned pre-transaction coach grant aft
         (await callables.listManagedTeams({}, authContext('coach-1', { email: 'coach@example.com' }))).items,
         []
     );
+});
+
+test('managed-team discovery fails closed when legacy coach grant evidence cannot be checked', async () => {
+    const { callables } = loadCallables({
+        'users/legacy-coach': { email: 'legacy@example.com', roles: ['coach'], coachOf: ['team-1'] },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        }
+    }, {
+        queryFailures: [{
+            path: 'accessCodes',
+            field: 'teamId',
+            operator: '==',
+            message: 'invite evidence unavailable'
+        }]
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('legacy-coach', { email: 'legacy@example.com' })
+    );
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, true);
 });
 
 test('managed-team discovery preserves a current mixed-case legacy admin grant', async () => {

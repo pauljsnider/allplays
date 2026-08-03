@@ -17863,16 +17863,40 @@ async function listStaffTeamDocuments(caller) {
   const settledCoachTeamSnaps = await Promise.allSettled(
     coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
   );
-  // coachOf is only a candidate index; canonical team grants remain authoritative,
-  // while loading candidates still recovers legacy-cased current grants.
-  settledCoachTeamSnaps.forEach((result) => {
-    if (result.status !== 'fulfilled') return;
-    const teamSnap = result.value;
-    if (!teamSnap.exists || teams.has(teamSnap.id)) return;
-    if (hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
-      // Recheck canonical teams because legacy grant aliases can use mixed casing.
+  // coachOf is a server-managed legacy staff grant. Before accepting its
+  // limited projection, reject one-sided admin-invite writes whose canonical
+  // team grant is absent (revoked invites and interrupted redemption alike).
+  const loadedCoachTeamSnaps = settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+    .filter((teamSnap) => teamSnap.exists);
+  loadedCoachTeamSnaps.forEach((teamSnap) => {
+    if (!teams.has(teamSnap.id) && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
+      // Recover canonical grants whose stored email uses legacy casing and was
+      // therefore missed by Firestore's case-sensitive discovery query.
       teams.set(teamSnap.id, teamSnap);
     }
+  });
+  const legacyCoachCandidates = loadedCoachTeamSnaps
+    .filter((teamSnap) => !teams.has(teamSnap.id));
+  const settledCoachGrantEvidence = await Promise.allSettled(
+    legacyCoachCandidates.map(async (teamSnap) => {
+      const inviteSnap = await firestore.collection('accessCodes')
+        .where('teamId', '==', teamSnap.id)
+        .get();
+      const hasAdminInviteLifecycleEvidence = inviteSnap.docs.some((inviteDoc) => {
+        const invite = inviteDoc.data() || {};
+        if (invite.type !== 'admin_invite') return false;
+        const inviteEmail = String(invite.email || '').trim().toLowerCase();
+        return String(invite.usedBy || '').trim() === caller.uid
+          || Boolean(caller.email && inviteEmail === caller.email);
+      });
+      return { teamSnap, hasAdminInviteLifecycleEvidence };
+    })
+  );
+  settledCoachGrantEvidence.forEach((result) => {
+    if (result.status !== 'fulfilled' || result.value.hasAdminInviteLifecycleEvidence) return;
+    teams.set(result.value.teamSnap.id, result.value.teamSnap);
   });
   teams.discoveryQueryCount += settledCoachTeamSnaps.length;
   teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
@@ -17880,8 +17904,15 @@ async function listStaffTeamDocuments(caller) {
   teams.discoveryErrors.push(...settledCoachTeamSnaps
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason));
+  teams.discoveryQueryCount += settledCoachGrantEvidence.length;
+  teams.successfulDiscoveryQueryCount += settledCoachGrantEvidence
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachGrantEvidence
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
   teams.isPartial = teams.isPartial === true
-    || settledCoachTeamSnaps.some((result) => result.status === 'rejected');
+    || settledCoachTeamSnaps.some((result) => result.status === 'rejected')
+    || settledCoachGrantEvidence.some((result) => result.status === 'rejected');
   if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
     throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
   }

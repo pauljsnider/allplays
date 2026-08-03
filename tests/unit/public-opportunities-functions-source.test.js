@@ -186,18 +186,28 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('managedListingSnaps.forEach');
   });
 
-  it('uses coachOf only to find candidate teams and rechecks the canonical grant', () => {
+  it('uses protected legacy coachOf grants only after stale invite evidence is excluded', () => {
     const resolverStart = source.indexOf('async function listStaffTeamDocuments(caller)');
     const resolverSource = source.slice(
       resolverStart,
       source.indexOf('\nexports.revokeTeamAdminAccess', resolverStart)
     );
+    const listManagedTeamsSource = source.slice(
+      source.indexOf('exports.listManagedTeams'),
+      source.indexOf('\nexports.getPublicTeamProfile')
+    );
 
     expect(resolverSource).toContain('caller.user?.coachOf');
-    expect(resolverSource).toContain('hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})');
-    expect(resolverSource).not.toContain('acceptedAdminInviteTeamIds');
-    expect(resolverSource).not.toContain(".where('usedBy', '==', caller.uid)");
-    expect(resolverSource).toMatch(/if \(hasOpportunityTeamAdminAccess[\s\S]*teams\.set\(teamSnap\.id, teamSnap\);[\s\S]*\n    \}/);
+    expect(resolverSource).toContain("firestore.collection('accessCodes')");
+    expect(resolverSource).toContain(".where('teamId', '==', teamSnap.id)");
+    expect(resolverSource).toContain("invite.type !== 'admin_invite'");
+    expect(resolverSource).toContain("String(invite.usedBy || '').trim() === caller.uid");
+    expect(resolverSource).toContain('inviteEmail === caller.email');
+    expect(resolverSource).toMatch(/if \(result\.status !== 'fulfilled' \|\| result\.value\.hasAdminInviteLifecycleEvidence\) return;\s+teams\.set\(result\.value\.teamSnap\.id, result\.value\.teamSnap\);/);
+    expect(resolverSource).toContain("settledCoachGrantEvidence.some((result) => result.status === 'rejected')");
+    expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
+    expect(listManagedTeamsSource).toContain('? serializeManagedTeamDocument(teamSnap.id, team)');
+    expect(listManagedTeamsSource).toContain(': serializeStaffTeamProfile(teamSnap.id, team)');
   });
 
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {
