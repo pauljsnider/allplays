@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
     backfillLegacyTeamOwnerIds,
@@ -9,6 +10,17 @@ function teamDoc(id, data) {
 }
 
 describe('legacy team ownerId migration planning', () => {
+    it('stays non-executable until the deploy adds late-signup reconciliation', () => {
+        const source = readFileSync(
+            new URL('../../_migration/backfill-legacy-team-owner-ids.js', import.meta.url),
+            'utf8'
+        );
+
+        expect(source).not.toContain('process.argv');
+        expect(source).not.toContain('getMigrationFirestore');
+        expect(source).toContain('apply = false');
+    });
+
     it('binds an ownerId only when Firebase Auth resolves the legacy alias', async () => {
         const auth = {
             getUserByEmail: vi.fn(async (email) => {

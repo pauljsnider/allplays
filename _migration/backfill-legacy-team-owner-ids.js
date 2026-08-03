@@ -1,16 +1,5 @@
-#!/usr/bin/env node
-
-import { pathToFileURL } from 'node:url';
-import { getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import { FieldValue } from 'firebase-admin/firestore';
-import {
-    getMigrationAdminAppOptions,
-    getMigrationFirestore
-} from './firebase-admin-credential.mjs';
 
-const APPLY = process.argv.includes('--apply');
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
 const BATCH_LIMIT = 500;
 const OWNER_BINDING_BATCH_LIMIT = Math.floor(BATCH_LIMIT / 2);
 
@@ -59,7 +48,7 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
     return { plans, aliasNormalizationPlans, unresolvedTeamIds };
 }
 
-export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log = console }) {
+export async function backfillLegacyTeamOwnerIds({ db, auth, apply = false, log = console }) {
     let snapshot = await db.collection('teams')
         .select('ownerId', 'ownerEmail', 'ownerEmailLower')
         .get();
@@ -95,9 +84,9 @@ export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log 
             });
         }
 
-        // Re-read after normalization. Auth accounts created before this commit are
-        // resolved here; accounts created afterward are handled by the retryable
-        // Auth onCreate trigger, which can now query ownerEmailLower exactly.
+        // Re-read after normalization so Auth accounts that already exist can be
+        // resolved exactly. The production handoff that invokes this library must
+        // install late-signup reconciliation before stricter rules are activated.
         snapshot = await db.collection('teams')
             .select('ownerId', 'ownerEmail', 'ownerEmailLower')
             .get();
@@ -159,22 +148,4 @@ export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log 
         normalizedAliases: normalizedAliasCount,
         unresolvedTeamIds
     };
-}
-
-async function main() {
-    if (!getApps().length) {
-        initializeApp(getMigrationAdminAppOptions({ projectId: FIREBASE_PROJECT_ID }));
-    }
-    await backfillLegacyTeamOwnerIds({
-        db: getMigrationFirestore({ projectId: FIREBASE_PROJECT_ID }),
-        auth: getAuth(),
-        apply: APPLY
-    });
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    main().catch((error) => {
-        console.error('[backfill-legacy-team-owner-ids] Failed:', error);
-        process.exitCode = 1;
-    });
 }
