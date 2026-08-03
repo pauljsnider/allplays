@@ -227,9 +227,9 @@ describe('team owner access trigger', () => {
       orderBy: vi.fn(() => makeQuery(pageIndex)),
       limit: vi.fn(() => makeQuery(pageIndex)),
       startAfter: vi.fn((cursor) => {
-        queryCalls.push({ type: 'startAfter', cursor: cursor.id });
+        queryCalls.push({ type: 'startAfter', cursor });
         const cursorPageIndex = pages.findIndex((page) => (
-          page.some((teamDoc) => teamDoc.id === cursor.id)
+          page.some((teamDoc) => teamDoc.id === cursor)
         ));
         return makeQuery(cursorPageIndex + 1);
       }),
@@ -253,10 +253,16 @@ describe('team owner access trigger', () => {
       ownerId: authUser.uid,
       teamIds: ['enabled']
     }));
+    const checkpointRef = {
+      get: vi.fn(async () => ({ exists: false, data: () => null })),
+      set: vi.fn(async () => {}),
+      delete: vi.fn(async () => {})
+    };
     const handler = createLegacyTeamOwnerReconciliationHandler({
-      firestore: { collection: vi.fn(() => makeQuery()) },
+      firestore: { collection: vi.fn(() => makeQuery()), doc: vi.fn(() => checkpointRef) },
       auth,
       documentIdField: { documentId: true },
+      checkpointRef,
       syncAuthUser,
       batchSize: 2,
       concurrency: 2
@@ -266,7 +272,10 @@ describe('team owner access trigger', () => {
       scanned: 5,
       candidateAliases: 3,
       resolvedUsers: 1,
-      boundTeamIds: ['enabled']
+      boundTeamIds: ['enabled'],
+      pagesProcessed: 3,
+      cursorTeamId: null,
+      cycleComplete: true
     });
     expect(auth.getUserByEmail).toHaveBeenCalledTimes(3);
     expect(syncAuthUser).toHaveBeenCalledOnce();
@@ -274,6 +283,81 @@ describe('team owner access trigger', () => {
       uid: 'enabled-owner'
     }));
     expect(queryCalls.filter(({ type }) => type === 'get')).toHaveLength(3);
+    expect(checkpointRef.set).toHaveBeenCalledTimes(2);
+    expect(checkpointRef.set).toHaveBeenLastCalledWith({
+      cursorTeamId: 'conflicting',
+      version: 1
+    }, { merge: true });
+    expect(checkpointRef.delete).toHaveBeenCalledOnce();
+  });
+
+  it('resumes from a durable page checkpoint instead of rescanning after a bounded run', async () => {
+    const makeDoc = (id, email) => ({
+      id,
+      data: () => ({ ownerEmail: email })
+    });
+    const pages = [
+      [makeDoc('early-team', 'early@example.com')],
+      [makeDoc('later-team', 'later@example.com')]
+    ];
+    let checkpointState = null;
+    const checkpointRef = {
+      get: vi.fn(async () => ({
+        exists: checkpointState !== null,
+        data: () => checkpointState
+      })),
+      set: vi.fn(async (value) => { checkpointState = value; }),
+      delete: vi.fn(async () => { checkpointState = null; })
+    };
+    const queriedPages = [];
+    const makeQuery = (pageIndex = 0) => ({
+      select: vi.fn(() => makeQuery(pageIndex)),
+      orderBy: vi.fn(() => makeQuery(pageIndex)),
+      limit: vi.fn(() => makeQuery(pageIndex)),
+      startAfter: vi.fn((cursor) => (
+        makeQuery(pages.findIndex((page) => page.some((teamDoc) => teamDoc.id === cursor)) + 1)
+      )),
+      get: vi.fn(async () => {
+        queriedPages.push(pageIndex);
+        return { docs: pages[pageIndex] || [] };
+      })
+    });
+    const syncAuthUser = vi.fn(async (authUser) => ({
+      ownerId: authUser.uid,
+      teamIds: [authUser.uid]
+    }));
+    const handler = createLegacyTeamOwnerReconciliationHandler({
+      firestore: { collection: vi.fn(() => makeQuery()), doc: vi.fn(() => checkpointRef) },
+      auth: {
+        getUserByEmail: vi.fn(async (email) => ({
+          uid: email.split('@')[0],
+          email,
+          disabled: false
+        }))
+      },
+      documentIdField: { documentId: true },
+      checkpointRef,
+      syncAuthUser,
+      batchSize: 1,
+      concurrency: 2,
+      maxPages: 1
+    });
+
+    await expect(handler()).resolves.toMatchObject({
+      boundTeamIds: ['early'],
+      cursorTeamId: 'early-team',
+      cycleComplete: false
+    });
+    await expect(handler()).resolves.toMatchObject({
+      boundTeamIds: ['later'],
+      cursorTeamId: 'later-team',
+      cycleComplete: false
+    });
+    expect(queriedPages).toEqual([0, 1]);
+    expect(syncAuthUser.mock.calls.map(([authUser]) => authUser.uid)).toEqual([
+      'early',
+      'later'
+    ]);
   });
 
   it('wires retryable Auth creation and scheduled legacy-owner reconciliation', () => {
@@ -283,5 +367,6 @@ describe('team owner access trigger', () => {
     expect(functionsSource).toContain('exports.reconcileLegacyTeamOwnership = functions');
     expect(functionsSource).toContain(".schedule('every 24 hours')");
     expect(functionsSource).toContain('.onRun(createLegacyTeamOwnerReconciliationHandler({');
+    expect(functionsSource).toContain("checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation')");
   });
 });

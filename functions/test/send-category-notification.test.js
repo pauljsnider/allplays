@@ -46,6 +46,115 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
         }
 });
 
+test('getTargetsForCategory excludes a disabled indexed owner before notification delivery', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'disabled-owner',
+                adminEmails: []
+            },
+            userDocs: {
+                'disabled-owner': { email: 'disabled@example.com', parentTeamIds: [] }
+            },
+            authUsersByUid: {
+                'disabled-owner': {
+                    email: 'disabled@example.com',
+                    emailVerified: true,
+                    disabled: true
+                }
+            },
+            indexedTargets: [{
+                uid: 'disabled-owner',
+                roles: ['staff'],
+                deviceId: 'disabled-device',
+                token: 'disabled-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.deepEqual(targets, []);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('empty-index backfill cannot recreate a disabled parent recipient', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'enabled-owner',
+                adminEmails: []
+            },
+            parentUserIds: ['disabled-parent'],
+            userDocs: {
+                'enabled-owner': { email: 'owner@example.com', parentTeamIds: [] },
+                'disabled-parent': {
+                    email: 'disabled-parent@example.com',
+                    parentTeamIds: ['team-1']
+                }
+            },
+            authUsersByUid: {
+                'enabled-owner': { email: 'owner@example.com', disabled: false },
+                'disabled-parent': {
+                    email: 'disabled-parent@example.com',
+                    disabled: true
+                }
+            },
+            preferenceDocs: {
+                'users/enabled-owner/notificationPreferences/team-1': { schedule: true },
+                'users/disabled-parent/notificationPreferences/team-1': { schedule: true }
+            },
+            deviceDocs: {
+                'enabled-owner': [{ id: 'owner-device', token: 'owner-token', platform: 'ios' }],
+                'disabled-parent': [{ id: 'parent-device', token: 'parent-token', platform: 'ios' }]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.deepEqual(targets.map((target) => target.uid), ['enabled-owner']);
+            assert.deepEqual(
+                env.dedupWrites
+                    .filter((write) => write.path.includes('/notificationRecipients/'))
+                    .map((write) => write.path),
+                ['teams/team-1/notificationRecipients/enabled-owner']
+            );
+        } finally {
+            cleanup();
+        }
+});
+
+test('targeted notification delivery excludes disabled requested user IDs', async () => {
+        const { internals, cleanup } = loadNotificationInternals({
+            authUsersByUid: {
+                'disabled-parent': { disabled: true }
+            },
+            preferenceDocs: {
+                'users/disabled-parent/notificationPreferences/team-1': { rsvp: true }
+            },
+            deviceDocs: {
+                'disabled-parent': [{ id: 'parent-device', token: 'parent-token', platform: 'ios' }]
+            }
+        });
+
+        try {
+            await assert.doesNotReject(async () => {
+                const targets = await internals.getTargetsForCategoryUserIds(
+                    'team-1',
+                    'rsvp',
+                    ['disabled-parent']
+                );
+                assert.deepEqual(targets, []);
+            });
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory returns the same recipient set from indexed resolution as the legacy scan', async () => {
         const fixture = {
             teamDoc: {

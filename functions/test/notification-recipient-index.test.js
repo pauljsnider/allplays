@@ -538,7 +538,36 @@ function loadNotificationRecipientIndexEnv({
             },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
-                return uid ? { uid } : { uid: '' };
+                const configured = uid ? authUsersByUid[uid] : null;
+                return uid
+                    ? { uid, ...(configured && !(configured instanceof Error) ? clone(configured) : {}) }
+                    : { uid: '' };
+            },
+            getUsers: async (identifiers) => {
+                const users = [];
+                for (const identifier of identifiers || []) {
+                    const uid = identifier?.uid
+                        || authUsersByEmail[String(identifier?.email || '').trim().toLowerCase()];
+                    if (!uid) continue;
+                    const configured = authUsersByUid[uid];
+                    if (configured instanceof Error) throw configured;
+                    if (configured) {
+                        users.push({ uid, ...clone(configured) });
+                        continue;
+                    }
+                    const user = userDocs[uid];
+                    if (user) {
+                        users.push({
+                            uid,
+                            email: user.email || user.profileEmail || null,
+                            emailVerified: true,
+                            disabled: false
+                        });
+                        continue;
+                    }
+                    users.push({ uid, disabled: false });
+                }
+                return { users, notFound: [] };
             },
             verifyIdToken: async () => null
         }),

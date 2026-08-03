@@ -82,13 +82,33 @@ function isAuthUserNotFound(error) {
   return ['auth/user-not-found', 'user-not-found'].includes(String(error?.code || ''));
 }
 
+async function mapWithConcurrencyLimit(items, limit, worker) {
+  const values = Array.from(items || []);
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(
+    Number.isInteger(limit) && limit > 0 ? limit : 1,
+    values.length || 1
+  ));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(values[index], index);
+    }
+  }));
+  return results;
+}
+
 function createLegacyTeamOwnerReconciliationHandler({
   firestore,
   auth,
   documentIdField,
   syncAuthUser,
+  checkpointRef = null,
   batchSize = 200,
-  concurrency = 20
+  concurrency = 20,
+  maxPages = 5
 }) {
   if (!firestore || !auth || !documentIdField || typeof syncAuthUser !== 'function') {
     throw new Error('Firestore, Auth, documentIdField, and syncAuthUser are required.');
@@ -98,17 +118,36 @@ function createLegacyTeamOwnerReconciliationHandler({
     const resolvedDocumentIdField = typeof documentIdField === 'function'
       ? documentIdField()
       : documentIdField;
-    const candidateAliases = new Set();
-    let cursor = null;
+    const reconciliationCheckpointRef = checkpointRef
+      || firestore.doc('systemJobs/legacyTeamOwnerReconciliation');
+    const checkpointSnap = await reconciliationCheckpointRef.get();
+    let cursorTeamId = checkpointSnap.exists
+      ? String(checkpointSnap.data()?.cursorTeamId || '').trim()
+      : '';
     let scanned = 0;
-    do {
+    let candidateAliasCount = 0;
+    let resolvedUserCount = 0;
+    let pagesProcessed = 0;
+    let cycleComplete = false;
+    const boundTeamIds = new Set();
+    const safeMaxPages = Number.isInteger(maxPages) && maxPages > 0 ? maxPages : 1;
+
+    while (pagesProcessed < safeMaxPages) {
       let query = firestore.collection('teams')
         .select('ownerId', 'ownerEmail', 'ownerEmailLower')
         .orderBy(resolvedDocumentIdField)
         .limit(batchSize);
-      if (cursor) query = query.startAfter(cursor);
+      if (cursorTeamId) query = query.startAfter(cursorTeamId);
       const snapshot = await query.get();
       const teamDocs = snapshot.docs || [];
+      if (!teamDocs.length) {
+        await reconciliationCheckpointRef.delete();
+        cursorTeamId = '';
+        cycleComplete = true;
+        break;
+      }
+
+      const candidateAliases = new Set();
       teamDocs.forEach((teamDoc) => {
         scanned += 1;
         const team = teamDoc.data() || {};
@@ -118,38 +157,54 @@ function createLegacyTeamOwnerReconciliationHandler({
         )];
         if (aliases.length === 1) candidateAliases.add(aliases[0]);
       });
-      cursor = teamDocs.at(-1) || null;
-      if (teamDocs.length < batchSize) break;
-    } while (cursor);
-
-    const resolvedUsers = new Map();
-    const aliases = [...candidateAliases];
-    for (let index = 0; index < aliases.length; index += concurrency) {
-      const chunk = aliases.slice(index, index + concurrency);
-      const users = await Promise.all(chunk.map(async (email) => {
+      const aliases = [...candidateAliases];
+      candidateAliasCount += aliases.length;
+      const authUsers = await mapWithConcurrencyLimit(aliases, concurrency, async (email) => {
         try {
           return await auth.getUserByEmail(email);
         } catch (error) {
           if (isAuthUserNotFound(error)) return null;
           throw error;
         }
-      }));
-      users.forEach((authUser) => {
+      });
+      const resolvedUsers = new Map();
+      authUsers.forEach((authUser) => {
         const uid = String(authUser?.uid || '').trim();
         if (uid && authUser?.disabled !== true) resolvedUsers.set(uid, authUser);
       });
+      resolvedUserCount += resolvedUsers.size;
+
+      const syncResults = await mapWithConcurrencyLimit(
+        resolvedUsers.values(),
+        concurrency,
+        (authUser) => syncAuthUser(authUser)
+      );
+      syncResults.forEach((result) => {
+        (result?.teamIds || []).forEach((teamId) => boundTeamIds.add(teamId));
+      });
+
+      pagesProcessed += 1;
+      cursorTeamId = String(teamDocs.at(-1)?.id || '').trim();
+      if (teamDocs.length < batchSize) {
+        await reconciliationCheckpointRef.delete();
+        cursorTeamId = '';
+        cycleComplete = true;
+        break;
+      }
+      await reconciliationCheckpointRef.set({
+        cursorTeamId,
+        version: 1
+      }, { merge: true });
     }
 
-    const boundTeamIds = new Set();
-    for (const authUser of resolvedUsers.values()) {
-      const result = await syncAuthUser(authUser);
-      (result?.teamIds || []).forEach((teamId) => boundTeamIds.add(teamId));
-    }
     return {
       scanned,
-      candidateAliases: aliases.length,
-      resolvedUsers: resolvedUsers.size,
-      boundTeamIds: [...boundTeamIds].sort()
+      candidateAliases: candidateAliasCount,
+      resolvedUsers: resolvedUserCount,
+      boundTeamIds: [...boundTeamIds].sort(),
+      pagesProcessed,
+      cursorTeamId: cursorTeamId || null,
+      cycleComplete
     };
   };
 }

@@ -105,6 +105,7 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         'normalizeNotificationPreferences',
         'getCandidateUsersForTeam',
         'buildTeamNotificationRecipientRef',
+        'getEnabledNotificationAuthUserIds',
         `${helperSource}\nreturn { getTargetsForCategory, getLegacyTargetsForCategory, canReceiveCategoryNotification };`
     );
 
@@ -115,7 +116,8 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         { media: false },
         (prefs) => ({ media: prefs?.media === true }),
         getCandidateUsersForTeam,
-        (teamId, uid) => ({ teamId, uid })
+        (teamId, uid) => ({ teamId, uid }),
+        async (userIds) => new Set(userIds)
     );
 
     return {

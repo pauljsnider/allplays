@@ -862,7 +862,32 @@ function buildNotificationTestEnv({
             },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
-                return uid ? { uid } : { uid: '' };
+                const configured = uid ? authUsersByUid[uid] : null;
+                return uid
+                    ? { uid, ...(configured && !(configured instanceof Error) ? configured : {}) }
+                    : { uid: '' };
+            },
+            getUsers: async (identifiers) => {
+                const users = [];
+                for (const identifier of identifiers || []) {
+                    const uid = identifier?.uid
+                        || authUsersByEmail[String(identifier?.email || '').trim().toLowerCase()];
+                    if (!uid) continue;
+                    const configured = authUsersByUid[uid];
+                    if (configured instanceof Error) throw configured;
+                    if (configured) {
+                        users.push({ uid, ...configured });
+                        continue;
+                    }
+                    if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
+                        users.push({ uid, email: userDocs[uid]?.email || null, disabled: false });
+                        continue;
+                    }
+                    const matchedEmail = Object.entries(authUsersByEmail)
+                        .find(([, mappedUid]) => mappedUid === uid)?.[0];
+                    users.push({ uid, email: matchedEmail || null, disabled: false });
+                }
+                return { users, notFound: [] };
             }
         }),
         messaging: () => ({

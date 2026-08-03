@@ -118,7 +118,9 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
         expect(targetResolverSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
         expect(targetResolverSource).toContain('return Array.isArray(data.roles) || Array.isArray(data.tokens);');
-        expect(targetResolverSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
+        expect(targetResolverSource).toContain('const rawCategoryRecipientDocs = targetSnap.docs || [];');
+        expect(targetResolverSource).toContain('const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([');
+        expect(targetResolverSource).toContain('const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (');
         expect(targetResolverSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
         expect(targetResolverSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(targetResolverSource).toContain('if (indexedRecipientDocs.length) {');

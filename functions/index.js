@@ -9206,16 +9206,26 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   }
 
   let authoritativeAuthEmail = options.authEmail;
+  let authUserEnabled = true;
   if (authoritativeAuthEmail === undefined) {
     try {
       const authUser = await admin.auth().getUser(normalizedUid);
-      authoritativeAuthEmail = authUser?.disabled === true ? '' : (authUser?.email || '');
+      authUserEnabled = authUser?.disabled !== true;
+      authoritativeAuthEmail = authUserEnabled ? (authUser?.email || '') : '';
     } catch (error) {
       if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
         throw error;
       }
+      authUserEnabled = false;
       authoritativeAuthEmail = '';
     }
+  }
+  if (!authUserEnabled) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
   }
   const email = String(authoritativeAuthEmail || '').trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
@@ -9499,6 +9509,7 @@ exports.reconcileLegacyTeamOwnership = functions
     firestore,
     auth: admin.auth(),
     documentIdField: () => admin.firestore.FieldPath.documentId(),
+    checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation'),
     syncAuthUser: legacyTeamOwnerAuthSyncHandler
   }));
 
@@ -10457,11 +10468,34 @@ async function getUserIdsByEmails(emails) {
     uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
   );
   lookupResults.forEach((result) => {
-    if (result.status === 'fulfilled' && result.value?.uid) {
+    if (
+      result.status === 'fulfilled'
+      && result.value?.uid
+      && result.value?.disabled !== true
+    ) {
       ids.add(result.value.uid);
     }
   });
   return Array.from(ids);
+}
+
+async function getEnabledNotificationAuthUserIds(userIds) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  ));
+  const enabledUserIds = new Set();
+  for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
+    const result = await admin.auth().getUsers(
+      uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }))
+    );
+    (result.users || []).forEach((authUser) => {
+      const uid = String(authUser?.uid || '').trim();
+      if (uid && authUser?.disabled !== true) enabledUserIds.add(uid);
+    });
+  }
+  return enabledUserIds;
 }
 
 async function getCandidateUsersForTeam(teamId) {
@@ -10486,7 +10520,8 @@ async function getCandidateUsersForTeam(teamId) {
   const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
   adminUserIds.forEach((id) => addRole(id, 'staff'));
 
-  return Array.from(users.values()).map((entry) => ({
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(Array.from(users.keys()));
+  return Array.from(users.values()).filter((entry) => enabledUserIds.has(entry.uid)).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
@@ -10584,7 +10619,11 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
 }
 
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(
+    (Array.isArray(users) ? users : []).map((user) => user?.uid)
+  );
   const queryTasks = users
+    .filter((user) => enabledUserIds.has(String(user?.uid || '').trim()))
     .filter((user) => user?.uid && user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
     .map(async (user) => {
       const uid = user.uid;
@@ -10778,7 +10817,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const categoryRecipientDocs = targetSnap.docs || [];
+  const rawCategoryRecipientDocs = targetSnap.docs || [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([
+    ...rawCategoryRecipientDocs.map((docSnap) => getNotificationRecipientDocUid(docSnap)),
+    ...(Array.isArray(additionalUsers) ? additionalUsers.map((user) => user?.uid) : [])
+  ]);
+  const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (
+    enabledAuthUserIds.has(getNotificationRecipientDocUid(docSnap))
+  ));
+  const enabledAdditionalUsers = (Array.isArray(additionalUsers) ? additionalUsers : [])
+    .filter((user) => enabledAuthUserIds.has(String(user?.uid || '').trim()));
   const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
     const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
@@ -10787,7 +10835,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       isLegacyTargetNotificationRecipientDoc(docSnap)
@@ -10814,7 +10862,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const legacyTargets = legacyTargetRecipientDocs
       .filter((docSnap) => eligibleUsers.has(getNotificationRecipientDocUid(docSnap)))
@@ -10833,7 +10881,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       !isAggregateNotificationRecipientDoc(docSnap)
@@ -10848,7 +10896,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const candidateUsers = await getCandidateUsersForTeam(teamId);
   const mergedUsers = new Map();
   candidateUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
-  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
+  enabledAdditionalUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
 
   const users = Array.from(mergedUsers.values()).map((entry) => ({
     uid: entry.uid,
@@ -10874,10 +10922,11 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds(userIds);
   const recipientUserIds = new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
-      .filter(Boolean)
+      .filter((uid) => uid && enabledAuthUserIds.has(uid))
   );
   if (!recipientUserIds.size) return [];
 

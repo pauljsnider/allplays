@@ -36,6 +36,7 @@ function getTargetsForCategoryFactory() {
         'teamNotificationRecipientIndexIsEmpty',
         'backfillNotificationRecipientsForTeam',
         'getLegacyTargetsForCategory',
+        'getEnabledNotificationAuthUserIds',
         'functions',
         `${extractChunk('function mergeNotificationResolutionUser(', 'async function pruneInvalidTokens')}
         return getTargetsForCategory;`
@@ -268,6 +269,7 @@ describe('getTargetsForCategory', () => {
             vi.fn(async () => false),
             vi.fn(async () => 0),
             vi.fn(async () => []),
+            vi.fn(async (userIds) => new Set(userIds)),
             { logger: { warn: vi.fn() } }
         );
 
