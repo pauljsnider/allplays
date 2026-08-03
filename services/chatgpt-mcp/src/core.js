@@ -421,6 +421,7 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 const date = toDate(projected?.startsAt);
                 if (
                     !eventId || !date || date < start || date > end
+                    || trackedCalendarEventIds.has(eventId)
                     || trackedCalendarEventIds.has(calendarOccurrenceId(eventId, date))
                 ) continue;
                 const eventKey = `${eventId}::${date.toISOString()}`;

@@ -356,7 +356,7 @@ describe('chatgpt-mcp core: listMyTeams', () => {
 });
 
 describe('chatgpt-mcp core: getFamilySchedule', () => {
-    function scheduleDb() {
+    function scheduleDb(calendarEventUid = 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z') {
         return parentDb({
             docs: {
                 'teams/team-a/games/game-1/rsvps/parent-1': {
@@ -371,7 +371,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                     const start = filters.find((f) => f.op === '>=').value;
                     const end = filters.find((f) => f.op === '<=').value;
                     const all = [
-                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid: 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
+                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid, privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
@@ -451,25 +451,28 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
     });
 
     it('deduplicates a projected TeamSnap event tracked by an ALL PLAYS game', async () => {
-        const db = scheduleDb();
-        const context = await resolveUserContext(db, parentIdentity);
-        const result = await getFamilySchedule(
-            db,
-            context,
-            { startDate: '2026-07-24', endDate: '2026-07-31' },
-            new Date('2026-07-24T00:00:00.000Z'),
-            {
-                loadCalendarProjection: async () => [{
+        for (const trackedUid of [
+            'teamsnap-tracked-game',
+            'teamsnap-tracked-game__2026-07-25T17:00:00.000Z'
+        ]) {
+            const db = scheduleDb(trackedUid);
+            const context = await resolveUserContext(db, parentIdentity);
+            const result = await getFamilySchedule(
+                db,
+                context,
+                { startDate: '2026-07-24', endDate: '2026-07-31' },
+                new Date('2026-07-24T00:00:00.000Z'),
+                { loadCalendarProjection: async () => [{
                     id: 'teamsnap-tracked-game',
                     type: 'game',
                     startsAt: '2026-07-25T17:00:00.000Z',
                     opponent: 'Duplicate Hawks'
-                }]
-            }
-        );
+                }] }
+            );
 
-        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
-        expect(result.events.some((event) => event.gameId === 'teamsnap-tracked-game')).toBe(false);
+            expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+            expect(result.events.some((event) => event.gameId === 'teamsnap-tracked-game')).toBe(false);
+        }
     });
 
     it('fails explicitly when imported calendar projection is unavailable', async () => {
