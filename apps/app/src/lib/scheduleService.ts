@@ -1741,7 +1741,7 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
       });
       const teamsById = new Map<string, any>();
       staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
-        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
       });
       return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
     },

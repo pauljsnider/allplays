@@ -541,6 +541,22 @@ describe('parent schedule child scope', () => {
     }));
   });
 
+  it('keeps a server-authorized coach link before client profile hydration finishes', async () => {
+    const freshCoachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-coached'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    } as any);
+
+    const scope = await loadParentScheduleScope(freshCoachUser);
+
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+  });
+
   it('marks parent scope partial when the authoritative staff-team read fails', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
