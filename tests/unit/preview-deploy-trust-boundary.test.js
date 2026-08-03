@@ -423,7 +423,7 @@ describe('preview deployment workflow trust boundary', () => {
 
     it('verifies and removes chat notifications in the same reversible smoke workflow', () => {
         const staffWorkflowStart = extendedProductionSmoke.indexOf(
-            "test('staff smoke writes are deterministic and removed after validation'"
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
         );
         const parentWorkflowStart = extendedProductionSmoke.indexOf(
             "test('parent smoke writes restore or remove every touched record'"
@@ -445,7 +445,10 @@ describe('preview deployment workflow trust boundary', () => {
             'listFirestoreDocuments(\n        staffRestSession,\n        `teams/${config.teamId}/chatConversations`'
         );
         expect(extendedProductionSmoke).toContain('`${getFirestoreDocumentPath(conversation)}/chatMessages`');
-        expect(extendedProductionSmoke).toContain('cleanup: () => deleteSmokeChatMessages(chatText)');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)');
+        expect(extendedProductionSmoke).toContain("deleted: { booleanValue: true }");
+        expect(extendedProductionSmoke).not.toContain('deleteFirestoreDocument(staffRestSession, chatDocumentPath)');
         const notificationAssertion = staffWorkflow.indexOf('const messageDeepLink');
         const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
         expect(notificationAssertion).toBeGreaterThanOrEqual(0);
@@ -454,7 +457,7 @@ describe('preview deployment workflow trust boundary', () => {
 
     it('keeps production image writes isolated and always schedules cleanup', () => {
         const staffWorkflowStart = extendedProductionSmoke.indexOf(
-            "test('staff smoke writes are deterministic and removed after validation'"
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
         );
         const imageWorkflowStart = extendedProductionSmoke.indexOf(
             "test('staff image upload is persisted and removed after validation'"
