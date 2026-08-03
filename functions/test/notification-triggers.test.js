@@ -1646,6 +1646,45 @@ test('sendFeeUnpaidDueReminders dedupes repeated scheduler runs without suppress
     }
 });
 
+test('sendFeeUnpaidDueReminders releases its marker when final Auth validation fails', async () => {
+    const authError = () => Object.assign(new Error('temporary Auth outage'), { code: 'auth/internal-error' });
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'], parentTeamIds: ['team-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        authGetUsersErrors: [null, authError(), authError(), authError()],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/retryable');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Retryable dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.notificationAuthResolutionFailed === true
+        );
+        assert.equal((await ref.get()).data().reminderSentAt, undefined);
+        assert.equal(env.messagingCalls.length, 0);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyFeeAssigned sends fees notifications only to opted-in payer targets', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

@@ -13284,7 +13284,23 @@ async function sendFeeUnpaidDueReminders() {
       return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
-      if (isNotificationAuthResolutionFailure(err)) throw err;
+      if (isNotificationAuthResolutionFailure(err)) {
+        // Final authorization failed before any delivery effect. Release the
+        // persisted marker so the scheduled retry can attempt this reminder.
+        try {
+          await doc.ref.update({
+            reminderSentAt: admin.firestore.FieldValue.delete()
+          });
+        } catch (releaseError) {
+          console.error('sendFeeUnpaidDueReminders: failed to release reminder marker', {
+            teamId,
+            batchId,
+            recipientId,
+            error: releaseError
+          });
+        }
+        throw err;
+      }
       return null;
     }
   });
