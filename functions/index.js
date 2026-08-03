@@ -17308,6 +17308,31 @@ exports.getPublicTeamCalendarProjection = functions
     const team = await getStrictPublicTeam(teamId);
     if (!team) throwOpportunityError('not-found', 'Public team not found.');
 
+    const calendarUrls = [];
+    const seenUrls = new Set();
+    (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
+      const normalizedUrl = normalizeFamilyShareText(url);
+      if (
+        !normalizedUrl ||
+        seenUrls.has(normalizedUrl) ||
+        calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS
+      ) return;
+      seenUrls.add(normalizedUrl);
+      calendarUrls.push(normalizedUrl);
+    });
+    if (calendarUrls.length === 0) {
+      return {
+        events: [],
+        warnings: [],
+        range: {
+          from: range.from,
+          to: range.to,
+          truncated: false
+        },
+        nextCursor: null
+      };
+    }
+
     const trackedCalendarEvents = await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
       let query = firestore.collection(`teams/${teamId}/games`)
         .orderBy(admin.firestore.FieldPath.documentId())
@@ -17322,19 +17347,6 @@ exports.getPublicTeamCalendarProjection = functions
         nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
       };
     }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS });
-
-    const calendarUrls = [];
-    const seenUrls = new Set();
-    (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
-      const normalizedUrl = normalizeFamilyShareText(url);
-      if (
-        !normalizedUrl ||
-        seenUrls.has(normalizedUrl) ||
-        calendarUrls.length >= MAX_FAMILY_SHARE_CALENDAR_URLS
-      ) return;
-      seenUrls.add(normalizedUrl);
-      calendarUrls.push(normalizedUrl);
-    });
 
     const settled = await Promise.allSettled(calendarUrls.map((url, index) => (
       fetchFamilyShareCalendarEvents({

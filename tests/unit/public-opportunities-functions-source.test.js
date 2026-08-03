@@ -41,6 +41,15 @@ describe('public opportunity callable wiring', () => {
     expect(calendarProjection).toContain('scanBoundedPublicCalendarTrackingEvents');
     expect(calendarProjection).toContain('maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS');
     expect(calendarProjection).toContain('calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid)');
+    const sourceListIndex = calendarProjection.indexOf('const calendarUrls = []');
+    const emptyReturnIndex = calendarProjection.indexOf('if (calendarUrls.length === 0)');
+    const trackingScanIndex = calendarProjection.indexOf('const trackedCalendarEvents');
+    expect(sourceListIndex).toBeGreaterThan(-1);
+    expect(emptyReturnIndex).toBeGreaterThan(sourceListIndex);
+    expect(trackingScanIndex).toBeGreaterThan(emptyReturnIndex);
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('events: []');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('truncated: false');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('nextCursor: null');
     expect(calendarProjection).toContain('!isFamilyShareCalendarEventTracked(event, trackedCalendarEvents)');
     expect(calendarProjection.indexOf('isFamilyShareCalendarEventTracked'))
       .toBeLessThan(calendarProjection.indexOf('serializePublicCalendarEvent'));
