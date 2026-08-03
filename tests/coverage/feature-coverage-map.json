@@ -153,6 +153,7 @@
                 "requestAccountDeletion",
                 "redeemAdminInvite",
                 "redeemCoParentInvite",
+                "redeemFriendInvite",
                 "redeemHouseholdInvite",
                 "redeemParentInvite",
                 "validateAccessCodeForAcceptance"
@@ -168,6 +169,7 @@
                 "functions/test/auth-email-resend-delivery.test.cjs",
                 "functions/test/co-parent-invite-core.test.cjs",
                 "functions/test/failed-invite-signup-cleanup.test.cjs",
+                "functions/test/friend-invite-redemption.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
                 "tests/unit/mobile-store-legal-pages.test.js",
                 "tests/unit/accept-invite-page.test.js",
