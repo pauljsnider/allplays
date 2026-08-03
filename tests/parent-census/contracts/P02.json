@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P02",
+  "title": "Invite-based email and password signup",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "goto",
+      "actor": "lifecycle",
+      "route": "/auth?mode=signup"
+    },
+    {
+      "action": "fill",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Join code",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_SIGNUP_INVITE_CODE}"
+    },
+    {
+      "action": "fillActorEmail",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Email",
+        "exact": true
+      }
+    },
+    {
+      "action": "fillActorPassword",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Password",
+        "exact": true
+      }
+    },
+    {
+      "action": "fillActorPassword",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Confirm password",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Create account",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Verify your email",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/verify-pending"
+    }
+  ],
+  "cleanupSteps": []
+}
