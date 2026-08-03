@@ -306,6 +306,7 @@ describe('parent schedule child scope', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('REST auth unavailable in isolated staff-scope tests'));
     vi.mocked(isTeamActive).mockImplementation((team: any) => (
       team?.active !== false &&
       team?.archived !== true &&
