@@ -36,6 +36,27 @@ function hashFamilyShareCalendarEventUid(value) {
   return uid ? hashFamilyShareOpaqueValue('calendar-event-uid', uid) : '';
 }
 
+function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
+  const entries = [...(trackedEvents instanceof Set ? trackedEvents : (Array.isArray(trackedEvents) ? trackedEvents : []))]
+    .map((tracked) => ({
+      id: compactText(typeof tracked === 'object' ? tracked?.calendarEventUid : tracked, 512),
+      startsAt: typeof tracked === 'object' ? toIso(tracked?.date || tracked?.startsAt) : null
+    }))
+    .filter((tracked) => tracked.id);
+  const eventId = compactText(event?.id || event?.eventKey, 256);
+  const startsAt = toIso(event?.date || event?.startsAt);
+  const uidHash = compactText(event?.calendarUidHash, 64);
+  for (const tracked of entries) {
+    if (tracked.startsAt && startsAt && tracked.startsAt !== startsAt) continue;
+    if (eventId && (tracked.id === eventId || (startsAt && tracked.id === `${eventId}__${startsAt}`))) return true;
+    if (!uidHash) continue;
+    const baseId = tracked.id
+      .replace(/__\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, '');
+    if (hashFamilyShareCalendarEventUid(baseId) === uidHash) return true;
+  }
+  return false;
+}
+
 function toIso(value) {
   if (!value) return null;
   const candidate = typeof value.toDate === 'function' ? value.toDate() : value;
@@ -507,6 +528,7 @@ module.exports = {
   buildFamilySharePresentation,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
+  isFamilyShareCalendarEventTracked,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 };

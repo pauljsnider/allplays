@@ -29,6 +29,18 @@ describe('public opportunity callable wiring', () => {
     ].forEach((name) => expect(source).toContain(`exports.${name}`));
   });
 
+  it('deduplicates public calendar projections against tracked team games before serialization', () => {
+    const calendarProjection = source.slice(
+      source.indexOf('exports.getPublicTeamCalendarProjection'),
+      source.indexOf('exports.getPublicGameProjection')
+    );
+    expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");
+    expect(calendarProjection).toContain('calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid)');
+    expect(calendarProjection).toContain('!isFamilyShareCalendarEventTracked(event, trackedCalendarEvents)');
+    expect(calendarProjection.indexOf('isFamilyShareCalendarEventTracked'))
+      .toBeLessThan(calendarProjection.indexOf('serializePublicCalendarEvent'));
+  });
+
   it('server-verifies publishing roles, verified email, expiration, rate limits, and private notifications', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
     expect(source).toContain('hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })');

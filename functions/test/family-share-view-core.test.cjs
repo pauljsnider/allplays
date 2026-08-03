@@ -6,9 +6,36 @@ const {
   buildExternalCalendarEvents,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
+  isFamilyShareCalendarEventTracked,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 } = require('../family-share-view-core.cjs');
+
+test('correlates projected events with legacy UID and current opaque occurrence tracking IDs', () => {
+  const startsAt = '2026-08-01T18:00:00.000Z';
+  const event = {
+    id: 'opaque-projected-id',
+    date: startsAt,
+    calendarUidHash: hashFamilyShareCalendarEventUid('raw-calendar-uid')
+  };
+  for (const trackedId of [
+    'raw-calendar-uid',
+    `raw-calendar-uid__${startsAt}`,
+    'opaque-projected-id',
+    `opaque-projected-id__${startsAt}`
+  ]) {
+    assert.equal(isFamilyShareCalendarEventTracked(event, [trackedId]), true, trackedId);
+  }
+  assert.equal(isFamilyShareCalendarEventTracked(event, [{
+    calendarEventUid: 'raw-calendar-uid',
+    date: startsAt
+  }]), true);
+  assert.equal(isFamilyShareCalendarEventTracked(event, [{
+    calendarEventUid: 'raw-calendar-uid',
+    date: '2026-08-08T18:00:00.000Z'
+  }]), false);
+  assert.equal(isFamilyShareCalendarEventTracked(event, ['different-event']), false);
+});
 
 test('scopes team calendar timestamp de-duplication without weakening token-level de-duplication', () => {
   const teams = [

@@ -37,6 +37,7 @@ const {
   buildExternalCalendarEvents,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
+  isFamilyShareCalendarEventTracked,
   sanitizeFamilyShareViewResponse
 } = require('./family-share-view-core.cjs');
 const { createVerifiedEmailSensitiveActionGuard } = require('./verified-email-policy.cjs');
@@ -17306,6 +17307,19 @@ exports.getPublicTeamCalendarProjection = functions
     const team = await getStrictPublicTeam(teamId);
     if (!team) throwOpportunityError('not-found', 'Public team not found.');
 
+    const trackedGameSnap = await firestore.collection(`teams/${teamId}/games`)
+      .where('date', '>=', range.fromDate)
+      .where('date', '<=', range.toDate)
+      .orderBy('date')
+      .limit(MAX_FAMILY_SHARE_DB_EVENTS)
+      .get();
+    const trackedCalendarEvents = trackedGameSnap.docs
+      .map((gameSnap) => ({
+        calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
+        date: gameSnap.data()?.date || null
+      }))
+      .filter((event) => event.calendarEventUid);
+
     const calendarUrls = [];
     const seenUrls = new Set();
     (Array.isArray(team.calendarUrls) ? team.calendarUrls : []).forEach((url) => {
@@ -17343,6 +17357,7 @@ exports.getPublicTeamCalendarProjection = functions
       warnings.push(`Calendar source ${index + 1} could not be loaded.`);
     });
     const events = projectedEvents
+      .filter((event) => !isFamilyShareCalendarEventTracked(event, trackedCalendarEvents))
       .map(serializePublicCalendarEvent)
       .filter(Boolean)
       .filter((event) => {

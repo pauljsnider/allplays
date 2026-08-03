@@ -302,6 +302,18 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect([...context.teams.get('admin-team').roles]).toEqual(['admin']);
     });
 
+    it('propagates transient legacy ownership query failures', async () => {
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: { teams: (filters) => {
+                if (filters[0]?.field === 'ownerEmailLower') throw new Error('network unavailable');
+                return [];
+            } }
+        });
+        await expect(resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' }))
+            .rejects.toThrow('network unavailable');
+    });
+
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
         const db = parentDb({
             docs: {
@@ -452,8 +464,8 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
 
     it('deduplicates a projected TeamSnap event tracked by an ALL PLAYS game', async () => {
         for (const trackedUid of [
-            'teamsnap-tracked-game',
-            'teamsnap-tracked-game__2026-07-25T17:00:00.000Z'
+            'opaque-projected-id',
+            'opaque-projected-id__2026-07-25T17:00:00.000Z'
         ]) {
             const db = scheduleDb(trackedUid);
             const context = await resolveUserContext(db, parentIdentity);
@@ -463,7 +475,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                 { startDate: '2026-07-24', endDate: '2026-07-31' },
                 new Date('2026-07-24T00:00:00.000Z'),
                 { loadCalendarProjection: async () => [{
-                    id: 'teamsnap-tracked-game',
+                    id: 'opaque-projected-id',
                     type: 'game',
                     startsAt: '2026-07-25T17:00:00.000Z',
                     opponent: 'Duplicate Hawks'
@@ -471,7 +483,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             );
 
             expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
-            expect(result.events.some((event) => event.gameId === 'teamsnap-tracked-game')).toBe(false);
+            expect(result.events.some((event) => event.gameId === 'opaque-projected-id')).toBe(false);
         }
     });
 

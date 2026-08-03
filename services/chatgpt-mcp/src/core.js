@@ -147,6 +147,15 @@ async function safeGetDoc(db, path) {
     }
 }
 
+async function safeLegacyOwnershipQuery(query) {
+    try {
+        return await query.get();
+    } catch (error) {
+        if (error instanceof DomainError && error.code === 'permission_denied') return { docs: [] };
+        throw error;
+    }
+}
+
 export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchImpl = fetch }) {
     if (!projectId || !idToken) {
         throw new DomainError('unauthenticated', 'Managed team discovery requires an authenticated project context.');
@@ -232,10 +241,10 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
                 ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
                 : Promise.resolve({ docs: [] }),
             normalizedEmail
-                ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get().catch(() => ({ docs: [] }))
+                ? safeLegacyOwnershipQuery(db.collection('teams').where('ownerEmailLower', '==', normalizedEmail))
                 : Promise.resolve({ docs: [] }),
             ...ownerEmailCandidates.map((ownerEmail) => (
-                db.collection('teams').where('ownerEmail', '==', ownerEmail).get().catch(() => ({ docs: [] }))
+                safeLegacyOwnershipQuery(db.collection('teams').where('ownerEmail', '==', ownerEmail))
             ))
         ]);
         for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
