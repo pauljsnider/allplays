@@ -163,7 +163,8 @@ export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchIm
     const payload = await response.json().catch(() => ({}));
     const result = payload?.result || payload?.data;
     if (!response.ok || !Array.isArray(result?.items)) {
-        throw new DomainError('unavailable', payload?.error?.message || 'Managed team discovery is unavailable.');
+        const code = response.status === 404 ? 'not_found' : callableErrorCode(payload);
+        throw new DomainError(code, payload?.error?.message || 'Managed team discovery is unavailable.');
     }
     return {
         teams: result.items.filter((team) => team && typeof team === 'object' && !Array.isArray(team)),
@@ -327,7 +328,12 @@ function gameDeepLink(teamId, gameId, { replay = false } = {}) {
 }
 
 function calendarEventDeepLink(teamId, eventId) {
-    return `${APP_BASE_URL}/app/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(eventId)}`;
+    return `${APP_BASE_URL}/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(eventId)}`;
+}
+
+function calendarOccurrenceId(sourceId, startsAt) {
+    const suffix = `__${startsAt.toISOString()}`;
+    return sourceId.endsWith(suffix) ? sourceId : `${sourceId}${suffix}`;
 }
 
 function whitelistRsvp(data, linkedPlayerIds) {
@@ -413,7 +419,10 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
             for (const projected of Array.isArray(projectedEvents) ? projectedEvents : []) {
                 const eventId = cleanString(projected?.id).trim();
                 const date = toDate(projected?.startsAt);
-                if (!eventId || !date || date < start || date > end || trackedCalendarEventIds.has(eventId)) continue;
+                if (
+                    !eventId || !date || date < start || date > end
+                    || trackedCalendarEventIds.has(calendarOccurrenceId(eventId, date))
+                ) continue;
                 const eventKey = `${eventId}::${date.toISOString()}`;
                 if (projectedEventKeys.has(eventKey)) continue;
                 projectedEventKeys.add(eventKey);

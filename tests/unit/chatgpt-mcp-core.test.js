@@ -145,6 +145,14 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(result).toEqual({ teams: [{ id: 'team-1' }], isPartial: true });
     });
 
+    it('identifies a missing callable so a pre-rollout server can use rules-scoped discovery', async () => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({ status: 404, ok: false, json: async () => ({}) })
+        })).rejects.toMatchObject({ code: 'not_found' });
+    });
+
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
         const context = await resolveUserContext(parentDb(), parentIdentity);
         expect(context.uid).toBe('parent-1');
@@ -363,7 +371,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                     const start = filters.find((f) => f.op === '>=').value;
                     const end = filters.find((f) => f.op === '<=').value;
                     const all = [
-                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid: 'teamsnap-tracked-game', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
+                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid: 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
@@ -437,7 +445,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             isImported: true
         }));
         expect(result.events.find((event) => event.gameId === 'teamsnap-next-game')?.deepLink)
-            .toContain('/app/schedule/team-a/teamsnap-next-game');
+            .toContain('/app/#/schedule/team-a/teamsnap-next-game');
         expect(JSON.stringify(result)).not.toContain('private-token');
         expect(JSON.stringify(result)).not.toContain('do not expose');
     });
@@ -751,6 +759,8 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain("throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.')");
         expect(source).toContain('loadPublicTeamCalendarProjection');
         expect(source).toContain('idToken: identity.idToken');
+        expect(source).toContain("error.code !== 'not_found'");
+        expect(source).toContain('managedTeamResult = { teams: null, isPartial: false }');
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });
