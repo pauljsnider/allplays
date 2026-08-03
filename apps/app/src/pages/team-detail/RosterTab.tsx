@@ -52,6 +52,7 @@ export function RosterTab({
   onTrackingChanged: () => Promise<void>;
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
+  const [expandedInvite, setExpandedInvite] = useState<{ teamId: string; playerId: string } | null>(null);
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [activePlayerLimit, setActivePlayerLimit] = useState<number>(rosterRenderLimits.activePlayers);
   const [inactivePlayerLimit, setInactivePlayerLimit] = useState<number>(rosterRenderLimits.inactivePlayers);
@@ -86,6 +87,12 @@ export function RosterTab({
     }
   }
 
+  function toggleInviteEditor(playerId: string) {
+    setExpandedInvite((current) => current?.teamId === model.team.id && current.playerId === playerId
+      ? null
+      : { teamId: model.team.id, playerId });
+  }
+
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -105,7 +112,7 @@ export function RosterTab({
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
       {model.canManageTeam ? <RosterAiChatLauncher teamId={model.team.id} teamName={model.team.name} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
+        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
@@ -125,7 +132,7 @@ export function RosterTab({
             <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{inactivePlayers.length} inactive</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
+            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} inviteExpanded={expandedInvite?.teamId === model.team.id && expandedInvite.playerId === player.id} onToggleInvite={() => toggleInviteEditor(player.id)} onInviteCreated={onInviteCreated} />)}
           </div>
           {inactivePlayerWindow.hasMore ? (
             <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setInactivePlayerLimit(inactivePlayerWindow.nextLimit)}>
@@ -583,6 +590,8 @@ function PlayerRow({
   pending = false,
   onToggleActive,
   inviteSummary,
+  inviteExpanded = false,
+  onToggleInvite,
   onInviteCreated
 }: {
   teamId: string;
@@ -593,6 +602,8 @@ function PlayerRow({
   pending?: boolean;
   onToggleActive?: (player: TeamDetailPlayer) => Promise<void>;
   inviteSummary?: TeamRosterParentInviteSummary;
+  inviteExpanded?: boolean;
+  onToggleInvite?: () => void;
   onInviteCreated: () => Promise<void>;
 }) {
   const navigate = useNavigate();
@@ -645,7 +656,7 @@ function PlayerRow({
   return (
     <div
       data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'}
-      className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      className="min-w-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
       onClick={(event) => openPlayerFromRow(event.target)}
     >
       <div className="flex min-w-0 items-center gap-3">
@@ -690,22 +701,23 @@ function PlayerRow({
         </div>
       ) : null}
       {canManageTeam ? (
-        <div className="mt-3 rounded-lg border border-white/80 bg-white p-3">
+        <div className="mt-3 min-w-0 overflow-hidden rounded-lg border border-white/80 bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.04em] ${statusClassName}`}>{statusLabel}</span>
             {player.active ? (
-              <button type="button" className="secondary-button !min-h-8 text-xs" disabled={creatingInvite} onClick={createInvite}>
-                {creatingInvite ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                {creatingInvite ? 'Creating invite...' : 'Create invite'}
+              <button type="button" className="secondary-button !min-h-11 text-xs" disabled={creatingInvite} onClick={onToggleInvite} aria-expanded={inviteExpanded} aria-controls={`parent-invite-editor-${player.id}`}>
+                <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {inviteExpanded ? 'Close invite' : 'Manage invite'}
               </button>
             ) : null}
           </div>
-          {player.active ? (
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]">
-              <label className="text-xs font-black text-gray-700">
+          {player.active && inviteExpanded ? (
+            <div id={`parent-invite-editor-${player.id}`} data-testid="parent-invite-editor" className="mt-3 min-w-0 space-y-3">
+              <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]">
+              <label className="min-w-0 text-xs font-black text-gray-700">
                 Recipient email
                 <input
-                  className="auth-input mt-1"
+                  className="auth-input mt-1 min-w-0 max-w-full"
                   type="email"
                   inputMode="email"
                   autoComplete="email"
@@ -716,9 +728,9 @@ function PlayerRow({
                   disabled={creatingInvite}
                 />
               </label>
-              <label className="text-xs font-black text-gray-700">
+              <label className="min-w-0 text-xs font-black text-gray-700">
                 Relation
-                <select className="auth-input mt-1" aria-label={`Parent relation for ${player.name}`} value={parentRelation} onChange={(event) => setParentRelation(event.target.value)} disabled={creatingInvite}>
+                <select className="auth-input mt-1 min-w-0 max-w-full" aria-label={`Parent relation for ${player.name}`} value={parentRelation} onChange={(event) => setParentRelation(event.target.value)} disabled={creatingInvite}>
                   <option value="Parent">Parent</option>
                   <option value="Mother">Mother</option>
                   <option value="Father">Father</option>
@@ -727,24 +739,29 @@ function PlayerRow({
                 </select>
               </label>
               <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the invite, or leave it blank for a shareable link and code.</div>
+              </div>
+              <button type="button" className="primary-button !min-h-11 w-full text-xs sm:w-auto" disabled={creatingInvite} onClick={createInvite}>
+                {creatingInvite ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                {creatingInvite ? 'Creating invite...' : 'Create invite'}
+              </button>
+              {inviteResult ? (
+                <InviteResultCard
+                  code={inviteResult.code}
+                  inviteUrl={inviteResult.inviteUrl}
+                  recipientEmail={inviteResult.email}
+                  emailSent={inviteResult.emailSent}
+                  title="Invite code"
+                  shareTitle={`${player.name} parent invite`}
+                  shareText={`Join ${teamName} on ALL PLAYS for ${player.name}.`}
+                  onStatus={(message) => setInviteStatus({ success: !message.startsWith('Unable'), message })}
+                />
+              ) : null}
+              {inviteStatus ? <div className={`text-xs font-black ${inviteStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{inviteStatus.message}</div> : null}
             </div>
           ) : null}
           {inviteSummary?.status === 'accepted' && inviteSummary.acceptedParentCount > 0 ? <div className="mt-2 text-xs font-semibold text-emerald-700">{inviteSummary.acceptedParentCount} linked parent{inviteSummary.acceptedParentCount === 1 ? '' : 's'}.</div> : null}
           {inviteSummary?.status === 'pending' && inviteSummary.pendingInviteCount > 0 && !inviteResult ? <div className="mt-2 text-xs font-semibold text-amber-700">{inviteSummary.pendingInviteCount} pending invite{inviteSummary.pendingInviteCount === 1 ? '' : 's'}.</div> : null}
           {!player.active ? <div className="mt-2 text-xs font-semibold text-gray-500">Reactivate the player to send a parent invite.</div> : null}
-          {inviteResult ? (
-            <InviteResultCard
-              code={inviteResult.code}
-              inviteUrl={inviteResult.inviteUrl}
-              recipientEmail={inviteResult.email}
-              emailSent={inviteResult.emailSent}
-              title="Invite code"
-              shareTitle={`${player.name} parent invite`}
-              shareText={`Join ${teamName} on ALL PLAYS for ${player.name}.`}
-              onStatus={(message) => setInviteStatus({ success: !message.startsWith('Unable'), message })}
-            />
-          ) : null}
-          {inviteStatus ? <div className={`mt-2 text-xs font-black ${inviteStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{inviteStatus.message}</div> : null}
         </div>
       ) : null}
     </div>

@@ -792,13 +792,29 @@ test.describe('mobile My Teams', () => {
     });
 
     test('keeps team detail tabs reachable while managing a long mobile roster', async ({ page, baseURL }) => {
-        await mockTeamsModules(page, { managedTeam: true });
+        await mockTeamsModules(page, { managedTeam: true, rosterPlayerCount: 12 });
         await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
 
         await waitForTeamDetailRoute(page, 'Bears');
         const tabNav = page.getByTestId('team-detail-tab-nav');
         await expect(tabNav).toBeVisible();
         await expect(page.getByText('Add player').first()).toBeVisible();
+        await expect(page.getByTestId('roster-player-row')).toHaveCount(12);
+        await expect(page.getByLabel(/^Recipient email for /)).toHaveCount(0);
+        const rosterRows = page.getByTestId('roster-player-row');
+        const manageInviteButtons = page.getByRole('button', { name: 'Manage invite' });
+        await expect(manageInviteButtons).toHaveCount(12);
+        const firstManageInvite = rosterRows.nth(0).getByRole('button', { name: 'Manage invite' });
+        await expect.poll(async () => firstManageInvite.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+        await firstManageInvite.click();
+        await expect(page.getByLabel('Recipient email for Pat Star')).toBeVisible();
+        await rosterRows.nth(1).getByRole('button', { name: 'Manage invite' }).click();
+        await expect(page.getByLabel('Recipient email for Pat Star')).toHaveCount(0);
+        await expect(page.getByLabel('Recipient email for Sam Wing')).toBeVisible();
+        await expect(page.getByTestId('parent-invite-editor')).toHaveCount(1);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        await rosterRows.nth(1).getByRole('button', { name: 'Close invite' }).click();
+        await expect(page.getByTestId('parent-invite-editor')).toHaveCount(0);
         await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
         expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('sticky');
 

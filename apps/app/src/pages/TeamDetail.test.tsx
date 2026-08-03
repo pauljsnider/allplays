@@ -1760,6 +1760,11 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('120 active')).toBeTruthy();
     expect(await screen.findByText('Checklist 8')).toBeTruthy();
     expect(screen.getAllByTestId('roster-player-row')).toHaveLength(rosterRenderLimits.activePlayers);
+    expect(screen.queryAllByLabelText(/^Recipient email for /)).toHaveLength(0);
+    expect(screen.queryAllByTestId('parent-invite-editor')).toHaveLength(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Manage invite' })[0]);
+    expect(screen.getAllByTestId('parent-invite-editor')).toHaveLength(1);
+    expect(screen.getAllByLabelText(/^Recipient email for /)).toHaveLength(1);
     expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
     expect(screen.queryAllByTestId('tracking-status-row')).toHaveLength(0);
     expect(screen.getAllByText(/\/120 done$/)).toHaveLength(8);
@@ -1792,6 +1797,8 @@ describe('TeamDetail', () => {
     expect(screen.getAllByTestId('roster-player-row')).toHaveLength(rosterRenderLimits.activePlayers);
     expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
     expect(screen.queryAllByTestId('tracking-status-row')).toHaveLength(0);
+    expect(screen.queryAllByTestId('parent-invite-editor')).toHaveLength(0);
+    expect(screen.queryAllByLabelText(/^Recipient email for /)).toHaveLength(0);
   }, 15_000);
 
   it('links staff to the native awards studio from the team more tab', async () => {
@@ -1963,8 +1970,50 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
 
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Manage invite' })).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows compact invite summaries and keeps only one roster editor expanded', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      canManageTeam: true,
+      players: [
+        { ...model.players[0], id: 'player-1', name: 'Pat Star' },
+        { ...model.players[0], id: 'player-2', name: 'Sam Wing', number: '12', isLinked: false },
+        { ...model.players[0], id: 'player-3', name: 'Alex Guard', number: '14', isLinked: false }
+      ],
+      inactivePlayers: []
+    });
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([
+      { playerId: 'player-1', status: 'accepted', acceptedParentCount: 1, pendingInviteCount: 0 },
+      { playerId: 'player-2', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1 }
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Accepted')).toBeTruthy();
+    expect(screen.getByText('Pending invite')).toBeTruthy();
+    expect(screen.getByText('No parent linked')).toBeTruthy();
+    expect(screen.queryAllByTestId('parent-invite-editor')).toHaveLength(0);
+    expect(screen.queryByLabelText('Recipient email for Pat Star')).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Manage invite' })[0]);
+    expect(screen.getByLabelText('Recipient email for Pat Star')).toBeTruthy();
+    expect(screen.queryByLabelText('Recipient email for Sam Wing')).toBeNull();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Manage invite' })[0]);
+    expect(screen.queryByLabelText('Recipient email for Pat Star')).toBeNull();
+    const samEmailInput = screen.getByLabelText('Recipient email for Sam Wing');
+    expect(samEmailInput).toHaveClass('min-w-0', 'max-w-full');
+    expect(samEmailInput.closest('[data-testid="roster-player-row"]')).toHaveClass('min-w-0', 'overflow-hidden');
+    expect(screen.getAllByTestId('parent-invite-editor')).toHaveLength(1);
   });
 
   it('shows parent and guardian contacts on managed roster rows', async () => {
@@ -2028,6 +2077,7 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage invite' }));
     expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Recipient email for Pat Star'), { target: { value: 'parent@example.com' } });
@@ -2075,6 +2125,7 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage invite' }));
     expect(await screen.findByRole('button', { name: 'Create invite' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Recipient email for Pat Star'), { target: { value: 'parent@example.com' } });
