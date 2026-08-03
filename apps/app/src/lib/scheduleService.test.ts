@@ -582,6 +582,35 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
+  it('retries partial owner and admin discovery when the profile has no coach links', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams)
+      .mockResolvedValueOnce({ teams: [], isPartial: true } as any)
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-owned', name: 'Owned Team', ownerId: 'staff-1', active: true },
+          { id: 'team-admin', name: 'Admin Team', adminEmails: ['staff@example.com'], active: true }
+        ],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(getStaffTeams).toHaveBeenNthCalledWith(2, {
+      userId: 'staff-1',
+      email: 'staff@example.com',
+      coachTeamIds: []
+    });
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-owned', teamName: 'Owned Team' },
+      { teamId: 'team-admin', teamName: 'Admin Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
   it('clears the staff partial flag when a rejected discovery succeeds on retry', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);

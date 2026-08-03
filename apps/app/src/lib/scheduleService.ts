@@ -3030,13 +3030,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     ...(Array.isArray((profile as any).coachOf) ? (profile as any).coachOf : [])
   ].map(compactString).filter(Boolean);
   const uniqueDeclaredCoachTeamIds = [...new Set(declaredCoachTeamIds)];
-  const discoveredStaffTeamIds = new Set(
-    staffTeamResult.teams.map((team: any) => compactString(team?.id)).filter(Boolean)
-  );
-  const isMissingDeclaredCoachTeam = uniqueDeclaredCoachTeamIds.some(
-    (teamId) => !discoveredStaffTeamIds.has(teamId)
-  );
-  if (staffTeamResult.isPartial && isMissingDeclaredCoachTeam) {
+  if (staffTeamResult.isPartial) {
     try {
       const retryResult = await loadStaffTeams({
         ...user,
