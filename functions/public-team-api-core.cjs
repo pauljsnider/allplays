@@ -586,6 +586,10 @@ function paginatePublicProjectionItems(items = [], limit = PUBLIC_TEAM_API_DEFAU
   };
 }
 
+function canTrackedCalendarEventSuppressPublicProjection(event = {}) {
+  return compactText(event?.type, 32).toLowerCase() !== 'practice';
+}
+
 async function scanBoundedPublicCalendarTrackingEvents(loadPage, {
   maxDocuments = 5000,
   pageSize = 500
@@ -616,6 +620,7 @@ module.exports = {
   PUBLIC_TEAM_API_VERSION,
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   comparePublicProjectionItems,
   compareRosterPlayers,

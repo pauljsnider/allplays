@@ -122,6 +122,7 @@ const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = requi
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
   isStrictPublicTeam,
@@ -17333,20 +17334,22 @@ exports.getPublicTeamCalendarProjection = functions
       };
     }
 
-    const trackedCalendarEvents = await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
+    const trackedCalendarEvents = (await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
       let query = firestore.collection(`teams/${teamId}/games`)
         .orderBy(admin.firestore.FieldPath.documentId())
-        .select('calendarEventUid', 'date');
+        .select('calendarEventUid', 'date', 'type');
       if (after) query = query.startAfter(after);
       const snapshot = await query.limit(limit).get();
       return {
         documents: snapshot.docs.map((gameSnap) => ({
           calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
-          date: gameSnap.data()?.date || null
+          date: gameSnap.data()?.date || null,
+          type: normalizeFamilyShareText(gameSnap.data()?.type)
         })),
         nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
       };
-    }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS });
+    }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS }))
+      .filter(canTrackedCalendarEventSuppressPublicProjection);
 
     const settled = await Promise.allSettled(calendarUrls.map((url, index) => (
       fetchFamilyShareCalendarEvents({

@@ -43,7 +43,7 @@ function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
       startsAt: typeof tracked === 'object' ? toIso(tracked?.date || tracked?.startsAt) : null
     }))
     .filter((tracked) => tracked.id);
-  const eventIds = [event?.id || event?.eventKey, event?.legacyOpaqueId]
+  const eventIds = [event?.id, event?.eventKey]
     .map((id) => compactText(id, 256))
     .filter(Boolean);
   const startsAt = toIso(event?.date || event?.startsAt);
@@ -367,17 +367,13 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
     const eventDiscriminator = uid
       ? `uid:${uid}`
       : `uid-missing:${summary}:${toIso(event.dtend) || ''}:${compactText(event.location, 300)}`;
-    const idSeed = `${sourceId || ''}:${eventDiscriminator}:${date || ''}`;
-    const legacyOpaqueId = uid
-      ? hashFamilyShareOpaqueValue(
-          'calendar-event-public-id',
-          `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`
-        )
-      : '';
+    const eventKeySeed = `${sourceId || ''}:${eventDiscriminator}:${date || ''}`;
+    const publicIdSeed = uid
+      ? `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`
+      : eventKeySeed;
     return {
-      eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', idSeed),
-      id: hashFamilyShareOpaqueValue('calendar-event-public-id', idSeed),
-      ...(legacyOpaqueId ? { legacyOpaqueId } : {}),
+      eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', eventKeySeed),
+      id: hashFamilyShareOpaqueValue('calendar-event-public-id', publicIdSeed),
       calendarUidHash: hashFamilyShareCalendarEventUid(event.uid),
       teamId: compactText(teamId, 128),
       teamName: compactText(teamName, 160) || compactText(sourceLabel, 160),
@@ -484,7 +480,6 @@ function sanitizeFamilyShareGame(game = {}) {
 
 function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], externalEvents = [], calendarWarnings = [] } = {}) {
   const externalEventFields = [
-    'eventKey',
     'id',
     'teamId',
     'teamName',

@@ -3,6 +3,7 @@ const test = require('node:test');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
   isStrictPublicTeam,
@@ -64,6 +65,12 @@ test('keeps a moved tracked occurrence available to suppress its original in-ran
     id: 'opaque-projected-id',
     startsAt: originalStartsAt
   }, trackedEvents), true);
+});
+
+test('only tracked events represented by public games suppress calendar projections', () => {
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game' }), true);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({}), true);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'PRACTICE' }), false);
 });
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {
@@ -192,6 +199,7 @@ test('public calendar projection hides feed credentials and keeps only event pre
     location: 'Public Field',
     status: 'CONFIRMED',
     calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
+    eventKey: 'SENTINEL_INTERNAL_EVENT_KEY',
     legacyOpaqueId: 'SENTINEL_LEGACY_OPAQUE_ID',
     sourceUrl: 'https://calendar.example.test/team.ics?token=secret',
     description: 'Private calendar notes',
@@ -212,6 +220,8 @@ test('public calendar projection hides feed credentials and keeps only event pre
   assert.equal(serialized.includes('token=secret'), false);
   assert.equal(serialized.includes('SENTINEL_CALENDAR_UID_HASH'), false);
   assert.equal(serialized.includes('calendarUidHash'), false);
+  assert.equal(serialized.includes('SENTINEL_INTERNAL_EVENT_KEY'), false);
+  assert.equal(serialized.includes('eventKey'), false);
   assert.equal(serialized.includes('SENTINEL_LEGACY_OPAQUE_ID'), false);
   assert.equal(serialized.includes('legacyOpaqueId'), false);
   assert.equal(serialized.includes('Private calendar notes'), false);
