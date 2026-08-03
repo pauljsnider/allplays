@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P08",
+  "title": "Team invite and access-code redemption",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "lifecycle"
+    },
+    {
+      "action": "goto",
+      "actor": "lifecycle",
+      "route": "/accept-invite"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Join ALL PLAYS",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Join code",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_TEAM_INVITE_CODE}"
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Apply code",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "status",
+        "name": "You've been added to follow a player on AllPlays Smoke Parent Census Redemption!",
+        "exact": true
+      },
+      "value": "AllPlays Smoke Parent Census Redemption"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "link",
+        "name": "Teams",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/home"
+    }
+  ],
+  "cleanupSteps": []
+}
