@@ -35,6 +35,8 @@ describe('public opportunity callable wiring', () => {
       source.indexOf('exports.getPublicGameProjection')
     );
     expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");
+    expect(calendarProjection).not.toContain(".where('date'");
+    expect(calendarProjection).toContain('orderBy(admin.firestore.FieldPath.documentId())');
     expect(calendarProjection).toContain(".select('calendarEventUid', 'date')");
     expect(calendarProjection).toContain('scanBoundedPublicCalendarTrackingEvents');
     expect(calendarProjection).toContain('maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS');

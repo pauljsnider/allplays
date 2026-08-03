@@ -17,6 +17,7 @@ const {
   serializePublicOpponentStats,
   serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
+const { isFamilyShareCalendarEventTracked } = require('../family-share-view-core.cjs');
 
 test('paginates calendar tracking scans and fails closed at the document cap', async () => {
   const pages = [
@@ -36,6 +37,33 @@ test('paginates calendar tracking scans and fails closed at the document cap', a
     ),
     /tracking scan limit exceeded/
   );
+});
+
+test('keeps a moved tracked occurrence available to suppress its original in-range calendar event', async () => {
+  const originalStartsAt = '2026-08-03T18:00:00.000Z';
+  const movedStartsAt = '2026-08-10T18:00:00.000Z';
+  const feedRange = {
+    from: new Date('2026-08-03T00:00:00.000Z'),
+    to: new Date('2026-08-03T23:59:59.999Z')
+  };
+  assert.equal(new Date(originalStartsAt) >= feedRange.from && new Date(originalStartsAt) <= feedRange.to, true);
+  assert.equal(new Date(movedStartsAt) > feedRange.to, true);
+
+  const trackedEvents = await scanBoundedPublicCalendarTrackingEvents(
+    async () => ({
+      documents: [{
+        calendarEventUid: `opaque-projected-id__${originalStartsAt}`,
+        date: movedStartsAt
+      }],
+      nextCursor: null
+    }),
+    { maxDocuments: 2, pageSize: 2 }
+  );
+
+  assert.equal(isFamilyShareCalendarEventTracked({
+    id: 'opaque-projected-id',
+    startsAt: originalStartsAt
+  }, trackedEvents), true);
 });
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {

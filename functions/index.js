@@ -17310,9 +17310,7 @@ exports.getPublicTeamCalendarProjection = functions
 
     const trackedCalendarEvents = await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
       let query = firestore.collection(`teams/${teamId}/games`)
-        .where('date', '>=', range.fromDate)
-        .where('date', '<=', range.toDate)
-        .orderBy('date')
+        .orderBy(admin.firestore.FieldPath.documentId())
         .select('calendarEventUid', 'date');
       if (after) query = query.startAfter(after);
       const snapshot = await query.limit(limit).get();
