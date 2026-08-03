@@ -914,6 +914,80 @@ test('sendCategoryNotification emits no effects when the canonical team grant is
         }
 });
 
+test('sendCategoryNotification preserves an enabled owner with one unambiguous legacy email alias', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerEmail: ' Legacy.Owner@Example.com ',
+                ownerEmailLower: 'legacy.owner@example.com',
+                adminEmails: []
+            },
+            userDocs: { 'legacy-owner': {} },
+            authUsersByUid: {
+                'legacy-owner': { email: 'LEGACY.OWNER@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'legacy-owner',
+                roles: ['staff'],
+                deviceId: 'legacy-owner-device',
+                token: 'legacy-owner-token',
+                categories: { liveChat: true }
+            }]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'Legacy owner should receive this.'
+            });
+
+            assert.equal(result?.successCount, 1);
+            assert.deepEqual(env.messagingCalls[0]?.tokens, ['legacy-owner-token']);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['legacy-owner']);
+            assert.equal(env.auditWrites[0]?.value.targetCount, 1);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification fails closed when legacy owner email aliases conflict', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerEmail: 'legacy.owner@example.com',
+                ownerEmailLower: 'former.owner@example.com',
+                adminEmails: []
+            },
+            userDocs: { 'legacy-owner': {} },
+            authUsersByUid: {
+                'legacy-owner': { email: 'legacy.owner@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'legacy-owner',
+                roles: ['staff'],
+                deviceId: 'legacy-owner-device',
+                token: 'legacy-owner-token',
+                categories: { liveChat: true }
+            }]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'Conflicting legacy owner must not receive this.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipients with enabled preferences', async () => {
         const { internals, cleanup } = loadNotificationInternals({
             teamDoc: {

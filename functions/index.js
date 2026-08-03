@@ -9124,6 +9124,18 @@ async function teamNotificationRecipientIndexIsEmpty(teamId) {
   return !(recipientSnap.docs || []).some((docSnap) => isAggregateNotificationRecipientDoc(docSnap));
 }
 
+function hasCurrentTeamOwnerIdentity({ team, uid, email = '' }) {
+  const normalizedUid = String(uid || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const ownerId = String(team?.ownerId || '').trim();
+  if (ownerId) return Boolean(normalizedUid && ownerId === normalizedUid);
+
+  const ownerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean))];
+  return Boolean(normalizedEmail && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail);
+}
+
 function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
   const normalizedTeamId = String(teamId || '').trim();
   const normalizedUid = String(uid || '').trim();
@@ -9131,7 +9143,7 @@ function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) 
   if (!normalizedTeamId || !normalizedUid || !team || !user) return [];
 
   const roles = new Set();
-  if (team.ownerId === normalizedUid) {
+  if (hasCurrentTeamOwnerIdentity({ team, uid: normalizedUid, email: normalizedEmail })) {
     roles.add('staff');
   }
 
