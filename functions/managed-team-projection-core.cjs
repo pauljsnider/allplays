@@ -57,10 +57,78 @@ function serializeManagedTeamProfile(teamId, team = {}) {
   };
 }
 
+// Keep this recovery response intentionally explicit. Managers normally read the
+// canonical document through Firestore, but this callable is also the fallback
+// when that read is temporarily denied. Spreading the document here would make
+// every future server-only field part of the client API (billing IDs included).
+const MANAGED_TEAM_DOCUMENT_FIELDS = Object.freeze([
+  'name',
+  'teamName',
+  'description',
+  'sport',
+  'photoUrl',
+  'photoPath',
+  'teamPhotoUrl',
+  'logoUrl',
+  'imageUrl',
+  'zip',
+  'city',
+  'state',
+  'colors',
+  'isPublic',
+  'active',
+  'archived',
+  'status',
+  'ownerId',
+  'ownerEmail',
+  'ownerEmailLower',
+  'adminEmails',
+  'notificationEmail',
+  'leagueUrl',
+  'bracketUrl',
+  'standingsConfig',
+  'tournamentPoolOverrides',
+  'twitchChannel',
+  'streamEmbedUrl',
+  'youtubeEmbedUrl',
+  'streamUrl',
+  'livestreamUrl',
+  'scheduleNotifications',
+  'calendarUrls',
+  'availabilityPreferences',
+  'defaultAssignments',
+  'teamPermissions',
+  'streamAccessMode',
+  'streamVolunteerEmails',
+  'mediaContributorEmails',
+  'mediaContributorUids',
+  'teamPassConfig',
+  'registrationSource',
+  'registrationProvider',
+  'registrationSourceId',
+  'externalRegistrationTeamId',
+  'registrationExternalTeamId',
+  'registrationSourceSnapshot',
+  'registrationScheduleSnapshot',
+  'registrationRosterSnapshot',
+  'externalScheduleEvents',
+  'externalRosterPlayers',
+  'season',
+  'division',
+  'createdAt',
+  'updatedAt',
+  'deactivatedAt',
+  'deactivatedBy'
+]);
+
 function serializeManagedTeamDocument(teamId, team = {}) {
   const id = cleanText(teamId, 128);
   if (!id || !team || typeof team !== 'object' || Array.isArray(team)) return null;
-  return { ...team, id };
+  const item = { id };
+  MANAGED_TEAM_DOCUMENT_FIELDS.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(team, field)) item[field] = team[field];
+  });
+  return item;
 }
 
 module.exports = {

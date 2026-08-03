@@ -58,15 +58,24 @@ test('team access recognizes canonical, admin, and legacy email ownership withou
   assert.equal(hasTeamAdminAccess({ team, uid: 'stranger-1', email: 'stranger@example.com' }), false);
 });
 
-test('staff summaries omit management fields while authorized detail preserves the canonical record', () => {
+test('authorized detail preserves required team UI fields without exposing server-only or unknown fields', () => {
   const team = {
     name: 'Bears',
     ownerId: 'owner-1',
     adminEmails: ['admin@example.com'],
     zip: '66210',
     leagueUrl: 'https://league.example.test/bears',
+    bracketUrl: 'https://league.example.test/bears/bracket',
+    twitchChannel: 'bears-live',
     scheduleNotifications: { enabled: true },
-    privateBillingCustomerId: 'manager-readable'
+    calendarUrls: ['https://calendar.example.test/bears.ics'],
+    teamPermissions: { scorekeeping: { mode: 'selected', memberIds: ['member-1'] } },
+    registrationSource: { provider: 'TeamSnap', externalTeamId: 'external-team-1' },
+    registrationScheduleSnapshot: { events: [{ id: 'external-game-1' }] },
+    tournamentPoolOverrides: { 'pool-a': { label: 'Gold' } },
+    privateBillingCustomerId: 'must-not-leak',
+    stripeCustomerId: 'must-not-leak-either',
+    unknownFutureSecret: 'must-default-to-private'
   };
 
   const staffSummary = serializeStaffTeamProfile('team-1', team);
@@ -75,5 +84,23 @@ test('staff summaries omit management fields while authorized detail preserves t
   assert.equal('privateBillingCustomerId' in staffSummary, false);
 
   const managerDocument = serializeManagedTeamDocument('team-1', team);
-  assert.deepEqual(managerDocument, { ...team, id: 'team-1' });
+  assert.deepEqual(managerDocument, {
+    id: 'team-1',
+    name: 'Bears',
+    zip: '66210',
+    leagueUrl: 'https://league.example.test/bears',
+    bracketUrl: 'https://league.example.test/bears/bracket',
+    twitchChannel: 'bears-live',
+    scheduleNotifications: { enabled: true },
+    calendarUrls: ['https://calendar.example.test/bears.ics'],
+    teamPermissions: { scorekeeping: { mode: 'selected', memberIds: ['member-1'] } },
+    registrationSource: { provider: 'TeamSnap', externalTeamId: 'external-team-1' },
+    registrationScheduleSnapshot: { events: [{ id: 'external-game-1' }] },
+    tournamentPoolOverrides: { 'pool-a': { label: 'Gold' } },
+    ownerId: 'owner-1',
+    adminEmails: ['admin@example.com']
+  });
+  assert.equal('privateBillingCustomerId' in managerDocument, false);
+  assert.equal('stripeCustomerId' in managerDocument, false);
+  assert.equal('unknownFutureSecret' in managerDocument, false);
 });

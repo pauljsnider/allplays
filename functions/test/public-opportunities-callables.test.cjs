@@ -401,7 +401,7 @@ test('managed-team callables return access fields only to current managers', asy
         authContext('owner-1', { email: 'owner@example.com' })
     );
     assert.equal(privateProfile.item.ownerId, 'owner-1');
-    assert.equal(privateProfile.item.privateBillingCustomerId, 'must-not-leak');
+    assert.equal('privateBillingCustomerId' in privateProfile.item, false);
 
     const publicProfile = await callables.getPublicTeamProfile({ teamId: 'public-team' }, {});
     assert.equal(publicProfile.item.name, 'Public Bears');
