@@ -351,7 +351,10 @@ const {
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
-const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
+const {
+  createLegacyTeamOwnerAuthSyncHandler,
+  createTeamOwnerAccessSyncHandler
+} = require('./team-owner-access-core.cjs');
 const {
   buildAdminUserSearchHashes,
   haveAdminUserSearchFieldsChanged
@@ -9452,6 +9455,15 @@ exports.syncTeamOwnerAccessOnCreate = functions
   .firestore
   .document('teams/{teamId}')
   .onCreate(createTeamOwnerAccessSyncHandler({
+    firestore,
+    fieldValue: admin.firestore.FieldValue
+  }));
+
+exports.syncLegacyTeamOwnershipOnAuthCreate = functions
+  .runWith({ failurePolicy: true })
+  .auth
+  .user()
+  .onCreate(createLegacyTeamOwnerAuthSyncHandler({
     firestore,
     fieldValue: admin.firestore.FieldValue
   }));

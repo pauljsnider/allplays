@@ -118,6 +118,7 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^node "\$firebase_cli" deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
+            'node "$firebase_cli" deploy --only functions:syncLegacyTeamOwnershipOnAuthCreate --project game-flow-c6311 --config "$firebase_config" --non-interactive --force',
             'node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive',
             'node "$firebase_cli" deploy "${deploy_args[@]}"'
         ]);
@@ -134,7 +135,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
         expect(productionSource).toContain(
-            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
+            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
         );
         expect(productionSource).toContain(
             'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
