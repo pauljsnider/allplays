@@ -47,12 +47,13 @@ function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
   const startsAt = toIso(event?.date || event?.startsAt);
   const uidHash = compactText(event?.calendarUidHash, 64);
   for (const tracked of entries) {
-    if (tracked.startsAt && startsAt && tracked.startsAt !== startsAt) continue;
-    if (eventId && (tracked.id === eventId || (startsAt && tracked.id === `${eventId}__${startsAt}`))) return true;
+    const occurrenceMatch = tracked.id.match(/^(.*)__(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/);
+    const baseId = occurrenceMatch?.[1] || tracked.id;
+    const occurrenceStartsAt = occurrenceMatch?.[2] || null;
+    if (eventId && (tracked.id === eventId || (baseId === eventId && occurrenceStartsAt === startsAt))) return true;
     if (!uidHash) continue;
-    const baseId = tracked.id
-      .replace(/__\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, '');
-    if (hashFamilyShareCalendarEventUid(baseId) === uidHash) return true;
+    if (hashFamilyShareCalendarEventUid(baseId) !== uidHash) continue;
+    if (occurrenceStartsAt ? occurrenceStartsAt === startsAt : !tracked.startsAt || tracked.startsAt === startsAt) return true;
   }
   return false;
 }

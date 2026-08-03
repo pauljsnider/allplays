@@ -10,12 +10,33 @@ const {
   parsePublicProjectionCursor,
   parsePublicGamesQuery,
   publicHttpUrl,
+  scanBoundedPublicCalendarTrackingEvents,
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
   serializePublicOpponentStats,
   serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
+
+test('paginates calendar tracking scans and fails closed at the document cap', async () => {
+  const pages = [
+    { documents: [{ date: 'ordinary-1' }, { date: 'ordinary-2' }], nextCursor: 'page-2' },
+    { documents: [{ calendarEventUid: 'tracked-later', date: 'game-date' }], nextCursor: null }
+  ];
+  const tracked = await scanBoundedPublicCalendarTrackingEvents(
+    async () => pages.shift(),
+    { maxDocuments: 4, pageSize: 2 }
+  );
+  assert.deepEqual(tracked, [{ calendarEventUid: 'tracked-later', date: 'game-date' }]);
+
+  await assert.rejects(
+    scanBoundedPublicCalendarTrackingEvents(
+      async ({ after }) => ({ documents: [{ calendarEventUid: `tracked-${after || 1}` }], nextCursor: 'next' }),
+      { maxDocuments: 2, pageSize: 1 }
+    ),
+    /tracking scan limit exceeded/
+  );
+});
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {
   assert.equal(isStrictPublicTeam({ isPublic: true, active: true }), true);

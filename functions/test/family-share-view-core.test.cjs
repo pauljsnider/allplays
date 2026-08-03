@@ -34,6 +34,15 @@ test('correlates projected events with legacy UID and current opaque occurrence 
     calendarEventUid: 'raw-calendar-uid',
     date: '2026-08-08T18:00:00.000Z'
   }]), false);
+  for (const trackedId of [
+    `raw-calendar-uid__${startsAt}`,
+    `opaque-projected-id__${startsAt}`
+  ]) {
+    assert.equal(isFamilyShareCalendarEventTracked(event, [{
+      calendarEventUid: trackedId,
+      date: '2026-08-08T18:00:00.000Z'
+    }]), true, `stable occurrence survives edited game date: ${trackedId}`);
+  }
   assert.equal(isFamilyShareCalendarEventTracked(event, ['different-event']), false);
 });
 

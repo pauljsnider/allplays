@@ -130,6 +130,7 @@ const {
   paginatePublicProjectionItems,
   parsePublicProjectionCursor,
   parsePublicGamesQuery,
+  scanBoundedPublicCalendarTrackingEvents,
   serializePublicCalendarEvent,
   serializePublicGame,
   serializePublicTeamDiscovery,
@@ -17307,18 +17308,22 @@ exports.getPublicTeamCalendarProjection = functions
     const team = await getStrictPublicTeam(teamId);
     if (!team) throwOpportunityError('not-found', 'Public team not found.');
 
-    const trackedGameSnap = await firestore.collection(`teams/${teamId}/games`)
-      .where('date', '>=', range.fromDate)
-      .where('date', '<=', range.toDate)
-      .orderBy('date')
-      .limit(MAX_FAMILY_SHARE_DB_EVENTS)
-      .get();
-    const trackedCalendarEvents = trackedGameSnap.docs
-      .map((gameSnap) => ({
-        calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
-        date: gameSnap.data()?.date || null
-      }))
-      .filter((event) => event.calendarEventUid);
+    const trackedCalendarEvents = await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
+      let query = firestore.collection(`teams/${teamId}/games`)
+        .where('date', '>=', range.fromDate)
+        .where('date', '<=', range.toDate)
+        .orderBy('date')
+        .select('calendarEventUid', 'date');
+      if (after) query = query.startAfter(after);
+      const snapshot = await query.limit(limit).get();
+      return {
+        documents: snapshot.docs.map((gameSnap) => ({
+          calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
+          date: gameSnap.data()?.date || null
+        })),
+        nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
+      };
+    }, { maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS });
 
     const calendarUrls = [];
     const seenUrls = new Set();
