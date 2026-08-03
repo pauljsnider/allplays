@@ -127,7 +127,7 @@ describe('game schedule update push notifications', () => {
             'toNumericScore',
             'buildScheduleUpdateNotificationPayload',
             `const exports = {};
-${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = functions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = functions.firestore'))}
+${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = retryableNotificationFunctions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore')).replaceAll('retryableNotificationFunctions.', 'functions.')}
 return exports.notifyGameUpdated;`
         )(
             {

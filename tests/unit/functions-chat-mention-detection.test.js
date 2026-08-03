@@ -6,12 +6,12 @@ const require = createRequire(import.meta.url);
 const { buildAppUrl } = require('../../functions/app-links-core.cjs');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const notifyTeamChatMessageCreatedSource = functionsSource.slice(
-    functionsSource.indexOf('exports.notifyTeamChatMessageCreated = functions.firestore'),
+    functionsSource.indexOf('exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore'),
     functionsSource.indexOf('\nexports.postSharedGameCancellationNotification')
 );
 const handleTeamChatMessageCreatedSource = functionsSource.slice(
     functionsSource.indexOf('async function handleTeamChatMessageCreated(snapshot, context) {'),
-    functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated = functions.firestore')
+    functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore')
 );
 
 function getDetectMentionedUids() {
@@ -430,7 +430,7 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('exports the notifyTeamChatMessageCreated Firestore trigger', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain("exports.notifyTeamChatMessageCreated = functions.firestore");
+        expect(notifyTeamChatMessageCreatedSource).toContain("exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore");
         expect(notifyTeamChatMessageCreatedSource).toContain(".document('teams/{teamId}/chatMessages/{messageId}')");
     });
 
@@ -454,7 +454,7 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('reuses the same create handler for conversation-scoped chat message documents', () => {
-        expect(functionsSource).toContain("exports.notifyConversationChatMessageCreated = functions.firestore");
+        expect(functionsSource).toContain("exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore");
         expect(functionsSource).toContain(".document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')");
         expect(functionsSource).toContain('.onCreate(handleTeamChatMessageCreated);');
     });

@@ -10449,6 +10449,7 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
     } catch (error) {
       await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
       console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+      if (isNotificationAuthResolutionFailure(error)) throw error;
     }
   }
 
@@ -10483,13 +10484,36 @@ async function getEnabledNotificationAuthUserIds(userIds) {
   const uniqueUserIds = Array.from(new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
-      .filter(Boolean)
+      .filter((uid) => uid && uid.length <= 128 && !/[\u0000-\u001f\u007f]/.test(uid))
   ));
   const enabledUserIds = new Set();
   for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
-    const result = await admin.auth().getUsers(
-      uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }))
-    );
+    const identifiers = uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }));
+    let result;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        result = await admin.auth().getUsers(identifiers);
+        break;
+      } catch (error) {
+        const code = String(error?.code || error?.errorInfo?.code || '').toLowerCase();
+        const retryable = [
+          'auth/internal-error',
+          'auth/network-request-failed',
+          'auth/too-many-requests',
+          'auth/service-unavailable',
+          'unavailable',
+          'deadline-exceeded'
+        ].some((candidate) => code === candidate || code.endsWith(`/${candidate}`));
+        if (!retryable || attempt === 2) {
+          const taggedError = error instanceof Error
+            ? error
+            : new Error(String(error || 'Firebase Auth user resolution failed.'));
+          taggedError.notificationAuthResolutionFailed = true;
+          throw taggedError;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
+      }
+    }
     (result.users || []).forEach((authUser) => {
       const uid = String(authUser?.uid || '').trim();
       if (uid && authUser?.disabled !== true) enabledUserIds.add(uid);
@@ -10497,6 +10521,12 @@ async function getEnabledNotificationAuthUserIds(userIds) {
   }
   return enabledUserIds;
 }
+
+function isNotificationAuthResolutionFailure(error) {
+  return error?.notificationAuthResolutionFailed === true;
+}
+
+const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });
 
 async function getCandidateUsersForTeam(teamId) {
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -12193,7 +12223,7 @@ exports.sweepStaleNotificationDeviceTokens = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sweepStaleNotificationDeviceTokens());
 
-exports.notifyOfficiatingNotificationCreated = functions.firestore
+exports.notifyOfficiatingNotificationCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/officiatingNotifications/{notificationId}')
   .onCreate(async (snapshot, context) => {
     const record = snapshot.data() || {};
@@ -12217,7 +12247,7 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
     });
   });
 
-exports.notifyOpenOfficiatingSlots = functions.firestore
+exports.notifyOpenOfficiatingSlots = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onWrite(async (change, context) => {
     if (!change.after?.exists) return null;
@@ -12262,7 +12292,7 @@ exports.queueTeamMediaNotificationBatch = functions.firestore
     return null;
   });
 
-exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub
+exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .timeZone('America/Chicago')
   .onRun(() => dispatchDueTeamMediaNotificationBatches());
@@ -12613,6 +12643,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
         } catch (pushError) {
           rsvpPushError = pushError;
           console.error('Failed to send RSVP reminder push notifications', { teamId, gameId, error: pushError });
+          if (isNotificationAuthResolutionFailure(pushError)) throw pushError;
         }
         await markReminderSent(eventRef, claimId, {
           ...sendResult,
@@ -12640,6 +12671,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       } catch (error) {
         await markReminderPendingAfterFailure(eventRef, claimId, error);
         console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+        if (isNotificationAuthResolutionFailure(error)) throw error;
         return null;
       }
     }
@@ -12648,11 +12680,11 @@ async function dispatchDuePreEventReminders(now = new Date()) {
   return drainSummary.results.filter(Boolean);
 }
 
-exports.dispatchDuePreEventReminders = functions.pubsub
+exports.dispatchDuePreEventReminders = retryableNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .onRun(() => dispatchDuePreEventReminders());
 
-exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
+exports.queueDueRegistrationFailedPaymentReminders = retryableNotificationFunctions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
@@ -12873,6 +12905,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
             playerId,
             error: error?.message || error
           });
+          if (isNotificationAuthResolutionFailure(error)) throw error;
         }
       }
     }
@@ -12941,7 +12974,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
   return results;
 }
 
-exports.sendPracticePacketDueTomorrowReminders = functions.pubsub
+exports.sendPracticePacketDueTomorrowReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendPracticePacketDueTomorrowReminders());
 
@@ -13123,16 +13156,21 @@ async function sendFeeUnpaidDueReminders() {
       return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      if (isNotificationAuthResolutionFailure(err)) throw err;
       return null;
     }
   });
 
   const results = await Promise.allSettled(promises);
+  const authResolutionFailure = results.find((result) => (
+    result.status === 'rejected' && isNotificationAuthResolutionFailure(result.reason)
+  ));
+  if (authResolutionFailure) throw authResolutionFailure.reason;
   const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
   console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
 }
 
-exports.sendFeeUnpaidDueReminders = functions.pubsub
+exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
 
@@ -14078,11 +14116,11 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   return results;
 }
 
-exports.notifyTeamChatMessageCreated = functions.firestore
+exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
-exports.notifyConversationChatMessageCreated = functions.firestore
+exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
@@ -14960,7 +14998,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   };
 });
 
-exports.notifyGameUpdated = functions.firestore
+exports.notifyGameUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -15022,7 +15060,7 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
-exports.notifyLiveEventCreated = functions.firestore
+exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/liveEvents/{eventId}')
   .onCreate(async (snapshot, context) => {
     const event = snapshot.data() || {};
@@ -15069,7 +15107,7 @@ exports.notifyLiveEventCreated = functions.firestore
     });
   });
 
-const notifyGameCreated = functions.firestore
+const notifyGameCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onCreate(async (snapshot, context) => {
     const game = snapshot.data() || {};
@@ -15088,7 +15126,7 @@ const notifyGameCreated = functions.firestore
 
 exports.notifyGameCreated = notifyGameCreated;
 
-const notifyScheduleImportBatchCompleted = functions.firestore
+const notifyScheduleImportBatchCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
   .onWrite(async (change, context) => {
     const after = change.after.exists ? (change.after.data() || {}) : null;
@@ -15105,7 +15143,7 @@ const notifyScheduleImportBatchCompleted = functions.firestore
 
 exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 
-const notifyRideOfferCreated = functions.firestore
+const notifyRideOfferCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onCreate(async (snapshot, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -15142,7 +15180,7 @@ const notifyRideOfferCreated = functions.firestore
 
 exports.notifyRideOfferCreated = notifyRideOfferCreated;
 
-const notifyRideClaimCreated = functions.firestore
+const notifyRideClaimCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onCreate(async (snapshot, context) => {
     return sendRideClaimNotification(snapshot.data() || {}, context);
@@ -15150,7 +15188,7 @@ const notifyRideClaimCreated = functions.firestore
 
 exports.notifyRideClaimCreated = notifyRideClaimCreated;
 
-const notifyRideClaimUpdated = functions.firestore
+const notifyRideClaimUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -15161,7 +15199,7 @@ const notifyRideClaimUpdated = functions.firestore
 
 exports.notifyRideClaimUpdated = notifyRideClaimUpdated;
 
-const notifyRideOfferCancelled = functions.firestore
+const notifyRideOfferCancelled = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onUpdate(async (change, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -15273,7 +15311,7 @@ exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestCreated = functions.firestore
+exports.notifyParentMembershipRequestCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -15302,7 +15340,7 @@ exports.notifyParentMembershipRequestCreated = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestUpdated = functions.firestore
+exports.notifyParentMembershipRequestUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15340,7 +15378,7 @@ exports.notifyParentMembershipRequestUpdated = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationSubmitted = functions.firestore
+exports.notifyRegistrationSubmitted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -15370,7 +15408,7 @@ exports.notifyRegistrationSubmitted = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationStatusChanged = functions.firestore
+exports.notifyRegistrationStatusChanged = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15423,7 +15461,7 @@ exports.notifyRegistrationStatusChanged = functions.firestore
     return null;
   });
 
-exports.notifyInviteRedeemed = functions.firestore
+exports.notifyInviteRedeemed = retryableNotificationFunctions.firestore
   .document('accessCodes/{codeId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15471,7 +15509,7 @@ exports.notifyInviteRedeemed = functions.firestore
     return null;
   });
 
-exports.notifyFeeMarkedPaid = functions.firestore
+exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onWrite(async (change, context) => {
     const before = change.before.exists ? change.before.data() : null;
@@ -15556,7 +15594,7 @@ exports.notifyFeeMarkedPaid = functions.firestore
     return null;
   });
 
-exports.notifyPublishedCertificateAward = functions.firestore
+exports.notifyPublishedCertificateAward = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/certificates/{certificateId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -15618,7 +15656,7 @@ exports.notifyPublishedCertificateAward = functions.firestore
     return null;
   });
 
-exports.notifyFeeAssigned = functions.firestore
+exports.notifyFeeAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -15696,7 +15734,7 @@ exports.notifyFeeAssigned = functions.firestore
     }
   });
 
-exports.notifyPracticePacketCompleted = functions.firestore
+exports.notifyPracticePacketCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}/packetCompletions/{completionId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -15761,7 +15799,7 @@ const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_MAX_BODY_BYTES = 4096;
 
-exports.notifyPracticePacketAssigned = functions.firestore
+exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -17178,6 +17216,11 @@ async function listOpportunityManagedTeamDocuments(caller, { allowPartial = fals
       }
     });
   });
+  teams.discoveryQueryCount = settledSnapshots.length;
+  teams.successfulDiscoveryQueryCount = settledSnapshots.filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors = settledSnapshots
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
   teams.isPartial = settledSnapshots.some((result) => result.status === 'rejected');
   if (teams.isPartial && !allowPartial) {
     throw settledSnapshots.find((result) => result.status === 'rejected').reason;
@@ -17210,8 +17253,17 @@ async function listStaffTeamDocuments(caller) {
       teams.set(teamSnap.id, teamSnap);
     }
   });
+  teams.discoveryQueryCount += settledCoachTeamSnaps.length;
+  teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachTeamSnaps
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
   teams.isPartial = teams.isPartial === true
     || settledCoachTeamSnaps.some((result) => result.status === 'rejected');
+  if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
+    throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
+  }
   return teams;
 }
 

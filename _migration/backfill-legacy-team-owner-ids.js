@@ -12,6 +12,7 @@ import {
 const APPLY = process.argv.includes('--apply');
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
 const BATCH_LIMIT = 500;
+const OWNER_BINDING_BATCH_LIMIT = Math.floor(BATCH_LIMIT / 2);
 
 function normalizeEmail(value) {
     return String(value || '').trim().toLowerCase();
@@ -105,23 +106,50 @@ export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log 
 
     const { plans, unresolvedTeamIds } = planning;
 
-    for (let start = 0; start < plans.length; start += BATCH_LIMIT) {
+    for (let start = 0; start < plans.length; start += OWNER_BINDING_BATCH_LIMIT) {
+        const chunk = plans.slice(start, start + OWNER_BINDING_BATCH_LIMIT);
         const batch = db.batch();
-        for (const plan of plans.slice(start, start + BATCH_LIMIT)) {
+        const teamIdsByOwnerId = new Map();
+        for (const plan of chunk) {
             batch.update(plan.teamDoc.ref, {
                 ownerId: plan.ownerId,
                 ownerIdBackfilledAt: FieldValue.serverTimestamp()
             }, { lastUpdateTime: plan.teamDoc.updateTime });
+            const teamIds = teamIdsByOwnerId.get(plan.ownerId) || new Set();
+            teamIds.add(plan.teamDoc.id);
+            teamIdsByOwnerId.set(plan.ownerId, teamIds);
+        }
+        for (const [ownerId, teamIds] of teamIdsByOwnerId) {
+            batch.set(db.doc(`users/${ownerId}`), {
+                coachOf: FieldValue.arrayUnion(...teamIds),
+                roles: FieldValue.arrayUnion('coach'),
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
         }
         await batch.commit();
     }
 
-    for (let start = 0; start < plans.length; start += BATCH_LIMIT) {
-        const chunk = plans.slice(start, start + BATCH_LIMIT);
-        const verified = await db.getAll(...chunk.map((plan) => plan.teamDoc.ref));
-        verified.forEach((teamDoc, index) => {
+    for (let start = 0; start < plans.length; start += OWNER_BINDING_BATCH_LIMIT) {
+        const chunk = plans.slice(start, start + OWNER_BINDING_BATCH_LIMIT);
+        const verifiedTeams = await db.getAll(...chunk.map((plan) => plan.teamDoc.ref));
+        verifiedTeams.forEach((teamDoc, index) => {
             if (!teamDoc.exists || String(teamDoc.data()?.ownerId || '') !== chunk[index].ownerId) {
                 throw new Error(`Legacy team owner migration verification failed for ${chunk[index].teamDoc.id}.`);
+            }
+        });
+        const ownerIds = [...new Set(chunk.map((plan) => plan.ownerId))];
+        const verifiedOwners = await db.getAll(...ownerIds.map((ownerId) => db.doc(`users/${ownerId}`)));
+        const verifiedOwnersById = new Map(ownerIds.map((ownerId, index) => [ownerId, verifiedOwners[index]]));
+        chunk.forEach((plan) => {
+            const owner = verifiedOwnersById.get(plan.ownerId);
+            const ownerData = owner?.exists ? (owner.data() || {}) : {};
+            if (
+                !Array.isArray(ownerData.coachOf)
+                || !ownerData.coachOf.includes(plan.teamDoc.id)
+                || !Array.isArray(ownerData.roles)
+                || !ownerData.roles.includes('coach')
+            ) {
+                throw new Error(`Legacy team owner reciprocal access verification failed for ${plan.teamDoc.id}.`);
             }
         });
     }

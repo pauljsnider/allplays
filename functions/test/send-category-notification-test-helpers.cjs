@@ -101,6 +101,7 @@ function buildNotificationTestEnv({
     userDocs = {},
     authUsersByEmail = {},
     authUsersByUid = {},
+    authGetUsersErrors = [],
     playerDocs = {},
     privateProfileDocs = {},
     gameDocs = {},
@@ -122,6 +123,7 @@ function buildNotificationTestEnv({
     const inboxWrites = [];
     const inboxCleanupLimits = [];
     const auditWrites = [];
+    const pendingAuthGetUsersErrors = [...authGetUsersErrors];
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
@@ -145,6 +147,7 @@ function buildNotificationTestEnv({
         inboxCleanupQueries: 0,
         inboxCleanupLimitQueries: 0,
         inboxCleanupOffsetQueries: 0,
+        authGetUsersCalls: 0,
         dedupTransactions: 0,
         deleteCalls: 0
     };
@@ -868,6 +871,9 @@ function buildNotificationTestEnv({
                     : { uid: '' };
             },
             getUsers: async (identifiers) => {
+                counts.authGetUsersCalls += 1;
+                const getUsersError = pendingAuthGetUsersErrors.shift();
+                if (getUsersError) throw getUsersError;
                 const users = [];
                 for (const identifier of identifiers || []) {
                     const uid = identifier?.uid

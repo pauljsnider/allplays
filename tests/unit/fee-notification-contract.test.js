@@ -32,7 +32,7 @@ function getFeeAssignmentNotificationHelpers() {
 
 describe('fee notification contract', () => {
     it('notifies assigned fee payers through the fees category with per-user claim guards', () => {
-        expect(functionsSource).toContain('exports.notifyFeeAssigned = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')");
         expect(functionsSource).toContain("if (!NOTIFICATION_CATEGORIES.includes('fees'))");
         expect(functionsSource).toContain('const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);');
@@ -132,7 +132,7 @@ describe('fee notification contract', () => {
     });
 
     it('notifies payers and staff when fees are marked paid', () => {
-        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain("String(after.status || '').trim().toLowerCase() !== 'paid'");
         expect(functionsSource).toContain("String(before?.status || '').trim().toLowerCase() === 'paid'");
         expect(functionsSource).toContain('const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });');

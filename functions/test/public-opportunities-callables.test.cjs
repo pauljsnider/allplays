@@ -708,6 +708,23 @@ test('managed-team discovery preserves successful queries and marks partial fail
     assert.deepEqual(managed.items.map((team) => team.id), ['owned-team']);
 });
 
+test('managed-team discovery rejects when every discovery query fails', async () => {
+    const queryFailures = ['ownerId', 'adminEmails', 'ownerEmailLower', 'ownerEmail'].map((field) => ({
+        path: 'teams',
+        field,
+        operator: field === 'adminEmails' ? 'array-contains' : '==',
+        message: `${field} index temporarily unavailable`
+    }));
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' }
+    }, { queryFailures });
+
+    await assert.rejects(
+        callables.listManagedTeams({}, authContext('owner-1', { email: 'owner@example.com' })),
+        /index temporarily unavailable/
+    );
+});
+
 test('opportunity management keeps fail-fast semantics when team discovery is partial', async () => {
     const { callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com' },

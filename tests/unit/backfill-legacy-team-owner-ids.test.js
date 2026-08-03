@@ -68,7 +68,9 @@ describe('legacy team ownerId migration planning', () => {
 
     it('rechecks Auth after alias normalization so signups during migration cannot be missed', async () => {
         const teamRef = { path: 'teams/legacy' };
+        const userRef = { path: 'users/owner-1' };
         const teamData = { ownerEmail: 'Owner@Example.com' };
+        const userData = {};
         const makeSnapshot = () => ({
             id: 'legacy',
             ref: teamRef,
@@ -77,14 +79,25 @@ describe('legacy team ownerId migration planning', () => {
             data: () => ({ ...teamData })
         });
         const db = {
+            doc: vi.fn((path) => path === userRef.path ? userRef : { path }),
             collection: vi.fn(() => ({
                 select: vi.fn(() => ({ get: vi.fn(async () => ({ docs: [makeSnapshot()] })) }))
             })),
             batch: vi.fn(() => ({
                 update: vi.fn((_ref, patch) => Object.assign(teamData, patch)),
+                set: vi.fn((ref) => {
+                    if (ref.path === userRef.path) {
+                        userData.coachOf = ['legacy'];
+                        userData.roles = ['coach'];
+                    }
+                }),
                 commit: vi.fn(async () => {})
             })),
-            getAll: vi.fn(async () => [makeSnapshot()])
+            getAll: vi.fn(async (...refs) => refs.map((ref) => (
+                ref.path === userRef.path
+                    ? { exists: true, data: () => ({ ...userData }) }
+                    : makeSnapshot()
+            )))
         };
         const auth = {
             getUserByEmail: vi.fn(async () => {
@@ -107,6 +120,7 @@ describe('legacy team ownerId migration planning', () => {
         });
         expect(teamData.ownerEmailLower).toBe('owner@example.com');
         expect(teamData.ownerId).toBe('owner-1');
+        expect(userData).toEqual({ coachOf: ['legacy'], roles: ['coach'] });
         expect(db.collection).toHaveBeenCalledTimes(2);
     });
 

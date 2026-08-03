@@ -15,7 +15,7 @@ function extractChunk(startMarker, endMarker) {
 function extractNotifyPracticePacketCompleted() {
     return [
         extractChunk('function buildPracticePacketNotificationDestination(', 'function buildNotificationLink'),
-        extractChunk('exports.notifyPracticePacketCompleted = functions.firestore', 'const PUBLIC_RSVP_TOKEN_TTL_DAYS')
+        extractChunk('exports.notifyPracticePacketCompleted = retryableNotificationFunctions.firestore', 'const PUBLIC_RSVP_TOKEN_TTL_DAYS')
     ].join('\n');
 }
 
@@ -56,7 +56,7 @@ function buildTriggerHarness({
         'getTargetsForCategory',
         'getCandidateUsersForTeam',
         'sendDirectTargetsNotification',
-        `${extractNotifyPracticePacketCompleted()}\nreturn exports.notifyPracticePacketCompleted;`
+        `${extractNotifyPracticePacketCompleted().replaceAll('retryableNotificationFunctions.', 'functions.')}\nreturn exports.notifyPracticePacketCompleted;`
     );
     const trigger = factory(
         exportsObject,

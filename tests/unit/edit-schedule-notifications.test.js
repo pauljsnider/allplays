@@ -151,7 +151,7 @@ describe('edit schedule notification wiring', () => {
 describe('notifyGameCreated Cloud Function trigger', () => {
     function readNotifyGameCreatedTrigger() {
         return functionsSource.slice(
-            functionsSource.indexOf('const notifyGameCreated = functions.firestore'),
+            functionsSource.indexOf('const notifyGameCreated = retryableNotificationFunctions.firestore'),
             functionsSource.indexOf('exports.notifyGameCreated = notifyGameCreated;')
         );
     }
@@ -187,7 +187,7 @@ describe('notifyGameCreated Cloud Function trigger', () => {
     });
 
     it('finalizes partial app import batches after the client writes the successful import count', () => {
-        expect(functionsSource).toContain("const notifyScheduleImportBatchCompleted = functions.firestore");
+        expect(functionsSource).toContain("const notifyScheduleImportBatchCompleted = retryableNotificationFunctions.firestore");
         expect(functionsSource).toContain(".document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')");
         expect(functionsSource).toContain('return sendScheduleImportBatchNotifications({');
         expect(functionsSource).toContain('if (!after || !after.importCompletedAt || after.sentAt || after.notificationClaimedAt) {');

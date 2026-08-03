@@ -122,7 +122,7 @@ function buildTriggerHarness({
         'sendDirectTargetsNotification',
         'markPublishedCertificateAwardNotificationProcessed',
         'buildAwardNotificationDestination',
-        `${extractChunk('exports.notifyPublishedCertificateAward = functions.firestore', 'exports.notifyFeeAssigned = functions.firestore')}
+        `${extractChunk('exports.notifyPublishedCertificateAward = retryableNotificationFunctions.firestore', 'exports.notifyFeeAssigned = retryableNotificationFunctions.firestore').replaceAll('retryableNotificationFunctions.', 'functions.')}
         return exports.notifyPublishedCertificateAward;`
     )(
         exportsObject,

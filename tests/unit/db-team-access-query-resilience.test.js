@@ -154,6 +154,20 @@ describe('team access query resilience', () => {
     expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
   });
 
+  it('rejects partial managed-team discovery instead of returning an authoritative incomplete array', async () => {
+    firebaseMocks.listManagedTeams.mockResolvedValue({
+      data: {
+        items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+        isPartial: true
+      }
+    });
+
+    await expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
+      code: 'managed-team-discovery-partial',
+      partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
+    });
+  });
+
   it('recognizes namespaced permission errors when loading a public team projection', async () => {
     firebaseMocks.getDoc.mockRejectedValue(Object.assign(new Error('denied'), {
       code: 'firestore/permission-denied'

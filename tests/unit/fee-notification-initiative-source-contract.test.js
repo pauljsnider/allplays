@@ -5,9 +5,9 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 
 describe('fees notification initiative source contract', () => {
     it('keeps all fee notification entry points registered in Cloud Functions', () => {
-        expect(functionsSource).toContain('exports.notifyFeeAssigned = functions.firestore');
-        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = functions.pubsub');
-        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')");
     });
 

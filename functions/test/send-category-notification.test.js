@@ -46,6 +46,74 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
         }
 });
 
+test('getTargetsForCategory retries a transient Auth batch failure before delivery', async () => {
+        const transientError = Object.assign(new Error('temporary Auth outage'), {
+            code: 'auth/internal-error'
+        });
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': { email: 'coach@example.com' } },
+            authGetUsersErrors: [transientError],
+            indexedTargets: [{
+                uid: 'coach-1',
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+            assert.deepEqual(targets.map((target) => target.token), ['coach-token']);
+            assert.ok(env.counts.authGetUsersCalls >= 3);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory rejects after bounded transient Auth retries', async () => {
+        const authErrors = Array.from({ length: 3 }, () => Object.assign(
+            new Error('persistent Auth outage'),
+            { code: 'auth/internal-error' }
+        ));
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': { email: 'coach@example.com' } },
+            authGetUsersErrors: authErrors,
+            indexedTargets: []
+        });
+
+        try {
+            await assert.rejects(
+                internals.getTargetsForCategory('team-1', 'schedule'),
+                (error) => error.notificationAuthResolutionFailed === true
+            );
+            assert.equal(env.counts.authGetUsersCalls, 3);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategory drops malformed Auth UIDs before batching', async () => {
+        const malformedUid = 'x'.repeat(129);
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: malformedUid, adminEmails: [] },
+            indexedTargets: [{
+                uid: malformedUid,
+                deviceId: 'invalid-device',
+                token: 'invalid-token',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            assert.deepEqual(await internals.getTargetsForCategory('team-1', 'schedule'), []);
+            assert.equal(env.counts.authGetUsersCalls, 0);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory excludes a disabled indexed owner before notification delivery', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {

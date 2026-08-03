@@ -361,6 +361,9 @@ async function nativeLoadNotificationTeams(userId: string, _email?: string | nul
     loadManagedTeamsFromNativeCallable(),
     nativeLoadTeamsByIds(getProfileParentTeamIds(profile))
   ]);
+  if (managedTeamResult.isPartial) {
+    throw new Error('Managed team discovery returned partial results.');
+  }
   const map = new Map<string, NotificationTeam>();
   filterActiveTeams([...managedTeamResult.teams, ...parentTeams])
     .forEach((team: any) => {

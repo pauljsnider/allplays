@@ -9,6 +9,19 @@ const messagesSource = [
 ].join('\n');
 
 describe('team chat notification delivery contract', () => {
+    it('retries transient Auth resolution and makes notification event triggers durable', () => {
+        expect(functionsSource).toContain('const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });');
+        expect(functionsSource).toContain('for (let attempt = 0; attempt < 3; attempt += 1)');
+        expect(functionsSource).toContain('taggedError.notificationAuthResolutionFailed = true;');
+        expect((functionsSource.match(/if \(isNotificationAuthResolutionFailure\([^)]*\)\) throw/g) || []).length).toBeGreaterThanOrEqual(5);
+        expect(functionsSource).toContain('exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyGameUpdated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub');
+    });
+
     it('builds one recipient context for mentions and live chat with per-conversation mute state', () => {
         expect(functionsSource).toContain('async function buildTeamChatNotificationContext(teamId, options = {})');
         expect(functionsSource).toContain('const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(');

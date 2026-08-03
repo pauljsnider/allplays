@@ -258,7 +258,7 @@ describe('native parent-team fallback hydration', () => {
         vi.unstubAllGlobals();
     });
 
-    function mockNativeProfileFallbackFetch() {
+    function mockNativeProfileFallbackFetch({ managedIsPartial = false } = {}) {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
 
@@ -268,7 +268,7 @@ describe('native parent-team fallback hydration', () => {
                     json: async () => ({
                         result: {
                             items: [{ id: 'legacy-team', name: 'Legacy Lions', ownerEmail: 'parent@example.com' }],
-                            isPartial: false
+                            isPartial: managedIsPartial
                         }
                     })
                 };
@@ -369,6 +369,15 @@ describe('native parent-team fallback hydration', () => {
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-3'))).toBe(true);
+    });
+
+    it('rejects partial native managed-team discovery instead of hiding notification teams', async () => {
+        dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
+        dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
+        mockNativeProfileFallbackFetch({ managedIsPartial: true });
+
+        await expect(loadNotificationTeams('user-1', 'parent@example.com'))
+            .rejects.toThrow('Managed team discovery returned partial results.');
     });
 
     it('reuses the per-document fallback loader for parent teams', async () => {

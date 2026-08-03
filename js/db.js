@@ -1874,13 +1874,17 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
     if (!Array.isArray(items)) {
         throw new Error('Managed teams response is invalid.');
     }
-    if (response?.data?.isPartial === true) {
-        console.warn('Managed team discovery returned partial results.');
-    }
     const teams = items
         .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
         .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-    return filterTeamsByActive(teams, includeInactive);
+    const activeTeams = filterTeamsByActive(teams, includeInactive);
+    if (response?.data?.isPartial === true) {
+        const error = new Error('Managed team discovery returned partial results.');
+        error.code = 'managed-team-discovery-partial';
+        error.partialTeams = activeTeams;
+        throw error;
+    }
+    return activeTeams;
 }
 
 /**
