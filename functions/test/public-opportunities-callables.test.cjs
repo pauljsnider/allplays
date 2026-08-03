@@ -509,6 +509,34 @@ test('managed-team discovery rejects an accepted invite whose team grant was rem
     );
 });
 
+test('managed-team discovery preserves a current mixed-case legacy admin grant', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: ['Coach@Example.com'],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach-1'
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('coach-1', { email: 'coach@example.com' })
+    );
+    assert.equal(managed.items.length, 1);
+    assert.equal(managed.items[0].id, 'team-1');
+    assert.deepEqual(managed.items[0].adminEmails, ['coach@example.com']);
+});
+
 test('team opportunity publishing is server-authorized and returns a public-only projection', async () => {
     const input = {
         kind: 'coach_or_staff',

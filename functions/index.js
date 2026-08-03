@@ -17073,6 +17073,13 @@ async function listStaffTeamDocuments(caller) {
     .filter(Boolean));
   coachTeamSnaps.forEach((teamSnap) => {
     if (!teamSnap.exists || teams.has(teamSnap.id)) return;
+    if (hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
+      // The query path expects normalized email storage, but legacy records can
+      // contain mixed-case values. Rechecking the loaded canonical team keeps a
+      // current manager from being mistaken for a revoked invite recipient.
+      teams.set(teamSnap.id, teamSnap);
+      return;
+    }
     if (acceptedAdminInviteTeamIds.has(teamSnap.id)) return;
     teams.set(teamSnap.id, teamSnap);
   });
