@@ -3,12 +3,14 @@
 function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   if (user?.isAdmin === true) return true;
   const normalizedEmail = String(email || user?.email || user?.profileEmail || '').trim().toLowerCase();
-  const ownerEmail = String(team?.ownerEmailLower || team?.ownerEmail || '').trim().toLowerCase();
+  const ownerEmails = [team?.ownerEmailLower, team?.ownerEmail]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean);
   const adminEmails = Array.isArray(team?.adminEmails)
     ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
     : [];
   return Boolean(uid && team?.ownerId === uid) ||
-    Boolean(normalizedEmail && ownerEmail === normalizedEmail) ||
+    Boolean(normalizedEmail && ownerEmails.includes(normalizedEmail)) ||
     Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 

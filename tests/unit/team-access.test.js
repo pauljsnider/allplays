@@ -34,6 +34,18 @@ describe('team access helpers', () => {
     )).toBe(true);
   });
 
+  it('checks both legacy owner aliases when the normalized alias is stale', () => {
+    expect(hasFullTeamAccess(
+      { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
+      {
+        ...TEAM,
+        ownerId: 'different-owner',
+        ownerEmailLower: 'stale@example.com',
+        ownerEmail: 'owner@example.com'
+      }
+    )).toBe(true);
+  });
+
   it('grants full access to platform admin', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });

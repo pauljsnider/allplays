@@ -42,11 +42,13 @@ test('managed team projection exposes only the fields required to establish team
 test('team access recognizes canonical, admin, and legacy email ownership without granting strangers', () => {
   const team = {
     ownerId: 'owner-1',
+    ownerEmailLower: 'stale@example.com',
     ownerEmail: 'legacy@example.com',
     adminEmails: ['admin@example.com']
   };
   assert.equal(hasTeamAdminAccess({ team, uid: 'owner-1', email: 'owner@example.com' }), true);
   assert.equal(hasTeamAdminAccess({ team, uid: 'legacy-1', email: 'LEGACY@example.com' }), true);
+  assert.equal(hasTeamAdminAccess({ team, uid: 'stale-1', email: 'STALE@example.com' }), true);
   assert.equal(hasTeamAdminAccess({ team, uid: 'admin-1', email: 'ADMIN@example.com' }), true);
   assert.equal(hasTeamAdminAccess({ team, uid: 'stranger-1', email: 'stranger@example.com' }), false);
 });
