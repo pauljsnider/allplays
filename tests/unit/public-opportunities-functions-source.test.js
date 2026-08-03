@@ -31,6 +31,43 @@ describe('public opportunity callable wiring', () => {
     ].forEach((name) => expect(source).toContain(`exports.${name}`));
   });
 
+  it('deduplicates public calendar projections against tracked team games before serialization', () => {
+    const calendarProjection = source.slice(
+      source.indexOf('exports.getPublicTeamCalendarProjection'),
+      source.indexOf('exports.getPublicGameProjection')
+    );
+    expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");
+    expect(calendarProjection).not.toContain(".where('date'");
+    expect(calendarProjection).toContain('orderBy(admin.firestore.FieldPath.documentId())');
+    expect(calendarProjection).toContain(".select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus')");
+    expect(calendarProjection).toContain('scanBoundedPublicCalendarTrackingEvents');
+    expect(calendarProjection).toContain('maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS');
+    expect(calendarProjection).toContain('calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid)');
+    expect(calendarProjection).toContain('type: normalizeFamilyShareText(gameSnap.data()?.type)');
+    expect(calendarProjection).toContain('location: normalizeFamilyShareText(gameSnap.data()?.location)');
+    expect(calendarProjection).toContain('opponent: normalizeFamilyShareText(gameSnap.data()?.opponent)');
+    expect(calendarProjection).toContain('title: normalizeFamilyShareText(gameSnap.data()?.title)');
+    expect(calendarProjection).toContain('visibility: normalizeFamilyShareText(gameSnap.data()?.visibility)');
+    expect(calendarProjection).toContain('isPrivate: gameSnap.data()?.isPrivate === true');
+    expect(calendarProjection).toContain('private: gameSnap.data()?.private === true');
+    expect(calendarProjection).toContain('deleted: gameSnap.data()?.deleted === true');
+    expect(calendarProjection).toContain('status: normalizeFamilyShareText(gameSnap.data()?.status)');
+    expect(calendarProjection).toContain('liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)');
+    expect(calendarProjection).toContain('.filter(canTrackedCalendarEventSuppressPublicProjection)');
+    const sourceListIndex = calendarProjection.indexOf('const calendarUrls = []');
+    const emptyReturnIndex = calendarProjection.indexOf('if (calendarUrls.length === 0)');
+    const trackingScanIndex = calendarProjection.indexOf('const trackedCalendarEvents');
+    expect(sourceListIndex).toBeGreaterThan(-1);
+    expect(emptyReturnIndex).toBeGreaterThan(sourceListIndex);
+    expect(trackingScanIndex).toBeGreaterThan(emptyReturnIndex);
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('events: []');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('truncated: false');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('nextCursor: null');
+    expect(calendarProjection).toContain('!isFamilyShareCalendarEventTracked(event, trackedCalendarEvents)');
+    expect(calendarProjection.indexOf('isFamilyShareCalendarEventTracked'))
+      .toBeLessThan(calendarProjection.indexOf('serializePublicCalendarEvent'));
+  });
+
   it('server-verifies publishing roles, verified email, expiration, rate limits, and private notifications', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
     expect(source).toContain("const rawEmail = String(context.auth.token?.email || '').trim();");

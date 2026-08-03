@@ -16,6 +16,9 @@ const CALENDAR_LOCATION_DIRECTIONS = new Set([
   'north', 'south', 'east', 'west',
   'northeast', 'northwest', 'southeast', 'southwest'
 ]);
+const GENERIC_CALENDAR_DISCRIMINATORS = new Set([
+  '', 'tbd', 'unknown', 'practice', 'game', 'training', 'workout', 'scrimmage'
+]);
 
 function compactText(value, maxLength = 240) {
   return String(value == null ? '' : value)
@@ -34,6 +37,68 @@ function hashFamilyShareOpaqueValue(namespace, value, length = 32) {
 function hashFamilyShareCalendarEventUid(value) {
   const uid = compactText(value, 256);
   return uid ? hashFamilyShareOpaqueValue('calendar-event-uid', uid) : '';
+}
+
+function normalizeFamilyShareCalendarEventType(value) {
+  return compactText(value, 32).toLowerCase() === 'practice' ? 'practice' : 'game';
+}
+
+function normalizeFamilyShareCalendarDiscriminator(value) {
+  const normalized = compactText(value, 300).replace(/\s+/g, ' ').toLowerCase();
+  return GENERIC_CALENDAR_DISCRIMINATORS.has(normalized) ? '' : normalized;
+}
+
+function hasMatchingFamilyShareCalendarDiscriminator(event, tracked, type) {
+  const eventLocation = normalizeFamilyShareCalendarDiscriminator(event?.location);
+  const trackedLocation = normalizeFamilyShareCalendarDiscriminator(tracked?.location);
+  if (eventLocation && eventLocation === trackedLocation) return true;
+
+  const field = type === 'practice' ? 'title' : 'opponent';
+  const eventValue = normalizeFamilyShareCalendarDiscriminator(event?.[field]);
+  const trackedValue = normalizeFamilyShareCalendarDiscriminator(tracked?.[field]);
+  return Boolean(eventValue && eventValue === trackedValue);
+}
+
+function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
+  const entries = [...(trackedEvents instanceof Set ? trackedEvents : (Array.isArray(trackedEvents) ? trackedEvents : []))]
+    .map((tracked) => ({
+      id: compactText(typeof tracked === 'object' ? tracked?.calendarEventUid : tracked, 512),
+      startsAt: typeof tracked === 'object' ? toIso(tracked?.date || tracked?.startsAt) : null,
+      type: typeof tracked === 'object' ? normalizeFamilyShareCalendarEventType(tracked?.type) : 'game',
+      location: typeof tracked === 'object' ? compactText(tracked?.location, 300) : '',
+      opponent: typeof tracked === 'object' ? compactText(tracked?.opponent, 240) : '',
+      title: typeof tracked === 'object' ? compactText(tracked?.title, 240) : ''
+    }))
+    .filter((tracked) => tracked.id);
+  const eventIds = [event?.id, event?.eventKey]
+    .map((id) => compactText(id, 256))
+    .filter(Boolean);
+  const startsAt = toIso(event?.date || event?.startsAt);
+  const uidHash = compactText(event?.calendarUidHash, 64);
+  const type = normalizeFamilyShareCalendarEventType(event?.type);
+  for (const tracked of entries) {
+    const occurrenceMatch = tracked.id.match(/^(.*)__(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/);
+    const baseId = occurrenceMatch?.[1] || tracked.id;
+    const occurrenceStartsAt = occurrenceMatch?.[2] || null;
+    if (eventIds.some((eventId) => (
+      tracked.id === eventId || (baseId === eventId && occurrenceStartsAt === startsAt)
+    ))) return true;
+    if (!uidHash) continue;
+    if (hashFamilyShareCalendarEventUid(baseId) === uidHash) {
+      if (occurrenceStartsAt ? occurrenceStartsAt === startsAt : !tracked.startsAt || tracked.startsAt === startsAt) return true;
+      continue;
+    }
+    // Prior public IDs are irreversible 32-hex hashes. Require stable event shape
+    // in addition to their embedded occurrence timestamp so simultaneous events
+    // do not suppress one another after mutable summary metadata changes.
+    if (
+      /^[a-f0-9]{32}$/i.test(baseId)
+      && occurrenceStartsAt === startsAt
+      && tracked.type === type
+      && hasMatchingFamilyShareCalendarDiscriminator(event, tracked, type)
+    ) return true;
+  }
+  return false;
 }
 
 function toIso(value) {
@@ -507,6 +572,7 @@ module.exports = {
   buildFamilySharePresentation,
   getFamilyShareCalendarDedupTimestamps,
   hashFamilyShareCalendarEventUid,
+  isFamilyShareCalendarEventTracked,
   parseBoundedIcsEvents,
   sanitizeFamilyShareViewResponse
 };
