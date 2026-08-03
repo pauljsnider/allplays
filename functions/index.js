@@ -16602,7 +16602,7 @@ function isOpportunityPlatformAdmin(caller) {
 
 const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
   firestore,
-  Timestamp: admin.firestore.Timestamp,
+  Timestamp: { now: () => admin.firestore.Timestamp.now() },
   HttpsError: functions.https.HttpsError,
   logger: functions.logger
 });
