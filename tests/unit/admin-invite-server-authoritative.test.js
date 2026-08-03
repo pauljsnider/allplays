@@ -60,6 +60,17 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'admin-1',
             authUser: { uid: 'admin-1', email: 'ADMIN@example.com' }
         }, true],
+        ['current legacy email owner with a conflicting normalized alias', {
+            team: {
+                ownerId: 'owner-1',
+                ownerEmailLower: 'stale@example.com',
+                ownerEmail: 'legacy-owner@example.com',
+                adminEmails: []
+            },
+            user: {},
+            uid: 'legacy-owner-1',
+            authUser: { uid: 'legacy-owner-1', email: 'LEGACY-OWNER@example.com' }
+        }, true],
         ['current global administrator', {
             team: { ownerId: 'owner-1', adminEmails: [] },
             user: { isAdmin: true },

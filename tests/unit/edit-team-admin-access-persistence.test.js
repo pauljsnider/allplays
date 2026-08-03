@@ -382,7 +382,7 @@ function extractEditTeamModule() {
             'const { checkAuth, sendInviteEmail } = deps.auth;'
         )
         .replace(
-            "import { renderTeamAdminBanner } from './js/team-admin-banner.js';",
+            "import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=13';",
             'const { renderTeamAdminBanner } = deps.teamAdminBanner;'
         )
         .replace(

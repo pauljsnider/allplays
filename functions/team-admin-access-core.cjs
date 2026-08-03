@@ -19,10 +19,15 @@ function hasAdminInviteIssuerAccess({ team, user = {}, uid, authUser }) {
   if (user?.isAdmin === true || team?.ownerId === uid) return true;
 
   const normalizedAuthEmail = String(authUser.email || '').trim().toLowerCase();
+  const ownerEmails = [team?.ownerEmailLower, team?.ownerEmail]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean);
   const adminEmails = Array.isArray(team?.adminEmails)
     ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
     : [];
-  return Boolean(normalizedAuthEmail && adminEmails.includes(normalizedAuthEmail));
+  return Boolean(normalizedAuthEmail && (
+    ownerEmails.includes(normalizedAuthEmail) || adminEmails.includes(normalizedAuthEmail)
+  ));
 }
 
 module.exports = { hasAdminInviteIssuerAccess, hasTeamAdminAccess };
