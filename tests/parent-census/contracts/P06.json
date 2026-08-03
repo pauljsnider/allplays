@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P06",
+  "title": "Normal login session restoration and logout",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "desktop",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Refresh Home",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/home"
+    },
+    {
+      "action": "logout",
+      "actor": "primary"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Sign in",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/auth"
+    }
+  ],
+  "cleanupSteps": []
+}
