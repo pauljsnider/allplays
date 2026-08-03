@@ -256,6 +256,21 @@ function loadCallables(seed = {}, { authUsers = {}, queryFailures = [] } = {}) {
         }),
         auth: () => ({
             verifyIdToken: async () => null,
+            getUserByEmail: async (email) => {
+                const normalizedEmail = String(email || '').trim().toLowerCase();
+                const match = Object.entries(authUsers).find(([, authUser]) => (
+                    authUser
+                    && !(authUser instanceof Error)
+                    && String(authUser.email || '').trim().toLowerCase() === normalizedEmail
+                ));
+                if (!match) {
+                    const error = new Error(`Missing auth user email: ${normalizedEmail}`);
+                    error.code = 'auth/user-not-found';
+                    throw error;
+                }
+                const [uid, authUser] = match;
+                return { uid, ...clone(authUser) };
+            },
             getUser: async (uid) => {
                 if (!Object.prototype.hasOwnProperty.call(authUsers, uid)) {
                     const seededUser = seed[`users/${uid}`];
@@ -499,6 +514,67 @@ test('team admin revocation atomically clears reciprocal coach access and accept
         (await callables.listManagedTeams({}, authContext('coach-1', { email: 'new-coach@example.com' }))).items,
         []
     );
+});
+
+test('team admin revocation clears reciprocal coach access for a current Auth grant without an invite binding', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/legacy-coach': {
+            email: 'stale-profile@example.com',
+            coachOf: ['team-1', 'other-team']
+        },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: ['Coach@Example.com'],
+            isPublic: false,
+            active: true
+        }
+    }, {
+        authUsers: {
+            'legacy-coach': { email: 'coach@example.com', disabled: false }
+        }
+    });
+
+    const result = await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: ' Coach@Example.com ' },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.deepEqual(result, { success: true, removedUserCount: 1 });
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
+    assert.deepEqual(firestore.snapshot('users/legacy-coach').coachOf, ['other-team']);
+    assert.deepEqual(
+        (await callables.listManagedTeams({}, authContext('legacy-coach', { email: 'coach@example.com' }))).items,
+        []
+    );
+});
+
+test('team admin revocation cannot remove a canonical owner resolved through current Auth', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com', coachOf: ['team-1'] },
+        'users/platform-admin': { email: 'platform@example.com', isAdmin: true },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            adminEmails: ['owner@example.com']
+        }
+    }, {
+        authUsers: {
+            'owner-1': { email: 'owner@example.com', disabled: false }
+        }
+    });
+
+    await assert.rejects(
+        callables.revokeTeamAdminAccess(
+            { teamId: 'team-1', email: 'owner@example.com' },
+            authContext('platform-admin', { email: 'platform@example.com' })
+        ),
+        (error) => error.code === 'failed-precondition'
+            && error.message === 'The team owner cannot be removed from staff access.'
+    );
+
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, ['owner@example.com']);
+    assert.deepEqual(firestore.snapshot('users/owner-1').coachOf, ['team-1']);
 });
 
 test('team admin revocation preserves authenticated manager access before email verification', async () => {

@@ -17297,6 +17297,19 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
   const teamRef = firestore.doc(`teams/${teamId}`);
   const callerRef = firestore.doc(`users/${caller.uid}`);
   const teamInviteQuery = firestore.collection('accessCodes').where('teamId', '==', teamId);
+  let targetAuthUid = '';
+  try {
+    const targetAuthUser = await admin.auth().getUserByEmail(targetEmail);
+    const resolvedUid = String(targetAuthUser?.uid || '').trim();
+    if (!resolvedUid || resolvedUid.includes('/') || resolvedUid.length > 128) {
+      throw new Error('Resolved team admin Auth user ID is invalid.');
+    }
+    targetAuthUid = resolvedUid;
+  } catch (error) {
+    if (!['auth/user-not-found', 'user-not-found', 'auth/invalid-email'].includes(String(error?.code || ''))) {
+      throw error;
+    }
+  }
   let removedUserCount = 0;
 
   await firestore.runTransaction(async (transaction) => {
@@ -17326,6 +17339,9 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
     if (caller.email === targetEmail && !callerOwnsTeam && !isOpportunityPlatformAdmin(currentCaller)) {
       throwOpportunityError('failed-precondition', 'Team admins cannot remove their own staff access.');
     }
+    if (targetAuthUid && String(team.ownerId || '').trim() === targetAuthUid) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
 
     const matchingInviteSnaps = inviteSnap.docs.filter((docSnap) => {
       const invite = docSnap.data() || {};
@@ -17333,7 +17349,12 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
         && normalizeParentInviteEmail(invite.email) === targetEmail;
     });
     const targetUserRefs = new Map();
-    // Only invite-bound usedBy identifies the principal; mutable profile aliases do not.
+    // Current Auth identity and invite-bound usedBy identify principals. Mutable
+    // profile email aliases must never authorize destructive reciprocal cleanup.
+    if (targetAuthUid) {
+      const targetAuthUserRef = firestore.doc(`users/${targetAuthUid}`);
+      targetUserRefs.set(targetAuthUserRef.path, targetAuthUserRef);
+    }
     matchingInviteSnaps.forEach((docSnap) => {
       const usedBy = String(docSnap.data()?.usedBy || '').trim();
       if (usedBy && /^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) {
