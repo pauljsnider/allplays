@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P01",
+  "title": "Parent invite landing preserves invite context",
+  "actors": [
+    "anonymous"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "goto",
+      "actor": "anonymous",
+      "route": "/accept-invite?code={LIFECYCLE_SIGNUP_INVITE_CODE}&type=parent"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "anonymous",
+      "route": "/accept-invite?code={LIFECYCLE_SIGNUP_INVITE_CODE}&type=parent"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Join ALL PLAYS",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "text",
+        "name": "Join code entered",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "anonymous",
+      "target": {
+        "kind": "text",
+        "name": "{LIFECYCLE_SIGNUP_INVITE_CODE}",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_SIGNUP_INVITE_CODE}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "label",
+        "name": "Join code",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "link",
+        "name": "Sign in to accept",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
