@@ -168,6 +168,10 @@ describe('certificate legacy signature inventory backfill', () => {
         const staleBindingSet = vi.fn(async () => {});
         const currentBindingSet = vi.fn(async () => {});
         const markerWrites = [];
+        const adminEmails = [
+            ...Array.from({ length: 100 }, (_, index) => `admin-${index}@example.test`),
+            'current-admin@example.test'
+        ];
         const teamRef = {
             get: vi.fn(async () => ({
                 exists: true,
@@ -175,7 +179,7 @@ describe('certificate legacy signature inventory backfill', () => {
                     ownerId: 'current-owner',
                     ownerEmail: 'former-owner@example.test',
                     ownerEmailLower: 'former-owner@example.test',
-                    adminEmails: ['admin@example.test']
+                    adminEmails
                 })
             }))
         };
@@ -210,8 +214,11 @@ describe('certificate legacy signature inventory backfill', () => {
         };
         const auth = {
             getUsers: vi.fn(async (identifiers) => {
-                expect(identifiers).toEqual([{ email: 'admin@example.test' }]);
-                return { users: [{ uid: 'admin-user' }] };
+                return {
+                    users: identifiers.some(({ email }) => email === 'current-admin@example.test')
+                        ? [{ uid: 'admin-user' }]
+                        : []
+                };
             })
         };
 
@@ -235,6 +242,8 @@ describe('certificate legacy signature inventory backfill', () => {
         }), { merge: true });
         expect(currentBindingSet).not.toHaveBeenCalled();
         expect(teamRef.get).toHaveBeenCalledOnce();
+        expect(auth.getUsers).toHaveBeenCalledTimes(2);
+        expect(auth.getUsers.mock.calls.map(([identifiers]) => identifiers.length)).toEqual([100, 1]);
         expect(markerWrites).toHaveLength(1);
         expect(markerWrites[0]).toMatchObject({
             status: 'completed',

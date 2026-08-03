@@ -32,13 +32,11 @@ function getAdminAppOptions() {
 
 async function getAuthorizedUploaderIds(auth, team = {}) {
     const uploaderIds = new Set([String(team.ownerId || '').trim()].filter(Boolean));
-    const managerEmails = [...new Set([
-        team.ownerEmail,
-        team.ownerEmailLower,
-        ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
-    ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
-    if (managerEmails.length) {
-        const result = await auth.getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+    const managerEmails = getCertificateLegacyManagerEmails(team);
+    for (let offset = 0; offset < managerEmails.length; offset += 100) {
+        const result = await auth.getUsers(
+            managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
+        );
         result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
     }
     return [...uploaderIds];

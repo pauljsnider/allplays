@@ -14165,13 +14165,11 @@ async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
     String(context.auth?.uid || '').trim(),
     String(team.ownerId || '').trim()
   ].filter(Boolean));
-  const managerEmails = [...new Set([
-    team.ownerEmail,
-    team.ownerEmailLower,
-    ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
-  ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
-  if (managerEmails.length) {
-    const result = await admin.auth().getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+  const managerEmails = getCertificateLegacyManagerEmails(team);
+  for (let offset = 0; offset < managerEmails.length; offset += 100) {
+    const result = await admin.auth().getUsers(
+      managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
+    );
     result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
   }
   return [...uploaderIds];
