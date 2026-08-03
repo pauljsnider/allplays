@@ -54,7 +54,8 @@ function serializeManagedTeamProfile(teamId, team = {}) {
   return {
     ...summary,
     ownerId: cleanText(team.ownerId, 160) || null,
-    ownerEmail: normalizeEmail(team.ownerEmail || team.ownerEmailLower) || null,
+    ownerEmail: normalizeEmail(team.ownerEmail) || null,
+    ownerEmailLower: normalizeEmail(team.ownerEmailLower) || null,
     adminEmails: normalizeEmailList(team.adminEmails)
   };
 }

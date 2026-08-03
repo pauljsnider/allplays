@@ -93,12 +93,17 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
             ok: true,
             json: async () => ({
                 result: {
-                    items: [{ id: 'legacy-team', name: 'Legacy', ownerEmail: 'coach@example.com' }],
+                    items: [{
+                        id: 'legacy-team',
+                        name: 'Legacy',
+                        ownerEmail: 'former@example.com',
+                        ownerEmailLower: 'coach@example.com'
+                    }],
                     isPartial: false
                 }
             })
         });
-        const managedTeams = await loadManagedTeamsFromCallable({
+        const managedTeamResult = await loadManagedTeamsFromCallable({
             projectId: 'all-plays-prod',
             idToken: 'user-id-token',
             fetchImpl
@@ -111,7 +116,7 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         const context = await resolveUserContext(
             db,
             { uid: 'coach-1', email: 'coach@example.com' },
-            { managedTeams }
+            { managedTeams: managedTeamResult.teams }
         );
 
         expect(fetchImpl).toHaveBeenCalledWith(
@@ -122,7 +127,21 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                 body: JSON.stringify({ data: {} })
             })
         );
+        expect(managedTeamResult.isPartial).toBe(false);
         expect([...context.teams.get('legacy-team').roles]).toEqual(['owner']);
+    });
+
+    it('preserves the callable partial marker so MCP tools can fail closed', async () => {
+        const result = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ result: { items: [{ id: 'team-1' }], isPartial: true } })
+            })
+        });
+
+        expect(result).toEqual({ teams: [{ id: 'team-1' }], isPartial: true });
     });
 
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
@@ -511,6 +530,8 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;');
         expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
         expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
+        expect(source).toContain('if (managedTeamResult.isPartial)');
+        expect(source).toContain("throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.')");
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });

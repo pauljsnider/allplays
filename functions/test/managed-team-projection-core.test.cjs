@@ -33,10 +33,21 @@ test('managed team projection exposes only the fields required to establish team
     isPublic: false,
     ownerId: 'owner-1',
     ownerEmail: 'owner@example.com',
+    ownerEmailLower: null,
     adminEmails: ['admin@example.com']
   });
   assert.equal('privateBillingCustomerId' in item, false);
   assert.equal('calendarUrls' in item, false);
+});
+
+test('managed team projection preserves conflicting legacy owner aliases for authorized clients', () => {
+  const item = serializeManagedTeamProfile('legacy-team', {
+    ownerEmail: ' First@Example.com ',
+    ownerEmailLower: 'second@example.com'
+  });
+
+  assert.equal(item.ownerEmail, 'first@example.com');
+  assert.equal(item.ownerEmailLower, 'second@example.com');
 });
 
 test('canonical ownership overrides stale legacy owner emails while legacy-only teams still work', () => {

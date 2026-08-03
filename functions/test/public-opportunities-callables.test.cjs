@@ -397,6 +397,7 @@ test('managed-team callables return access fields only to current managers', asy
         isPublic: false,
         ownerId: 'owner-1',
         ownerEmail: null,
+        ownerEmailLower: null,
         adminEmails: []
     }]);
     assert.ok(!managed.items.some((team) => team.id === 'coach-team'));

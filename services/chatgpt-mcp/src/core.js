@@ -80,7 +80,10 @@ export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchIm
     if (!response.ok || !Array.isArray(result?.items)) {
         throw new DomainError('unavailable', payload?.error?.message || 'Managed team discovery is unavailable.');
     }
-    return result.items.filter((team) => team && typeof team === 'object' && !Array.isArray(team));
+    return {
+        teams: result.items.filter((team) => team && typeof team === 'object' && !Array.isArray(team)),
+        isPartial: result.isPartial === true
+    };
 }
 
 /**

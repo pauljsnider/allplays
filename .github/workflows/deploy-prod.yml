@@ -604,6 +604,8 @@ jobs:
           mkdir -p "$FIREBASE_PRODUCTION_BUNDLE/_migration"
           cp _migration/backfill-admin-user-search-index.js \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-admin-user-search-index.mjs"
+          cp _migration/backfill-legacy-team-owner-ids.js \
+            "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-legacy-team-owner-ids.mjs"
           cp _migration/backfill-team-fee-checkout-attempts.js \
             "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-team-fee-checkout-attempts.mjs"
           cp _migration/backfill-registration-checkout-attempts.js \
@@ -721,6 +723,8 @@ jobs:
           test ! -L "$bundle/context/extract-production-functions-handoff.py"
           test -f "$bundle/_migration/backfill-admin-user-search-index.mjs"
           test ! -L "$bundle/_migration/backfill-admin-user-search-index.mjs"
+          test -f "$bundle/_migration/backfill-legacy-team-owner-ids.mjs"
+          test ! -L "$bundle/_migration/backfill-legacy-team-owner-ids.mjs"
           test -f "$bundle/_migration/backfill-team-fee-checkout-attempts.mjs"
           test ! -L "$bundle/_migration/backfill-team-fee-checkout-attempts.mjs"
           test -f "$bundle/_migration/backfill-registration-checkout-attempts.mjs"
@@ -754,6 +758,35 @@ jobs:
             "$bundle"
           ln -s functions/node_modules "$bundle/node_modules"
           echo "FIREBASE_PRODUCTION_BUNDLE=$bundle" >> "$GITHUB_ENV"
+
+      - name: Authenticate legacy owner migration through exact-workflow OIDC
+        id: google_auth_owner_migration
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_DEPLOY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: game-flow-c6311
+          create_credentials_file: true
+          cleanup_credentials: true
+
+      - name: Canonicalize legacy team owners before authorization lockdown
+        run: node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-legacy-team-owner-ids.mjs" --apply
+        env:
+          FIREBASE_PROJECT_ID: game-flow-c6311
+
+      - name: Remove legacy owner migration credential
+        env:
+          GOOGLE_CREDENTIAL_FILE: ${{ steps.google_auth_owner_migration.outputs.credentials_file_path }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$GOOGLE_CREDENTIAL_FILE" ]]; then
+            rm -f -- "$GOOGLE_CREDENTIAL_FILE"
+          fi
+          {
+            echo "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE="
+            echo "GOOGLE_APPLICATION_CREDENTIALS="
+            echo "GOOGLE_GHA_CREDS_PATH="
+          } >> "$GITHUB_ENV"
 
       - name: Authenticate Storage deploy through exact-workflow OIDC
         id: google_auth_storage

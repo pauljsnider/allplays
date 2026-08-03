@@ -733,7 +733,13 @@ describe('parent schedule child scope', () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
     vi.mocked(getStaffTeams).mockRejectedValue(new Error('native Firebase unavailable'));
     vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
-      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      teams: [{
+        id: 'team-owned',
+        name: 'Vipers',
+        ownerEmail: 'former@example.com',
+        ownerEmailLower: 'coach@example.com',
+        active: true
+      }],
       isPartial: true
     });
 

@@ -183,11 +183,14 @@ function buildServer(identity) {
 
     const run = (handler) => async (args) => {
         try {
-            const managedTeams = await loadManagedTeamsFromCallable({
+            const managedTeamResult = await loadManagedTeamsFromCallable({
                 projectId: PROJECT_ID,
                 idToken: identity.idToken
             });
-            const context = await resolveUserContext(db, identity, { managedTeams });
+            if (managedTeamResult.isPartial) {
+                throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.');
+            }
+            const context = await resolveUserContext(db, identity, { managedTeams: managedTeamResult.teams });
             return toolResult(await handler(context, args));
         } catch (error) {
             return toolError(error);
