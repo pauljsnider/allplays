@@ -444,7 +444,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: FIREBASE_STUB
     }));
-    await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({
+    await page.route('**/js/team-admin-banner.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_ADMIN_BANNER_STUB
