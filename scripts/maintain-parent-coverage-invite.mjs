@@ -24,6 +24,10 @@ function boolValue(fields, name) {
     return fields?.[name]?.booleanValue === true;
 }
 
+function normalizedStatus(fields) {
+    return stringValue(fields, 'status').trim().toLowerCase();
+}
+
 function timestampMillis(fields, name) {
     return Date.parse(String(fields?.[name]?.timestampValue || '')) || 0;
 }
@@ -69,15 +73,19 @@ export function inspectRedemptionFixture(teamDocument, playerDocument, { staffUi
     const teamMarked = stringValue(team, 'fixtureType') === redemptionFixtureMarker;
     const playerMarked = stringValue(player, 'fixtureType') === redemptionFixtureMarker;
     const playerBound = stringValue(player, 'teamId') === teamId;
-    const teamActive = team.active?.booleanValue === true && team.archived?.booleanValue !== true;
-    const playerActive = player.active?.booleanValue === true && player.archived?.booleanValue !== true;
+    const teamPrivate = team.isPublic?.booleanValue === false;
+    const teamActive = team.active?.booleanValue === true && team.archived?.booleanValue !== true &&
+        normalizedStatus(team) === 'active';
+    const playerActive = player.active?.booleanValue === true && player.archived?.booleanValue !== true &&
+        normalizedStatus(player) === 'active';
     return {
         ready: Boolean(teamDocument && playerDocument) && teamOwned && teamMarked && playerMarked &&
-            playerBound && teamActive && playerActive,
+            playerBound && teamPrivate && teamActive && playerActive,
         teamOwned,
         teamMarked,
         playerMarked,
         playerBound,
+        teamPrivate,
         teamActive,
         playerActive
     };

@@ -67,8 +67,12 @@ describe('parent coverage lifecycle invite selection', () => {
 
         expect(inspect().ready).toBe(true);
         expect(inspect({ fields: { ...team.fields, ownerId: { stringValue: 'other' } } }).ready).toBe(false);
+        expect(inspect({ fields: { ...team.fields, isPublic: { booleanValue: true } } }).ready).toBe(false);
+        expect(inspect({ fields: { ...team.fields, status: { stringValue: 'inactive' } } }).ready).toBe(false);
+        expect(inspect({ fields: { ...team.fields, status: { stringValue: ' ARCHIVED ' } } }).ready).toBe(false);
         expect(inspect(team, { fields: { ...player.fields, teamId: { stringValue: 'other' } } }).ready).toBe(false);
         expect(inspect(team, { fields: { ...player.fields, fixtureType: { stringValue: 'other' } } }).ready).toBe(false);
+        expect(inspect(team, { fields: { ...player.fields, status: { stringValue: 'inactive' } } }).ready).toBe(false);
         expect(inspect(null, player).ready).toBe(false);
     });
 });
