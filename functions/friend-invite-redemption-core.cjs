@@ -51,6 +51,26 @@ function extractVerifiedFriendInviteRecipientIdentities(auth, HttpsError) {
   return { uid, email, phone };
 }
 
+function createFriendInviteRedemptionCallableHandler({ redeemTransaction, HttpsError }) {
+  if (typeof redeemTransaction !== 'function') throw new TypeError('redeemTransaction is required');
+  if (typeof HttpsError !== 'function') throw new TypeError('HttpsError is required');
+
+  return async function redeemFriendInviteCallable(data, context = {}) {
+    try {
+      const recipientIdentities = extractVerifiedFriendInviteRecipientIdentities(
+        context.auth,
+        HttpsError
+      );
+      return await redeemTransaction({
+        code: data?.code,
+        recipientIdentities
+      });
+    } catch {
+      throw new HttpsError('permission-denied', FRIEND_INVITE_REDEMPTION_ERROR_MESSAGE);
+    }
+  };
+}
+
 function normalizeAccessCode(value) {
   const code = String(value || '').trim().toUpperCase();
   return ACCESS_CODE_PATTERN.test(code) ? code : '';
@@ -290,6 +310,7 @@ function createFriendInviteRedemptionTransaction({ firestore, Timestamp, HttpsEr
 
 module.exports = {
   FRIEND_INVITE_REDEMPTION_ERROR_MESSAGE,
+  createFriendInviteRedemptionCallableHandler,
   createFriendInviteRedemptionTransaction,
   extractVerifiedFriendInviteRecipientIdentities,
   normalizeVerifiedRecipientEmail,

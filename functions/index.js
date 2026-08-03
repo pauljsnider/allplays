@@ -320,6 +320,10 @@ const {
   createCheckAcceptedFriendMessageAccessHandler,
   hasCurrentTeamAccess
 } = require('./friend-message-access-core.cjs');
+const {
+  createFriendInviteRedemptionCallableHandler,
+  createFriendInviteRedemptionTransaction
+} = require('./friend-invite-redemption-core.cjs');
 const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
@@ -16595,6 +16599,18 @@ async function getOpportunityCaller(context, options = {}) {
 function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
 }
+
+const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger
+});
+const redeemFriendInviteHandler = createFriendInviteRedemptionCallableHandler({
+  redeemTransaction: redeemFriendInviteTransaction,
+  HttpsError: functions.https.HttpsError
+});
+exports.redeemFriendInvite = functions.https.onCall(redeemFriendInviteHandler);
 
 exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   createCheckAcceptedFriendMessageAccessHandler({
