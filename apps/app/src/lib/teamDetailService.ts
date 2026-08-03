@@ -802,9 +802,13 @@ async function recoverAuthoritativeManagedTeam(
     });
     return null;
   });
-  return authoritativeTeam && hasFullTeamAccess(user, authoritativeTeam)
-    ? authoritativeTeam
-    : team;
+  if (!authoritativeTeam || !hasFullTeamAccess(user, authoritativeTeam)) return team;
+
+  const cachedSnapshot = teamDetailBaseSnapshotCache.get(cleanString(teamId));
+  if (cachedSnapshot) {
+    cacheTeamDetailBaseSnapshot({ ...cachedSnapshot, team: authoritativeTeam });
+  }
+  return authoritativeTeam;
 }
 
 async function loadTeamPlayers(teamId: string) {

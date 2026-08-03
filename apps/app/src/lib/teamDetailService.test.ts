@@ -868,6 +868,8 @@ describe('team detail bootstrap loading', () => {
       active: true
     });
     authServiceMocks.getNativeAuthIdToken.mockResolvedValueOnce('web-token');
+    dbMocks.getRosterFieldDefinitions.mockResolvedValueOnce([]);
+    dbMocks.applyRosterCsvImportOperations.mockResolvedValueOnce([{ playerId: 'player-2' }]);
     (globalThis as any).fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -891,6 +893,12 @@ describe('team detail bootstrap loading', () => {
         includeInactive: true
       }));
       expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+
+      await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1', roles: ['coach'] } as any, {
+        name: 'New Player'
+      })).resolves.toMatchObject({ playerId: 'player-2' });
+      expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     } finally {
       globalThis.fetch = previousFetch;
     }
