@@ -22,7 +22,7 @@ describe('co-parent invite workflow regression', () => {
 
         expect(acceptInviteSource).toContain('redeemCoParentInvite');
         expect(acceptInviteSource).toContain("./js/db.js?v=4433155");
-        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443313");
+        expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=443314");
     });
 
     it('routes co-parent membership grants through a callable instead of browser membership writes', () => {

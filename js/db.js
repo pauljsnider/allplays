@@ -236,7 +236,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44337';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44338';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,

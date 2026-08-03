@@ -23,7 +23,7 @@ vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
 vi.mock('../../js/utils.js?v=443333', () => ({
     escapeHtml: (value) => String(value || '')
 }));
-vi.mock('../../js/global-search-visibility.js?v=44334', () => ({
+vi.mock('../../js/global-search-visibility.js?v=44335', () => ({
     filterSearchableTeams: (teams) => Array.isArray(teams) ? teams : [],
     canUserDiscoverPlayerInSearch: () => true
 }));

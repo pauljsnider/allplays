@@ -118,7 +118,7 @@ const setTimeout = deps.setTimeout;
             'const { redeemAdminInviteAtomically } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=443313';",
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=443314';",
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(

@@ -31,7 +31,7 @@ import {
     isTeamMediaDocument,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=44337';
+} from './team-media-utils.js?v=44338';
 
 const state = {
     teamId: '',

@@ -43,7 +43,7 @@ vi.mock('../../js/admin-invite.js?v=6', () => ({
 vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
     mergeApprovedParentMembershipRequests: vi.fn()
 }));
-vi.mock('../../js/accept-invite-flow.js?v=443313', () => ({
+vi.mock('../../js/accept-invite-flow.js?v=443314', () => ({
     createInviteProcessor: vi.fn()
 }));
 vi.mock('../../js/auth-email.js?v=1', () => ({
