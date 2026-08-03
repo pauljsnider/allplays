@@ -353,6 +353,15 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
       limit(12)
     )), 'Public athlete profiles').catch(() => null)
   ]);
+  const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
+  const publicTeamsPromise = Promise.all(
+    uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
+  ).then((teams) => teams.filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
+    id: team.id,
+    name: team.name,
+    sport: team.sport,
+    photoUrl: team.photoUrl
+  })));
   const postDocs = await loadSocialPostQueryPages({
     buildQuery: (cursor) => query(
       collection(db, 'socialPosts'),
@@ -368,16 +377,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     pageSize: socialPostLimit,
     visibleLimit: socialPostLimit
   });
-  const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
-  const publicTeams = (await Promise.all(
-    uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
-  )).filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
-    id: team.id,
-    name: team.name,
-    sport: team.sport,
-    photoUrl: team.photoUrl
-  }));
   const publicChildren = publicChildSnap ? snapshotToDocs(publicChildSnap).map((child) => ({
     id: child.id,
     name: compactString(child.athlete?.name) || 'Athlete profile',
@@ -388,7 +388,10 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
   const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
-  const viewerReactions = await loadViewerSocialPostReactions(posts, viewerId);
+  const [publicTeams, viewerReactions] = await Promise.all([
+    publicTeamsPromise,
+    loadViewerSocialPostReactions(posts, viewerId)
+  ]);
   const hydratedPosts = posts.map((post) => ({
     ...post,
     viewerHasLiked: viewerReactions.has(post.id)
