@@ -9,6 +9,84 @@ function teamDoc(id, data) {
     return { id, data: () => data };
 }
 
+function createAtomicBackfillDb({ teams, users, failOwnerBindingCommit = false }) {
+    const teamState = new Map(Object.entries(teams).map(([id, data]) => [id, structuredClone(data)]));
+    const userState = new Map(Object.entries(users).map(([id, data]) => [id, structuredClone(data)]));
+    const refFor = (path) => ({ path });
+    const applyPatch = (target, patch) => {
+        for (const [key, value] of Object.entries(patch)) {
+            if (value?.constructor?.name === 'ArrayUnionTransform') {
+                target[key] = [...new Set([...(Array.isArray(target[key]) ? target[key] : []), ...value.elements])];
+            } else if (value?.constructor?.name === 'ServerTimestampTransform') {
+                target[key] = 'server-timestamp';
+            } else {
+                target[key] = value;
+            }
+        }
+    };
+    const teamSnapshot = (id, state = teamState) => ({
+        id,
+        ref: refFor(`teams/${id}`),
+        updateTime: { seconds: 1 },
+        exists: state.has(id),
+        data: () => structuredClone(state.get(id))
+    });
+    const userSnapshot = (id, state = userState) => ({
+        id,
+        ref: refFor(`users/${id}`),
+        exists: state.has(id),
+        data: () => structuredClone(state.get(id))
+    });
+
+    const db = {
+        doc: vi.fn(refFor),
+        collection: vi.fn(() => ({
+            select: vi.fn(() => ({
+                get: vi.fn(async () => ({ docs: [...teamState.keys()].map((id) => teamSnapshot(id)) }))
+            }))
+        })),
+        batch: vi.fn(() => {
+            const operations = [];
+            return {
+                update: vi.fn((ref, patch) => operations.push({ kind: 'update', ref, patch })),
+                set: vi.fn((ref, patch, options) => operations.push({ kind: 'set', ref, patch, options })),
+                commit: vi.fn(async () => {
+                    const isOwnerBinding = operations.some(({ patch }) => Object.hasOwn(patch, 'ownerId'));
+                    if (failOwnerBindingCommit && isOwnerBinding) {
+                        throw new Error('simulated atomic owner binding failure');
+                    }
+
+                    const nextTeams = new Map([...teamState].map(([id, data]) => [id, structuredClone(data)]));
+                    const nextUsers = new Map([...userState].map(([id, data]) => [id, structuredClone(data)]));
+                    for (const operation of operations) {
+                        const [collection, id] = operation.ref.path.split('/');
+                        const state = collection === 'teams' ? nextTeams : nextUsers;
+                        const target = operation.kind === 'set' && operation.options?.merge !== true
+                            ? {}
+                            : structuredClone(state.get(id) || {});
+                        applyPatch(target, operation.patch);
+                        state.set(id, target);
+                    }
+                    teamState.clear();
+                    nextTeams.forEach((data, id) => teamState.set(id, data));
+                    userState.clear();
+                    nextUsers.forEach((data, id) => userState.set(id, data));
+                })
+            };
+        }),
+        getAll: vi.fn(async (...refs) => refs.map((ref) => {
+            const [collection, id] = ref.path.split('/');
+            return collection === 'teams' ? teamSnapshot(id) : userSnapshot(id);
+        }))
+    };
+
+    return {
+        db,
+        getTeam: (id) => structuredClone(teamState.get(id)),
+        getUser: (id) => structuredClone(userState.get(id))
+    };
+}
+
 describe('legacy team ownerId migration planning', () => {
     it('binds an ownerId only when Firebase Auth resolves the legacy alias', async () => {
         const auth = {
@@ -122,6 +200,74 @@ describe('legacy team ownerId migration planning', () => {
         expect(teamData.ownerId).toBe('owner-1');
         expect(userData).toEqual({ coachOf: ['legacy'], roles: ['coach'] });
         expect(db.collection).toHaveBeenCalledTimes(2);
+    });
+
+    it('atomically preserves an existing owner while granting reciprocal access to every migrated team', async () => {
+        const { db, getTeam, getUser } = createAtomicBackfillDb({
+            teams: {
+                first: { ownerEmailLower: 'owner@example.com', name: 'First' },
+                second: { ownerEmailLower: 'owner@example.com', name: 'Second' }
+            },
+            users: {
+                'owner-1': {
+                    coachOf: ['existing-team'],
+                    roles: ['parent'],
+                    displayName: 'Existing Owner'
+                }
+            }
+        });
+        const auth = {
+            getUserByEmail: vi.fn(async () => ({ uid: 'owner-1', email: 'owner@example.com' }))
+        };
+
+        await expect(backfillLegacyTeamOwnerIds({
+            db,
+            auth,
+            apply: true,
+            log: { log: vi.fn() }
+        })).resolves.toEqual({
+            migrated: 2,
+            normalizedAliases: 0,
+            unresolvedTeamIds: []
+        });
+
+        expect(getTeam('first')).toMatchObject({ ownerId: 'owner-1', name: 'First' });
+        expect(getTeam('second')).toMatchObject({ ownerId: 'owner-1', name: 'Second' });
+        expect(getUser('owner-1')).toEqual({
+            coachOf: ['existing-team', 'first', 'second'],
+            roles: ['parent', 'coach'],
+            displayName: 'Existing Owner',
+            updatedAt: 'server-timestamp'
+        });
+    });
+
+    it('leaves both teams and the existing owner unchanged when the atomic binding commit fails', async () => {
+        const { db, getTeam, getUser } = createAtomicBackfillDb({
+            teams: {
+                legacy: { ownerEmailLower: 'owner@example.com', name: 'Legacy' }
+            },
+            users: {
+                'owner-1': { coachOf: ['existing-team'], roles: ['parent'], displayName: 'Existing Owner' }
+            },
+            failOwnerBindingCommit: true
+        });
+        const auth = {
+            getUserByEmail: vi.fn(async () => ({ uid: 'owner-1', email: 'owner@example.com' }))
+        };
+
+        await expect(backfillLegacyTeamOwnerIds({
+            db,
+            auth,
+            apply: true,
+            log: { log: vi.fn() }
+        })).rejects.toThrow('simulated atomic owner binding failure');
+
+        expect(getTeam('legacy')).toEqual({ ownerEmailLower: 'owner@example.com', name: 'Legacy' });
+        expect(getUser('owner-1')).toEqual({
+            coachOf: ['existing-team'],
+            roles: ['parent'],
+            displayName: 'Existing Owner'
+        });
     });
 
     it('fails before Auth lookup when normalized owner aliases conflict', async () => {
