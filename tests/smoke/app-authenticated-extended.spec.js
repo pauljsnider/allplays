@@ -30,6 +30,7 @@ const secretValues = [
     config.parentEmail,
     config.parentPassword
 ];
+const LIVE_ACTION_TIMEOUT_MS = 25_000;
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 test.describe.configure({ mode: 'serial' });
@@ -122,6 +123,7 @@ test.afterAll(async () => {
 
 async function withAuthenticatedPage(session, callback) {
     const { page, issues } = session;
+    page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS);
     await callback(page);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }
@@ -180,36 +182,38 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await expect(page.getByText(`${playerName} added to roster.`)).toBeVisible({ timeout: 20_000 });
             await expect(page.getByText(playerName, { exact: true })).toBeVisible();
 
-            await openRoute(
-                page,
-                `/schedule?scope=staff&teamId=${encodeURIComponent(config.teamId)}`
-            );
-            const scheduleTools = page.locator('section[aria-label="Manage schedule tools"]');
-            await expect(scheduleTools).toBeVisible({ timeout: 25_000 });
-            const manageSchedule = scheduleTools.locator('button[aria-controls]').first();
-            await expect(manageSchedule).toBeVisible({ timeout: 25_000 });
-            await manageSchedule.click({ timeout: 25_000 });
-            await expect(manageSchedule).toHaveAttribute('aria-expanded', 'true', { timeout: 25_000 });
-            const createGame = page.locator('section[aria-label="Create game"]');
-            await expect(createGame).toBeVisible({ timeout: 25_000 });
-            await createGame.getByLabel('Opponent').fill(opponentName);
-            await createGame.getByRole('button', { name: 'Create game' }).click();
-            await expect(page.getByText('Game created and schedule refreshed.')).toBeVisible({ timeout: 30_000 });
-            await expect(page.getByText(opponentName, { exact: false }).first()).toBeVisible();
-            const createdEvents = await findFirestoreDocumentsByStringField(
-                staffRestSession,
-                `teams/${config.teamId}/games`,
-                'opponent',
-                opponentName
-            );
-            expect(createdEvents).toHaveLength(1);
-            const createdEventId = getFirestoreDocumentPath(createdEvents[0]).split('/').pop();
-            expect(createdEventId).toBeTruthy();
-            await openRoute(
-                page,
-                `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(createdEventId)}?section=game`
-            );
-            await expect(page.locator('main')).toContainText(opponentName);
+            await test.step('create and verify a schedule game', async () => {
+                await openRoute(
+                    page,
+                    `/schedule?scope=staff&teamId=${encodeURIComponent(config.teamId)}`
+                );
+                const scheduleTools = page.locator('section[aria-label="Manage schedule tools"]');
+                await expect(scheduleTools).toBeVisible({ timeout: 25_000 });
+                const manageSchedule = scheduleTools.locator('button[aria-controls]').first();
+                await expect(manageSchedule).toBeVisible({ timeout: 25_000 });
+                await manageSchedule.click({ timeout: 25_000 });
+                await expect(manageSchedule).toHaveAttribute('aria-expanded', 'true', { timeout: 25_000 });
+                const createGame = page.locator('section[aria-label="Create game"]');
+                await expect(createGame).toBeVisible({ timeout: 25_000 });
+                await createGame.getByLabel('Opponent').fill(opponentName);
+                await createGame.getByRole('button', { name: 'Create game' }).click();
+                await expect(page.getByText('Game created and schedule refreshed.')).toBeVisible({ timeout: 30_000 });
+                await expect(page.getByText(opponentName, { exact: false }).first()).toBeVisible();
+                const createdEvents = await findFirestoreDocumentsByStringField(
+                    staffRestSession,
+                    `teams/${config.teamId}/games`,
+                    'opponent',
+                    opponentName
+                );
+                expect(createdEvents).toHaveLength(1);
+                const createdEventId = getFirestoreDocumentPath(createdEvents[0]).split('/').pop();
+                expect(createdEventId).toBeTruthy();
+                await openRoute(
+                    page,
+                    `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(createdEventId)}?section=game`
+                );
+                await expect(page.locator('main')).toContainText(opponentName);
+            });
 
             await openRoute(page, `/messages/${encodeURIComponent(config.teamId)}`);
             const composer = page.locator('.chat-composer-textarea');
