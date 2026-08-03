@@ -3,10 +3,13 @@
 function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   if (user?.isAdmin === true) return true;
   const normalizedEmail = String(email || user?.email || user?.profileEmail || '').trim().toLowerCase();
+  const ownerEmail = String(team?.ownerEmailLower || team?.ownerEmail || '').trim().toLowerCase();
   const adminEmails = Array.isArray(team?.adminEmails)
     ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
     : [];
-  return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
+  return Boolean(uid && team?.ownerId === uid) ||
+    Boolean(normalizedEmail && ownerEmail === normalizedEmail) ||
+    Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 
 function hasAdminInviteIssuerAccess({ team, user = {}, uid, authUser }) {

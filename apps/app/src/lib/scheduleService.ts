@@ -3059,7 +3059,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   ));
   const shouldVerifyEmptyStaffResult = staffTeamResult.teams.length === 0
     && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
-  if (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult) {
+  if (isNativeRuntime() && (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)) {
     try {
       const restResult = await loadStaffTeamsFromRest(staffUser);
       const teamsById = new Map<string, any>();

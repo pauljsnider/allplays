@@ -25,11 +25,13 @@ export function hasFullTeamAccess(user, team) {
 
   const isOwner = team.ownerId === user.uid;
   const normalizedEmail = getNormalizedUserEmail(user);
+  const ownerEmail = String(team.ownerEmailLower || team.ownerEmail || '').trim().toLowerCase();
+  const isLegacyOwner = Boolean(normalizedEmail && ownerEmail === normalizedEmail);
   const adminEmails = normalizeAdminEmailList(team.adminEmails);
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
 
-  return isOwner || isTeamAdmin || isPlatformAdmin;
+  return isOwner || isLegacyOwner || isTeamAdmin || isPlatformAdmin;
 }
 
 function isScheduledGame(game) {

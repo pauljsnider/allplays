@@ -904,6 +904,33 @@ describe('team detail bootstrap loading', () => {
     }
   });
 
+  it('grants fresh-session management from the authenticated callable projection without browser REST', async () => {
+    const previousFetch = globalThis.fetch;
+    const fetchMock = vi.fn();
+    (globalThis as any).fetch = fetchMock;
+    dbMocks.getTeam.mockResolvedValueOnce({
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      ownerId: 'owner-1',
+      adminEmails: [],
+      active: true
+    });
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+      expect(model.canManageTeam).toBe(true);
+      expect(model.team.ownerId).toBe('owner-1');
+      expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        includeInactive: true
+      }));
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('includes later-page players when the native roster fallback is paginated', async () => {
     const previousFetch = globalThis.fetch;
     nativeRuntimeState.isNative = true;

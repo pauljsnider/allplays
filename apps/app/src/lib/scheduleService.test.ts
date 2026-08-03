@@ -583,78 +583,46 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
-  it('recovers a profile-declared coach team when the web SDK reports an empty complete result', async () => {
+  it('uses the authoritative web callable result without browser Firestore REST verification', async () => {
     const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token' as any);
-    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
-      if (init?.body) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => []
-        } as any;
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
-          fields: {
-            name: { stringValue: 'Vipers' },
-            active: { booleanValue: true }
-          }
-        })
-      } as any;
-    });
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    } as any);
+    const fetchMock = vi.fn();
+    (globalThis as any).fetch = fetchMock;
 
     try {
       const scope = await loadParentScheduleScope(coachUser);
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);
-      expect(getNativeAuthIdToken).toHaveBeenCalledWith(true);
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
       expect(scope.staffTeamsPartial).toBe(false);
       expect(scope.isPartial).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = previousFetch;
     }
   });
 
-  it('verifies an empty complete staff result for a coach even when profile hydration has no team links', async () => {
+  it('accepts an empty complete web callable result without issuing permission-noise REST requests', async () => {
     const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
     vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token' as any);
-    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) : null;
-      const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => fieldPath === 'ownerId' ? [{
-          document: {
-            name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
-            fields: {
-              name: { stringValue: 'Vipers' },
-              ownerId: { stringValue: 'coach-1' },
-              active: { booleanValue: true }
-            }
-          }
-        }] : []
-      } as any;
-    });
+    const fetchMock = vi.fn();
+    (globalThis as any).fetch = fetchMock;
 
     try {
       const scope = await loadParentScheduleScope(coachUser);
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);
-      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeams).toEqual([]);
       expect(scope.staffTeamsPartial).toBe(false);
       expect(scope.isPartial).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       globalThis.fetch = previousFetch;
     }

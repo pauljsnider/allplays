@@ -21,6 +21,7 @@ describe('public opportunity callable wiring', () => {
       'getOpportunityInquiry',
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
+      'listManagedTeams',
       'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
       'getPublicTeamCalendarProjection',
@@ -87,7 +88,8 @@ describe('public opportunity callable wiring', () => {
   it('requires verified inquiry senders and allow-lists public team profiles', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
-    expect(source).toContain('const item = serializePublicTeamProfile(teamSnap.id, team);');
+    expect(source).toContain('item = serializePublicTeamProfile(teamSnap.id, team);');
+    expect(source).toContain('item = serializeManagedTeamProfile(teamSnap.id, team);');
     expect(source).toContain('return { item };');
   });
 

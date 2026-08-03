@@ -325,6 +325,7 @@ const {
   createFriendInviteRedemptionTransaction
 } = require('./friend-invite-redemption-core.cjs');
 const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
+const { serializeManagedTeamProfile } = require('./managed-team-projection-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildChatConversationAccountScrubPlan,
@@ -16601,9 +16602,11 @@ function requireOpportunityAuth(context, { verified = false } = {}) {
 async function getOpportunityCaller(context, options = {}) {
   const uid = requireOpportunityAuth(context, options);
   const userSnap = await firestore.doc(`users/${uid}`).get();
+  const rawEmail = String(context.auth.token?.email || userSnap.data()?.email || '').trim();
   return {
     uid,
-    email: String(context.auth.token?.email || userSnap.data()?.email || '').trim().toLowerCase(),
+    email: rawEmail.toLowerCase(),
+    rawEmail,
     user: userSnap.exists ? userSnap.data() || {} : {}
   };
 }
@@ -17007,10 +17010,24 @@ async function resolveOpportunityTeam(input, caller) {
 
 async function listOpportunityManagedTeamDocuments(caller) {
   const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
-  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
+  if (caller.email) {
+    queries.push(
+      firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get(),
+      firestore.collection('teams').where('ownerEmailLower', '==', caller.email).get()
+    );
+    const ownerEmailCandidates = Array.from(new Set([caller.rawEmail, caller.email].filter(Boolean)));
+    ownerEmailCandidates.forEach((ownerEmail) => {
+      queries.push(firestore.collection('teams').where('ownerEmail', '==', ownerEmail).get());
+    });
+  }
   const snapshots = await Promise.all(queries);
   const teams = new Map();
-  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => teams.set(docSnap.id, docSnap)));
+  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
+    const team = docSnap.data() || {};
+    if (hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+      teams.set(docSnap.id, docSnap);
+    }
+  }));
   return teams;
 }
 
@@ -17213,6 +17230,16 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  const managedTeams = await listOpportunityManagedTeamDocuments(caller);
+  const items = Array.from(managedTeams.values())
+    .map((teamSnap) => serializeManagedTeamProfile(teamSnap.id, teamSnap.data() || {}))
+    .filter(Boolean)
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return { items };
+});
+
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');
   let teamId;
@@ -17223,10 +17250,19 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
+  if (!teamSnap.exists) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
-  const item = serializePublicTeamProfile(teamSnap.id, team);
+  let item = null;
+  if (context.auth?.uid) {
+    const caller = await getOpportunityCaller(context);
+    if (hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+      item = serializeManagedTeamProfile(teamSnap.id, team);
+    }
+  }
+  if (!item && isOpportunityTeamDiscoverable(team)) {
+    item = serializePublicTeamProfile(teamSnap.id, team);
+  }
   if (!item) {
     throwOpportunityError('not-found', 'Public team not found.');
   }

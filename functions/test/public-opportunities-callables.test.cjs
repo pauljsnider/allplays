@@ -165,6 +165,11 @@ function makeFirestore(seed = {}) {
         _state: state,
         doc,
         collection,
+        runTransaction: async (callback) => callback({
+            get: (ref) => ref.get(),
+            set: (ref, value, options) => ref.set(value, options),
+            update: (ref, value) => ref.update(value)
+        }),
         batch() {
             const operations = [];
             return {
@@ -326,6 +331,65 @@ test('opportunity writes require authentication and verified inquiry replies', a
     await assert.rejects(
         callables.replyToOpportunityInquiry({ inquiryId: 'inquiry-1', message: 'Hello' }, authContext('user-1', { verified: false })),
         (error) => error.code === 'failed-precondition'
+    );
+});
+
+test('managed-team callables return access fields only to current managers', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/stranger-1': { email: 'stranger@example.com' },
+        'teams/private-team': {
+            name: 'Private Bears',
+            sport: 'Basketball',
+            ownerId: 'owner-1',
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'must-not-leak'
+        },
+        'teams/public-team': {
+            name: 'Public Bears',
+            sport: 'Basketball',
+            ownerId: 'someone-else',
+            active: true,
+            isPublic: true
+        }
+    });
+
+    const managed = await callables.listManagedTeams({}, authContext('owner-1', { email: 'owner@example.com' }));
+    assert.deepEqual(managed.items, [{
+        id: 'private-team',
+        name: 'Private Bears',
+        sport: 'Basketball',
+        photoUrl: null,
+        description: null,
+        active: true,
+        archived: false,
+        status: null,
+        isPublic: false,
+        ownerId: 'owner-1',
+        ownerEmail: null,
+        adminEmails: []
+    }]);
+    assert.equal('privateBillingCustomerId' in managed.items[0], false);
+
+    const privateProfile = await callables.getPublicTeamProfile(
+        { teamId: 'private-team' },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+    assert.equal(privateProfile.item.ownerId, 'owner-1');
+    assert.equal('privateBillingCustomerId' in privateProfile.item, false);
+
+    const publicProfile = await callables.getPublicTeamProfile({ teamId: 'public-team' }, {});
+    assert.equal(publicProfile.item.name, 'Public Bears');
+    assert.equal('ownerId' in publicProfile.item, false);
+    assert.equal('adminEmails' in publicProfile.item, false);
+
+    await assert.rejects(
+        callables.getPublicTeamProfile(
+            { teamId: 'private-team' },
+            authContext('stranger-1', { email: 'stranger@example.com' })
+        ),
+        (error) => error.code === 'not-found'
     );
 });
 

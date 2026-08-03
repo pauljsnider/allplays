@@ -54,6 +54,8 @@ vi.mock('@legacy/firebase.js', () => ({
     deleteField: vi.fn(),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    functions: { name: 'functions' },
+    httpsCallable: vi.fn(),
     increment: vi.fn(),
     query: vi.fn(),
     runTransaction: vi.fn(),
@@ -63,7 +65,7 @@ vi.mock('@legacy/firebase.js', () => ({
 }));
 
 import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeams as legacyGetTeams } from '@legacy/db.js';
-import { collection, doc, getDoc, getDocs, query, where } from '@legacy/firebase.js';
+import { collection, doc, getDoc, getDocs, httpsCallable, query, where } from '@legacy/firebase.js';
 import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
@@ -238,173 +240,32 @@ describe('legacyScheduleDb tracker config reads', () => {
 });
 
 describe('legacyScheduleDb staff team reads', () => {
-    const snapshot = (id: string, data: Record<string, unknown>) => ({
-        id,
-        exists: () => true,
-        data: () => data
-    });
-
-    beforeEach(() => {
-        vi.mocked(collection).mockReturnValue({ path: 'teams' } as never);
-        vi.mocked(query).mockImplementation((base: unknown, ...constraints: unknown[]) => ({ base, constraints }) as never);
-        vi.mocked(where).mockImplementation((field: string, operation: string, value: unknown) => ({ field, operation, value }) as never);
-        vi.mocked(doc).mockImplementation((...parts: unknown[]) => ({ path: parts.filter((part) => typeof part === 'string').join('/') }) as never);
-    });
-
-    it('merges owner id, legacy owner email, normalized admin email, and unique coach team reads without a catalog load', async () => {
-        vi.mocked(getDocs)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' }), snapshot('team-shared', { name: 'Owner copy' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' }), snapshot('team-shared', { name: 'Admin copy' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email-lower', { name: 'Legacy normalized owner' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email', { name: 'Legacy owner' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner-email-normalized', { name: 'Legacy normalized owner copy' })] } as never);
-        vi.mocked(getDoc)
-            .mockResolvedValueOnce(snapshot('team-coach', { name: 'Coach' }) as never)
-            .mockRejectedValueOnce(new Error('Missing or insufficient permissions.'));
-
-        const teams = await getStaffTeams({
-            userId: 'user-1',
-            email: '  STAFF@EXAMPLE.COM ',
-            coachTeamIds: ['team-coach', 'team-coach', 'team-inaccessible']
+    it('uses the authenticated managed-team callable without browser Firestore queries', async () => {
+        const callable = vi.fn().mockResolvedValue({
+            data: { items: [{ id: 'team-owner', name: 'Owner', ownerId: 'user-1', active: true }] }
         });
+        vi.mocked(httpsCallable).mockReturnValue(callable as never);
 
-        expect(teams).toEqual({
-            teams: [
-                { id: 'team-owner', name: 'Owner' },
-                { id: 'team-shared', name: 'Admin copy' },
-                { id: 'team-admin', name: 'Admin' },
-                { id: 'team-owner-email-lower', name: 'Legacy normalized owner' },
-                { id: 'team-owner-email', name: 'Legacy owner' },
-                { id: 'team-owner-email-normalized', name: 'Legacy normalized owner copy' },
-                { id: 'team-coach', name: 'Coach' }
-            ],
-            isPartial: true
-        });
-        expect(getDocs).toHaveBeenCalledTimes(5);
-        expect(where).toHaveBeenCalledWith('ownerId', '==', 'user-1');
-        expect(where).toHaveBeenCalledWith('adminEmails', 'array-contains', 'staff@example.com');
-        expect(where).toHaveBeenCalledWith('ownerEmailLower', '==', 'staff@example.com');
-        expect(where).toHaveBeenCalledWith('ownerEmail', '==', 'STAFF@EXAMPLE.COM');
-        expect(where).toHaveBeenCalledWith('ownerEmail', '==', 'staff@example.com');
-        expect(getDoc).toHaveBeenCalledTimes(2);
-        expect(legacyGetTeams).not.toHaveBeenCalled();
-    });
-
-    it('skips the admin-email query and direct reads when affiliations are empty', async () => {
-        vi.mocked(getDocs).mockResolvedValueOnce({ docs: [] } as never);
-
-        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).resolves.toEqual({
-            teams: [],
+        await expect(getStaffTeams({ userId: 'user-1', email: 'staff@example.com', coachTeamIds: [] })).resolves.toEqual({
+            teams: [{ id: 'team-owner', name: 'Owner', ownerId: 'user-1', active: true }],
             isPartial: false
         });
 
-        expect(getDocs).toHaveBeenCalledTimes(1);
-        expect(where).toHaveBeenCalledTimes(1);
-        expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
+        expect(httpsCallable).toHaveBeenCalledWith({ name: 'functions' }, 'listManagedTeams');
+        expect(callable).toHaveBeenCalledWith({});
+        expect(getDocs).not.toHaveBeenCalled();
         expect(getDoc).not.toHaveBeenCalled();
     });
 
-    it('propagates an owner-id failure for blank-email users so native callers can use the REST fallback', async () => {
-        const queryError = new Error('web sdk unavailable');
-        vi.mocked(getDocs).mockRejectedValueOnce(queryError);
+    it('rejects malformed managed-team responses instead of treating them as complete', async () => {
+        vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({ data: {} }) as never);
 
-        await expect(getStaffTeams({ userId: 'parent-1', email: '   ', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
-
-        expect(getDocs).toHaveBeenCalledTimes(1);
-        expect(where).toHaveBeenCalledTimes(1);
-        expect(where).toHaveBeenCalledWith('ownerId', '==', 'parent-1');
-        expect(getDoc).not.toHaveBeenCalled();
+        await expect(getStaffTeams({ userId: 'user-1' })).rejects.toThrow('Managed teams response is invalid.');
     });
 
-    it('keeps UID and admin teams when the normalized legacy owner query is denied', async () => {
-        vi.mocked(getDocs)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
-            .mockRejectedValueOnce(new Error('ownerEmailLower denied'))
-            .mockResolvedValueOnce({ docs: [] } as never);
+    it('propagates callable failures so native callers can use the REST fallback', async () => {
+        vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(new Error('callable unavailable')) as never);
 
-        await expect(getStaffTeams({
-            userId: 'user-1',
-            email: 'staff@example.com',
-            coachTeamIds: []
-        })).resolves.toEqual({
-            teams: [
-                { id: 'team-owner', name: 'Owner' },
-                { id: 'team-admin', name: 'Admin' }
-            ],
-            isPartial: true
-        });
-    });
-
-    it('keeps UID and admin teams when a legacy ownerEmail query is denied', async () => {
-        vi.mocked(getDocs)
-            .mockResolvedValueOnce({ docs: [snapshot('team-owner', { name: 'Owner' })] } as never)
-            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
-            .mockResolvedValueOnce({ docs: [] } as never)
-            .mockRejectedValueOnce(new Error('ownerEmail denied'));
-
-        await expect(getStaffTeams({
-            userId: 'user-1',
-            email: 'staff@example.com',
-            coachTeamIds: []
-        })).resolves.toEqual({
-            teams: [
-                { id: 'team-owner', name: 'Owner' },
-                { id: 'team-admin', name: 'Admin' }
-            ],
-            isPartial: true
-        });
-    });
-
-    it('keeps the in-app-created owner team when the admin-email query is denied', async () => {
-        vi.mocked(getDocs)
-            .mockResolvedValueOnce({ docs: [snapshot('team-vipers', { name: 'Vipers', ownerId: 'user-1' })] } as never)
-            .mockRejectedValueOnce(new Error('adminEmails denied'))
-            .mockResolvedValueOnce({ docs: [] } as never)
-            .mockResolvedValueOnce({ docs: [] } as never);
-
-        await expect(getStaffTeams({
-            userId: 'user-1',
-            email: 'paul@allplays.ai',
-            coachTeamIds: []
-        })).resolves.toEqual({
-            teams: [
-                { id: 'team-vipers', name: 'Vipers', ownerId: 'user-1' }
-            ],
-            isPartial: true
-        });
-    });
-
-    it('keeps admin teams when the owner-id query is denied', async () => {
-        vi.mocked(getDocs)
-            .mockRejectedValueOnce(new Error('ownerId denied'))
-            .mockResolvedValueOnce({ docs: [snapshot('team-admin', { name: 'Admin' })] } as never)
-            .mockResolvedValueOnce({ docs: [] } as never)
-            .mockResolvedValueOnce({ docs: [] } as never);
-
-        await expect(getStaffTeams({
-            userId: 'user-1',
-            email: 'staff@example.com',
-            coachTeamIds: []
-        })).resolves.toEqual({
-            teams: [
-                { id: 'team-admin', name: 'Admin' }
-            ],
-            isPartial: true
-        });
-    });
-
-    it('propagates owner and admin query failures so native callers can use the REST fallback', async () => {
-        const queryError = new Error('web sdk unavailable');
-        vi.mocked(getDocs)
-            .mockRejectedValueOnce(queryError)
-            .mockRejectedValueOnce(queryError)
-            .mockRejectedValueOnce(queryError)
-            .mockRejectedValueOnce(queryError);
-
-        await expect(getStaffTeams({ userId: 'coach-1', email: 'coach@example.com', coachTeamIds: [] })).rejects.toThrow('web sdk unavailable');
-
-        expect(getDocs).toHaveBeenCalledTimes(4);
-        expect(getDoc).not.toHaveBeenCalled();
+        await expect(getStaffTeams({ userId: 'user-1' })).rejects.toThrow('callable unavailable');
     });
 });

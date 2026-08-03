@@ -27,6 +27,13 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
   });
 
+  it('grants full access to a legacy owner email during ownership migration', () => {
+    expect(hasFullTeamAccess(
+      { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
+      { ...TEAM, ownerId: 'different-owner', ownerEmail: 'owner@example.com' }
+    )).toBe(true);
+  });
+
   it('grants full access to platform admin', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });
