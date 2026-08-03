@@ -1,7 +1,10 @@
 import { pathToFileURL } from 'node:url';
 import {
     createFirebaseRestSession,
+    findFirestoreDocumentsByStringArrayContains,
+    findFirestoreDocumentsByStringField,
     getFirestoreDocument,
+    getFirestoreDocumentPath,
     patchFirestoreDocumentFields
 } from '../tests/smoke/helpers/firebase-rest.js';
 import { assertSmokeFixtureIdentifier } from './maintain-production-smoke-official-fixture.mjs';
@@ -174,16 +177,27 @@ export function buildActiveTeamPatch() {
     };
 }
 
-export function inspectStaffTeamDiscovery(teamDocument, { uid, email }) {
+export function inspectStaffTeamDiscovery(
+    teamDocument,
+    staffDocument,
+    { uid, email, teamId, ownerQueryFound = false, adminQueryFound = false }
+) {
     const fields = teamDocument?.fields || {};
+    const staffFields = staffDocument?.fields || {};
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const ownsTeam = Boolean(uid) && getStringField(fields, 'ownerId') === uid;
     const hasCanonicalAdminEmail = Boolean(normalizedEmail) && getArrayValues(fields.adminEmails)
         .some((value) => String(value?.stringValue || '') === normalizedEmail);
+    const hasCoachTeamId = Boolean(teamId) && hasStringValue(staffFields.coachOf, teamId);
+    const directCoachDiscovery = hasCoachTeamId && (ownsTeam || hasCanonicalAdminEmail);
     return {
-        ready: ownsTeam || hasCanonicalAdminEmail,
+        ready: ownerQueryFound || adminQueryFound || directCoachDiscovery,
         ownsTeam,
-        hasCanonicalAdminEmail
+        hasCanonicalAdminEmail,
+        hasCoachTeamId,
+        ownerQueryFound,
+        adminQueryFound,
+        directCoachDiscovery
     };
 }
 
@@ -197,6 +211,46 @@ export function buildCanonicalStaffAccessPatch(teamDocument, email) {
         fields: {
             adminEmails: buildStringArray([...adminEmails, normalizedEmail])
         }
+    };
+}
+
+export function buildCanonicalStaffProfilePatch(staffDocument, teamId) {
+    if (!teamId) throw new Error('Canonical staff team ID is required');
+    const coachTeamIds = getArrayValues(staffDocument?.fields?.coachOf)
+        .map((value) => String(value?.stringValue || ''))
+        .filter((value) => value.trim() !== teamId);
+    return {
+        fields: {
+            coachOf: buildStringArray([...coachTeamIds, teamId])
+        }
+    };
+}
+
+function queryContainsDocument(documents, documentPath) {
+    return documents.some((document) => getFirestoreDocumentPath(document) === documentPath);
+}
+
+async function queryStaffTeamDiscovery(session, teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const teamPath = `teams/${teamId}`;
+    const [ownerResult, adminResult] = await Promise.allSettled([
+        findFirestoreDocumentsByStringField(session, 'teams', 'ownerId', session.localId),
+        normalizedEmail
+            ? findFirestoreDocumentsByStringArrayContains(
+                session,
+                'teams',
+                'adminEmails',
+                normalizedEmail
+            )
+            : Promise.resolve([])
+    ]);
+    return {
+        ownerQueryFound: ownerResult.status === 'fulfilled' &&
+            queryContainsDocument(ownerResult.value, teamPath),
+        adminQueryFound: adminResult.status === 'fulfilled' &&
+            queryContainsDocument(adminResult.value, teamPath),
+        ownerQueryFailed: ownerResult.status === 'rejected',
+        adminQueryFailed: adminResult.status === 'rejected'
     };
 }
 
@@ -264,37 +318,76 @@ async function main() {
         })
     ]);
 
-    let [adminDocument, teamDocument] = await Promise.all([
+    let [adminDocument, staffDocument, teamDocument] = await Promise.all([
         getFirestoreDocument(adminSession, `users/${adminSession.localId}`),
+        getFirestoreDocument(staffSession, `users/${staffSession.localId}`),
         getFirestoreDocument(staffSession, `teams/${teamId}`)
     ]);
     if (!adminDocument || !isGlobalAdmin(adminDocument)) {
         throw new Error('The admin smoke account is not authorized to maintain fixture membership');
     }
-    if (!teamDocument || !isAuthorizedFixtureManager(teamDocument, staffSession, staffEmail)) {
+    const canonicalStaffEmail = String(staffSession.email || staffEmail).trim().toLowerCase();
+    if (!teamDocument || !isAuthorizedFixtureManager(teamDocument, staffSession, canonicalStaffEmail)) {
         throw new Error('The staff smoke account is not an owner or administrator of the fixture team');
     }
-    let staffDiscovery = inspectStaffTeamDiscovery(teamDocument, {
+    if (!staffDocument) {
+        throw new Error('The staff smoke user profile does not exist');
+    }
+    let staffQueryDiscovery = await queryStaffTeamDiscovery(
+        staffSession,
+        teamId,
+        canonicalStaffEmail
+    );
+    let staffDiscovery = inspectStaffTeamDiscovery(teamDocument, staffDocument, {
         uid: staffSession.localId,
-        email: staffEmail
+        email: canonicalStaffEmail,
+        teamId,
+        ...staffQueryDiscovery
     });
-    if (mode === 'repair' && !staffDiscovery.ready) {
-        await patchFirestoreDocumentFields(
-            adminSession,
-            `teams/${teamId}`,
-            buildCanonicalStaffAccessPatch(teamDocument, staffEmail).fields,
-            { updateTime: String(teamDocument.updateTime || '') }
+    if (mode === 'repair' && (
+        !staffDiscovery.hasCanonicalAdminEmail ||
+        !staffDiscovery.hasCoachTeamId ||
+        !staffDiscovery.ready
+    )) {
+        if (!staffDiscovery.hasCanonicalAdminEmail) {
+            await patchFirestoreDocumentFields(
+                adminSession,
+                `teams/${teamId}`,
+                buildCanonicalStaffAccessPatch(teamDocument, canonicalStaffEmail).fields,
+                { updateTime: String(teamDocument.updateTime || '') }
+            );
+        }
+        if (!staffDiscovery.hasCoachTeamId) {
+            await patchFirestoreDocumentFields(
+                adminSession,
+                `users/${staffSession.localId}`,
+                buildCanonicalStaffProfilePatch(staffDocument, teamId).fields,
+                { updateTime: String(staffDocument.updateTime || '') }
+            );
+        }
+        [staffDocument, teamDocument] = await Promise.all([
+            getFirestoreDocument(staffSession, `users/${staffSession.localId}`),
+            getFirestoreDocument(staffSession, `teams/${teamId}`)
+        ]);
+        staffQueryDiscovery = await queryStaffTeamDiscovery(
+            staffSession,
+            teamId,
+            canonicalStaffEmail
         );
-        teamDocument = await getFirestoreDocument(staffSession, `teams/${teamId}`);
-        staffDiscovery = inspectStaffTeamDiscovery(teamDocument, {
+        staffDiscovery = inspectStaffTeamDiscovery(teamDocument, staffDocument, {
             uid: staffSession.localId,
-            email: staffEmail
+            email: canonicalStaffEmail,
+            teamId,
+            ...staffQueryDiscovery
         });
     }
     if (!staffDiscovery.ready) {
         throw new Error(
-            `The staff smoke account is not queryable by canonical team access ` +
-            `(owner=${staffDiscovery.ownsTeam}, canonical-admin=${staffDiscovery.hasCanonicalAdminEmail})`
+            `The staff smoke account is not discoverable by the app's team access paths ` +
+            `(owner=${staffDiscovery.ownsTeam}, canonical-admin=${staffDiscovery.hasCanonicalAdminEmail}, ` +
+            `coach-link=${staffDiscovery.hasCoachTeamId}, owner-query=${staffDiscovery.ownerQueryFound}, ` +
+            `admin-query=${staffDiscovery.adminQueryFound}, owner-query-failed=${staffQueryDiscovery.ownerQueryFailed}, ` +
+            `admin-query-failed=${staffQueryDiscovery.adminQueryFailed})`
         );
     }
 
@@ -383,7 +476,11 @@ async function main() {
         );
     }
 
-    console.log(`Parent fixture ${mode} passed with a linked active player.`);
+    console.log(
+        `Parent fixture ${mode} passed with a linked active player and app-discoverable staff team ` +
+        `(owner-query=${staffDiscovery.ownerQueryFound}, admin-query=${staffDiscovery.adminQueryFound}, ` +
+        `coach-link=${staffDiscovery.hasCoachTeamId}).`
+    );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
