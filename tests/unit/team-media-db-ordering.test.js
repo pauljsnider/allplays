@@ -110,7 +110,7 @@ vi.mock('../../js/firebase-images.js?v=11', () => ({
     requireImageAuth: vi.fn()
 }));
 
-vi.mock('../../js/team-media-utils.js?v=44336', () => teamMediaUtilsMocks);
+vi.mock('../../js/team-media-utils.js?v=44337', () => teamMediaUtilsMocks);
 
 vi.mock('../../js/vendor/firebase-storage.js', () => ({
     uploadBytesResumable: vi.fn((_storageRef, _file, _metadata) => {

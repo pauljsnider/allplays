@@ -187,7 +187,7 @@ async function installModuleMocks(page) {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: authModule });
     });
 
-    await page.route(/\/js\/team-access\.js$/, async (route) => {
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule });
     });
 }
