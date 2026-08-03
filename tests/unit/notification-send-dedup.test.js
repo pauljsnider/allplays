@@ -93,6 +93,7 @@ function createDedupHarness({ nowMs, docs = {} } = {}) {
 function buildSendCategoryNotificationHarness({
     canSend = true,
     targets = [{ uid: 'user-1', token: 'token-1' }],
+    getTargetsForCategoryImpl = async () => targets,
     categories = ['schedule', 'liveScore', 'mentions', 'liveChat'],
     deliveryOptions = {},
     sendEachForMulticastImpl = async () => ({
@@ -112,7 +113,7 @@ function buildSendCategoryNotificationHarness({
         })
     };
     const checkAndSetNotificationDedup = vi.fn(async () => canSend);
-    const getTargetsForCategory = vi.fn(async () => targets);
+    const getTargetsForCategory = vi.fn(getTargetsForCategoryImpl);
     const buildNotificationLink = vi.fn(({ category, teamId, gameId }) => `https://allplays.ai/${category}/${teamId}/${gameId || ''}`);
     const buildNotificationAppRoute = vi.fn(({ category, teamId, gameId, eventId }) => `/${category}/${teamId}/${gameId || eventId || ''}`);
     const buildNotificationDeliveryOptions = vi.fn(() => deliveryOptions);
@@ -293,6 +294,28 @@ describe('notification send dedup guard — checkAndSetNotificationDedup', () =>
 });
 
 describe('notification send dedup guard — sendCategoryNotification', () => {
+    it('does not claim dedup when authoritative target resolution fails', async () => {
+        const authError = Object.assign(new Error('temporary Auth outage'), {
+            notificationAuthResolutionFailed: true
+        });
+        const harness = buildSendCategoryNotificationHarness({
+            getTargetsForCategoryImpl: async () => {
+                throw authError;
+            }
+        });
+
+        await expect(harness.fn({
+            teamId: 'team-1',
+            category: 'schedule',
+            gameId: 'game-1',
+            title: 'Schedule update',
+            body: 'Details changed.'
+        })).rejects.toBe(authError);
+
+        expect(harness.checkAndSetNotificationDedup).not.toHaveBeenCalled();
+        expect(harness.sendEachForMulticast).not.toHaveBeenCalled();
+    });
+
     it('skips schedule sends when the dedup transaction reports a recent Firestore send', async () => {
         const harness = buildSendCategoryNotificationHarness({ canSend: false });
 

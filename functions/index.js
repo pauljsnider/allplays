@@ -11601,15 +11601,6 @@ async function sendCategoryNotification({
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
 
-  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
-  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
-    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
-    if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
-      return null;
-    }
-  }
-
   const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
   const targets = excludeSet.size
@@ -11618,6 +11609,15 @@ async function sendCategoryNotification({
   const inboxTargets = getUniqueNotificationInboxTargets(targets);
   const pushTargets = targets.filter((target) => String(target?.token || '').trim());
   if (!pushTargets.length && !inboxTargets.length) return null;
+
+  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
+  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
+      return null;
+    }
+  }
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
