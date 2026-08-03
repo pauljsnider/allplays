@@ -551,6 +551,13 @@ describe('Profile', () => {
 
     expect(await screen.findByText('The profile save status is unknown. The new photo was preserved; refresh before retrying.')).toBeTruthy();
     expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalled();
+
+    const saveButton = screen.getByRole('button', { name: 'Save profile' });
+    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalled();
   });
 
   it('reports an upload permission failure as Storage failure before profile persistence', async () => {
