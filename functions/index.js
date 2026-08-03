@@ -362,6 +362,7 @@ const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
   isCertificateSignatureTargetReferenced,

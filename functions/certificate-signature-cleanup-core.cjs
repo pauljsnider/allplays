@@ -538,6 +538,7 @@ module.exports = {
   discoverLegacyImageSignatureReferences,
   doesLegacyImageMetadataMatchSourceHash,
   extractFirebaseStoragePathFromUrl,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,

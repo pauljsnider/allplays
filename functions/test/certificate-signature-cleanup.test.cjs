@@ -8,6 +8,7 @@ const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
   doesLegacyImageMetadataMatchSourceHash,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,

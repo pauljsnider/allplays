@@ -14,6 +14,7 @@ import {
 const require = createRequire(import.meta.url);
 const {
     discoverLegacyImageSignatureReferences,
+    getCertificateLegacyManagerEmails,
     getCertificateLegacySignatureInventoryId,
     isMatchingCertificateLegacySignatureBinding
 } = require('../functions/certificate-signature-cleanup-core.cjs');
