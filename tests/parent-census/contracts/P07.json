@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P07",
+  "title": "Google sign-in handoff and return",
+  "actors": [
+    "anonymous"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "goto",
+      "actor": "anonymous",
+      "route": "/auth"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Sign in",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Continue with Google",
+        "exact": true
+      }
+    },
+    {
+      "action": "clickAndExpectGoogleAuth",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Continue with Google",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Sign in",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "anonymous",
+      "route": "/auth"
+    }
+  ],
+  "cleanupSteps": []
+}
