@@ -16,6 +16,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -182,7 +183,11 @@ function buildServer(identity) {
 
     const run = (handler) => async (args) => {
         try {
-            const context = await resolveUserContext(db, identity);
+            const managedTeams = await loadManagedTeamsFromCallable({
+                projectId: PROJECT_ID,
+                idToken: identity.idToken
+            });
+            const context = await resolveUserContext(db, identity, { managedTeams });
             return toolResult(await handler(context, args));
         } catch (error) {
             return toolError(error);

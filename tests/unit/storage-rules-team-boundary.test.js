@@ -359,6 +359,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
 
             await assertFails(legacyOwnerFirestore.doc('teams/team-a').get());
             await assertFails(
+                legacyOwnerFirestore.collection('teams').where('ownerEmail', '==', 'legacy-owner@example.com').get()
+            );
+            await assertFails(
                 legacyOwnerStorage.ref('stat-sheets/team-chat/team-a/team/legacy-owner-uid/former-owner-photo.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }

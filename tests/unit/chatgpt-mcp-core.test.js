@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -87,6 +88,43 @@ function parentDb(extra = {}) {
 }
 
 describe('chatgpt-mcp core: resolveUserContext', () => {
+    it('loads legacy managed teams through the authenticated server-filtered callable', async () => {
+        const fetchImpl = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                result: {
+                    items: [{ id: 'legacy-team', name: 'Legacy', ownerEmail: 'coach@example.com' }],
+                    isPartial: false
+                }
+            })
+        });
+        const managedTeams = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl
+        });
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: { teams: () => { throw new Error('Client team discovery must not run.'); } }
+        });
+
+        const context = await resolveUserContext(
+            db,
+            { uid: 'coach-1', email: 'coach@example.com' },
+            { managedTeams }
+        );
+
+        expect(fetchImpl).toHaveBeenCalledWith(
+            'https://us-central1-all-plays-prod.cloudfunctions.net/listManagedTeams',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({ Authorization: 'Bearer user-id-token' }),
+                body: JSON.stringify({ data: {} })
+            })
+        );
+        expect([...context.teams.get('legacy-team').roles]).toEqual(['owner']);
+    });
+
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
         const context = await resolveUserContext(parentDb(), parentIdentity);
         expect(context.uid).toBe('parent-1');

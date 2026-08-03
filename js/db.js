@@ -1864,62 +1864,22 @@ export async function getUserTeams(userId, options = {}) {
 
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
-    const profile = await profileSnap;
-    const ownerEmailCandidates = [
-        email,
-        profile?.exists?.() ? profile.data()?.email : null,
-        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
-    ].map((value) => String(value || '').trim()).filter(Boolean);
-    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
-    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
-        console.warn(`Optional team access query failed (${label}).`, error);
-        return { docs: [] };
-    });
-    const ownerEmailQueries = ownerEmailCandidates.length
-        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
-            .map((ownerEmail) => optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
-                `ownerEmail:${ownerEmail}`
-            ))
-        : [];
-    const ownerEmailLowerQuery = normalizedEmail
-        ? optionalTeamQuery(
-            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
-            `ownerEmailLower:${normalizedEmail}`
-        )
-        : Promise.resolve({ docs: [] });
-    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
-        getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        normalizedEmail
-            ? optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))),
-                `adminEmails:${normalizedEmail}`
-            )
-            : Promise.resolve({ docs: [] }),
-        ownerEmailLowerQuery,
-        ...ownerEmailQueries
-    ]);
-
-    const map = new Map();
-    ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
-
-    const teams = Array.from(map.values())
-        .filter((team) => {
-            const ownerId = String(team.ownerId || '').trim();
-            const ownerEmails = [team.ownerEmailLower, team.ownerEmail]
-                .map((value) => String(value || '').trim().toLowerCase())
-                .filter(Boolean);
-            const adminEmails = Array.isArray(team.adminEmails)
-                ? team.adminEmails.map((value) => String(value || '').trim().toLowerCase())
-                : [];
-            return ownerId === userId ||
-                Boolean(normalizedEmail && adminEmails.includes(normalizedEmail)) ||
-                Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail));
-        })
-        .sort((a, b) => a.name.localeCompare(b.name));
+    if (!String(userId || '').trim()) return [];
+    // Firestore cannot authorize a legacy owner-email list query while also
+    // proving ownerId is absent on every possible result. Discover managed
+    // teams through the server, which evaluates each canonical document.
+    const callable = httpsCallable(functions, 'listManagedTeams');
+    const response = await callable({});
+    const items = response?.data?.items;
+    if (!Array.isArray(items)) {
+        throw new Error('Managed teams response is invalid.');
+    }
+    if (response?.data?.isPartial === true) {
+        console.warn('Managed team discovery returned partial results.');
+    }
+    const teams = items
+        .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     return filterTeamsByActive(teams, includeInactive);
 }
 

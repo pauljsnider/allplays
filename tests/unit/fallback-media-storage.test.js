@@ -85,11 +85,8 @@ describe('fallback media paths and Storage rules', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
         expect(rules).toContain("team.get('ownerId', '') == ''");
         expect(rules).toContain("team.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
-        expect(dbSource).toContain('where("ownerEmail", "==", ownerEmail)');
-        expect(dbSource).toContain('where("ownerEmailLower", "==", normalizedEmail)');
-        expect(dbSource).toContain('Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail))');
-        expect(dbSource).toContain('const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {');
-        expect(dbSource).toContain('Optional team access query failed');
+        expect(dbSource).toContain("httpsCallable(functions, 'listManagedTeams')");
+        expect(dbSource).not.toContain('Optional team access query failed');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
         expect(chatFallbackRules).toContain("allow create: if ((isSignedIn() && conversationId == 'team') ||\n        isVerifiedForSensitiveWrite()) &&");

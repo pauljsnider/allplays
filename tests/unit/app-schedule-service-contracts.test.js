@@ -46,6 +46,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const profileMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn(),
     loadProfileDocument: vi.fn(),
     saveProfileDocument: vi.fn()
 }));
@@ -283,6 +284,7 @@ beforeEach(() => {
     vi.unstubAllGlobals();
     installWindow();
     managedTeamMocks.listManagedTeams.mockResolvedValue([]);
+    profileMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({ teams: [], isPartial: false });
     profileMocks.loadProfileDocument.mockResolvedValue({
         parentOf: [
             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
@@ -547,10 +549,8 @@ describe('React app schedule service contract integration', () => {
 
         expect(staffTeamSource).toContain('getStaffTeams({');
         expect(staffTeamSource).not.toContain('getTeams(');
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
+        expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable()');
+        expect(staffTeamSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
         expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
         expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && email &&');
         expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');

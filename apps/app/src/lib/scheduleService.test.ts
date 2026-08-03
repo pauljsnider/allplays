@@ -202,7 +202,11 @@ vi.mock('./adapters/legacyAvailability', () => ({
   isAvailabilityLocked: vi.fn(() => false),
   normalizeAvailabilityPreferences: vi.fn((value: any) => (value && typeof value === 'object' ? value : {}))
 }));
-vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(), saveProfileDocument: vi.fn() }));
+vi.mock('./profileService', () => ({
+  loadManagedTeamsFromNativeCallable: vi.fn(async () => ({ teams: [], isPartial: false })),
+  loadProfileDocument: vi.fn(),
+  saveProfileDocument: vi.fn()
+}));
 vi.mock('./authService', () => ({
   firebaseAuth: { app: { options: { projectId: 'allplays-test' } } },
   getNativeAuthIdToken: vi.fn()
@@ -224,7 +228,7 @@ import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
-import { loadProfileDocument } from './profileService';
+import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
 import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
@@ -722,34 +726,15 @@ describe('parent schedule child scope', () => {
     expect(getStaffTeams).toHaveBeenCalledTimes(2);
   });
 
-  it('marks native staff scope partial when one REST fallback read fails', async () => {
+  it('preserves native staff teams when server-filtered discovery is partial', async () => {
     const previousWindow = (globalThis as any).window;
-    const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('native Firebase unavailable'));
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
-    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) : null;
-      if (body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath === 'adminEmails') {
-        return {
-          ok: false,
-          status: 503,
-          json: async () => ({ error: { message: 'temporarily unavailable' } })
-        } as any;
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => body ? [] : ({
-          name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
-          fields: {
-            name: { stringValue: 'Vipers' },
-            active: { booleanValue: true }
-          }
-        })
-      } as any;
+    vi.mocked(getStaffTeams).mockRejectedValue(new Error('native Firebase unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: true
     });
 
     try {
@@ -760,7 +745,6 @@ describe('parent schedule child scope', () => {
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     } finally {
       (globalThis as any).window = previousWindow;
-      globalThis.fetch = previousFetch;
     }
   });
 });

@@ -173,17 +173,15 @@ it('routes handled profile-service failures through the shared logger helper', (
     expect(profileServiceSource).not.toContain('console.');
 });
 
-it('keeps native notification team loading compatible with legacy owner emails', () => {
+it('routes native notification team discovery through the server-filtered callable', () => {
     const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
     const nativeNotificationSource = profileServiceSource.slice(
         profileServiceSource.indexOf('async function nativeLoadNotificationTeams'),
         profileServiceSource.indexOf('async function nativeLoadParentTeams')
     );
 
-    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
-    expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
-    expect(nativeNotificationSource).toContain('ownerEmailTeams.flat()');
-    expect(nativeNotificationSource).toContain('Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail))');
+    expect(nativeNotificationSource).toContain('loadManagedTeamsFromNativeCallable()');
+    expect(nativeNotificationSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
 });
 
 describe('loadProfileDocument telemetry', () => {
@@ -263,6 +261,18 @@ describe('native parent-team fallback hydration', () => {
     function mockNativeProfileFallbackFetch() {
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
+
+            if (url.endsWith('.cloudfunctions.net/listManagedTeams')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        result: {
+                            items: [{ id: 'legacy-team', name: 'Legacy Lions', ownerEmail: 'parent@example.com' }],
+                            isPartial: false
+                        }
+                    })
+                };
+            }
 
             if (url.endsWith('/documents/users/user-1')) {
                 return {
@@ -350,9 +360,11 @@ describe('native parent-team fallback hydration', () => {
 
         await expect(loadNotificationTeams('user-1', 'parent@example.com')).resolves.toEqual([
             { id: 'team-1', name: 'Bears' },
-            { id: 'team-3', name: 'Cougars' }
+            { id: 'team-3', name: 'Cougars' },
+            { id: 'legacy-team', name: 'Legacy Lions' }
         ]);
 
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('.cloudfunctions.net/listManagedTeams'))).toBe(true);
         expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || '').includes('"fieldPath":"__name__"'))).toBe(false);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(true);
