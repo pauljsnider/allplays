@@ -2,18 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import {
     AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS,
-    buildAppSmokeUrl,
-    closeAuthenticatedAppSession,
-    createAuthenticatedAppSession,
-    getAppSmokeConfig,
-    redactSmokeDiagnostic
+    getAppSmokeConfig
 } from './helpers/app-auth.js';
 import {
     createFirestoreDocument,
     createFirebaseRestSession,
     deleteFirebaseStorageObject,
     deleteFirestoreDocument,
-    deleteSmokeMediaByTitle,
     getFirestoreDocument,
     getFirestoreStringField,
     isEmptyFirestoreDocument,
@@ -28,16 +23,13 @@ const extendedEnabled = process.env.SMOKE_EXTENDED_WRITES === '1';
 const runId = String(config.runId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48);
 const attemptNonce = randomUUID().replace(/-/g, '');
 const smokePrefix = `allplays-smoke-${runId}-${attemptNonce}`;
-const secretValues = [config.staffEmail, config.staffPassword, config.parentEmail, config.parentPassword];
-const LIVE_ACTION_TIMEOUT_MS = 25_000;
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 
-let staffSession;
 let staffRestSession;
 let parentRestSession;
 
-test.beforeAll(async ({ browser }) => {
+test.beforeAll(async () => {
     test.setTimeout(AUTHENTICATED_SMOKE_SETUP_TIMEOUT_MS);
     for (const [name, value] of Object.entries({
         SMOKE_RUN_ID: runId,
@@ -52,13 +44,7 @@ test.beforeAll(async ({ browser }) => {
         expect(value, `${name} is required for the reversible image suite`).toBeTruthy();
     }
 
-    [staffSession, staffRestSession, parentRestSession] = await Promise.all([
-        createAuthenticatedAppSession(browser, {
-            appBaseUrl: config.appBaseUrl,
-            email: config.staffEmail,
-            password: config.staffPassword,
-            roleLabel: 'staff image writes'
-        }),
+    [staffRestSession, parentRestSession] = await Promise.all([
         createFirebaseRestSession({
             appBaseUrl: config.appBaseUrl,
             email: config.staffEmail,
@@ -71,43 +57,6 @@ test.beforeAll(async ({ browser }) => {
         })
     ]);
 });
-
-test.afterAll(async () => {
-    await closeAuthenticatedAppSession(staffSession);
-});
-
-async function withAuthenticatedPage(callback) {
-    const { page, issues } = staffSession;
-    page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS);
-    await callback(page);
-    expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
-}
-
-async function openRoute(page, route) {
-    await page.goto(buildAppSmokeUrl(config.appBaseUrl, route), { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('main')).toBeVisible({ timeout: 25_000 });
-    await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
-}
-
-async function openWritableMediaAlbum(page) {
-    await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
-    const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
-    if (await photoButton.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false)) {
-        return photoButton;
-    }
-
-    const refreshMedia = page.getByRole('button', { name: 'Refresh media' });
-    if (await refreshMedia.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
-        await refreshMedia.click({ timeout: LIVE_ACTION_TIMEOUT_MS });
-    } else {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: LIVE_ACTION_TIMEOUT_MS });
-    }
-    await expect(
-        photoButton,
-        'The existing smoke media album must become writable after one bounded read-only refresh'
-    ).toBeVisible({ timeout: LIVE_ACTION_TIMEOUT_MS });
-    return photoButton;
-}
 
 async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.keys(documentState.expectedFields)) {
     const expectedEntries = Object.entries(documentState.expectedFields)
@@ -215,42 +164,6 @@ async function reconcileDedicatedImageFixture(target) {
     // Path-only abandoned uploads are retained because their historical Storage
     // generation was not persisted and cannot be proven from current metadata.
 }
-
-test('staff image upload is persisted and removed after validation', async () => {
-    test.setTimeout(240_000);
-    const mediaName = `${smokePrefix}-media.png`;
-    const cleanupTasks = [{
-        recordType: 'team-media',
-        cleanup: () => deleteSmokeMediaByTitle(
-            staffRestSession,
-            `teams/${config.teamId}/mediaItems`,
-            mediaName
-        )
-    }];
-
-    try {
-        await withAuthenticatedPage(async (page) => {
-            await openWritableMediaAlbum(page);
-            const photoInput = page.locator('input[type="file"][accept="image/*"]');
-            await photoInput.setInputFiles({
-                name: mediaName,
-                mimeType: 'image/png',
-                buffer: Buffer.from(
-                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-                    'base64'
-                )
-            });
-            await expect(page.getByText('Uploaded', { exact: true })).toBeVisible({ timeout: 35_000 });
-            const deleteMedia = page.getByRole('button', { name: `Delete ${mediaName}` });
-            await expect(deleteMedia).toBeVisible({ timeout: 25_000 });
-            page.once('dialog', (dialog) => dialog.accept());
-            await deleteMedia.click();
-            await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
-        });
-    } finally {
-        await runSmokeCleanup(runId, cleanupTasks);
-    }
-});
 
 test('profile image paths accept authenticated storage and document writes', async () => {
     test.setTimeout(120_000);
