@@ -2010,7 +2010,9 @@ describe('TeamDetail', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Manage invite' })[0]);
     expect(screen.queryByLabelText('Recipient email for Pat Star')).toBeNull();
-    expect(screen.getByLabelText('Recipient email for Sam Wing')).toBeTruthy();
+    const samEmailInput = screen.getByLabelText('Recipient email for Sam Wing');
+    expect(samEmailInput).toHaveClass('min-w-0', 'max-w-full');
+    expect(samEmailInput.closest('[data-testid="roster-player-row"]')).toHaveClass('min-w-0', 'overflow-hidden');
     expect(screen.getAllByTestId('parent-invite-editor')).toHaveLength(1);
   });
 

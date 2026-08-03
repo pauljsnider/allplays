@@ -656,7 +656,7 @@ function PlayerRow({
   return (
     <div
       data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'}
-      className="cursor-pointer rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      className="min-w-0 cursor-pointer overflow-hidden rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
       onClick={(event) => openPlayerFromRow(event.target)}
     >
       <div className="flex min-w-0 items-center gap-3">
@@ -714,10 +714,10 @@ function PlayerRow({
           {player.active && inviteExpanded ? (
             <div id={`parent-invite-editor-${player.id}`} data-testid="parent-invite-editor" className="mt-3 min-w-0 space-y-3">
               <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]">
-              <label className="text-xs font-black text-gray-700">
+              <label className="min-w-0 text-xs font-black text-gray-700">
                 Recipient email
                 <input
-                  className="auth-input mt-1"
+                  className="auth-input mt-1 min-w-0 max-w-full"
                   type="email"
                   inputMode="email"
                   autoComplete="email"
@@ -728,9 +728,9 @@ function PlayerRow({
                   disabled={creatingInvite}
                 />
               </label>
-              <label className="text-xs font-black text-gray-700">
+              <label className="min-w-0 text-xs font-black text-gray-700">
                 Relation
-                <select className="auth-input mt-1" aria-label={`Parent relation for ${player.name}`} value={parentRelation} onChange={(event) => setParentRelation(event.target.value)} disabled={creatingInvite}>
+                <select className="auth-input mt-1 min-w-0 max-w-full" aria-label={`Parent relation for ${player.name}`} value={parentRelation} onChange={(event) => setParentRelation(event.target.value)} disabled={creatingInvite}>
                   <option value="Parent">Parent</option>
                   <option value="Mother">Mother</option>
                   <option value="Father">Father</option>
