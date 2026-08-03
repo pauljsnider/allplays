@@ -316,7 +316,7 @@ async function installMocks(page, scenario, { delayedAuth = false } = {}) {
     await page.route(/\/js\/firebase\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: firebaseModule }));
     await page.route(/\/js\/utils\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsModule }));
     await page.route(/\/js\/auth\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authModule }));
-    await page.route(/\/js\/team-admin-banner\.js$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
+    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
     await page.route(/\/js\/post-game-insights\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: insightsModule }));
     await page.route(/\/js\/live-game-state\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameStateModule }));
     await page.route(/\/js\/live-game-video\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameVideoModule }));

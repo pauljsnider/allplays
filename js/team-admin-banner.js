@@ -1,7 +1,7 @@
-import { escapeHtml } from './utils.js?v=443331';
-import { getTeamAccessInfo } from './team-access.js';
+import { escapeHtml } from './utils.js?v=443332';
+import { getTeamAccessInfo } from './team-access.js?v=44337';
 
-export { getTeamAccessInfo } from './team-access.js';
+export { getTeamAccessInfo } from './team-access.js?v=44337';
 
 function icon(name) {
   if (name === 'view') {
