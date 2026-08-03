@@ -480,6 +480,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             status: 'scheduled',
             calendarUrl: 'https://calendar.example.test/private-token',
             calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
+            legacyOpaqueId: 'SENTINEL_LEGACY_OPAQUE_ID',
             privateNotes: 'do not expose'
         }]);
 
@@ -510,6 +511,8 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(JSON.stringify(result)).not.toContain('private-token');
         expect(JSON.stringify(result)).not.toContain('SENTINEL_CALENDAR_UID_HASH');
         expect(JSON.stringify(result)).not.toContain('calendarUidHash');
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_LEGACY_OPAQUE_ID');
+        expect(JSON.stringify(result)).not.toContain('legacyOpaqueId');
         expect(JSON.stringify(result)).not.toContain('do not expose');
     });
 

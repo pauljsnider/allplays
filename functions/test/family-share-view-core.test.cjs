@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const test = require('node:test');
 const {
   MAX_FAMILY_SHARE_CALENDAR_URLS,
@@ -61,12 +62,32 @@ test('keeps UID-backed occurrence IDs stable across summary edits and discrimina
 
   const original = buildEvent({ summary: 'Bears vs. Hawks' });
   const edited = buildEvent({ summary: 'Bears vs. Falcons' });
+  const originalStartsAt = '2026-08-01T18:00:00.000Z';
+  const priorOpaqueId = crypto.createHash('sha256')
+    .update(`family-share:calendar-event-public-id:v1:stable-source-id:stable-provider-uid:${originalStartsAt}:Bears vs. Hawks`)
+    .digest('hex')
+    .slice(0, 32);
   assert.equal(edited.id, original.id);
   assert.equal(edited.eventKey, original.eventKey);
   assert.notEqual(edited.opponent, original.opponent);
   assert.equal(isFamilyShareCalendarEventTracked(edited, [
-    `${original.id}__2026-08-01T18:00:00.000Z`
+    `${original.id}__${originalStartsAt}`
   ]), true);
+  assert.equal(original.legacyOpaqueId, priorOpaqueId);
+  assert.equal(edited.legacyOpaqueId, crypto.createHash('sha256')
+    .update(`family-share:calendar-event-public-id:v1:stable-source-id:stable-provider-uid:${originalStartsAt}:Bears vs. Falcons`)
+    .digest('hex')
+    .slice(0, 32));
+  assert.equal(isFamilyShareCalendarEventTracked(original, [{
+    calendarEventUid: `${priorOpaqueId}__${originalStartsAt}`,
+    date: '2026-08-08T18:00:00.000Z'
+  }]), true);
+  // A pre-stable-ID opaque hash created from an older summary is irreversible.
+  // Existing raw-UID records and all newly tracked stable IDs survive edits;
+  // this assertion prevents claiming compatibility the stored data cannot prove.
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [
+    `${priorOpaqueId}__${originalStartsAt}`
+  ]), false);
 
   const uidMissingOriginal = buildEvent({ uid: '', summary: 'Bears vs. Hawks' });
   const uidMissingOther = buildEvent({ uid: '', summary: 'Bears vs. Falcons' });
@@ -133,6 +154,8 @@ test('projects bounded recurring ICS events without returning source URLs or sen
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
   assert.equal(payload.includes('calendarUidHash'), false);
+  assert.equal(payload.includes(events[0].legacyOpaqueId), false);
+  assert.equal(Object.hasOwn(response.externalEvents[0], 'legacyOpaqueId'), false);
   assert.equal(response.externalEvents[0].locationDetail, 'Field 14');
   assert.equal(response.presentation.label, 'Grandma');
 });

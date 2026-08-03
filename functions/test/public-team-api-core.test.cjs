@@ -192,6 +192,7 @@ test('public calendar projection hides feed credentials and keeps only event pre
     location: 'Public Field',
     status: 'CONFIRMED',
     calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
+    legacyOpaqueId: 'SENTINEL_LEGACY_OPAQUE_ID',
     sourceUrl: 'https://calendar.example.test/team.ics?token=secret',
     description: 'Private calendar notes',
     childNames: ['Private Child']
@@ -211,6 +212,8 @@ test('public calendar projection hides feed credentials and keeps only event pre
   assert.equal(serialized.includes('token=secret'), false);
   assert.equal(serialized.includes('SENTINEL_CALENDAR_UID_HASH'), false);
   assert.equal(serialized.includes('calendarUidHash'), false);
+  assert.equal(serialized.includes('SENTINEL_LEGACY_OPAQUE_ID'), false);
+  assert.equal(serialized.includes('legacyOpaqueId'), false);
   assert.equal(serialized.includes('Private calendar notes'), false);
   assert.equal(serialized.includes('Private Child'), false);
 });

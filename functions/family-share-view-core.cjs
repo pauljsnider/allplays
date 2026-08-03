@@ -43,14 +43,18 @@ function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
       startsAt: typeof tracked === 'object' ? toIso(tracked?.date || tracked?.startsAt) : null
     }))
     .filter((tracked) => tracked.id);
-  const eventId = compactText(event?.id || event?.eventKey, 256);
+  const eventIds = [event?.id || event?.eventKey, event?.legacyOpaqueId]
+    .map((id) => compactText(id, 256))
+    .filter(Boolean);
   const startsAt = toIso(event?.date || event?.startsAt);
   const uidHash = compactText(event?.calendarUidHash, 64);
   for (const tracked of entries) {
     const occurrenceMatch = tracked.id.match(/^(.*)__(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/);
     const baseId = occurrenceMatch?.[1] || tracked.id;
     const occurrenceStartsAt = occurrenceMatch?.[2] || null;
-    if (eventId && (tracked.id === eventId || (baseId === eventId && occurrenceStartsAt === startsAt))) return true;
+    if (eventIds.some((eventId) => (
+      tracked.id === eventId || (baseId === eventId && occurrenceStartsAt === startsAt)
+    ))) return true;
     if (!uidHash) continue;
     if (hashFamilyShareCalendarEventUid(baseId) !== uidHash) continue;
     if (occurrenceStartsAt ? occurrenceStartsAt === startsAt : !tracked.startsAt || tracked.startsAt === startsAt) return true;
@@ -358,9 +362,16 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
       ? `uid:${uid}`
       : `uid-missing:${summary}:${toIso(event.dtend) || ''}:${compactText(event.location, 300)}`;
     const idSeed = `${sourceId || ''}:${eventDiscriminator}:${date || ''}`;
+    const legacyOpaqueId = uid
+      ? hashFamilyShareOpaqueValue(
+          'calendar-event-public-id',
+          `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`
+        )
+      : '';
     return {
       eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', idSeed),
       id: hashFamilyShareOpaqueValue('calendar-event-public-id', idSeed),
+      ...(legacyOpaqueId ? { legacyOpaqueId } : {}),
       calendarUidHash: hashFamilyShareCalendarEventUid(event.uid),
       teamId: compactText(teamId, 128),
       teamName: compactText(teamName, 160) || compactText(sourceLabel, 160),
