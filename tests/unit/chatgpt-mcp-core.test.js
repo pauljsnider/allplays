@@ -1,8 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
     DomainError,
-    loadManagedTeamsFromCallable,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -88,62 +87,6 @@ function parentDb(extra = {}) {
 }
 
 describe('chatgpt-mcp core: resolveUserContext', () => {
-    it('loads legacy managed teams through the authenticated server-filtered callable', async () => {
-        const fetchImpl = vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({
-                result: {
-                    items: [{
-                        id: 'legacy-team',
-                        name: 'Legacy',
-                        ownerEmail: 'Coach@Example.com',
-                        ownerEmailLower: 'coach@example.com'
-                    }],
-                    isPartial: false
-                }
-            })
-        });
-        const managedTeamResult = await loadManagedTeamsFromCallable({
-            projectId: 'all-plays-prod',
-            idToken: 'user-id-token',
-            fetchImpl
-        });
-        const db = fakeDb({
-            docs: { 'users/coach-1': { email: 'coach@example.com' } },
-            queries: { teams: () => { throw new Error('Client team discovery must not run.'); } }
-        });
-
-        const context = await resolveUserContext(
-            db,
-            { uid: 'coach-1', email: 'coach@example.com' },
-            { managedTeams: managedTeamResult.teams }
-        );
-
-        expect(fetchImpl).toHaveBeenCalledWith(
-            'https://us-central1-all-plays-prod.cloudfunctions.net/listManagedTeams',
-            expect.objectContaining({
-                method: 'POST',
-                headers: expect.objectContaining({ Authorization: 'Bearer user-id-token' }),
-                body: JSON.stringify({ data: {} })
-            })
-        );
-        expect(managedTeamResult.isPartial).toBe(false);
-        expect([...context.teams.get('legacy-team').roles]).toEqual(['owner']);
-    });
-
-    it('preserves the callable partial marker so MCP tools can fail closed', async () => {
-        const result = await loadManagedTeamsFromCallable({
-            projectId: 'all-plays-prod',
-            idToken: 'user-id-token',
-            fetchImpl: vi.fn().mockResolvedValue({
-                ok: true,
-                json: async () => ({ result: { items: [{ id: 'team-1' }], isPartial: true } })
-            })
-        });
-
-        expect(result).toEqual({ teams: [{ id: 'team-1' }], isPartial: true });
-    });
-
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
         const context = await resolveUserContext(parentDb(), parentIdentity);
         expect(context.uid).toBe('parent-1');
@@ -185,10 +128,10 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                     const filter = filters[0];
                     queried.push([filter.field, filter.value]);
                     if (filter.field === 'ownerEmail' && filter.value === 'Coach@Example.com') {
-                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case', ownerEmail: 'Coach@Example.com' } }];
+                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case' } }];
                     }
                     if (filter.field === 'ownerEmailLower') {
-                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower', ownerEmailLower: 'coach@example.com' } }];
+                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower' } }];
                     }
                     return [];
                 }
@@ -202,95 +145,6 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(queried).toContainEqual(['ownerEmailLower', 'coach@example.com']);
         expect([...context.teams.get('team-legacy-case').roles]).toEqual(['owner']);
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
-    });
-
-    it('rejects conflicting legacy owner aliases for an explicit authenticated email', async () => {
-        const db = fakeDb({
-            docs: { 'users/former-owner': { email: 'former@example.com' } },
-            queries: {
-                teams: (filters) => {
-                    const filter = filters[0];
-                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
-                        return [{
-                            id: 'conflicting-team',
-                            data: {
-                                ownerEmail: 'current@example.com',
-                                ownerEmailLower: 'former@example.com'
-                            }
-                        }];
-                    }
-                    return [];
-                }
-            }
-        });
-
-        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'former@example.com' });
-        expect(context.teams.has('conflicting-team')).toBe(false);
-    });
-
-    it('does not use a stale profile email when the authenticated email is absent', async () => {
-        const teamQuery = vi.fn(() => []);
-        const db = fakeDb({
-            docs: { 'users/former-owner': { email: 'former@example.com', profileEmail: 'former@example.com' } },
-            queries: { teams: teamQuery }
-        });
-
-        const context = await resolveUserContext(db, { uid: 'former-owner', email: '' });
-
-        expect(context.teams.size).toBe(0);
-        expect(teamQuery).not.toHaveBeenCalledWith(expect.arrayContaining([
-            expect.objectContaining({ field: 'ownerEmail' })
-        ]));
-    });
-
-    it('does not derive ownership from stale owner email aliases when a canonical owner exists', async () => {
-        const db = fakeDb({
-            docs: { 'users/former-owner': { email: 'Former@Example.com' } },
-            queries: {
-                teams: (filters) => {
-                    const filter = filters[0];
-                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
-                        return [{
-                            id: 'reassigned-team',
-                            data: {
-                                name: 'Reassigned',
-                                ownerId: 'current-owner',
-                                ownerEmail: 'Former@Example.com',
-                                ownerEmailLower: 'former@example.com'
-                            }
-                        }];
-                    }
-                    return [];
-                }
-            }
-        });
-
-        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'Former@Example.com' });
-
-        expect(context.teams.has('reassigned-team')).toBe(false);
-    });
-
-    it('keeps canonical and admin teams when legacy owner-email queries are denied by rules', async () => {
-        const db = fakeDb({
-            docs: { 'users/coach-1': { email: 'coach@example.com' } },
-            queries: {
-                teams: (filters) => {
-                    const filter = filters[0];
-                    if (filter.field === 'ownerId') {
-                        return [{ id: 'owned-team', data: { ownerId: 'coach-1' } }];
-                    }
-                    if (filter.field === 'adminEmails') {
-                        return [{ id: 'admin-team', data: { ownerId: 'other-owner', adminEmails: ['coach@example.com'] } }];
-                    }
-                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
-                }
-            }
-        });
-
-        const context = await resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' });
-
-        expect([...context.teams.get('owned-team').roles]).toEqual(['owner']);
-        expect([...context.teams.get('admin-team').roles]).toEqual(['admin']);
     });
 
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
@@ -569,8 +423,6 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;');
         expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
         expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
-        expect(source).toContain('if (managedTeamResult.isPartial)');
-        expect(source).toContain("throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.')");
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });

@@ -137,6 +137,7 @@ test('notifyGameCreated sends one team summary for schedule import batches over 
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
         parentUserIds: ['parent-1'],
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } },
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
@@ -168,7 +169,17 @@ test('notifyGameCreated sends one team summary for schedule import batches over 
                 }
             });
             const context = { params: { teamId: 'team-1', gameId: event.id } };
-            const result = await moduleExports.notifyGameCreated(snapshot, context);
+            let result;
+            if (index === importedEvents.length - 1) {
+                await assert.rejects(moduleExports.notifyGameCreated(snapshot, context),
+                    (error) => error.notificationAuthResolutionFailed === true);
+                const released = (await env.firestoreState.doc(
+                    `teams/team-1/scheduleImportNotificationBatches/${importBatchId}`
+                ).get()).data();
+                assert.equal(released.notificationClaimedAt, undefined);
+                assert.equal(released.notificationClaimedByGameId, undefined);
+            }
+            result = await moduleExports.notifyGameCreated(snapshot, context);
 
             if (index < importedEvents.length - 1) {
                 assert.equal(result, null);
@@ -288,7 +299,7 @@ test('notifyGameCreated respects schedule preferences for practices and skips se
         assert.equal(result, null);
         assert.equal(env.messagingCalls.length, 0);
         assert.equal(env.auditWrites.length, 0);
-        assert.equal(env.counts.dedupTransactions, 1);
+        assert.equal(env.counts.dedupTransactions, 0);
     } finally {
         cleanup();
     }
@@ -659,6 +670,7 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         parentUserIds: ['parent-1'],
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveScore: true } },
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
@@ -670,6 +682,9 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
         const change = makeChange(ref, { homeScore: 10, awayScore: 8 }, { homeScore: 12, awayScore: 8, updatedBy: 'coach-1' });
         const context = { params: { teamId: 'team-1', gameId: 'game-2' } };
 
+        await assert.rejects(moduleExports.notifyGameUpdated(change, context),
+            (error) => error.notificationAuthResolutionFailed === true);
+        assert.equal(env.counts.dedupTransactions, 0);
         const result = await moduleExports.notifyGameUpdated(change, context);
 
         assert.equal(result?.successCount, 1);
@@ -756,6 +771,7 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         parentUserIds: ['parent-1'],
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', roles: ['staff'], deviceId: 'actor-device', token: 'actor-token', categories: { liveScore: true } },
             { uid: 'assistant-1', roles: ['staff'], deviceId: 'assistant-device', token: 'assistant-token', categories: { liveScore: true } },
@@ -782,6 +798,9 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
         });
         const context = { params: { teamId: 'team-1', gameId: 'game-3', eventId: 'doc-event-1' } };
 
+        await assert.rejects(moduleExports.notifyLiveEventCreated(snapshot, context),
+            (error) => error.notificationAuthResolutionFailed === true);
+        assert.equal(env.counts.dedupTransactions, 0);
         const firstResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
         const duplicateResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
 

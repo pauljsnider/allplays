@@ -11595,6 +11595,7 @@ async function sendCategoryNotification({
   actorUid = null,
   linkOverride = null,
   dedupKey = null,
+  dedupKeys = [],
   excludeUids = [],
   audienceContext = {},
   timeSensitive = false
@@ -11610,8 +11611,24 @@ async function sendCategoryNotification({
   const pushTargets = targets.filter((target) => String(target?.token || '').trim());
   if (!pushTargets.length && !inboxTargets.length) return null;
 
+  const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (normalizedDedupKeys.length) {
+    const canSend = await checkAndSetNotificationDedupKeys(teamId, category, gameId, normalizedDedupKeys);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate send', {
+        teamId,
+        category,
+        gameId,
+        dedupKeys: normalizedDedupKeys
+      });
+      return null;
+    }
+  }
+
   const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
-  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
+  if (!ALWAYS_SEND_CATEGORIES.has(category) && !normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
       functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
@@ -11886,7 +11903,10 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     const totalCount = current.importCompletedAt && currentTotalCount > 0
       ? currentTotalCount
       : Math.max(batch.totalCount, currentTotalCount);
-    const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
+    const claimBelongsToCurrentEvent = current.notificationClaimedByGameId === gameId;
+    const shouldSendSummary = !current.sentAt
+      && (!current.notificationClaimedAt || claimBelongsToCurrentEvent)
+      && nextEventIds.length >= totalCount;
 
     txn.set(batchRef, {
       batchId: batch.batchId,
@@ -11915,14 +11935,37 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     return null;
   }
 
-  return sendScheduleImportBatchNotifications({
-    teamId,
-    batchId: batch.batchId,
-    batch: {
-      ...batchState,
-      finalizedBy: game.createdBy || null
+  try {
+    return await sendScheduleImportBatchNotifications({
+      teamId,
+      batchId: batch.batchId,
+      batch: {
+        ...batchState,
+        finalizedBy: game.createdBy || null
+      }
+    });
+  } catch (error) {
+    try {
+      await firestore.runTransaction(async (txn) => {
+        const latestSnap = await txn.get(batchRef);
+        const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+        if (latest.sentAt || latest.notificationClaimedByGameId !== gameId) return;
+        txn.update(batchRef, {
+          notificationClaimedAt: admin.firestore.FieldValue.delete(),
+          notificationClaimedByGameId: admin.firestore.FieldValue.delete(),
+          notificationLastFailedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    } catch (releaseError) {
+      functions.logger.error('Failed to release schedule import notification claim', {
+        teamId,
+        batchId: batch.batchId,
+        gameId,
+        error: releaseError?.message || String(releaseError || 'Unknown error')
+      });
     }
-  });
+    throw error;
+  }
 }
 
 async function sendDirectTargetsNotification({
@@ -15023,20 +15066,6 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
         });
         return null;
       }
-      const canSendLiveScore = await checkAndSetNotificationDedupKeys(teamId, category, gameId, [
-        liveScoreDedupKey,
-        liveScoreStateDedupKey
-      ]);
-      if (!canSendLiveScore) {
-        functions.logger.info('Notification dedup: skipping duplicate live score send', {
-          teamId,
-          category,
-          gameId,
-          dedupKey: liveScoreDedupKey
-        });
-        return null;
-      }
-
       return sendCategoryNotification({
         teamId,
         gameId,
@@ -15044,7 +15073,8 @@ exports.notifyGameUpdated = retryableNotificationFunctions.firestore
         title: 'Live score update',
         body: `Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}`,
         actorUid,
-        dedupKey: liveScoreDedupKey
+        dedupKey: liveScoreDedupKey,
+        dedupKeys: [liveScoreDedupKey, liveScoreStateDedupKey]
       });
     }
 
@@ -15083,18 +15113,6 @@ exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore
     const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
     if (!dedupKey) return null;
     const scoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(event);
-    const canSend = await checkAndSetNotificationDedupKeys(teamId, 'liveScore', gameId, [dedupKey, scoreStateDedupKey]);
-    if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate live event send', {
-        teamId,
-        gameId,
-        eventId: documentEventId,
-        dedupKey,
-        scoreStateDedupKey
-      });
-      return null;
-    }
-
     return sendCategoryNotification({
       teamId,
       gameId,
@@ -15103,7 +15121,8 @@ exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore
       title: payload.title,
       body: payload.body,
       actorUid: getLiveEventActorUid(event),
-      dedupKey
+      dedupKey,
+      dedupKeys: [dedupKey, scoreStateDedupKey]
     });
   });
 
@@ -16944,7 +16963,7 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
     userId: recipientId,
     email: recipientEmail
   });
-  if (!callerHasAccess || !recipientHasAccess) {
+  if (!callerHasAccess || !recipientAuthEnabled || !recipientHasAccess) {
     throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
   }
   if (conversation.directAccess === 'accepted_friend') {

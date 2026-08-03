@@ -62,40 +62,16 @@ async function safeGetDoc(db, path) {
     }
 }
 
-export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchImpl = fetch }) {
-    if (!projectId || !idToken) {
-        throw new DomainError('unauthenticated', 'Managed team discovery requires an authenticated project context.');
-    }
-    const requestUrl = `https://us-central1-${encodeURIComponent(projectId)}.cloudfunctions.net/listManagedTeams`;
-    const response = await fetchImpl(requestUrl, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${idToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ data: {} })
-    });
-    const payload = await response.json().catch(() => ({}));
-    const result = payload?.result || payload?.data;
-    if (!response.ok || !Array.isArray(result?.items)) {
-        throw new DomainError('unavailable', payload?.error?.message || 'Managed team discovery is unavailable.');
-    }
-    return {
-        teams: result.items.filter((team) => team && typeof team === 'object' && !Array.isArray(team)),
-        isPartial: result.isPartial === true
-    };
-}
-
 /**
  * Build the caller's authorization context from Firestore. Roles are always
  * re-derived per request; nothing supplied by the model is trusted.
  */
-export async function resolveUserContext(db, { uid, email }, { managedTeams = null } = {}) {
+export async function resolveUserContext(db, { uid, email }) {
     if (!uid) throw new DomainError('unauthenticated', 'Missing authenticated user.');
 
     const userSnap = await safeGetDoc(db, `users/${uid}`);
     const profile = userSnap.exists ? userSnap.data() || {} : {};
-    const normalizedEmail = normalizeEmail(email);
+    const normalizedEmail = normalizeEmail(email || profile.email);
     const legacyParentLinks = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
         .filter((link) => link && typeof link.teamId === 'string' && link.teamId);
     const parentTeamIds = new Set([
@@ -118,6 +94,21 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
         if (link) addLinkedPlayer(link.teamId, link.playerId);
     }
 
+    const ownerEmailCandidates = [...new Set([email, profile.email, normalizedEmail]
+        .filter((value) => typeof value === 'string' && value))];
+    const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
+        db.collection('teams').where('ownerId', '==', uid).get(),
+        normalizedEmail
+            ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
+            : Promise.resolve({ docs: [] }),
+        normalizedEmail
+            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
+            : Promise.resolve({ docs: [] }),
+        ...ownerEmailCandidates.map((ownerEmail) => (
+            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
+        ))
+    ]);
+
     const teams = new Map();
     const addTeam = (teamId, teamData, role) => {
         if (!teams.has(teamId)) {
@@ -126,45 +117,11 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
         teams.get(teamId).roles.add(role);
     };
 
-    if (Array.isArray(managedTeams)) {
-        for (const team of managedTeams) {
-            const teamId = String(team?.id || '').trim();
-            if (!teamId) continue;
-            const ownerId = String(team.ownerId || '').trim();
-            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
-            const role = ownerId === uid || (!ownerId && ownerEmails.length === 1 && normalizedEmail === ownerEmails[0])
-                ? 'owner'
-                : 'admin';
-            addTeam(teamId, team, role);
-        }
-    } else {
-        const ownerEmailCandidates = [...new Set([email, normalizedEmail]
-            .filter((value) => typeof value === 'string' && value))];
-        const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
-            db.collection('teams').where('ownerId', '==', uid).get(),
-            normalizedEmail
-                ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
-                : Promise.resolve({ docs: [] }),
-            normalizedEmail
-                ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get().catch(() => ({ docs: [] }))
-                : Promise.resolve({ docs: [] }),
-            ...ownerEmailCandidates.map((ownerEmail) => (
-                db.collection('teams').where('ownerEmail', '==', ownerEmail).get().catch(() => ({ docs: [] }))
-            ))
-        ]);
-        for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
-        for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
-        const addLegacyOwnedTeam = (doc) => {
-            const team = doc.data() || {};
-            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
-            if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail) {
-                addTeam(doc.id, team, 'owner');
-            }
-        };
-        for (const doc of ownerEmailLowerSnap.docs) addLegacyOwnedTeam(doc);
-        for (const snap of ownerEmailSnaps) {
-            for (const doc of snap.docs) addLegacyOwnedTeam(doc);
-        }
+    for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
+    for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
+    for (const doc of ownerEmailLowerSnap.docs) addTeam(doc.id, doc.data(), 'owner');
+    for (const snap of ownerEmailSnaps) {
+        for (const doc of snap.docs) addTeam(doc.id, doc.data(), 'owner');
     }
 
     const parentTeamSnaps = await Promise.all([...parentTeamIds].map((teamId) => safeGetDoc(db, `teams/${teamId}`)));

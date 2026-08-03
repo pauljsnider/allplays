@@ -8,11 +8,13 @@ const originalModuleLoad = Module._load;
 let adminStub = null;
 let functionsStub = null;
 let StripeStub = null;
+let resendStub = null;
 
 function patchedModuleLoad(request, parent, isMain) {
     if (request === 'firebase-admin' && adminStub) return adminStub;
     if (request === 'firebase-functions' && functionsStub) return functionsStub;
     if (request === 'stripe' && StripeStub) return StripeStub;
+    if (request === 'resend' && resendStub) return resendStub;
     return originalModuleLoad(request, parent, isMain);
 }
 
@@ -255,7 +257,17 @@ function loadCallables(seed = {}, { authUsers = {}, queryFailures = [] } = {}) {
         auth: () => ({
             verifyIdToken: async () => null,
             getUser: async (uid) => {
+                if (!Object.prototype.hasOwnProperty.call(authUsers, uid)) {
+                    const seededUser = seed[`users/${uid}`];
+                    if (seededUser) {
+                        return { uid, email: seededUser.email || null, disabled: false };
+                    }
+                    const error = new Error(`Missing auth user: ${uid}`);
+                    error.code = 'auth/user-not-found';
+                    throw error;
+                }
                 const authUser = authUsers[uid];
+                if (authUser instanceof Error) throw authUser;
                 if (!authUser) {
                     const error = new Error(`Missing auth user: ${uid}`);
                     error.code = 'auth/user-not-found';
@@ -275,6 +287,7 @@ function loadCallables(seed = {}, { authUsers = {}, queryFailures = [] } = {}) {
             };
         }
     };
+    resendStub = { Resend: class ResendMock {} };
     return { firestore, callables: require('../index.js') };
 }
 
@@ -318,6 +331,7 @@ test.beforeEach(() => {
     adminStub = null;
     functionsStub = null;
     StripeStub = null;
+    resendStub = null;
 });
 
 test.afterEach(() => {
@@ -326,6 +340,7 @@ test.afterEach(() => {
     adminStub = null;
     functionsStub = null;
     StripeStub = null;
+    resendStub = null;
 });
 
 test('opportunity writes require authentication and verified inquiry replies', async () => {
@@ -1115,9 +1130,10 @@ test('direct-message callable rejects recipients whose Auth account is disabled'
         'users/owner': { email: 'owner@example.com', isAdmin: false },
         'users/disabled-parent': {
             email: 'stale@example.com',
-            isAdmin: false
+            isAdmin: false,
+            parentTeamIds: ['team-1']
         },
-        'teams/team-1': { ownerId: 'owner', adminEmails: ['stale@example.com'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
         [conversationPath]: {
             type: 'direct',
             participantIds: ['owner', 'user:disabled-parent'],
@@ -1143,6 +1159,48 @@ test('direct-message callable rejects recipients whose Auth account is disabled'
         (error) => error.code === 'permission-denied'
     );
 });
+
+for (const authFailure of [
+    { label: 'disabled canonical owners', value: { email: 'owner@example.com', disabled: true } },
+    { label: 'missing canonical owner Auth records', value: null },
+    { label: 'temporarily unresolvable canonical owner Auth records', value: new Error('Auth unavailable') }
+]) {
+    test(`direct-message callable rejects ${authFailure.label}`, async () => {
+        const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Aparent';
+        const seed = {
+            'users/owner': { email: 'owner@example.com', isAdmin: false },
+            'users/parent': { email: 'parent@example.com', isAdmin: false, parentTeamIds: ['team-1'] },
+            'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+            [conversationPath]: {
+                type: 'direct',
+                participantIds: ['owner', 'user:parent'],
+                participantRoles: [],
+                directAccess: 'team_admin',
+                directUserIds: ['owner', 'parent'],
+                friendshipId: null,
+                initiatedBy: 'owner'
+            }
+        };
+        const { firestore, callables } = loadCallables(seed, {
+            authUsers: { owner: authFailure.value }
+        });
+
+        await assert.rejects(
+            callables.sendAuthorizedDirectMessage({
+                teamId: 'team-1',
+                conversationId: 'direct_owner__user%3Aparent',
+                clientMessageId: 'disabled-owner-recipient',
+                text: 'Should not send',
+                attachments: []
+            }, authContext('parent')),
+            (error) => error.code === 'permission-denied'
+        );
+        assert.equal(
+            firestore.snapshot(`${conversationPath}/chatMessages/parent__disabled-owner-recipient`),
+            undefined
+        );
+    });
+}
 
 test('opportunity moderation trusts protected user admin state only', async () => {
     const seed = {
