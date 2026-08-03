@@ -221,8 +221,9 @@ describe('parent coverage contract boundary', () => {
         ]) {
             expect(workflowRouteAllowed('P10', route)).toBe(true);
         }
-        expect(workflowRouteAllowed('P10', '/teams')).toBe(false);
-        expect(workflowRouteAllowed('P10', '/ai')).toBe(false);
+        for (const route of ['/teams', '/teams/team-1', '/ai', '/ai/private']) {
+            expect(workflowRouteAllowed('P10', route)).toBe(false);
+        }
     });
 
     it('allows credential fills without putting credentials in the contract', () => {
