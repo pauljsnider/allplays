@@ -61,6 +61,10 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const managedTeamMocks = vi.hoisted(() => ({
+    listManagedTeams: vi.fn()
+}));
+
 const firebaseMocks = vi.hoisted(() => {
     const makeMissingSnapshot = (id = '') => ({
         id,
@@ -74,7 +78,7 @@ const firebaseMocks = vi.hoisted(() => {
         httpsCallable: vi.fn((_functions, name) => async () => ({
             data: {
                 items: name === 'listManagedTeams'
-                    ? [await dbMocks.getTeam('team-1')].filter(Boolean)
+                    ? await managedTeamMocks.listManagedTeams()
                     : []
             }
         })),
@@ -278,6 +282,7 @@ beforeEach(() => {
     dbMocks.getMyRsvps.mockImplementation((teamId, gameId) => dbMocks.getRsvps(teamId, gameId));
     vi.unstubAllGlobals();
     installWindow();
+    managedTeamMocks.listManagedTeams.mockResolvedValue([]);
     profileMocks.loadProfileDocument.mockResolvedValue({
         parentOf: [
             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
@@ -729,6 +734,7 @@ describe('React app schedule service contract integration', () => {
             { id: 'player-1', name: 'Pat', active: true },
             { id: 'player-2', name: 'Sam', active: true }
         ]);
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentPlayerSchedule({
             ...user(),
@@ -845,6 +851,7 @@ describe('React app schedule service contract integration', () => {
             opponent: 'Falcons',
             status: 'scheduled'
         });
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentScheduleEventDetail({
             ...user(),
