@@ -35,7 +35,7 @@ function createLegacyTeamOwnerAuthSyncHandler({ firestore, fieldValue }) {
     const ownerId = String(authUser?.uid || '').trim();
     const rawEmail = String(authUser?.email || '').trim();
     const normalizedEmail = normalizeEmail(rawEmail);
-    if (!ownerId || !normalizedEmail) return null;
+    if (!ownerId || !normalizedEmail || authUser?.disabled === true) return null;
 
     const ownerEmailCandidates = [...new Set([rawEmail, normalizedEmail].filter(Boolean))];
     const snapshots = await Promise.all([
@@ -78,7 +78,84 @@ function createLegacyTeamOwnerAuthSyncHandler({ firestore, fieldValue }) {
   };
 }
 
+function isAuthUserNotFound(error) {
+  return ['auth/user-not-found', 'user-not-found'].includes(String(error?.code || ''));
+}
+
+function createLegacyTeamOwnerReconciliationHandler({
+  firestore,
+  auth,
+  documentIdField,
+  syncAuthUser,
+  batchSize = 200,
+  concurrency = 20
+}) {
+  if (!firestore || !auth || !documentIdField || typeof syncAuthUser !== 'function') {
+    throw new Error('Firestore, Auth, documentIdField, and syncAuthUser are required.');
+  }
+
+  return async function reconcileLegacyTeamOwners() {
+    const resolvedDocumentIdField = typeof documentIdField === 'function'
+      ? documentIdField()
+      : documentIdField;
+    const candidateAliases = new Set();
+    let cursor = null;
+    let scanned = 0;
+    do {
+      let query = firestore.collection('teams')
+        .select('ownerId', 'ownerEmail', 'ownerEmailLower')
+        .orderBy(resolvedDocumentIdField)
+        .limit(batchSize);
+      if (cursor) query = query.startAfter(cursor);
+      const snapshot = await query.get();
+      const teamDocs = snapshot.docs || [];
+      teamDocs.forEach((teamDoc) => {
+        scanned += 1;
+        const team = teamDoc.data() || {};
+        if (String(team.ownerId || '').trim()) return;
+        const aliases = [...new Set(
+          [team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean)
+        )];
+        if (aliases.length === 1) candidateAliases.add(aliases[0]);
+      });
+      cursor = teamDocs.at(-1) || null;
+      if (teamDocs.length < batchSize) break;
+    } while (cursor);
+
+    const resolvedUsers = new Map();
+    const aliases = [...candidateAliases];
+    for (let index = 0; index < aliases.length; index += concurrency) {
+      const chunk = aliases.slice(index, index + concurrency);
+      const users = await Promise.all(chunk.map(async (email) => {
+        try {
+          return await auth.getUserByEmail(email);
+        } catch (error) {
+          if (isAuthUserNotFound(error)) return null;
+          throw error;
+        }
+      }));
+      users.forEach((authUser) => {
+        const uid = String(authUser?.uid || '').trim();
+        if (uid && authUser?.disabled !== true) resolvedUsers.set(uid, authUser);
+      });
+    }
+
+    const boundTeamIds = new Set();
+    for (const authUser of resolvedUsers.values()) {
+      const result = await syncAuthUser(authUser);
+      (result?.teamIds || []).forEach((teamId) => boundTeamIds.add(teamId));
+    }
+    return {
+      scanned,
+      candidateAliases: aliases.length,
+      resolvedUsers: resolvedUsers.size,
+      boundTeamIds: [...boundTeamIds].sort()
+    };
+  };
+}
+
 module.exports = {
   createLegacyTeamOwnerAuthSyncHandler,
+  createLegacyTeamOwnerReconciliationHandler,
   createTeamOwnerAccessSyncHandler
 };

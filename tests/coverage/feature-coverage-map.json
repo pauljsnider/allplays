@@ -245,6 +245,7 @@
                 "notifyParentMembershipRequestUpdated",
                 "queueInviteEmail",
                 "queueParentInviteEmail",
+                "reconcileLegacyTeamOwnership",
                 "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
                 "syncLegacyTeamOwnershipOnAuthCreate",

@@ -135,7 +135,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
         expect(productionSource).toContain(
-            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
+            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
         );
         expect(productionSource).toContain(
             'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'

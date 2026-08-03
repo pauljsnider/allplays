@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const {
   createLegacyTeamOwnerAuthSyncHandler,
+  createLegacyTeamOwnerReconciliationHandler,
   createTeamOwnerAccessSyncHandler
 } = require('../../functions/team-owner-access-core.cjs');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
@@ -121,6 +122,26 @@ describe('team owner access trigger', () => {
     }, { merge: true });
   });
 
+  it('never binds owner-email-only teams for a disabled Auth account', async () => {
+    const firestore = {
+      collection: vi.fn(),
+      doc: vi.fn(),
+      runTransaction: vi.fn()
+    };
+    const handler = createLegacyTeamOwnerAuthSyncHandler({
+      firestore,
+      fieldValue: { arrayUnion: vi.fn(), serverTimestamp: vi.fn() }
+    });
+
+    await expect(handler({
+      uid: 'disabled-owner',
+      email: 'disabled@example.com',
+      disabled: true
+    })).resolves.toBeNull();
+    expect(firestore.collection).not.toHaveBeenCalled();
+    expect(firestore.runTransaction).not.toHaveBeenCalled();
+  });
+
   it('never lets a late legacy alias overwrite canonical ownership', async () => {
     const teamRef = { path: 'teams/canonical-team' };
     const update = vi.fn();
@@ -184,8 +205,83 @@ describe('team owner access trigger', () => {
     expect(set).not.toHaveBeenCalled();
   });
 
-  it('wires retryable Auth creation binding before legacy list compatibility is removed', () => {
+  it('reconciles re-enabled legacy owners with bounded team and Auth lookups', async () => {
+    const makeDoc = (id, data) => ({ id, data: () => data });
+    const pages = [
+      [
+        makeDoc('canonical', { ownerId: 'current-owner', ownerEmail: 'canonical@example.com' }),
+        makeDoc('enabled', { ownerEmail: 'enabled@example.com' })
+      ],
+      [
+        makeDoc('disabled', { ownerEmailLower: 'disabled@example.com' }),
+        makeDoc('conflicting', {
+          ownerEmail: 'first@example.com',
+          ownerEmailLower: 'second@example.com'
+        })
+      ],
+      [makeDoc('missing', { ownerEmail: 'missing@example.com' })]
+    ];
+    const queryCalls = [];
+    const makeQuery = (pageIndex = 0) => ({
+      select: vi.fn(() => makeQuery(pageIndex)),
+      orderBy: vi.fn(() => makeQuery(pageIndex)),
+      limit: vi.fn(() => makeQuery(pageIndex)),
+      startAfter: vi.fn((cursor) => {
+        queryCalls.push({ type: 'startAfter', cursor: cursor.id });
+        const cursorPageIndex = pages.findIndex((page) => (
+          page.some((teamDoc) => teamDoc.id === cursor.id)
+        ));
+        return makeQuery(cursorPageIndex + 1);
+      }),
+      get: vi.fn(async () => {
+        queryCalls.push({ type: 'get', pageIndex });
+        return { docs: pages[pageIndex] || [] };
+      })
+    });
+    const auth = {
+      getUserByEmail: vi.fn(async (email) => {
+        if (email === 'enabled@example.com') {
+          return { uid: 'enabled-owner', email, disabled: false };
+        }
+        if (email === 'disabled@example.com') {
+          return { uid: 'disabled-owner', email, disabled: true };
+        }
+        throw Object.assign(new Error('missing'), { code: 'auth/user-not-found' });
+      })
+    };
+    const syncAuthUser = vi.fn(async (authUser) => ({
+      ownerId: authUser.uid,
+      teamIds: ['enabled']
+    }));
+    const handler = createLegacyTeamOwnerReconciliationHandler({
+      firestore: { collection: vi.fn(() => makeQuery()) },
+      auth,
+      documentIdField: { documentId: true },
+      syncAuthUser,
+      batchSize: 2,
+      concurrency: 2
+    });
+
+    await expect(handler()).resolves.toEqual({
+      scanned: 5,
+      candidateAliases: 3,
+      resolvedUsers: 1,
+      boundTeamIds: ['enabled']
+    });
+    expect(auth.getUserByEmail).toHaveBeenCalledTimes(3);
+    expect(syncAuthUser).toHaveBeenCalledOnce();
+    expect(syncAuthUser).toHaveBeenCalledWith(expect.objectContaining({
+      uid: 'enabled-owner'
+    }));
+    expect(queryCalls.filter(({ type }) => type === 'get')).toHaveLength(3);
+  });
+
+  it('wires retryable Auth creation and scheduled legacy-owner reconciliation', () => {
     expect(functionsSource).toContain('exports.syncLegacyTeamOwnershipOnAuthCreate = functions');
-    expect(functionsSource).toContain('.auth\n  .user()\n  .onCreate(createLegacyTeamOwnerAuthSyncHandler({');
+    expect(functionsSource).toContain('const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({');
+    expect(functionsSource).toContain('.auth\n  .user()\n  .onCreate(legacyTeamOwnerAuthSyncHandler);');
+    expect(functionsSource).toContain('exports.reconcileLegacyTeamOwnership = functions');
+    expect(functionsSource).toContain(".schedule('every 24 hours')");
+    expect(functionsSource).toContain('.onRun(createLegacyTeamOwnerReconciliationHandler({');
   });
 });

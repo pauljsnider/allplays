@@ -620,8 +620,11 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /blockedReason === 'unverified-historical-generation'[\s\S]*status: 'blocked-unverified-generation'/);
   assert.match(functionsSource, /isAuthorizedCertificateSignatureCleanupTarget\(teamId, target\)/);
   assert.match(functionsSource, /async function lookupCertificateLegacySignatureBinding[\s\S]*getCertificateLegacyUploaderIds[\s\S]*conflicted: true/);
-  assert.match(functionsSource, /managerEmails\.slice\(offset, offset \+ 100\)/);
-  assert.match(migrationSource, /managerEmails\.slice\(offset, offset \+ 100\)/);
+  assert.match(functionsSource, /managerIdentifiers\.slice\(offset, offset \+ 100\)/);
+  assert.match(migrationSource, /managerIdentifiers\.slice\(offset, offset \+ 100\)/);
+  assert.match(functionsSource, /String\(team\.ownerId \|\| ''\)\.trim\(\)/);
+  assert.match(functionsSource, /map\(\(uid\) => \[`uid:\$\{uid\}`, \{ uid \}\]\)/);
+  assert.match(migrationSource, /managerIdentifiers[\s\S]*\{ uid: ownerId \}/);
   assert.match(functionsSource, /getCertificateLegacyUploaderIds[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
   assert.match(functionsSource, /lookupExistingUserIds:[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
   assert.match(migrationSource, /getAuthorizedUploaderIds[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);

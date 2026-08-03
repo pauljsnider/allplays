@@ -305,7 +305,7 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
-        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
+        'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"',
         'Production retry-enabled function allowlist'
     );
     assertIncludes(

@@ -1392,7 +1392,7 @@ test('definitively missing or disabled Auth identities remove notification targe
     });
     await runScenario({
         uid: 'disabled-admin',
-        authIdentity: { email: 'admin@example.com', disabled: true },
+        authIdentity: { email: 'admin@example.com', emailVerified: true, disabled: true },
         expectedErrorCode: 'disabled Auth record'
     });
 });

@@ -353,6 +353,7 @@ const {
 } = require('./account-deletion-core.cjs');
 const {
   createLegacyTeamOwnerAuthSyncHandler,
+  createLegacyTeamOwnerReconciliationHandler,
   createTeamOwnerAccessSyncHandler
 } = require('./team-owner-access-core.cjs');
 const {
@@ -3787,6 +3788,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
           : null;
         const currentEmail = String(authIdentity.email || '').trim().toLowerCase();
         const isIneligible = authIdentity.userMissing === true
+          || authIdentity.userDisabled === true
           || authIdentity.emailVerified !== true;
         if (!isIneligible && indexedEmail === currentEmail) return null;
 
@@ -3878,7 +3880,8 @@ async function loadPublicUserProfileAuthIdentity(userId) {
       email: authRecord.email || null,
       displayName: authRecord.displayName || null,
       photoUrl: authRecord.photoURL || null,
-      emailVerified: authRecord.emailVerified === true
+      emailVerified: authRecord.emailVerified === true,
+      userDisabled: authRecord.disabled === true
     };
   } catch (error) {
     if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error)) {
@@ -3914,7 +3917,11 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
 async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIdentity) {
   const normalizedUserId = String(userId || '').trim();
   const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
-  if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) return false;
+  if (
+    authIdentity.userMissing !== true &&
+    authIdentity.userDisabled !== true &&
+    authIdentity.emailVerified === true
+  ) return false;
 
   const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
   const [cleanupScope, indexedAuthIdentitySnap] = await Promise.all([
@@ -4052,7 +4059,11 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (removedForIneligibleAuth) {
     functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
       userId: normalizedUserId,
-      reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
+      reason: authIdentity.userMissing === true
+        ? 'auth-user-missing'
+        : authIdentity.userDisabled === true
+          ? 'auth-user-disabled'
+          : 'email-unverified'
     });
     return null;
   }
@@ -9272,6 +9283,7 @@ async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = 
   const authIdentity = await loadPublicUserProfileAuthIdentity(normalizedUid);
   const forceRemove = !user
     || authIdentity.userMissing === true
+    || authIdentity.userDisabled === true
     || authIdentity.emailVerified !== true;
   if (forceRemove) {
     const indexedStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUid);
@@ -9468,13 +9480,26 @@ exports.syncTeamOwnerAccessOnCreate = functions
     fieldValue: admin.firestore.FieldValue
   }));
 
+const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({
+  firestore,
+  fieldValue: admin.firestore.FieldValue
+});
+
 exports.syncLegacyTeamOwnershipOnAuthCreate = functions
   .runWith({ failurePolicy: true })
   .auth
   .user()
-  .onCreate(createLegacyTeamOwnerAuthSyncHandler({
+  .onCreate(legacyTeamOwnerAuthSyncHandler);
+
+exports.reconcileLegacyTeamOwnership = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB', failurePolicy: true })
+  .pubsub
+  .schedule('every 24 hours')
+  .onRun(createLegacyTeamOwnerReconciliationHandler({
     firestore,
-    fieldValue: admin.firestore.FieldValue
+    auth: admin.auth(),
+    documentIdField: () => admin.firestore.FieldPath.documentId(),
+    syncAuthUser: legacyTeamOwnerAuthSyncHandler
   }));
 
 exports.syncTeamNotificationTargetsOnPreferenceWrite = functions
@@ -14199,15 +14224,16 @@ function getCertificateSignatureCleanupId(teamId, target = {}) {
 }
 
 async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
-  const uploaderIds = new Set([
+  const uploaderIds = new Set();
+  const managerIdentifiers = [...new Map([
     String(context.auth?.uid || '').trim(),
     String(team.ownerId || '').trim()
-  ].filter(Boolean));
-  const managerEmails = getCertificateLegacyManagerEmails(team);
-  for (let offset = 0; offset < managerEmails.length; offset += 100) {
-    const result = await admin.auth().getUsers(
-      managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
-    );
+  ].filter(Boolean).map((uid) => [`uid:${uid}`, { uid }])).values()];
+  getCertificateLegacyManagerEmails(team).forEach((email) => {
+    managerIdentifiers.push({ email });
+  });
+  for (let offset = 0; offset < managerIdentifiers.length; offset += 100) {
+    const result = await admin.auth().getUsers(managerIdentifiers.slice(offset, offset + 100));
     getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
   }
   return [...uploaderIds];
