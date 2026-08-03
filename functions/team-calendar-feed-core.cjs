@@ -28,11 +28,22 @@ function calendarTokenHasTeamAccess({ team, profile = {}, authUser = null, token
   if (!uid || tokenUid !== uid) return false;
 
   const email = String(authUser.email || '').trim().toLowerCase();
+  const ownerId = String(team.ownerId || '').trim();
+  const legacyOwnerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean))];
+  const hasLegacyOwnerAccess = Boolean(
+    !ownerId &&
+    email &&
+    legacyOwnerEmails.length === 1 &&
+    legacyOwnerEmails[0] === email
+  );
   const adminEmails = Array.isArray(team.adminEmails)
     ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
     : [];
   const parentTeamIds = Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [];
-  return team.ownerId === uid ||
+  return ownerId === uid ||
+    hasLegacyOwnerAccess ||
     (email && adminEmails.includes(email)) ||
     parentTeamIds.includes(tokenData.teamId);
 }

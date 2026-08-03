@@ -527,6 +527,11 @@ function getAccountReauthenticationProvider(userRecord = {}, authToken = {}) {
   return 'unknown';
 }
 
+function getCurrentEnabledAuthEmail(authUser) {
+  if (!authUser || authUser.disabled === true) return '';
+  return String(authUser.email || '').trim();
+}
+
 async function loadOwnedTeams({ firestore, uid, email }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const emailCandidates = getAccountEmailQueryCandidates(email);
@@ -632,6 +637,7 @@ module.exports = {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountReauthenticationProvider,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,

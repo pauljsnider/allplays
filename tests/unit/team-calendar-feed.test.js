@@ -528,6 +528,44 @@ describe('team calendar subscription feed', () => {
         })).toBe(false);
     });
 
+    it('recognizes one unambiguous legacy owner alias from the current enabled Auth identity', () => {
+        const tokenData = { teamId: 'team-1', uid: 'legacy-owner' };
+
+        expect(calendarTokenHasTeamAccess({
+            team: {
+                ownerEmail: ' Legacy.Owner@Example.com ',
+                ownerEmailLower: 'legacy.owner@example.com'
+            },
+            profile: {},
+            authUser: { uid: 'legacy-owner', email: 'LEGACY.OWNER@example.com', disabled: false },
+            tokenData
+        })).toBe(true);
+    });
+
+    it('fails closed for conflicting or stale legacy owner aliases', () => {
+        const tokenData = { teamId: 'team-1', uid: 'legacy-owner' };
+        const authUser = { uid: 'legacy-owner', email: 'owner@example.com', disabled: false };
+
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerEmail: 'owner@example.com', ownerEmailLower: 'former@example.com' },
+            profile: {},
+            authUser,
+            tokenData
+        })).toBe(false);
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerId: 'current-owner', ownerEmail: 'owner@example.com' },
+            profile: {},
+            authUser,
+            tokenData
+        })).toBe(false);
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerEmail: 'owner@example.com' },
+            profile: {},
+            authUser: { ...authUser, disabled: true },
+            tokenData
+        })).toBe(false);
+    });
+
     it('rejects private calendar tokens for disabled, deleted, or mismatched Auth identities', () => {
         const tokenData = { teamId: 'team-1', uid: 'owner-1', userEmail: 'owner@example.com' };
         const team = { ownerId: 'owner-1', adminEmails: ['owner@example.com'] };

@@ -349,6 +349,7 @@ const {
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
@@ -18473,7 +18474,9 @@ exports.processAccountDeletionRequest = functions
           throw error;
         })
       ]);
-      const ownerEmail = authUser?.email || userDoc.data()?.email || snapshot.data()?.email || '';
+      // A disabled or deleted Auth identity cannot claim an ownerId-less team
+      // through stale profile/request email snapshots.
+      const ownerEmail = getCurrentEnabledAuthEmail(authUser);
       const ownedTeams = await loadOwnedTeams({ firestore, uid, email: ownerEmail });
       if (ownedTeams.length) {
         throw new Error('Account still owns one or more teams.');
