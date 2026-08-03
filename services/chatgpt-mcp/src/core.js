@@ -359,6 +359,31 @@ function calendarOccurrenceId(sourceId, startsAt) {
     return sourceId.endsWith(suffix) ? sourceId : `${sourceId}${suffix}`;
 }
 
+function parseCalendarOccurrenceId(sourceId) {
+    const normalizedId = cleanString(sourceId).trim();
+    if (!normalizedId) return { id: '', startsAt: null };
+    const occurrenceMatch = normalizedId.match(/^(.*)__(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/);
+    return {
+        id: normalizedId,
+        startsAt: occurrenceMatch ? toDate(occurrenceMatch[2]) : null
+    };
+}
+
+function isProjectedCalendarEventTracked(projectedId, projectedStartsAt, trackedEvents) {
+    const eventId = cleanString(projectedId).trim();
+    const startsAt = toDate(projectedStartsAt);
+    if (!eventId || !startsAt) return false;
+    const occurrenceId = calendarOccurrenceId(eventId, startsAt);
+    const occurrenceTime = startsAt.getTime();
+
+    return trackedEvents.some((tracked) => {
+        if (tracked.id === eventId || tracked.id === occurrenceId) return true;
+        const parsed = parseCalendarOccurrenceId(tracked.id);
+        if (parsed.startsAt) return parsed.startsAt.getTime() === occurrenceTime;
+        return tracked.date?.getTime() === occurrenceTime;
+    });
+}
+
 function whitelistRsvp(data, linkedPlayerIds) {
     if (!data) return null;
     const playerIds = (Array.isArray(data.playerIds) ? data.playerIds : [data.playerId])
@@ -384,7 +409,7 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
 
     for (const entry of context.teams.values()) {
         const teamEvents = [];
-        const trackedCalendarEventIds = new Set();
+        const trackedCalendarEvents = [];
         const snap = await db.collection(`teams/${entry.teamId}/games`)
             .where('date', '>=', start)
             .where('date', '<=', end)
@@ -395,7 +420,6 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
         for (const doc of snap.docs) {
             const data = doc.data() || {};
             const trackedCalendarEventId = cleanString(data.calendarEventUid).trim();
-            if (trackedCalendarEventId) trackedCalendarEventIds.add(trackedCalendarEventId);
             const event = {
                 teamId: entry.teamId,
                 teamName: cleanString(entry.team.name),
@@ -409,6 +433,15 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 linkedPlayerIds: [...entry.linkedPlayerIds],
                 deepLink: gameDeepLink(entry.teamId, doc.id)
             };
+            if (trackedCalendarEventId) {
+                trackedCalendarEvents.push({
+                    id: trackedCalendarEventId,
+                    type: event.type,
+                    date: toDate(data.date),
+                    location: event.location,
+                    opponent: event.opponent
+                });
+            }
 
             if (entry.roles.has('parent')) {
                 const rsvpSnap = await safeGetDoc(db, `teams/${entry.teamId}/games/${doc.id}/rsvps/${context.uid}`);
@@ -444,8 +477,7 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 const date = toDate(projected?.startsAt);
                 if (
                     !eventId || !date || date < start || date > end
-                    || trackedCalendarEventIds.has(eventId)
-                    || trackedCalendarEventIds.has(calendarOccurrenceId(eventId, date))
+                    || isProjectedCalendarEventTracked(eventId, date, trackedCalendarEvents)
                 ) continue;
                 const eventKey = `${eventId}::${date.toISOString()}`;
                 if (projectedEventKeys.has(eventKey)) continue;

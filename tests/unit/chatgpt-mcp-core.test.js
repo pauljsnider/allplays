@@ -416,7 +416,10 @@ describe('chatgpt-mcp core: listMyTeams', () => {
 });
 
 describe('chatgpt-mcp core: getFamilySchedule', () => {
-    function scheduleDb(calendarEventUid = 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z') {
+    function scheduleDb(
+        calendarEventUid = 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z',
+        trackedGameOverrides = {}
+    ) {
         return parentDb({
             docs: {
                 'teams/team-a/games/game-1/rsvps/parent-1': {
@@ -431,7 +434,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                     const start = filters.find((f) => f.op === '>=').value;
                     const end = filters.find((f) => f.op === '<=').value;
                     const all = [
-                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid, privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
+                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid, privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' }, ...trackedGameOverrides } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
@@ -542,6 +545,80 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
             expect(result.events.some((event) => event.gameId === 'opaque-projected-id')).toBe(false);
         }
+    });
+
+    it.each([
+        ['practice', 'legacy-practice-uid', { type: 'practice' }],
+        ['private game', 'legacy-private-uid__2026-07-25T17:00:00.000Z', { visibility: 'private' }],
+        ['deleted game', '7bca28b6105ee23830c3517602e276d3__2026-07-25T17:00:00.000Z', { deleted: true }]
+    ])('deduplicates a projected event materialized as an authorized %s record', async (_label, trackedUid, overrides) => {
+        const db = scheduleDb(trackedUid, overrides);
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: overrides.type === 'practice' ? 'practice' : 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Duplicate Hawks',
+                location: 'Field 2',
+                calendarUidHash: 'SENTINEL_PRIVATE_CORRELATION_HASH'
+            }] }
+        );
+
+        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_PRIVATE_CORRELATION_HASH');
+        expect(JSON.stringify(result)).not.toContain('calendarUidHash');
+        expect(JSON.stringify(result)).not.toContain('calendarEventUid');
+    });
+
+    it('uses the embedded original occurrence time when a materialized event moves', async () => {
+        const trackedUid = 'legacy-moved-uid__2026-07-25T17:00:00.000Z';
+        const db = scheduleDb(trackedUid, { date: new Date('2026-07-26T20:00:00.000Z') });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Original Hawks'
+            }] }
+        );
+
+        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
+    });
+
+    it('keeps a projected event at a different occurrence time', async () => {
+        const trackedUid = 'legacy-moved-uid__2026-07-25T17:00:00.000Z';
+        const db = scheduleDb(trackedUid, { date: new Date('2026-07-26T20:00:00.000Z') });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T18:00:00.000Z',
+                opponent: 'Different Hawks'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(true);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
     });
 
     it('fails explicitly when imported calendar projection is unavailable', async () => {
