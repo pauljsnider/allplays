@@ -14242,7 +14242,20 @@ async function lookupCertificateLegacySignatureBinding(reference) {
   const bindingId = getCertificateLegacySignatureInventoryId(reference);
   if (!bindingId) return null;
   const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
-  return bindingSnap.exists ? bindingSnap.data() || {} : null;
+  if (!bindingSnap.exists) return null;
+  const binding = bindingSnap.data() || {};
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(binding.teamId);
+  } catch {
+    return { ...binding, conflicted: true };
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return { ...binding, conflicted: true };
+  const authorizedUploaderIds = await getCertificateLegacyUploaderIds(teamSnap.data() || {});
+  return authorizedUploaderIds.includes(String(binding.legacyOwnerId || '').trim())
+    ? binding
+    : { ...binding, conflicted: true };
 }
 
 exports.indexCertificateLegacySignaturesOnDefaultsWrite = functions

@@ -426,8 +426,16 @@ async function upgradeCertificateSignatureCleanupTarget({
 }) {
   const normalizedTeamId = normalizeCertificateTeamId(teamId);
   if (String(target.teamId || '').trim() !== normalizedTeamId) return null;
-  if (isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, target)) {
+  const isCanonicalTarget = isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, target);
+  if (isCanonicalTarget && target.storageBucket !== LEGACY_IMAGE_STORAGE_KIND) {
     return { target, missing: false };
+  }
+  if (isCanonicalTarget) {
+    if (typeof lookupTeamObjectBinding !== 'function') return null;
+    const binding = await lookupTeamObjectBinding(target);
+    return isMatchingCertificateLegacySignatureBinding(binding, target)
+      ? { target, missing: false }
+      : null;
   }
   const storageBucket = target.storageBucket === LEGACY_IMAGE_STORAGE_KIND
     ? LEGACY_IMAGE_STORAGE_KIND
