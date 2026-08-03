@@ -93,7 +93,8 @@ export async function createFirebaseRestSession({ appBaseUrl, email, password })
         projectId: config.projectId,
         storageBucket: config.storageBucket || '',
         idToken: auth.idToken,
-        localId: auth.localId
+        localId: auth.localId,
+        email: String(auth.email || email || '').trim()
     };
 }
 
@@ -150,6 +151,41 @@ function buildStructuredQuery(collectionPath, fields) {
     };
 }
 
+function buildSingleStringFieldQuery(collectionPath, fieldName, operator, stringValue) {
+    const { parentPath, structuredQuery } = buildStructuredQuery(collectionPath, {
+        [fieldName]: stringValue
+    });
+    structuredQuery.where.fieldFilter.op = operator;
+    return { parentPath, structuredQuery };
+}
+
+async function runFirestoreStringFieldQuery(
+    session,
+    collectionPath,
+    fieldName,
+    expectedValue,
+    operator
+) {
+    const { parentPath, structuredQuery } = buildSingleStringFieldQuery(
+        collectionPath,
+        fieldName,
+        operator,
+        expectedValue
+    );
+    const parentSuffix = parentPath ? `/${encodeDocumentPath(parentPath)}` : '';
+    const url = `${firestoreApiOrigin}/v1/projects/${encodeURIComponent(session.projectId)}/databases/(default)/documents${parentSuffix}:runQuery`;
+    const response = await fetchFirebase(url, {
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${session.idToken}`,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ structuredQuery })
+    }, { retrySafe: true });
+    const payload = await readJson(response, 'Firestore smoke filtered query');
+    return payload.map((entry) => entry.document).filter(Boolean);
+}
+
 export async function findFirestoreDocumentsByStringFields(session, collectionPath, fields) {
     const entries = Object.entries(fields);
     if (!entries.length) throw new Error('Firestore smoke query requires at least one field');
@@ -177,9 +213,35 @@ export async function findFirestoreDocumentsByStringFields(session, collectionPa
 }
 
 export async function findFirestoreDocumentsByStringField(session, collectionPath, fieldName, expectedValue) {
-    return findFirestoreDocumentsByStringFields(session, collectionPath, {
-        [fieldName]: expectedValue
-    });
+    const documents = await runFirestoreStringFieldQuery(
+        session,
+        collectionPath,
+        fieldName,
+        expectedValue,
+        'EQUAL'
+    );
+    return documents.filter(
+        (document) => getFirestoreStringField(document, fieldName) === String(expectedValue)
+    );
+}
+
+export async function findFirestoreDocumentsByStringArrayContains(
+    session,
+    collectionPath,
+    fieldName,
+    expectedValue
+) {
+    const documents = await runFirestoreStringFieldQuery(
+        session,
+        collectionPath,
+        fieldName,
+        expectedValue,
+        'ARRAY_CONTAINS'
+    );
+    return documents.filter((document) => (
+        (document?.fields?.[fieldName]?.arrayValue?.values || [])
+            .some((value) => String(value?.stringValue || '') === String(expectedValue))
+    ));
 }
 
 export function getFirestoreDocumentPath(document) {
