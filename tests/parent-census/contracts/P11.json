@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P11",
+  "title": "Team and player views enforce parent role boundaries",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/teams/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/teams/{TEAM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "testId",
+        "name": "team-detail-tab-nav",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Coach/admin tools",
+        "exact": true
+      }
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "RSVP",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Refresh player",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
