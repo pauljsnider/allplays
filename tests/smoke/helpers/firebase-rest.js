@@ -82,8 +82,7 @@ export async function createFirebaseRestSession({ appBaseUrl, email, password })
                 password,
                 returnSecureToken: true
             })
-        },
-        { retrySafe: true }
+        }
     );
     const auth = await readJson(authResponse, 'Firebase smoke authentication');
     if (!auth.idToken || !auth.localId) {

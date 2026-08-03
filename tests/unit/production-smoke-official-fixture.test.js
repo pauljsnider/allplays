@@ -347,6 +347,30 @@ describe('production officials smoke fixture maintenance', () => {
         });
     });
 
+    it('does not retry authentication POST requests when their result is uncertain', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    apiKey: 'runtime-api-key',
+                    projectId: 'runtime-project'
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503
+            });
+
+        await expect(createFirebaseRestSession({
+            appBaseUrl: 'https://allplays.ai/app/',
+            email: 'smoke@example.com',
+            password: 'exact password'
+        })).rejects.toThrow('Firebase smoke authentication failed with status 503');
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    });
+
     it('keeps production fixture credentials on an exact default-branch manual workflow', () => {
         expect(workflowSource).toContain('workflow_dispatch:');
         expect(workflowSource).not.toContain('pull_request:');
