@@ -82,7 +82,12 @@ const {
   getRegistrationPaidCheckoutGuardFailure,
   normalizeRegistrationCheckoutCurrency
 } = require('./registration-payment-webhook-core.cjs');
-const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
+const {
+  createFirestoreFixedWindowRateLimitReservation,
+  createFirestoreFixedWindowRateLimiter,
+  createInMemoryRateLimiter,
+  getRequestIp
+} = require('./rate-limit.cjs');
 const {
   PUBLIC_RSVP_RATE_LIMITS,
   buildPublicRsvpRateLimitBoundaries
@@ -390,6 +395,13 @@ const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
 const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
 const NOTIFICATION_INBOX_WRITE_CONCURRENCY = 10;
+function getPositiveIntegerEnvironmentValue(name, fallback) {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+const TEAM_EMAIL_RATE_LIMIT_WINDOW_MS = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1000);
+const TEAM_EMAIL_SENDER_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_SENDER_SEND_LIMIT', 3);
+const TEAM_EMAIL_TEAM_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_TEAM_SEND_LIMIT', 10);
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -14565,6 +14577,46 @@ async function requireTeamEmailSender(teamId, context) {
   return { team, user, callerEmail };
 }
 
+const prepareTeamEmailSenderRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_SENDER_SEND_LIMIT
+});
+const prepareTeamEmailTeamRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_TEAM_SEND_LIMIT
+});
+
+async function reserveTeamEmailSendCapacity(teamId, senderUid) {
+  const now = Date.now();
+  const reservations = [
+    prepareTeamEmailSenderRateLimitReservation(`sender\n${teamId}\n${senderUid}`, now),
+    prepareTeamEmailTeamRateLimitReservation(`team\n${teamId}`, now)
+  ];
+  const decisions = await firestore.runTransaction(async (transaction) => {
+    const snapshots = [];
+    for (const reservation of reservations) {
+      snapshots.push(await transaction.get(reservation.ref));
+    }
+    const evaluated = reservations.map((reservation, index) => reservation.evaluate(snapshots[index]));
+    if (evaluated.every((decision) => decision.allowed)) {
+      reservations.forEach((reservation, index) => reservation.commit(transaction, evaluated[index]));
+    }
+    return evaluated;
+  });
+  const rejection = decisions.find((decision) => !decision.allowed);
+  if (rejection) {
+    const retryMinutes = Math.max(1, Math.ceil(rejection.retryAfterSeconds / 60));
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      `Team email send limit reached. Keep this message and try again in about ${retryMinutes} minute${retryMinutes === 1 ? '' : 's'}.`
+    );
+  }
+}
+
 exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   const teamId = normalizeText(data?.teamId, 160);
   const draftId = normalizeText(data?.draftId, 160);
@@ -14620,6 +14672,8 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid team email attachments.');
   }
+
+  await reserveTeamEmailSendCapacity(teamId, context.auth.uid);
 
   const [playersSnap, ownerSnap] = await Promise.all([
     firestore.collection(`teams/${teamId}/players`).get(),
