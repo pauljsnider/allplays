@@ -174,6 +174,32 @@ export function buildActiveTeamPatch() {
     };
 }
 
+export function inspectStaffTeamDiscovery(teamDocument, { uid, email }) {
+    const fields = teamDocument?.fields || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const ownsTeam = Boolean(uid) && getStringField(fields, 'ownerId') === uid;
+    const hasCanonicalAdminEmail = Boolean(normalizedEmail) && getArrayValues(fields.adminEmails)
+        .some((value) => String(value?.stringValue || '') === normalizedEmail);
+    return {
+        ready: ownsTeam || hasCanonicalAdminEmail,
+        ownsTeam,
+        hasCanonicalAdminEmail
+    };
+}
+
+export function buildCanonicalStaffAccessPatch(teamDocument, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('Canonical staff email is required');
+    const adminEmails = getArrayValues(teamDocument?.fields?.adminEmails)
+        .map((value) => String(value?.stringValue || ''))
+        .filter((value) => value.trim().toLowerCase() !== normalizedEmail);
+    return {
+        fields: {
+            adminEmails: buildStringArray([...adminEmails, normalizedEmail])
+        }
+    };
+}
+
 function isAuthorizedFixtureManager(teamDocument, session, staffEmail) {
     const fields = teamDocument?.fields || {};
     if (getStringField(fields, 'ownerId') === session.localId) return true;
@@ -247,6 +273,29 @@ async function main() {
     }
     if (!teamDocument || !isAuthorizedFixtureManager(teamDocument, staffSession, staffEmail)) {
         throw new Error('The staff smoke account is not an owner or administrator of the fixture team');
+    }
+    let staffDiscovery = inspectStaffTeamDiscovery(teamDocument, {
+        uid: staffSession.localId,
+        email: staffEmail
+    });
+    if (mode === 'repair' && !staffDiscovery.ready) {
+        await patchFirestoreDocumentFields(
+            adminSession,
+            `teams/${teamId}`,
+            buildCanonicalStaffAccessPatch(teamDocument, staffEmail).fields,
+            { updateTime: String(teamDocument.updateTime || '') }
+        );
+        teamDocument = await getFirestoreDocument(staffSession, `teams/${teamId}`);
+        staffDiscovery = inspectStaffTeamDiscovery(teamDocument, {
+            uid: staffSession.localId,
+            email: staffEmail
+        });
+    }
+    if (!staffDiscovery.ready) {
+        throw new Error(
+            `The staff smoke account is not queryable by canonical team access ` +
+            `(owner=${staffDiscovery.ownsTeam}, canonical-admin=${staffDiscovery.hasCanonicalAdminEmail})`
+        );
     }
 
     const playerPath = `teams/${teamId}/players/${playerId}`;
