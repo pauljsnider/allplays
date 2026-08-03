@@ -1,5 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import {
+    collectVersionedModuleImports,
+    findStaleVersionedModuleImports
+} from './cache-bust-graph.mjs';
 
 const CRITICAL_RULES = [
     {
@@ -115,6 +119,31 @@ for (const rule of changedRules) {
         failures.push(rule.failure);
     }
 }
+
+const versionedProductionSources = execGit(['ls-files', '*.html', 'js/*.js', 'js/**/*.js'])
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+const previousVersionedImports = collectVersionedModuleImports(versionedProductionSources.map((file) => ({
+    path: file,
+    source: readFileAtRef(comparisonBase, file)
+})));
+const currentVersionedImports = collectVersionedModuleImports(versionedProductionSources.map((file) => ({
+    path: file,
+    source: readFileSync(file, 'utf8')
+})));
+const staleVersionedModules = findStaleVersionedModuleImports({
+    changedFiles,
+    previousImports: previousVersionedImports,
+    currentImports: currentVersionedImports
+});
+staleVersionedModules.forEach((failure) => {
+    failures.push(
+        `${failure.modulePath} changed without a fresh, uniform cache version in every production consumer. ` +
+        `Previous max: ${failure.previousMax}; current: ${failure.currentVersions.join(', ') || 'none'}.\n` +
+        failure.consumers.join('\n')
+    );
+});
 
 if (changedFiles.has('js/db.js')) {
     const productionSources = execGit(['ls-files', '*.html', 'js/*.js', 'js/**/*.js'])

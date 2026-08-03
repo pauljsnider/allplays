@@ -41,13 +41,13 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit roster page', () => {
         const html = readRepoFile('edit-roster.html');
-        expect(html).toContain("from './js/team-access.js?v=44337'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 
     it('uses shared full-access helper in edit team page', () => {
         const html = readRepoFile('edit-team.html');
-        expect(html).toContain("from './js/team-access.js?v=44337'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 

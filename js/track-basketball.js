@@ -10,7 +10,7 @@ import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, can
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
-import { hasScorekeepingTeamAccess } from './team-access.js?v=44337';
+import { hasScorekeepingTeamAccess } from './team-access.js?v=44338';
 
 let currentTeamId = null;
 let currentGameId = null;

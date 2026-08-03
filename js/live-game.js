@@ -19,7 +19,7 @@ import {
   deleteUploadedMediaObjects
 } from './db.js?v=4433155';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443333';
-import { hasFullTeamAccess } from './team-access.js?v=44337';
+import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=4433159';

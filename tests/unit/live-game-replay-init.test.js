@@ -236,7 +236,7 @@ function buildModuleSource() {
             'const { computePanelVisibility } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess } from './team-access.js?v=44337';",
+            "import { hasFullTeamAccess } from './team-access.js?v=44338';",
             'const { hasFullTeamAccess } = deps.teamAccess;'
         )
         .replace(
