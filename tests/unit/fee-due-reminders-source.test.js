@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 
 function getHelper(name, nextMarker) {
     const start = functionsSource.indexOf(`function ${name}(`);
@@ -120,6 +121,25 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain(".where('status', 'in', ['unpaid', 'pending'])");
         expect(functionsSource).toContain(".where('dueDate', '>=', now)");
         expect(functionsSource).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
+        expect(functionsSource).toContain(".where('reminderDeliveryClaimExpiresAtMillis', '>', 0)");
+    });
+
+    it('declares collection-group indexes for upcoming and leased reminder queries', () => {
+        expect(firestoreIndexes.indexes).toContainEqual({
+            collectionGroup: 'feeRecipients',
+            queryScope: 'COLLECTION_GROUP',
+            fields: [
+                { fieldPath: 'status', order: 'ASCENDING' },
+                { fieldPath: 'dueDate', order: 'ASCENDING' }
+            ]
+        });
+        expect(firestoreIndexes.fieldOverrides).toContainEqual({
+            collectionGroup: 'feeRecipients',
+            fieldPath: 'reminderDeliveryClaimExpiresAtMillis',
+            indexes: [
+                { order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' }
+            ]
+        });
     });
 
     it('resolves player-linked parents and team reminder thresholds before deciding whether to mark the reminder as sent', () => {
@@ -129,7 +149,8 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain('const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, recipient);');
         expect(functionsSource).toContain('const candidateUserIdSet = new Set(candidateUserIds);');
         expect(functionsSource).toContain('async function resolveEligibleFeeReminderRecipient({');
-        expect(functionsSource).toContain('if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {');
+        expect(functionsSource).toContain('if (!isFeeDueReminderCandidateEligible(recipient, {');
+        expect(functionsSource).toContain('allowRecentlyOverdueRecovery');
         expect(functionsSource).toContain('reminderThresholdHours');
     });
 

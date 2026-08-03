@@ -289,6 +289,14 @@
       ]
     },
     {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "registrations",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
@@ -849,6 +857,13 @@
         { "order": "DESCENDING", "queryScope": "COLLECTION" },
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" },
         { "order": "DESCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "fieldPath": "reminderDeliveryClaimExpiresAtMillis",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     },
     {

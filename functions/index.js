@@ -12065,7 +12065,9 @@ async function sendDirectTargetsNotification({
   appRouteOverride = null,
   timeSensitive = false,
   requireCanonicalTeamAccess = false,
-  audienceContext = {}
+  audienceContext = {},
+  beforeEffects = null,
+  onEffectsStarting = null
 }) {
   const logicalTargets = Array.isArray(targets) ? targets : [];
   const requestedInboxTargets = Array.isArray(inboxUids)
@@ -12081,14 +12083,37 @@ async function sendDirectTargetsNotification({
   const authorizedUserIds = new Set(
     authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
   );
-  const pushTargets = logicalTargets.filter((target) => (
+  let pushTargets = logicalTargets.filter((target) => (
     authorizedUserIds.has(String(target?.uid || '').trim())
     && String(target?.token || '').trim()
   ));
-  const inboxTargets = getUniqueNotificationInboxTargets(
+  let inboxTargets = getUniqueNotificationInboxTargets(
     requestedInboxTargets.filter((target) => authorizedUserIds.has(String(target?.uid || '').trim()))
   );
   if (!pushTargets.length && !inboxTargets.length) return null;
+
+  // Callers that need durable dedup can commit their marker after the final
+  // authorization check but before any inbox or push effect becomes visible.
+  if (typeof beforeEffects === 'function') {
+    const beforeEffectsResult = await beforeEffects({ authorizedTargets, pushTargets, inboxTargets });
+    if (beforeEffectsResult === false) return null;
+    if (Array.isArray(beforeEffectsResult?.allowedUserIds)) {
+      const allowedUserIds = new Set(
+        beforeEffectsResult.allowedUserIds.map((uid) => String(uid || '').trim()).filter(Boolean)
+      );
+      pushTargets = pushTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      inboxTargets = inboxTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      if (!pushTargets.length && !inboxTargets.length) return null;
+    }
+  }
+  if (typeof onEffectsStarting === 'function') {
+    const canStartEffects = await onEffectsStarting();
+    if (canStartEffects === false) {
+      const effectsStartError = new Error('Notification effects could not acquire their delivery boundary.');
+      effectsStartError.code = 'notification/effects-start-failed';
+      throw effectsStartError;
+    }
+  }
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -12331,6 +12356,9 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
     .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
 }
 
+const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
+const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+
 exports._internal = {
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
@@ -12350,7 +12378,11 @@ exports._internal = {
   buildFeeReminderNotificationBody,
   resolveEligibleFeeReminderRecipient,
   claimFeeDueReminder,
+  markFeeDueReminderClaimSent,
+  releaseFeeDueReminderClaim,
   finalizeFeeDueReminderClaim,
+  FEE_REMINDER_CLAIM_LEASE_MS,
+  FEE_REMINDER_STALE_RECOVERY_GRACE_MS,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
@@ -13165,7 +13197,8 @@ function getFeeReminderDueDateMillis(recipient = {}) {
 
 function isFeeDueReminderCandidateEligible(recipient = {}, {
   nowMillis = Date.now(),
-  reminderThresholdHours = 72
+  reminderThresholdHours = 72,
+  allowRecentlyOverdueRecovery = false
 } = {}) {
   const status = String(recipient?.status || '').trim().toLowerCase();
   if (!['unpaid', 'pending'].includes(status)) return false;
@@ -13175,7 +13208,13 @@ function isFeeDueReminderCandidateEligible(recipient = {}, {
   if (!Number.isFinite(dueDateMillis)) return false;
 
   const effectiveNowMillis = Number(nowMillis);
-  if (!Number.isFinite(effectiveNowMillis) || dueDateMillis < effectiveNowMillis) return false;
+  if (!Number.isFinite(effectiveNowMillis)) return false;
+  if (dueDateMillis < effectiveNowMillis) {
+    if (
+      !allowRecentlyOverdueRecovery
+      || dueDateMillis < effectiveNowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+    ) return false;
+  }
 
   const reminderThresholdMillis = Number(reminderThresholdHours) * 60 * 60 * 1000;
   if (!Number.isFinite(reminderThresholdMillis) || reminderThresholdMillis <= 0) return false;
@@ -13213,9 +13252,14 @@ async function resolveEligibleFeeReminderRecipient({
   recipientId,
   recipient,
   nowMillis,
-  reminderThresholdHours
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
 }) {
-  if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {
+  if (!isFeeDueReminderCandidateEligible(recipient, {
+    nowMillis,
+    reminderThresholdHours,
+    allowRecentlyOverdueRecovery
+  })) {
     return null;
   }
 
@@ -13240,30 +13284,277 @@ function buildFeeReminderClaimId() {
   return `fee-reminder-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
 }
 
-async function claimFeeDueReminder(recipientRef, { nowMillis, reminderThresholdHours }) {
+function isFeeReminderDeliveryClaimActive(recipient = {}, nowMillis = Date.now()) {
+  const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+  if (!existingClaimId) return false;
+  const existingClaimExpiresAtMillis = Number(recipient.reminderDeliveryClaimExpiresAtMillis);
+  const existingClaimDate = coerceDate(recipient.reminderDeliveryClaimedAt);
+  const existingClaimMillis = existingClaimDate?.getTime();
+  return Number.isFinite(existingClaimExpiresAtMillis)
+    ? existingClaimExpiresAtMillis > nowMillis
+    : !Number.isFinite(existingClaimMillis)
+      || existingClaimMillis > nowMillis - FEE_REMINDER_CLAIM_LEASE_MS;
+}
+
+async function claimFeeDueReminder(recipientRef, {
+  nowMillis,
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
+}) {
+  const claimId = buildFeeReminderClaimId();
+  let claimResult;
+  try {
+    claimResult = await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
+        nowMillis,
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
+      })) {
+        return null;
+      }
+
+      const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+      const existingClaimIsActive = isFeeReminderDeliveryClaimActive(recipient, nowMillis);
+      if (existingClaimIsActive) {
+        if (existingClaimId === claimId) return claimId;
+        return { activeClaimId: existingClaimId };
+      }
+
+      transaction.update(recipientRef, {
+        reminderDeliveryClaimId: claimId,
+        reminderDeliveryClaimedAt: admin.firestore.Timestamp.fromMillis(nowMillis),
+        reminderDeliveryClaimExpiresAtMillis: nowMillis + FEE_REMINDER_CLAIM_LEASE_MS
+      });
+      return claimId;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (reconciledRecipient.reminderDeliveryClaimId === claimId) return claimId;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder claim acquisition', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    error.code = error.code || 'fee-reminder/pre-effect-failed';
+    error.feeReminderPreEffectFailed = true;
+    throw error;
+  }
+
+  if (claimResult && typeof claimResult === 'object' && claimResult.activeClaimId) {
+    const activeClaimError = new Error('Fee reminder delivery is already leased by another attempt.');
+    activeClaimError.code = 'fee-reminder/claim-active';
+    activeClaimError.feeReminderClaimActive = true;
+    throw activeClaimError;
+  }
+  return claimResult;
+}
+
+function isFeeReminderClaimActiveFailure(error) {
+  return error?.feeReminderClaimActive === true || error?.code === 'fee-reminder/claim-active';
+}
+
+function isFeeReminderPreEffectFailure(error) {
+  return error?.feeReminderPreEffectFailed === true || error?.code === 'fee-reminder/pre-effect-failed';
+}
+
+function feeReminderSentMarkerBelongsToClaim(recipient = {}, claimId, reminderThresholdHours) {
+  return recipient.reminderDeliveryClaimId === claimId
+    && recipient.reminderSentClaimId === claimId
+    && wasFeeReminderSentForThreshold(recipient, reminderThresholdHours);
+}
+
+function getFeeReminderSentTargetUserIds(recipient = {}, authorizedUserIdSet = new Set()) {
+  return normalizeNotificationAudienceUserIds(recipient.reminderSentTargetUserIds)
+    .filter((uid) => authorizedUserIdSet.has(uid));
+}
+
+async function markFeeDueReminderClaimSent(
+  recipientRef,
+  claimId,
+  {
+    nowMillis,
+    reminderThresholdHours,
+    teamId,
+    authorizedPayerUserIds = [],
+    allowRecentlyOverdueRecovery = false
+  }
+) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) return false;
+      const authorizedUserIdSet = new Set(
+        (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+          .map((uid) => String(uid || '').trim())
+          .filter(Boolean)
+      );
+      if (feeReminderSentMarkerBelongsToClaim(recipient, claimId, reminderThresholdHours)) {
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(recipient, authorizedUserIdSet);
+        return reconciledTargetUserIds.length ? reconciledTargetUserIds : false;
+      }
+      if (
+        wasFeeReminderSentForThreshold(recipient, reminderThresholdHours)
+        || !isFeeDueReminderCandidateEligible(recipient, {
+          nowMillis,
+          reminderThresholdHours,
+          allowRecentlyOverdueRecovery
+        })
+      ) {
+        return false;
+      }
+
+      if (!authorizedUserIdSet.size) return false;
+
+      const playerKey = getFeeReminderPlayerKey(recipient, teamId);
+      let deliverablePayerUserIds = [];
+      if (playerKey) {
+        const [playerTeamId, playerId] = playerKey.split('::');
+        if (!playerTeamId || playerTeamId !== String(teamId || '').trim() || !playerId) return false;
+        const playerRef = firestore.doc(`teams/${playerTeamId}/players/${playerId}`);
+        const linkedParentsQuery = firestore.collection('users')
+          .where('parentPlayerKeys', 'array-contains', playerKey);
+        const [playerSnap, linkedParentsSnap] = await Promise.all([
+          transaction.get(playerRef),
+          transaction.get(linkedParentsQuery)
+        ]);
+        const player = playerSnap.exists ? (playerSnap.data() || {}) : {};
+        if (!playerSnap.exists || player.active === false) return false;
+        const linkedParentUserIds = new Set(linkedParentsSnap.docs.map((docSnap) => docSnap.id));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => linkedParentUserIds.has(uid));
+      } else {
+        const directPayerIds = new Set(buildFeeReminderCandidateUserIds(recipient));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => directPayerIds.has(uid));
+      }
+      if (!deliverablePayerUserIds.length) return false;
+
+      transaction.update(recipientRef, {
+        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        reminderThresholdHours,
+        reminderSentClaimId: claimId,
+        reminderSentTargetUserIds: deliverablePayerUserIds
+      });
+      return deliverablePayerUserIds;
+    });
+  } catch (error) {
+    // A transaction commit can succeed even when its acknowledgement is lost.
+    // Reconcile the claim-owned marker before treating the pre-effect write as failed.
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (feeReminderSentMarkerBelongsToClaim(
+        reconciledRecipient,
+        claimId,
+        reminderThresholdHours
+      )) {
+        const authorizedUserIdSet = new Set(
+          (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+            .map((uid) => String(uid || '').trim())
+            .filter(Boolean)
+        );
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(
+          reconciledRecipient,
+          authorizedUserIdSet
+        );
+        if (reconciledTargetUserIds.length) return reconciledTargetUserIds;
+      }
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder sent marker', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function markFeeDueReminderEffectsStarted(recipientRef, claimId) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (
+        !recipientSnap.exists
+        || recipient.reminderDeliveryClaimId !== claimId
+        || recipient.reminderSentClaimId !== claimId
+      ) return false;
+      if (recipient.reminderEffectsStartedAt) return true;
+      transaction.update(recipientRef, {
+        reminderEffectsStartedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      return true;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (
+        reconciledRecipient.reminderDeliveryClaimId === claimId
+        && reconciledRecipient.reminderSentClaimId === claimId
+        && reconciledRecipient.reminderEffectsStartedAt
+      ) return true;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder effects boundary', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function releaseFeeDueReminderClaim(recipientRef, claimId, error = null, {
+  requireExpiredAtMillis = null,
+  requireNoEffectsStarted = false,
+  requirePreparedMarker = false
+} = {}) {
   return firestore.runTransaction(async (transaction) => {
     const recipientSnap = await transaction.get(recipientRef);
     const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
-    if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
-      nowMillis,
-      reminderThresholdHours
-    })) {
-      return null;
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
     }
+    if (requireNoEffectsStarted && recipient.reminderEffectsStartedAt) return false;
+    if (
+      requireExpiredAtMillis !== null
+      && Number.isFinite(Number(requireExpiredAtMillis))
+      && isFeeReminderDeliveryClaimActive(recipient, Number(requireExpiredAtMillis))
+    ) return false;
+    if (
+      requirePreparedMarker
+      && (
+        recipient.reminderSentClaimId !== claimId
+        || !recipient.reminderSentAt
+      )
+    ) return false;
 
-    const claimId = buildFeeReminderClaimId();
     transaction.update(recipientRef, {
-      reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
-      reminderThresholdHours,
-      reminderDeliveryClaimId: claimId,
-      reminderDeliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp()
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      ...(recipient.reminderSentClaimId === claimId ? {
+        reminderSentAt: admin.firestore.FieldValue.delete(),
+        reminderThresholdHours: admin.firestore.FieldValue.delete(),
+        reminderSentClaimId: admin.firestore.FieldValue.delete(),
+        reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+        reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
+      } : {}),
+      ...(error ? {
+        reminderLastError: String(error?.message || error || 'Unknown fee reminder error').slice(0, 500)
+      } : {})
     });
-    return claimId;
+    return true;
   });
 }
 
 async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
-  releaseReminder = false,
   error = null
 } = {}) {
   return firestore.runTransaction(async (transaction) => {
@@ -13275,11 +13566,12 @@ async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
 
     const update = {
       reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
-      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete()
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      reminderSentClaimId: admin.firestore.FieldValue.delete(),
+      reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+      reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
     };
-    if (releaseReminder) {
-      update.reminderSentAt = admin.firestore.FieldValue.delete();
-    }
     if (error) {
       update.reminderLastError = String(error?.message || error || 'Unknown fee reminder error').slice(0, 500);
     } else {
@@ -13296,21 +13588,86 @@ async function sendFeeUnpaidDueReminders() {
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
 
-  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
-  const snap = await firestore.collectionGroup('feeRecipients')
-    .where('status', 'in', ['unpaid', 'pending'])
-    .where('dueDate', '>=', now)
-    .where('dueDate', '<=', maxReminderThresholdLater)
-    .get();
+  // Keep leased recipients in the retry set even if they cross their due time
+  // while a crashed attempt's lease is active.
+  const [upcomingSnap, leasedSnap] = await Promise.all([
+    firestore.collectionGroup('feeRecipients')
+      .where('status', 'in', ['unpaid', 'pending'])
+      .where('dueDate', '>=', now)
+      .where('dueDate', '<=', maxReminderThresholdLater)
+      .get(),
+    firestore.collectionGroup('feeRecipients')
+      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+      .get()
+  ]);
+  const reminderDocs = [...new Map(
+    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
+  ).values()];
 
-  const promises = snap.docs.map(async (doc) => {
-    const data = doc.data();
+  const promises = reminderDocs.map(async (doc) => {
+    let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
     const teamId = pathParts[1];
     const batchId = pathParts[3];
     const recipientId = pathParts[5];
     if (!teamId) return null;
+
+    let recoveredExpiredLease = false;
+    const preparedClaimId = String(data.reminderDeliveryClaimId || '').trim();
+    const hasPreparedMarker = Boolean(
+      preparedClaimId
+      && data.reminderSentClaimId === preparedClaimId
+      && data.reminderSentAt
+    );
+    if (hasPreparedMarker && data.reminderEffectsStartedAt) {
+      if (isFeeReminderDeliveryClaimActive(data, nowMillis)) return null;
+      try {
+        await finalizeFeeDueReminderClaim(doc.ref, preparedClaimId);
+        return null;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+    if (hasPreparedMarker && isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      const activeClaimError = new Error('Prepared fee reminder delivery is still leased by another attempt.');
+      activeClaimError.code = 'fee-reminder/claim-active';
+      activeClaimError.feeReminderClaimActive = true;
+      throw activeClaimError;
+    }
+    if (preparedClaimId && !isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      try {
+        const released = await releaseFeeDueReminderClaim(
+          doc.ref,
+          preparedClaimId,
+          new Error('Recovering an expired fee reminder claim with no started effects.'),
+          {
+            requireExpiredAtMillis: nowMillis,
+            requireNoEffectsStarted: true,
+            requirePreparedMarker: hasPreparedMarker
+          }
+        );
+        if (!released) {
+          return null;
+        }
+        const refreshedSnap = await doc.ref.get();
+        data = refreshedSnap.exists ? (refreshedSnap.data() || {}) : {};
+        recoveredExpiredLease = true;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+
+    const dueDateMillis = getFeeReminderDueDateMillis(data);
+    const hasDeliveryLease = Boolean(String(data.reminderDeliveryClaimId || '').trim());
+    const allowRecentlyOverdueRecovery = Number.isFinite(dueDateMillis)
+      && dueDateMillis < nowMillis
+      && dueDateMillis >= nowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+      && (hasDeliveryLease || recoveredExpiredLease);
 
     let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
     if (!reminderThresholdHours) {
@@ -13330,18 +13687,22 @@ async function sendFeeUnpaidDueReminders() {
         recipientId,
         recipient: data,
         nowMillis,
-        reminderThresholdHours
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
       if (!eligibleRecipient) return null;
 
-      // Atomically claim the reminder and its sent marker. Concurrent scheduler
-      // invocations cannot both claim the same fee recipient.
+      // Acquire a short lease without marking the reminder sent. Concurrent
+      // scheduler invocations cannot deliver the same fee recipient.
       const claimId = await claimFeeDueReminder(doc.ref, {
         nowMillis,
-        reminderThresholdHours
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
       if (!claimId) return null;
 
+      let sentMarkerCommitted = false;
+      let effectsStarted = false;
       try {
         await sendDirectTargetsNotification({
           targets: eligibleRecipient.payerTargets,
@@ -13351,34 +13712,81 @@ async function sendFeeUnpaidDueReminders() {
           teamId,
           batchId,
           recipientId,
+          requireCanonicalTeamAccess: true,
+          beforeEffects: async ({ authorizedTargets }) => {
+            const deliverablePayerUserIds = await markFeeDueReminderClaimSent(
+              doc.ref,
+              claimId,
+              {
+                nowMillis,
+                reminderThresholdHours,
+                teamId,
+                authorizedPayerUserIds: authorizedTargets.map((target) => target.uid),
+                allowRecentlyOverdueRecovery
+              }
+            );
+            sentMarkerCommitted = Array.isArray(deliverablePayerUserIds)
+              && deliverablePayerUserIds.length > 0;
+            return sentMarkerCommitted
+              ? { allowedUserIds: deliverablePayerUserIds }
+              : false;
+          },
+          onEffectsStarting: async () => {
+            effectsStarted = await markFeeDueReminderEffectsStarted(doc.ref, claimId);
+            return effectsStarted;
+          }
         });
+        if (!sentMarkerCommitted || !effectsStarted) {
+          await releaseFeeDueReminderClaim(doc.ref, claimId);
+          return null;
+        }
         await finalizeFeeDueReminderClaim(doc.ref, claimId);
         return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
       } catch (err) {
-        if (isNotificationAuthResolutionFailure(err)) {
-          await finalizeFeeDueReminderClaim(doc.ref, claimId, {
-            releaseReminder: true,
-            error: err
-          });
-          throw err;
+        if (!effectsStarted && !isNotificationAuthResolutionFailure(err) && !isFeeReminderClaimActiveFailure(err)) {
+          err.code = err.code || 'fee-reminder/pre-effect-failed';
+          err.feeReminderPreEffectFailed = true;
         }
-        await finalizeFeeDueReminderClaim(doc.ref, claimId, { error: err });
+        try {
+          if (effectsStarted) {
+            await finalizeFeeDueReminderClaim(doc.ref, claimId, { error: err });
+          } else {
+            await releaseFeeDueReminderClaim(doc.ref, claimId, err);
+          }
+        } catch (claimError) {
+          functions.logger.error('Failed to finalize fee reminder delivery claim', {
+            teamId,
+            batchId,
+            recipientId,
+            claimId,
+            error: claimError?.message || String(claimError || 'Unknown error')
+          });
+        }
         throw err;
       }
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
-      if (isNotificationAuthResolutionFailure(err)) throw err;
+      if (
+        isNotificationAuthResolutionFailure(err)
+        || isFeeReminderClaimActiveFailure(err)
+        || isFeeReminderPreEffectFailure(err)
+      ) throw err;
       return null;
     }
   });
 
   const results = await Promise.allSettled(promises);
-  const authResolutionFailure = results.find((result) => (
-    result.status === 'rejected' && isNotificationAuthResolutionFailure(result.reason)
+  const retryableFailure = results.find((result) => (
+    result.status === 'rejected'
+    && (
+      isNotificationAuthResolutionFailure(result.reason)
+      || isFeeReminderClaimActiveFailure(result.reason)
+      || isFeeReminderPreEffectFailure(result.reason)
+    )
   ));
-  if (authResolutionFailure) throw authResolutionFailure.reason;
+  if (retryableFailure) throw retryableFailure.reason;
   const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
 }
 
 exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub

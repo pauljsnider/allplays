@@ -116,15 +116,24 @@ function buildNotificationTestEnv({
     invalidTokenResponses = [],
     sendEachErrors = [],
     notificationInboxDocs = {},
+    docGetErrors = {},
     rejectedNotificationInboxUids = [],
     deferNotificationInboxOperations = false,
-    nowMillis = Date.parse('2026-06-28T12:00:00.000Z')
+    transactionErrors = [],
+    transactionPostCommitErrors = [],
+    nowMillis = Date.parse('2026-06-28T12:00:00.000Z'),
+    nowMillisProvider = null
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
     const inboxCleanupLimits = [];
     const auditWrites = [];
     const pendingAuthGetUsersErrors = [...authGetUsersErrors];
+    const pendingTransactionErrors = [...transactionErrors];
+    const pendingTransactionPostCommitErrors = [...transactionPostCommitErrors];
+    const pendingDocGetErrors = new Map(
+        Object.entries(docGetErrors || {}).map(([path, errors]) => [path, [...(errors || [])]])
+    );
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
@@ -253,15 +262,15 @@ function buildNotificationTestEnv({
         if (filter.op === '==') {
             return actual === filter.value;
         }
-        if (filter.op === '>=' || filter.op === '<=') {
+        if (filter.op === '>' || filter.op === '>=' || filter.op === '<=') {
             const actualMillis = comparableMillis(actual);
             const expectedMillis = comparableMillis(filter.value);
             if (!Number.isFinite(actualMillis) || !Number.isFinite(expectedMillis)) {
                 return false;
             }
-            return filter.op === '>='
-                ? actualMillis >= expectedMillis
-                : actualMillis <= expectedMillis;
+            if (filter.op === '>') return actualMillis > expectedMillis;
+            if (filter.op === '>=') return actualMillis >= expectedMillis;
+            return actualMillis <= expectedMillis;
         }
         return false;
     }
@@ -337,6 +346,9 @@ function buildNotificationTestEnv({
             path,
             id: String(path).split('/').pop(),
             async get() {
+                const pathGetErrors = pendingDocGetErrors.get(path);
+                const pathGetError = pathGetErrors?.shift();
+                if (pathGetError) throw pathGetError;
                 if (path === `teams/${teamId}`) {
                     counts.teamDocGets += 1;
                     return makeDocSnapshot({ id: teamId, ref: this, data: teamDoc, exists: true });
@@ -368,7 +380,16 @@ function buildNotificationTestEnv({
                 const playerMatch = path.match(/^teams\/([^/]+)\/players\/([^/]+)$/);
                 if (playerMatch) {
                     const playerId = playerMatch[2];
-                    const data = playerDocs[playerId];
+                    const hasExplicitPlayer = Object.prototype.hasOwnProperty.call(playerDocs, playerId);
+                    const linkedPlayerKey = `${playerMatch[1]}::${playerId}`;
+                    const hasLinkedParent = Object.values(userDocs).some((user) => (
+                        Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(linkedPlayerKey)
+                    ));
+                    const data = hasExplicitPlayer
+                        ? playerDocs[playerId]
+                        : hasLinkedParent
+                            ? { active: true }
+                            : undefined;
                     return makeDocSnapshot({
                         id: playerId,
                         ref: this,
@@ -823,11 +844,16 @@ function buildNotificationTestEnv({
         },
         async runTransaction(handler) {
             counts.dedupTransactions += 1;
-            return handler({
+            const transactionError = pendingTransactionErrors.shift();
+            if (transactionError) throw transactionError;
+            const result = await handler({
                 get: (ref) => ref.get(),
                 set: (ref, value) => ref.set(value),
                 update: (ref, value) => ref.update(value)
             });
+            const postCommitError = pendingTransactionPostCommitErrors.shift();
+            if (postCommitError) throw postCommitError;
+            return result;
         },
         batch() {
             return {
@@ -852,7 +878,9 @@ function buildNotificationTestEnv({
             delete: () => ({ __delete: true })
         },
         Timestamp: {
-            now: () => makeTimestamp(nowMillis),
+            now: () => makeTimestamp(
+                typeof nowMillisProvider === 'function' ? nowMillisProvider() : nowMillis
+            ),
             fromDate: (date) => makeTimestamp(new Date(date).getTime()),
             fromMillis: (millis) => makeTimestamp(millis)
         }

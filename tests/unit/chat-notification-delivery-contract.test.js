@@ -14,9 +14,20 @@ describe('team chat notification delivery contract', () => {
         expect(functionsSource).toContain('for (let attempt = 0; attempt < 3; attempt += 1)');
         expect(functionsSource).toContain('taggedError.notificationAuthResolutionFailed = true;');
         expect((functionsSource.match(/if \(isNotificationAuthResolutionFailure\([^)]*\)\) throw/g) || []).length).toBeGreaterThanOrEqual(4);
-        expect(functionsSource).toContain('if (isNotificationAuthResolutionFailure(err)) {');
         expect(functionsSource).toContain('reminderDeliveryClaimId: claimId');
-        expect(functionsSource).toContain('update.reminderSentAt = admin.firestore.FieldValue.delete()');
+        const feeResolverStart = functionsSource.indexOf('async function resolveEligibleFeeReminderRecipient({');
+        const feeReminderStart = functionsSource.indexOf('async function sendFeeUnpaidDueReminders()');
+        const feeReminderEnd = functionsSource.indexOf('exports.sendFeeUnpaidDueReminders =', feeReminderStart);
+        const feeResolverSource = functionsSource.slice(feeResolverStart, feeReminderStart);
+        const feeReminderSource = functionsSource.slice(feeReminderStart, feeReminderEnd);
+        expect(functionsSource).toContain('const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;');
+        expect(feeReminderSource.indexOf('await claimFeeDueReminder(doc.ref, {'))
+            .toBeLessThan(feeReminderSource.indexOf('requireCanonicalTeamAccess: true'));
+        expect(feeReminderSource.indexOf('requireCanonicalTeamAccess: true'))
+            .toBeLessThan(feeReminderSource.indexOf('beforeEffects: async ({ authorizedTargets }) => {'));
+        expect(feeReminderSource).toContain('await markFeeDueReminderClaimSent(');
+        expect(feeReminderSource).toContain('await releaseFeeDueReminderClaim(doc.ref, claimId, err)');
+        expect(feeReminderSource).not.toContain('releaseReminder: true');
         expect(functionsSource).toContain('exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyGameUpdated = retryableNotificationFunctions.firestore');
