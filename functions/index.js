@@ -17742,12 +17742,17 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
     .map((teamSnap) => {
       const team = teamSnap.data() || {};
       const canManage = hasOpportunityTeamAdminAccess(caller, team);
-      return canManage
+      const item = canManage
         ? serializeManagedTeamDocument(teamSnap.id, team)
         : serializeStaffTeamProfile(teamSnap.id, team);
+      if (!item) return null;
+      return {
+        ...item,
+        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team'
+      };
     })
     .filter(Boolean)
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
   return { items, isPartial: staffTeams.isPartial === true };
 });
 

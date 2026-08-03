@@ -501,6 +501,34 @@ test('managed-team callables return access fields only to current managers', asy
     assert.equal('privateBillingCustomerId' in stalePublicProfile.item, false);
 });
 
+test('managed-team discovery normalizes legacy teamName-only documents before sorting', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/zebra-team': {
+            teamName: 'Zebras',
+            ownerId: 'owner-1',
+            active: true,
+            isPublic: false
+        },
+        'teams/bears-team': {
+            name: 'Bears',
+            ownerId: 'owner-1',
+            active: true,
+            isPublic: false
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.deepEqual(managed.items.map((team) => ({ id: team.id, name: team.name })), [
+        { id: 'bears-team', name: 'Bears' },
+        { id: 'zebra-team', name: 'Zebras' }
+    ]);
+});
+
 test('team admin revocation atomically clears reciprocal coach access and accepted invites', async () => {
     const { firestore, callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com' },
