@@ -23,6 +23,7 @@ function isAuthUserNotFound(error) {
 
 export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
     const plans = [];
+    const aliasNormalizationPlans = [];
     const unresolvedTeamIds = [];
 
     for (const teamDoc of teamDocs) {
@@ -30,6 +31,9 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
         if (String(team.ownerId || '').trim()) continue;
         const aliases = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
         if (aliases.length === 0) continue;
+        if (aliases.length === 1 && String(team.ownerEmailLower || '').trim() !== aliases[0]) {
+            aliasNormalizationPlans.push({ teamDoc, ownerEmailLower: aliases[0] });
+        }
 
         const resolvedUsers = new Map();
         for (const alias of aliases) {
@@ -51,16 +55,55 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
         plans.push({ teamDoc, ownerId: user.uid });
     }
 
-    return { plans, unresolvedTeamIds };
+    return { plans, aliasNormalizationPlans, unresolvedTeamIds };
 }
 
 export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log = console }) {
-    const snapshot = await db.collection('teams')
+    let snapshot = await db.collection('teams')
         .select('ownerId', 'ownerEmail', 'ownerEmailLower')
         .get();
-    const { plans, unresolvedTeamIds } = await planLegacyTeamOwnerBackfill(snapshot.docs, auth);
-    log.log(`[backfill-legacy-team-owner-ids] ${apply ? 'Will migrate' : 'Would migrate'} ${plans.length} team(s); ${unresolvedTeamIds.length} alias-only team(s) have no current Auth user.`);
-    if (!apply || plans.length === 0) return { migrated: 0, unresolvedTeamIds };
+    let planning = await planLegacyTeamOwnerBackfill(snapshot.docs, auth);
+    const normalizedAliasCount = planning.aliasNormalizationPlans.length;
+    log.log(`[backfill-legacy-team-owner-ids] ${apply ? 'Will normalize' : 'Would normalize'} ${planning.aliasNormalizationPlans.length} legacy owner alias(es); ${apply ? 'will migrate' : 'would migrate'} ${planning.plans.length} team(s); ${planning.unresolvedTeamIds.length} alias-only team(s) have no current Auth user.`);
+    if (!apply) {
+        return {
+            migrated: 0,
+            normalizedAliases: 0,
+            unresolvedTeamIds: planning.unresolvedTeamIds
+        };
+    }
+
+    for (let start = 0; start < planning.aliasNormalizationPlans.length; start += BATCH_LIMIT) {
+        const batch = db.batch();
+        for (const plan of planning.aliasNormalizationPlans.slice(start, start + BATCH_LIMIT)) {
+            batch.update(plan.teamDoc.ref, {
+                ownerEmailLower: plan.ownerEmailLower
+            }, { lastUpdateTime: plan.teamDoc.updateTime });
+        }
+        await batch.commit();
+    }
+
+    if (planning.aliasNormalizationPlans.length > 0) {
+        for (let start = 0; start < planning.aliasNormalizationPlans.length; start += BATCH_LIMIT) {
+            const chunk = planning.aliasNormalizationPlans.slice(start, start + BATCH_LIMIT);
+            const verified = await db.getAll(...chunk.map((plan) => plan.teamDoc.ref));
+            verified.forEach((teamDoc, index) => {
+                if (!teamDoc.exists || String(teamDoc.data()?.ownerEmailLower || '') !== chunk[index].ownerEmailLower) {
+                    throw new Error(`Legacy team owner alias normalization failed for ${chunk[index].teamDoc.id}.`);
+                }
+            });
+        }
+
+        // Re-read after normalization. Auth accounts created before this commit are
+        // resolved here; accounts created afterward are handled by the retryable
+        // Auth onCreate trigger, which can now query ownerEmailLower exactly.
+        snapshot = await db.collection('teams')
+            .select('ownerId', 'ownerEmail', 'ownerEmailLower')
+            .get();
+        planning = await planLegacyTeamOwnerBackfill(snapshot.docs, auth);
+    }
+
+    const { plans, unresolvedTeamIds } = planning;
 
     for (let start = 0; start < plans.length; start += BATCH_LIMIT) {
         const batch = db.batch();
@@ -83,7 +126,11 @@ export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log 
         });
     }
     log.log(`[backfill-legacy-team-owner-ids] Verified ${plans.length} canonical owner binding(s).`);
-    return { migrated: plans.length, unresolvedTeamIds };
+    return {
+        migrated: plans.length,
+        normalizedAliases: normalizedAliasCount,
+        unresolvedTeamIds
+    };
 }
 
 async function main() {
