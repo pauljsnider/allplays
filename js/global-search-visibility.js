@@ -1,4 +1,4 @@
-import { getTeamAccessInfo } from './team-access.js?v=6';
+import { getTeamAccessInfo } from './team-access.js?v=44337';
 
 export function canUserDiscoverTeamInSearch(team, user) {
     if (!team) return false;

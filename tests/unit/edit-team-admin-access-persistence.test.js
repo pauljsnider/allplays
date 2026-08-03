@@ -374,7 +374,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443331';",
+            /import\s+\{\s*renderHeader,\s*renderFooter,\s*getUrlParams,\s*escapeHtml\s*\}\s+from\s+'\.\/js\/utils\.js\?v=\d+';/,
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -382,7 +382,7 @@ function extractEditTeamModule() {
             'const { checkAuth, sendInviteEmail } = deps.auth;'
         )
         .replace(
-            "import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=13';",
+            /import\s+\{\s*renderTeamAdminBanner\s*\}\s+from\s+'\.\/js\/team-admin-banner\.js\?v=\d+';/,
             'const { renderTeamAdminBanner } = deps.teamAdminBanner;'
         )
         .replace(
@@ -390,7 +390,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=44336';",
+            /import\s+\{\s*hasFullTeamAccess,\s*normalizeAdminEmailList,\s*normalizeStreamVolunteerEmailList,\s*normalizeTeamPermissions\s*\}\s+from\s+'\.\/js\/team-access\.js\?v=\d+';/,
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
