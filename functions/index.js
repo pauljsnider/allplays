@@ -17881,16 +17881,24 @@ async function listStaffTeamDocuments(caller) {
     .filter((teamSnap) => !teams.has(teamSnap.id));
   const settledCoachGrantEvidence = await Promise.allSettled(
     legacyCoachCandidates.map(async (teamSnap) => {
-      const inviteSnap = await firestore.collection('accessCodes')
+      if (!caller.email) {
+        return { teamSnap, hasAdminInviteLifecycleEvidence: true };
+      }
+      const usedByQuery = firestore.collection('accessCodes')
         .where('teamId', '==', teamSnap.id)
-        .get();
-      const hasAdminInviteLifecycleEvidence = inviteSnap.docs.some((inviteDoc) => {
-        const invite = inviteDoc.data() || {};
-        if (invite.type !== 'admin_invite') return false;
-        const inviteEmail = String(invite.email || '').trim().toLowerCase();
-        return String(invite.usedBy || '').trim() === caller.uid
-          || Boolean(caller.email && inviteEmail === caller.email);
-      });
+        .where('type', '==', 'admin_invite')
+        .where('usedBy', '==', caller.uid)
+        .limit(1);
+      const currentEmailQuery = firestore.collection('accessCodes')
+        .where('teamId', '==', teamSnap.id)
+        .where('type', '==', 'admin_invite')
+        .where('email', '==', caller.email)
+        .limit(1);
+      const [usedBySnap, currentEmailSnap] = await Promise.all([
+        usedByQuery.get(),
+        currentEmailQuery.get()
+      ]);
+      const hasAdminInviteLifecycleEvidence = !usedBySnap.empty || !currentEmailSnap.empty;
       return { teamSnap, hasAdminInviteLifecycleEvidence };
     })
   );
