@@ -8,9 +8,9 @@ const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
   doesLegacyImageMetadataMatchSourceHash,
+  getEnabledCertificateAuthUserIds,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
-  getCertificateLegacyManagerEmails,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
@@ -28,6 +28,15 @@ const legacyBucket = 'game-flow-img.firebasestorage.app';
 const primaryBucket = 'all-plays-ai.firebasestorage.app';
 const legacyPath = 'user-photos/1700000000000_certificate-signature_owner_admin_My_Signature.png';
 const legacyUrl = `https://firebasestorage.googleapis.com/v0/b/${legacyBucket}/o/${encodeURIComponent(legacyPath)}?alt=media&token=legacy-token`;
+
+test('certificate legacy provenance excludes disabled Auth accounts', () => {
+  assert.deepEqual(getEnabledCertificateAuthUserIds([
+    { uid: 'enabled-manager' },
+    { uid: 'disabled-manager', disabled: true },
+    { uid: 'enabled-manager', disabled: false },
+    { disabled: false }
+  ]), ['enabled-manager']);
+});
 
 test('canonical owner IDs exclude stale owner aliases from legacy signature provenance', () => {
   assert.deepEqual(getCertificateLegacyManagerEmails({
@@ -613,6 +622,10 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /async function lookupCertificateLegacySignatureBinding[\s\S]*getCertificateLegacyUploaderIds[\s\S]*conflicted: true/);
   assert.match(functionsSource, /managerEmails\.slice\(offset, offset \+ 100\)/);
   assert.match(migrationSource, /managerEmails\.slice\(offset, offset \+ 100\)/);
+  assert.match(functionsSource, /getCertificateLegacyUploaderIds[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
+  assert.match(functionsSource, /lookupExistingUserIds:[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
+  assert.match(migrationSource, /getAuthorizedUploaderIds[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
+  assert.match(migrationSource, /lookupExistingUserIds:[\s\S]*getEnabledCertificateAuthUserIds\(result\.users\)/);
   assert.match(functionsSource, /collection\(`teams\/\$\{teamId\}\/certificates`\)[\s\S]*collection\(`teams\/\$\{teamId\}\/certificateBatches`\)/);
   assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*transaction\.get\(certificatesQuery\)[\s\S]*transaction\.get\(certificateBatchesQuery\)[\s\S]*referenceRecords\.some[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);
   assert.match(functionsSource, /target\.storageBucket === 'legacy-image'[\s\S]*IMAGE_STORAGE_BUCKET[\s\S]*file\(storagePath, \{[\s\S]*preconditionOpts[\s\S]*ifGenerationMatch[\s\S]*blocked-generation-changed[\s\S]*status: 'completed'/);

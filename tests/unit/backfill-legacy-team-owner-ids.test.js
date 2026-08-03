@@ -50,6 +50,22 @@ describe('legacy team ownerId migration planning', () => {
         expect(result.unresolvedTeamIds).toEqual(['legacy']);
     });
 
+    it('leaves aliases owned by disabled Auth accounts unresolved', async () => {
+        const legacy = teamDoc('disabled-owner', { ownerEmailLower: 'disabled@example.com' });
+        const auth = {
+            getUserByEmail: vi.fn(async (email) => ({
+                uid: 'disabled-owner-1',
+                email,
+                disabled: true
+            }))
+        };
+
+        const result = await planLegacyTeamOwnerBackfill([legacy], auth);
+
+        expect(result.plans).toEqual([]);
+        expect(result.unresolvedTeamIds).toEqual(['disabled-owner']);
+    });
+
     it('rechecks Auth after alias normalization so signups during migration cannot be missed', async () => {
         const teamRef = { path: 'teams/legacy' };
         const teamData = { ownerEmail: 'Owner@Example.com' };

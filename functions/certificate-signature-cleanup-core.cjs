@@ -21,6 +21,15 @@ function getCertificateLegacyManagerEmails(team = {}) {
   ])];
 }
 
+function getEnabledCertificateAuthUserIds(userRecords = []) {
+  return [...new Set(
+    (Array.isArray(userRecords) ? userRecords : [])
+      .filter((userRecord) => userRecord?.disabled !== true)
+      .map((userRecord) => String(userRecord?.uid || '').trim())
+      .filter(Boolean)
+  )];
+}
+
 function normalizeCertificateTeamId(value) {
   const teamId = String(value || '').trim();
   if (!TEAM_ID_PATTERN.test(teamId)) {
@@ -538,9 +547,9 @@ module.exports = {
   discoverLegacyImageSignatureReferences,
   doesLegacyImageMetadataMatchSourceHash,
   extractFirebaseStoragePathFromUrl,
+  getEnabledCertificateAuthUserIds,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
-  getCertificateLegacyManagerEmails,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,

@@ -370,6 +370,7 @@ const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
+  getEnabledCertificateAuthUserIds,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
@@ -14207,7 +14208,7 @@ async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
     const result = await admin.auth().getUsers(
       managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
     );
-    result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
+    getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
   }
   return [...uploaderIds];
 }
@@ -14222,7 +14223,7 @@ async function discoverCertificateLegacySignatureReferences({ defaults, teamId, 
     allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
     lookupExistingUserIds: async (candidates) => {
       const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
-      return result.users.map((userRecord) => userRecord.uid);
+      return getEnabledCertificateAuthUserIds(result.users);
     },
     getObjectMetadata: async (storagePath) => {
       const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
@@ -16784,9 +16785,13 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
   const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
   let recipientEmail = '';
+  let recipientAuthEnabled = false;
   try {
     const recipientAuthRecord = await admin.auth().getUser(recipientId);
-    recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
+    recipientAuthEnabled = recipientAuthRecord?.disabled !== true;
+    recipientEmail = recipientAuthEnabled
+      ? String(recipientAuthRecord?.email || '').trim().toLowerCase()
+      : '';
   } catch (error) {
     console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
   }

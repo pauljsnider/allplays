@@ -1092,6 +1092,41 @@ test('email-only team admins can send and receive direct replies when their user
     );
 });
 
+test('direct-message callable rejects recipients whose Auth account is disabled', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Adisabled-parent';
+    const seed = {
+        'users/owner': { email: 'owner@example.com', isAdmin: false },
+        'users/disabled-parent': {
+            email: 'stale@example.com',
+            isAdmin: false
+        },
+        'teams/team-1': { ownerId: 'owner', adminEmails: ['stale@example.com'] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:disabled-parent'],
+            participantRoles: [],
+            directAccess: 'team_admin',
+            directUserIds: ['disabled-parent', 'owner'],
+            friendshipId: null,
+            initiatedBy: 'owner'
+        }
+    };
+    const { callables } = loadCallables(seed, {
+        authUsers: { 'disabled-parent': { email: 'stale@example.com', disabled: true } }
+    });
+
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({
+            teamId: 'team-1',
+            conversationId: 'direct_owner__user%3Adisabled-parent',
+            clientMessageId: 'disabled-recipient-1',
+            text: 'Should not send',
+            attachments: []
+        }, authContext('owner')),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
 test('opportunity moderation trusts protected user admin state only', async () => {
     const seed = {
         'users/member': { email: 'member@example.com', isAdmin: false },

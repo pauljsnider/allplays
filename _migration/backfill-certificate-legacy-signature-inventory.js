@@ -14,6 +14,7 @@ import {
 const require = createRequire(import.meta.url);
 const {
     discoverLegacyImageSignatureReferences,
+    getEnabledCertificateAuthUserIds,
     getCertificateLegacyManagerEmails,
     getCertificateLegacySignatureInventoryId,
     isMatchingCertificateLegacySignatureBinding
@@ -38,7 +39,7 @@ async function getAuthorizedUploaderIds(auth, team = {}) {
         const result = await auth.getUsers(
             managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
         );
-        result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
+        getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
     }
     return [...uploaderIds];
 }
@@ -149,7 +150,7 @@ export async function backfillCertificateLegacySignatureInventory({
             allowedUploaderIds: await getAuthorizedUploaderIds(auth, teamSnap.data() || {}),
             lookupExistingUserIds: async (candidates) => {
                 const result = await auth.getUsers(candidates.map((uid) => ({ uid })));
-                return result.users.map((userRecord) => userRecord.uid);
+                return getEnabledCertificateAuthUserIds(result.users);
             },
             getObjectMetadata: async (storagePath) => {
                 const [metadata] = await legacyBucket.file(storagePath).getMetadata();

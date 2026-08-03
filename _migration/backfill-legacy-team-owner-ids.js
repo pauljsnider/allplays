@@ -42,7 +42,7 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
         for (const alias of aliases) {
             try {
                 const user = await auth.getUserByEmail(alias);
-                if (user?.uid) resolvedUsers.set(user.uid, user);
+                if (user?.uid && user.disabled !== true) resolvedUsers.set(user.uid, user);
             } catch (error) {
                 if (!isAuthUserNotFound(error)) throw error;
             }
