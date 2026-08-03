@@ -221,12 +221,12 @@ vi.mock('./appDataCache', () => ({
 
 import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -4550,6 +4550,198 @@ describe('resolveCachedParentScheduleEvents (#2649)', () => {
   it('returns empty on a cache miss', () => {
     vi.mocked(getCachedAppData).mockReturnValue(null);
     expect(resolveCachedParentScheduleEvents('u1', 't1', 'e1')).toEqual([]);
+  });
+});
+
+describe('enableRsvpForImportedCalendarEvent', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: ['coach'] } as any;
+  const calendarEvent = {
+    eventKey: 'team-1::calendar-uid-1::player-1::2026-06-04T18:00:00.000Z::game',
+    id: 'calendar-uid-1',
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date('2026-06-04T18:00:00.000Z'),
+    endDate: new Date('2026-06-04T20:00:00.000Z'),
+    location: 'Main Gym',
+    opponent: 'Wolves',
+    title: null,
+    childId: 'player-1',
+    childName: 'Avery',
+    isDbGame: false,
+    isCancelled: false,
+    isImported: true,
+    sourceType: 'calendar',
+    sourceLabel: 'Imported calendar',
+    assignments: []
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1', active: true } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionSet.mockReset();
+  });
+
+  it.each([
+    ['game', calendarEvent, { type: 'game', opponent: 'Wolves', title: null }],
+    ['practice', { ...calendarEvent, type: 'practice', opponent: null, title: 'Skills practice' }, { type: 'practice', opponent: null, title: 'Skills practice' }]
+  ])('materializes an imported calendar %s with stable provenance and idempotency', async (_label, event, expectedPayload) => {
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => false });
+
+    const firstId = await enableRsvpForImportedCalendarEvent(event as any, user);
+    const firstWrite = mocks.transactionSet.mock.calls[0]?.[1] as any;
+
+    expect(firstId).toMatch(/^calendar_[a-f0-9]{64}$/);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `teams/team-1/games/${firstId}` }),
+      expect.objectContaining({
+        ...expectedPayload,
+        calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z',
+        source: 'calendar',
+        sourceMetadata: {
+          sourceType: 'calendar',
+          sourceLabel: 'Imported calendar'
+        },
+        importBatch: expect.objectContaining({
+          rowNumber: 1,
+          totalCount: 1,
+          actionId: expect.stringMatching(/^calendar-materialize:/)
+        }),
+        createdBy: 'coach-1'
+      })
+    );
+
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ importBatch: firstWrite.importBatch })
+    });
+    const retryId = await enableRsvpForImportedCalendarEvent(event as any, user);
+
+    expect(retryId).toBe(firstId);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed before writing when the caller cannot manage the team', async () => {
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'another-user', active: true } as any);
+
+    await expect(enableRsvpForImportedCalendarEvent(calendarEvent, user)).rejects.toThrow('permission');
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects coach-only staff because game creation requires owner/admin access', async () => {
+    const coachOnlyUser = { ...user, coachOf: ['team-1'] } as any;
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'another-user', active: true } as any);
+
+    await expect(enableRsvpForImportedCalendarEvent(calendarEvent, coachOnlyUser)).rejects.toThrow('permission');
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('materializes separate occurrences that reuse the same calendar event ID', async () => {
+    mocks.transactionGet.mockResolvedValue({ exists: () => false });
+    const laterOccurrence = {
+      ...calendarEvent,
+      eventKey: 'team-1::calendar-uid-1::player-1::2026-06-11T18:00:00.000Z::game',
+      date: new Date('2026-06-11T18:00:00.000Z'),
+      endDate: new Date('2026-06-11T20:00:00.000Z')
+    };
+
+    const firstId = await enableRsvpForImportedCalendarEvent(calendarEvent, user);
+    const laterId = await enableRsvpForImportedCalendarEvent(laterOccurrence, user);
+
+    expect(laterId).not.toBe(firstId);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(2);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[0]?.path)).toEqual([
+      `teams/team-1/games/${firstId}`,
+      `teams/team-1/games/${laterId}`
+    ]);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[1]?.calendarEventUid)).toEqual([
+      'calendar-uid-1__2026-06-04T18:00:00.000Z',
+      'calendar-uid-1__2026-06-11T18:00:00.000Z'
+    ]);
+  });
+
+  it('keeps a later shared-UID occurrence visible after reloading the materialized occurrence', async () => {
+    const parent = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parent.parentOf } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Bears',
+      ownerId: 'coach-1',
+      active: true,
+      calendarUrls: ['https://calendar.example.com/bears.ics']
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'tracked-first-occurrence',
+      type: 'game',
+      date: new Date('2026-06-04T18:00:00.000Z'),
+      opponent: 'Wolves',
+      calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getCalendarEventTrackingId).mockImplementation((event: any) => event.id || event.uid || '');
+    vi.mocked(isTrackedCalendarEvent).mockImplementation((event: any, trackedIds: string[]) => (
+      trackedIds.includes(event.id || event.uid || '')
+    ));
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Wolves',
+        dtstart: new Date('2026-06-04T18:00:00.000Z'),
+        dtend: new Date('2026-06-04T20:00:00.000Z')
+      },
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Tigers',
+        dtstart: new Date('2026-06-11T18:00:00.000Z'),
+        dtend: new Date('2026-06-11T20:00:00.000Z')
+      }
+    ] as any);
+
+    const reloaded = await loadParentSchedule(parent, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      includePastGames: true
+    });
+
+    expect(reloaded.events).toHaveLength(2);
+    expect(reloaded.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'tracked-first-occurrence', isDbGame: true }),
+      expect.objectContaining({
+        id: 'calendar-uid-1',
+        date: new Date('2026-06-11T18:00:00.000Z'),
+        isDbGame: false,
+        isImported: true
+      })
+    ]));
+
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => false });
+    const laterOccurrence = reloaded.events.find((event) => event.date.toISOString() === '2026-06-11T18:00:00.000Z');
+    const laterId = await enableRsvpForImportedCalendarEvent({ ...laterOccurrence, opponent: 'Tigers' } as any, user);
+
+    expect(laterId).not.toBe('tracked-first-occurrence');
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `teams/team-1/games/${laterId}` }),
+      expect.objectContaining({ calendarEventUid: 'calendar-uid-1__2026-06-11T18:00:00.000Z' })
+    );
+  });
+
+  it.each([
+    ['already tracked', { isDbGame: true }],
+    ['cancelled', { isCancelled: true }],
+    ['not a calendar import', { isImported: false, sourceType: 'db' }]
+  ])('rejects an invalid %s event before authorization or persistence', async (_label, overrides) => {
+    await expect(enableRsvpForImportedCalendarEvent({ ...calendarEvent, ...overrides } as any, user)).rejects.toThrow();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
   });
 });
 

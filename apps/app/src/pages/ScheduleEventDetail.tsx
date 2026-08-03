@@ -1,5 +1,5 @@
 import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
@@ -25,6 +25,7 @@ import {
   saveStaffPracticePacket,
   updateGameScore,
   createStaffRsvpAvailabilityLoader,
+  enableRsvpForImportedCalendarEvent,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
   type StaffPracticePacket,
@@ -79,6 +80,7 @@ import {
   getScheduleForecastHref,
   getScheduleLocationLabel,
   canSubmitScheduleEventRsvp,
+  getScheduleEventRsvpCapability,
   isScheduleAssignmentOpen,
   getScheduleTitle,
   getLiveClockViewModel,
@@ -338,6 +340,7 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
@@ -668,6 +671,16 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   }
 
   const rsvp = normalizeRsvpResponse(selectedEvent.myRsvp);
+  const rsvpCapability = getScheduleEventRsvpCapability(selectedEvent);
+  const rsvpPresentation = rsvpCapability === 'calendar_only'
+    ? { label: 'Calendar only', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+    : rsvpCapability === 'locked'
+      ? { label: 'Availability closed', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+      : rsvpCapability === 'cancelled'
+        ? { label: 'Cancelled', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+        : rsvpCapability === 'untracked'
+          ? { label: 'Availability unavailable', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+          : { label: rsvpLabels[rsvp], className: rsvpBadgeClasses[rsvp] };
   const title = getScheduleTitle(selectedEvent);
   const hasPracticePacket = selectedEvent.type === 'practice' && Boolean(selectedEvent.practiceHomePacketSummary);
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
@@ -744,8 +757,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               ) : (
                 <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
               )}
-              rsvpLabel={rsvpLabels[rsvp]}
-              rsvpClassName={rsvpBadgeClasses[rsvp]}
+              rsvpLabel={rsvpPresentation.label}
+              rsvpClassName={rsvpPresentation.className}
               briefPieces={getEventBriefPieces(selectedEvent)}
             />
             <button
@@ -795,6 +808,13 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAvailabilityNoteChange={setAvailabilityNote}
             attentionItems={attentionItems}
             onSelectSection={selectSection}
+            onEventMaterialized={(trackedEventId) => {
+              const childId = String(selectedEvent.childId || '').trim();
+              const query = new URLSearchParams();
+              if (childId) query.set('childId', childId);
+              query.set('section', 'availability');
+              navigate(`/schedule/${encodeURIComponent(selectedEvent.teamId)}/${encodeURIComponent(trackedEventId)}?${query.toString()}`);
+            }}
           />
         ) : null}
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
@@ -1138,15 +1158,18 @@ function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; o
   );
 }
 
-function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection }: {
+function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNoteChange, attentionItems, onSelectSection, onEventMaterialized }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
+  onEventMaterialized: (trackedEventId: string) => void;
 }) {
-  const { childEvents } = useScheduleEventDetailContext();
+  const { auth, childEvents } = useScheduleEventDetailContext();
+  const [materializing, setMaterializing] = useState(false);
+  const [materializationError, setMaterializationError] = useState('');
   const matchingChildEvents = childEvents.filter((childEvent) => (
     childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
   ));
@@ -1176,6 +1199,17 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
+  const rsvpCapability = getScheduleEventRsvpCapability(event);
+  const isCalendarOnly = rsvpCapability === 'calendar_only';
+  const availabilityPresentation = rsvpCapability === 'calendar_only'
+    ? { label: 'Calendar only', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+    : rsvpCapability === 'locked'
+      ? { label: 'Closed', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+      : rsvpCapability === 'cancelled'
+        ? { label: 'Cancelled', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+        : rsvpCapability === 'untracked'
+          ? { label: 'Unavailable', className: 'border-gray-200 bg-gray-100 text-gray-700' }
+          : { label: rsvpLabels[visibleRsvp], className: rsvpBadgeClasses[visibleRsvp] };
   const availabilitySummary = showTeamRsvpTools ? (staffRsvp.breakdown?.counts || event.rsvpSummary) : event.rsvpSummary;
 
   return (
@@ -1185,8 +1219,8 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <h2 className="app-section-title">Availability</h2>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(availabilitySummary)}</div>
         </div>
-        <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[visibleRsvp]}`}>
-          {rsvpLabels[visibleRsvp]}
+        <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${availabilityPresentation.className}`}>
+          {availabilityPresentation.label}
         </span>
       </div>
       {familyRsvpAvailable ? (
@@ -1252,7 +1286,42 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           />
         </>
       ) : (
-        <ReadOnlyAvailabilityPanel event={event} rsvp={visibleRsvp} />
+        <>
+          <ReadOnlyAvailabilityPanel event={event} rsvp={visibleRsvp} />
+          {isCalendarOnly ? (
+            <div className="border-b border-gray-200 bg-white px-3 py-3 sm:px-4">
+              {event.isTeamAdmin ? (
+                <>
+                  <p className="text-sm font-semibold leading-5 text-gray-600">Create a tracked copy of this event so families can respond. The imported calendar entry will be hidden after the tracked copy loads.</p>
+                  <button
+                    type="button"
+                    className="secondary-button mt-3 !min-h-11 text-sm"
+                    disabled={materializing}
+                    onClick={async () => {
+                      const eventLabel = event.type === 'practice' ? 'practice' : 'game';
+                      if (!window.confirm(`Enable RSVP for this imported ${eventLabel}? This adds a tracked copy to the team schedule so families can respond.`)) return;
+                      setMaterializationError('');
+                      setMaterializing(true);
+                      try {
+                        const trackedEventId = await enableRsvpForImportedCalendarEvent(event, auth.user);
+                        onEventMaterialized(trackedEventId);
+                      } catch (nextError: any) {
+                        setMaterializationError(nextError?.message || 'Unable to enable RSVP for this event.');
+                      } finally {
+                        setMaterializing(false);
+                      }
+                    }}
+                  >
+                    {materializing ? 'Enabling RSVP…' : 'Enable RSVP'}
+                  </button>
+                </>
+              ) : (
+                <p className="text-sm font-semibold leading-5 text-gray-600">Ask a team owner or admin to enable RSVP for this event.</p>
+              )}
+              {materializationError ? <div className="mt-2"><Status tone="error" message={materializationError} /></div> : null}
+            </div>
+          ) : null}
+        </>
       )}
       <div className="px-3 pb-3 sm:px-4">
         {rsvpWorkflow.message ? <Status tone="success" message={rsvpWorkflow.message} /> : null}

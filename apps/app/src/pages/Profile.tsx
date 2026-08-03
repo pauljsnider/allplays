@@ -76,10 +76,10 @@ const notificationPreferenceGroups = NOTIFICATION_PREFERENCE_GROUPS as readonly 
 const collapsedInviteCount = 3;
 const logger = createLogger('profile');
 const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
-  { id: 'account', label: 'Account' },
-  { id: 'alerts', label: 'Alerts' },
+  { id: 'account', label: 'Profile' },
+  { id: 'alerts', label: 'Notifications' },
   { id: 'invites', label: 'Invites' },
-  { id: 'security', label: 'Security' }
+  { id: 'security', label: 'Sign-in & security' }
 ];
 type PushServiceModule = typeof import('../lib/pushService');
 let pushServiceRequest: Promise<PushServiceModule> | null = null;
@@ -292,14 +292,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   }, [activeProfileSection, isNative]);
 
-  const selectProfileSection = (sectionId: ProfileSectionId) => {
+  const focusProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.set('section', sectionId);
-      next.delete('teamId');
-      return next;
-    }, { replace: true });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -1407,9 +1401,6 @@ export function Profile({ auth }: { auth: AuthState }) {
             <p className="truncate text-sm font-semibold text-gray-600">{user.email || 'No email loaded'}</p>
             <p className="mt-1 text-xs font-bold text-gray-400">Last updated: {updatedAt}</p>
           </div>
-          <button type="button" className="ghost-button flex-none !min-h-11 !px-3" onClick={handleSignOut} disabled={busy === 'logout'} aria-label="Sign out">
-            {busy === 'logout' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
-          </button>
         </div>
         <Link to="/profile" className="secondary-button mt-3 !min-h-11 text-xs">
           <UserCircle className="h-4 w-4" aria-hidden="true" />
@@ -1422,15 +1413,15 @@ export function Profile({ auth }: { auth: AuthState }) {
           {profileSections.map((section) => {
             const active = activeProfileSection === section.id;
             return (
-              <button
+              <Link
                 key={section.id}
-                type="button"
+                to={getProfileSectionRoute(section.id)}
                 className={`min-h-11 rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
-                onClick={() => selectProfileSection(section.id)}
-                aria-pressed={active}
+                onClick={() => focusProfileSection(section.id)}
+                aria-current={active ? 'page' : undefined}
               >
                 {section.label}
-              </button>
+              </Link>
             );
           })}
         </div>

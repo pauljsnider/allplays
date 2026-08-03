@@ -62,11 +62,31 @@ describe('FriendProfile', () => {
     expect(await screen.findByRole('heading', { name: 'Pat Parent' })).toBeVisible();
     expect(screen.getByRole('link', { name: /Bears/ })).toHaveAttribute('href', '/teams/team-1/public');
     expect(screen.getByRole('link', { name: /Pat Star/ })).toHaveAttribute('href', profile.publicChildren[0].shareUrl);
-    expect(screen.getAllByRole('link', { name: /settings/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: 'Edit profile' })).toHaveLength(1);
+    expect(screen.getByRole('navigation', { name: 'Profile sections' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Posts' })).toHaveAttribute('href', '/profile?section=posts');
+    expect(screen.getByRole('link', { name: 'Teams' })).toHaveAttribute('href', '/profile?section=teams');
+    expect(screen.getByRole('link', { name: 'Players' })).toHaveAttribute('href', '/profile?section=players');
     expect(document.querySelector('main')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy profile link' }));
     await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(`${window.location.origin}/app/#/people/user-1`));
+  });
+
+  it('supports route-addressable profile sections without rendering unrelated collections', async () => {
+    render(
+      <MemoryRouter initialEntries={['/profile?section=teams']}>
+        <Routes>
+          <Route path="/profile" element={<FriendProfile auth={auth} profileUserId="user-1" />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Public teams' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Teams' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('heading', { name: 'Public players' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Recent posts' })).toBeNull();
   });
 
   it('shows a direct message action for an accepted friend profile', async () => {

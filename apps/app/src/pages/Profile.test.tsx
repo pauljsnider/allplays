@@ -365,7 +365,7 @@ describe('Profile', () => {
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
     expect(pushServiceMocks.getPushNotificationPermissionStatus).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Alerts$/ }));
+    fireEvent.click(screen.getByRole('link', { name: /^Notifications$/ }));
 
     expect(await screen.findByText('Notification preferences')).toBeTruthy();
     await waitFor(() => {
@@ -388,7 +388,7 @@ describe('Profile', () => {
       .mockRejectedValueOnce(new Error('save failed'));
 
     renderProfile();
-    fireEvent.click(await screen.findByRole('button', { name: /^Alerts$/ }));
+    fireEvent.click(await screen.findByRole('link', { name: /^Notifications$/ }));
 
     const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
     await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
@@ -422,16 +422,17 @@ describe('Profile', () => {
     expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('keeps mobile profile section buttons in a two-column grid so Alerts stays reachable', async () => {
+  it('keeps semantic mobile profile navigation in a two-column grid', async () => {
     renderProfile();
 
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
-    const alertsButton = screen.getByRole('button', { name: /^Alerts$/ });
-    expect(alertsButton).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Invites$/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Security$/ })).toBeTruthy();
+    const notificationsLink = screen.getByRole('link', { name: /^Notifications$/ });
+    expect(notificationsLink).toHaveAttribute('href', '/profile/settings?section=alerts');
+    expect(screen.getByRole('link', { name: /^Invites$/ })).toHaveAttribute('href', '/profile/settings?section=invites');
+    expect(screen.getByRole('link', { name: /^Sign-in & security$/ })).toHaveAttribute('href', '/profile/settings?section=security');
+    expect(screen.getByRole('link', { name: /^Profile$/ })).toHaveAttribute('aria-current', 'page');
 
-    const sectionGrid = alertsButton.parentElement;
+    const sectionGrid = notificationsLink.parentElement;
     expect(sectionGrid).not.toBeNull();
     expect(sectionGrid?.className).toContain('grid-cols-2');
     expect(sectionGrid?.className).toContain('sm:grid-cols-4');

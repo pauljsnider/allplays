@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import { AlertCircle, ArrowLeft, Copy, Heart, Loader2, MessageCircle, Settings, Trophy, UserRound, UsersRound } from 'lucide-react';
 import { AvatarImage } from '../components/AvatarImage';
@@ -15,6 +15,8 @@ import type { AuthState } from '../lib/types';
 
 export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profileUserId?: string }) {
   const { userId: routeUserId = '' } = useParams();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const userId = profileUserId || routeUserId;
   const [profile, setProfile] = useState<FriendProfileModel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -126,21 +128,26 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   const initials = getInitials(profile.name);
   const publicTeams = profile.publicTeams || [];
   const publicChildren = profile.publicChildren || [];
+  const requestedSection = searchParams.get('section');
+  const activeSection = requestedSection === 'posts' || requestedSection === 'teams' || requestedSection === 'players'
+    ? requestedSection
+    : 'overview';
+  const profileSections = [
+    { id: 'overview', label: 'Overview', to: location.pathname },
+    { id: 'posts', label: 'Posts', to: `${location.pathname}?section=posts` },
+    { id: 'teams', label: 'Teams', to: `${location.pathname}?section=teams` },
+    { id: 'players', label: 'Players', to: `${location.pathname}?section=players` }
+  ] as const;
   return (
     <div className="mx-auto max-w-3xl px-4 py-5 sm:py-7">
-      {profile.isSelf ? (
-        <Link to="/profile/settings" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
-          <Settings className="h-4 w-4" aria-hidden="true" />
-          Profile settings
-        </Link>
-      ) : (
+      {!profile.isSelf ? (
         <Link to="/home?section=friends" className="ghost-button !inline-flex !min-h-11 !px-3 text-sm">
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to friends
         </Link>
-      )}
+      ) : null}
 
-      <header className="app-card mt-4 overflow-hidden">
+      <header className={`app-card overflow-hidden ${profile.isSelf ? '' : 'mt-4'}`}>
         <div className="h-24 bg-gradient-to-br from-primary-700 via-primary-600 to-sky-500 sm:h-32" />
         <div className="px-5 pb-5 sm:px-7">
           <div className="-mt-10 flex items-end justify-between gap-4">
@@ -179,7 +186,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
             {profile.isSelf ? (
               <Link to="/profile/settings" className="secondary-button !min-h-11 text-sm">
                 <Settings className="h-4 w-4" aria-hidden="true" />
-                Settings
+                Edit profile
               </Link>
             ) : null}
           </div>
@@ -193,26 +200,43 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
 
       {status ? <div className="mt-3 rounded-xl bg-gray-950 px-3 py-2 text-sm font-bold text-white" role="status">{status}</div> : null}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
+      <nav className="sticky top-24 z-20 mt-3 overflow-x-auto rounded-2xl border border-gray-200 bg-white/95 p-1 shadow-sm backdrop-blur" aria-label="Profile sections">
+        <div className="grid min-w-max grid-cols-4 gap-1">
+          {profileSections.map((section) => (
+            <Link
+              key={section.id}
+              to={section.to}
+              aria-current={activeSection === section.id ? 'page' : undefined}
+              className={`inline-flex min-h-11 items-center justify-center rounded-xl px-4 text-sm font-black transition ${activeSection === section.id ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+            >
+              {section.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
+
+      {activeSection === 'overview' || activeSection === 'teams' || activeSection === 'players' ? (
+      <div className={`mt-6 grid gap-4 ${activeSection === 'overview' ? 'sm:grid-cols-2' : ''}`}>
+        {activeSection === 'overview' || activeSection === 'teams' ? <ProfileCollection title="Public teams" icon={Trophy} empty="No public teams shared.">
           {publicTeams.map((team) => (
             <Link key={team.id} to={`/teams/${encodeURIComponent(team.id)}/public`} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
               {team.photoUrl ? <img src={team.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><Trophy className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{team.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{team.sport || 'Public team'}</span></span>
             </Link>
           ))}
-        </ProfileCollection>
-        <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
+        </ProfileCollection> : null}
+        {activeSection === 'overview' || activeSection === 'players' ? <ProfileCollection title="Public players" icon={UserRound} empty="No public player profiles shared.">
           {publicChildren.map((child) => (
             <a key={child.id} href={child.shareUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 hover:border-primary-200">
               {child.photoUrl ? <img src={child.photoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-950 text-white"><UserRound className="h-5 w-5" /></span>}
               <span className="min-w-0"><span className="block truncate text-sm font-black text-gray-950">{child.name}</span><span className="block truncate text-xs font-semibold text-gray-500">{child.headline || 'View public profile'}</span></span>
             </a>
           ))}
-        </ProfileCollection>
+        </ProfileCollection> : null}
       </div>
+      ) : null}
 
-      <section className="mt-6" aria-labelledby="profile-posts-heading">
+      {activeSection === 'overview' || activeSection === 'posts' ? <section className="mt-6" aria-labelledby="profile-posts-heading">
         <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.12em] text-primary-700">Timeline</p>
@@ -261,7 +285,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
             </div>
           )}
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }
