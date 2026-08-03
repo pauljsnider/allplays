@@ -1431,22 +1431,23 @@ jobs:
             FIRESTORE_CONFIG_CHANGED="true"
           fi
           # The full Functions deploy does not guarantee per-function update order.
-          # Install the durable legacy binding producer, backfill authoritative
-          # current defaults, then publish the superset consumer before any current
-          # or future writer can emit a new certificate-signature tombstone schema.
+          # Install the durable legacy binding producer and the revalidating
+          # superset consumer before the V2 backfill revokes stale bindings, then
+          # run that backfill before any current or future writer can emit a new
+          # certificate-signature tombstone schema.
           retry_firebase_deploy \
             "$retry_enabled_inventory_producer_target" \
             "certificate-signature-inventory-producer" \
             3 \
             15 \
             true
-          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           retry_firebase_deploy \
             "$retry_enabled_cleanup_compatibility_target" \
             "certificate-signature-cleanup-compatibility" \
             3 \
             15 \
             true
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             # Most authorization changes publish before their callers. Certificate
             # defaults are a compatibility migration: deploy the server writer,

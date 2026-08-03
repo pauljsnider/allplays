@@ -43,7 +43,7 @@ describe('agent regression guidance', () => {
         expect(guidance).toContain('Every upload helper must return both the display URL and exact cleanup path');
         expect(guidance).toContain('every adapter, native wrapper, normalizer, saved-output serializer, persisted nested object, and test mock must preserve that pair');
         expect(guidance).toContain('never narrow it back to a URL string, strip the path from a certificate/batch snapshot');
-        expect(guidance).toContain('Deploy the old/new-compatible server-only inventory producer first, backfill every authoritative active legacy reference, deploy the superset cleanup worker, and only then deploy a writer that emits new tombstones');
+        expect(guidance).toContain('Deploy the old/new-compatible server-only inventory producer first, deploy the revalidating superset cleanup worker before any migration invalidates previously accepted bindings, backfill every authoritative active legacy reference, and only then deploy a writer that emits new tombstones');
         expect(guidance).toContain('cleanup authorization requires a nonempty canonical object key, and equality between two missing keys is never proof');
         expect(guidance).toContain('current Storage metadata cannot reconstruct a generation omitted by an old path-only tombstone');
         expect(guidance).toContain('compare the complete normalized writable payload—not only signers—before reporting success');
