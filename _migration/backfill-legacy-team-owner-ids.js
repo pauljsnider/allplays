@@ -31,6 +31,9 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
         if (String(team.ownerId || '').trim()) continue;
         const aliases = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
         if (aliases.length === 0) continue;
+        if (aliases.length > 1) {
+            throw new Error(`Legacy team ${teamDoc.id} has conflicting normalized owner aliases.`);
+        }
         if (aliases.length === 1 && String(team.ownerEmailLower || '').trim() !== aliases[0]) {
             aliasNormalizationPlans.push({ teamDoc, ownerEmailLower: aliases[0] });
         }
@@ -43,9 +46,6 @@ export async function planLegacyTeamOwnerBackfill(teamDocs, auth) {
             } catch (error) {
                 if (!isAuthUserNotFound(error)) throw error;
             }
-        }
-        if (resolvedUsers.size > 1) {
-            throw new Error(`Legacy team ${teamDoc.id} has owner aliases bound to different Firebase Auth users.`);
         }
         if (resolvedUsers.size === 0) {
             unresolvedTeamIds.push(teamDoc.id);

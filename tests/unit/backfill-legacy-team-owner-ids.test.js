@@ -94,12 +94,13 @@ describe('legacy team ownerId migration planning', () => {
         expect(db.collection).toHaveBeenCalledTimes(2);
     });
 
-    it('fails before migration when conflicting aliases resolve to different principals', async () => {
+    it('fails before Auth lookup when normalized owner aliases conflict', async () => {
         const auth = {
-            getUserByEmail: vi.fn(async (email) => ({
-                uid: email.startsWith('first') ? 'owner-1' : 'owner-2',
-                email
-            }))
+            getUserByEmail: vi.fn(async (email) => (
+                email === 'first@example.com'
+                    ? { uid: 'owner-1', email }
+                    : Promise.reject(Object.assign(new Error('missing'), { code: 'auth/user-not-found' }))
+            ))
         };
 
         await expect(planLegacyTeamOwnerBackfill([
@@ -107,7 +108,8 @@ describe('legacy team ownerId migration planning', () => {
                 ownerEmail: 'first@example.com',
                 ownerEmailLower: 'second@example.com'
             })
-        ], auth)).rejects.toThrow(/different Firebase Auth users/);
+        ], auth)).rejects.toThrow(/conflicting normalized owner aliases/);
+        expect(auth.getUserByEmail).not.toHaveBeenCalled();
     });
 
     it('runs from the trusted deploy handoff before stricter Firestore rules activate', () => {
