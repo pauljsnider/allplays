@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=4433157';
+import { checkAuth } from './auth.js?v=4433158';
 import {
     getTeam,
     getTeamMediaFolders,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433153';
+} from './db.js?v=4433154';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -31,7 +31,7 @@ import {
     isTeamMediaDocument,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=44336';
+} from './team-media-utils.js?v=44337';
 
 const state = {
     teamId: '',

@@ -1,4 +1,4 @@
-import { hasTeamMediaManagementAccess } from './team-access.js?v=44336';
+import { hasTeamMediaManagementAccess } from './team-access.js?v=44337';
 
 const VIDEO_HOST_PATTERNS = [
     /(^|\.)youtube\.com$/,

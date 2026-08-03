@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433153';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433154';";
 const ACCEPT_INVITE_ADMIN_IMPORT = "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';";
 
 class MockClassList {
@@ -106,7 +106,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433157';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433158';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
@@ -118,11 +118,11 @@ const setTimeout = deps.setTimeout;
             'const { redeemAdminInviteAtomically } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=443312';",
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=443313';",
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
-            "import { renderHeader, renderFooter } from './js/utils.js?v=443331';",
+            "import { renderHeader, renderFooter } from './js/utils.js?v=443332';",
             'const { renderHeader, renderFooter } = deps.utils;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
