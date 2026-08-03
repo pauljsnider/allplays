@@ -202,7 +202,8 @@ describe('public opportunity callable wiring', () => {
     expect(resolverSource).toContain("firestore.collection('accessCodes')");
     expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
     expect(resolverSource).toContain(".where('usedBy', '==', caller.uid)");
-    expect(resolverSource).toContain(".where('email', '==', caller.email)");
+    expect(resolverSource).toContain('[caller.rawEmail, caller.email]');
+    expect(resolverSource).toContain(".where('email', 'in', coachInviteEmailCandidates)");
     expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(2);
     expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain('snapshot.size > legacyCoachInviteEvidenceLimit');
@@ -217,10 +218,12 @@ describe('public opportunity callable wiring', () => {
     const accessCodeIndexes = firestoreIndexes.indexes.filter((index) => (
       index.collectionGroup === 'accessCodes' && index.queryScope === 'COLLECTION'
     ));
-    const fieldSignature = (index) => index.fields.map(({ fieldPath }) => fieldPath).join(',');
+    const fieldSignature = (index) => index.fields
+      .map(({ fieldPath, order }) => `${fieldPath}:${order}`)
+      .join(',');
 
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type,usedBy')).toBe(true);
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type,email')).toBe(true);
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,usedBy:ASCENDING')).toBe(true);
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,email:ASCENDING')).toBe(true);
   });
 
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {

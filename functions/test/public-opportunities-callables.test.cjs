@@ -408,7 +408,7 @@ test('opportunity writes require authentication and verified inquiry replies', a
 
 test('managed-team callables return access fields only to current managers', async () => {
     const { firestore, callables } = loadCallables({
-        'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team'] },
+        'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team', 'coach-team-2'] },
         'users/stranger-1': { email: 'stranger@example.com' },
         'users/stale-owner': { email: 'legacy-owner@example.com' },
         'teams/private-team': {
@@ -431,6 +431,15 @@ test('managed-team callables return access fields only to current managers', asy
         },
         'teams/coach-team': {
             name: 'Coach Bears',
+            sport: 'Basketball',
+            ownerId: 'someone-else',
+            adminEmails: ['someone@example.com'],
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'must-not-leak-to-coach'
+        },
+        'teams/coach-team-2': {
+            name: 'Coach Cougars',
             sport: 'Basketball',
             ownerId: 'someone-else',
             adminEmails: ['someone@example.com'],
@@ -468,6 +477,17 @@ test('managed-team callables return access fields only to current managers', asy
             isPublic: false
         },
         {
+            id: 'coach-team-2',
+            name: 'Coach Cougars',
+            sport: 'Basketball',
+            photoUrl: null,
+            description: null,
+            active: true,
+            archived: false,
+            status: null,
+            isPublic: false
+        },
+        {
             id: 'private-team',
             name: 'Private Bears',
             sport: 'Basketball',
@@ -480,10 +500,12 @@ test('managed-team callables return access fields only to current managers', asy
         }
     ]);
     const coachTeam = managed.items.find((team) => team.id === 'coach-team');
+    const secondCoachTeam = managed.items.find((team) => team.id === 'coach-team-2');
     const privateTeam = managed.items.find((team) => team.id === 'private-team');
     assert.equal('ownerId' in coachTeam, false);
     assert.equal('adminEmails' in coachTeam, false);
     assert.equal('privateBillingCustomerId' in coachTeam, false);
+    assert.equal('privateBillingCustomerId' in secondCoachTeam, false);
     assert.equal('privateBillingCustomerId' in privateTeam, false);
     const evidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
         path === 'accessCodes' && filters.some(({ field, value }) => field === 'type' && value === 'admin_invite')

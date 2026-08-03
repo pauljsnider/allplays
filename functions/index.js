@@ -17884,6 +17884,9 @@ async function listStaffTeamDocuments(caller) {
   let coachGrantEvidenceIsIncomplete = legacyCoachCandidates.length > 0 && !caller.email;
   const teamsWithAdminInviteEvidence = new Set();
   if (legacyCoachCandidates.length > 0 && caller.email) {
+    const coachInviteEmailCandidates = Array.from(new Set(
+      [caller.rawEmail, caller.email].map((email) => String(email || '').trim()).filter(Boolean)
+    ));
     settledCoachGrantEvidence = await Promise.allSettled([
       firestore.collection('accessCodes')
         .where('type', '==', 'admin_invite')
@@ -17892,7 +17895,7 @@ async function listStaffTeamDocuments(caller) {
         .get(),
       firestore.collection('accessCodes')
         .where('type', '==', 'admin_invite')
-        .where('email', '==', caller.email)
+        .where('email', 'in', coachInviteEmailCandidates)
         .limit(legacyCoachInviteEvidenceLimit + 1)
         .get()
     ]);
