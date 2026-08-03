@@ -73,6 +73,11 @@ test('authorized detail preserves required team UI fields without exposing serve
     registrationSource: { provider: 'TeamSnap', externalTeamId: 'external-team-1' },
     registrationScheduleSnapshot: { events: [{ id: 'external-game-1' }] },
     tournamentPoolOverrides: { 'pool-a': { label: 'Gold' } },
+    rosterFields: [{ key: 'position', label: 'Position' }],
+    rosterProfileFields: [{ key: 'graduationYear', label: 'Graduation year' }],
+    playerProfileFields: [{ key: 'height', label: 'Height' }],
+    customRosterFields: [{ key: 'medicalClearance', label: 'Medical clearance' }],
+    rosterFieldDefinitions: [{ key: 'school', label: 'School' }],
     privateBillingCustomerId: 'must-not-leak',
     stripeCustomerId: 'must-not-leak-either',
     unknownFutureSecret: 'must-default-to-private'
@@ -97,6 +102,11 @@ test('authorized detail preserves required team UI fields without exposing serve
     registrationSource: { provider: 'TeamSnap', externalTeamId: 'external-team-1' },
     registrationScheduleSnapshot: { events: [{ id: 'external-game-1' }] },
     tournamentPoolOverrides: { 'pool-a': { label: 'Gold' } },
+    rosterFields: [{ key: 'position', label: 'Position' }],
+    rosterProfileFields: [{ key: 'graduationYear', label: 'Graduation year' }],
+    playerProfileFields: [{ key: 'height', label: 'Height' }],
+    customRosterFields: [{ key: 'medicalClearance', label: 'Medical clearance' }],
+    rosterFieldDefinitions: [{ key: 'school', label: 'School' }],
     ownerId: 'owner-1',
     adminEmails: ['admin@example.com']
   });

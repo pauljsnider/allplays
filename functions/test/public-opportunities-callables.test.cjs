@@ -648,6 +648,33 @@ test('managed-team discovery preserves successful queries and marks partial fail
     assert.deepEqual(managed.items.map((team) => team.id), ['owned-team']);
 });
 
+test('opportunity management keeps fail-fast semantics when team discovery is partial', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/owned-team': {
+            name: 'Owned Bears',
+            ownerId: 'owner-1',
+            active: true,
+            isPublic: true
+        }
+    }, {
+        queryFailures: [{
+            path: 'teams',
+            field: 'adminEmails',
+            operator: 'array-contains',
+            message: 'admin index temporarily unavailable'
+        }]
+    });
+
+    await assert.rejects(
+        callables.listManagedPublicOpportunityTeams(
+            {},
+            authContext('owner-1', { email: 'owner@example.com' })
+        ),
+        /admin index temporarily unavailable/
+    );
+});
+
 test('team opportunity publishing is server-authorized and returns a public-only projection', async () => {
     const input = {
         kind: 'coach_or_staff',

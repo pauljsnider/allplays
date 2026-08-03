@@ -17033,7 +17033,7 @@ async function resolveOpportunityTeam(input, caller) {
   return { id: teamSnap.id, ...team };
 }
 
-async function listOpportunityManagedTeamDocuments(caller) {
+async function listOpportunityManagedTeamDocuments(caller, { allowPartial = false } = {}) {
   const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
   if (caller.email) {
     queries.push(
@@ -17057,11 +17057,14 @@ async function listOpportunityManagedTeamDocuments(caller) {
     });
   });
   teams.isPartial = settledSnapshots.some((result) => result.status === 'rejected');
+  if (teams.isPartial && !allowPartial) {
+    throw settledSnapshots.find((result) => result.status === 'rejected').reason;
+  }
   return teams;
 }
 
 async function listStaffTeamDocuments(caller) {
-  const teams = await listOpportunityManagedTeamDocuments(caller);
+  const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
   const coachTeamIds = Array.from(new Set(
     (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
       .map((teamId) => String(teamId || '').trim())
