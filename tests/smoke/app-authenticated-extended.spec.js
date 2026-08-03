@@ -17,6 +17,7 @@ import {
     findFirestoreDocumentsByStringField,
     getFirestoreDocument,
     getFirestoreDocumentPath,
+    patchFirestoreDocumentFields,
     restoreFirestoreDocument,
     runSmokeCleanup
 } from './helpers/firebase-rest.js';
@@ -185,10 +186,21 @@ async function findSmokeChatMessages(text) {
     return [...rootMessages, ...nestedMessages.flat()];
 }
 
-async function deleteSmokeChatMessages(text) {
-    const messages = await findSmokeChatMessages(text);
+async function softDeleteSmokeChatMessage(documentPath) {
+    const message = await getFirestoreDocument(staffRestSession, documentPath);
+    if (!message || message?.fields?.deleted?.booleanValue === true) return;
+    await patchFirestoreDocumentFields(staffRestSession, documentPath, {
+        deleted: { booleanValue: true }
+    });
+}
+
+async function softDeleteSmokeChatMessages(...texts) {
+    const messageGroups = await Promise.all(texts.map((text) => findSmokeChatMessages(text)));
+    const messages = [
+        ...new Map(messageGroups.flat().map((message) => [getFirestoreDocumentPath(message), message])).values()
+    ];
     await Promise.all(messages.map((message) => (
-        deleteFirestoreDocument(staffRestSession, getFirestoreDocumentPath(message))
+        softDeleteSmokeChatMessage(getFirestoreDocumentPath(message))
     )));
     return messages.length;
 }
@@ -213,7 +225,7 @@ async function openWritableMediaAlbum(page) {
     return photoButton;
 }
 
-test('staff smoke writes are deterministic and removed after validation', async () => {
+test('staff smoke writes are deterministic and reversed or soft-deleted after validation', async () => {
     test.setTimeout(300_000);
     const playerName = `${smokePrefix}-player`;
     const opponentName = `${smokePrefix}-opponent`;
@@ -252,7 +264,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
         },
         {
             recordType: 'chat-message',
-            cleanup: () => deleteSmokeChatMessages(chatText)
+            cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)
         }
     ];
 
@@ -310,7 +322,7 @@ test('staff smoke writes are deterministic and removed after validation', async 
             const chatDocumentPath = getFirestoreDocumentPath(chatDocuments[0]);
             cleanupTasks.push({
                 recordType: 'chat-message',
-                cleanup: () => deleteFirestoreDocument(staffRestSession, chatDocumentPath)
+                cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)
             });
 
             const messageRow = page.locator('.message-row-measure').filter({ hasText: chatText });
@@ -325,6 +337,9 @@ test('staff smoke writes are deterministic and removed after validation', async 
             page.once('dialog', (dialog) => dialog.accept());
             await editedRow.getByRole('button', { name: 'Delete' }).click();
             await expect(editedRow.getByText('Message removed')).toBeVisible({ timeout: 20_000 });
+            await expect.poll(async () => (
+                await getFirestoreDocument(staffRestSession, chatDocumentPath)
+            )?.fields?.deleted?.booleanValue).toBe(true);
 
             await openRoute(page, `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}?section=game`);
             const trackerLaunch = page.getByTestId('standard-tracker-launch');
