@@ -320,6 +320,28 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
         expect(harness.sendEachForMulticast).not.toHaveBeenCalled();
     });
 
+    it('does not claim dedup when final target revalidation fails', async () => {
+        const authError = Object.assign(new Error('temporary final Auth outage'), {
+            notificationAuthResolutionFailed: true
+        });
+        const harness = buildSendCategoryNotificationHarness({
+            revalidateNotificationEffectTargetsImpl: async () => {
+                throw authError;
+            }
+        });
+
+        await expect(harness.fn({
+            teamId: 'team-1',
+            category: 'schedule',
+            gameId: 'game-1',
+            title: 'Schedule update',
+            body: 'Details changed.'
+        })).rejects.toBe(authError);
+
+        expect(harness.checkAndSetNotificationDedup).not.toHaveBeenCalled();
+        expect(harness.sendEachForMulticast).not.toHaveBeenCalled();
+    });
+
     it('skips schedule sends when the dedup transaction reports a recent Firestore send', async () => {
         const harness = buildSendCategoryNotificationHarness({ canSend: false });
 

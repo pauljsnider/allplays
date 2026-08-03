@@ -11666,6 +11666,19 @@ async function sendCategoryNotification({
     : allTargets;
   if (!candidateTargets.length) return null;
 
+  // Resolve final recipients before claiming dedup. If current Auth or team
+  // authorization cannot be verified, the event must remain retryable.
+  const targets = await revalidateNotificationEffectTargets({
+    targets: candidateTargets,
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess: true
+  });
+  const inboxTargets = getUniqueNotificationInboxTargets(targets);
+  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
+  if (!pushTargets.length && !inboxTargets.length) return null;
+
   const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
     .map((value) => String(value || '').trim())
     .filter(Boolean))];
@@ -11690,17 +11703,6 @@ async function sendCategoryNotification({
       return null;
     }
   }
-
-  const targets = await revalidateNotificationEffectTargets({
-    targets: candidateTargets,
-    teamId,
-    category,
-    audienceContext,
-    requireCanonicalTeamAccess: true
-  });
-  const inboxTargets = getUniqueNotificationInboxTargets(targets);
-  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
-  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
