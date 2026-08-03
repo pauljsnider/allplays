@@ -809,6 +809,8 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByLabel('Recipient email for Sam Wing')).toBeVisible();
         await expect(page.getByTestId('parent-invite-editor')).toHaveCount(1);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        await rosterRows.nth(1).getByRole('button', { name: 'Close invite' }).click();
+        await expect(page.getByTestId('parent-invite-editor')).toHaveCount(0);
         await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
         expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('sticky');
 
