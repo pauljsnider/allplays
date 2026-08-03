@@ -195,6 +195,36 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract(reversible, catalog, 'P13')).toThrow(/cleanup action uploadSyntheticImage is not allowed/);
     });
 
+    it('keeps P10 home action destinations inside its trusted read-only routes', () => {
+        const homeAction = validContract({
+            workflowId: 'P10',
+            title: catalog.workflows[9].title,
+            actors: ['primary'],
+            steps: [
+                { action: 'goto', actor: 'primary', route: '/home' },
+                {
+                    action: 'expectText', actor: 'primary',
+                    target: { kind: 'text', name: 'Action queue', exact: true }, value: 'Action'
+                },
+                {
+                    action: 'clickAndExpectRoute', actor: 'primary',
+                    target: { kind: 'role', role: 'link', name: 'Schedule', exact: true },
+                    route: '/schedule'
+                }
+            ]
+        });
+
+        expect(validateContract(homeAction, catalog, 'P10').workflowId).toBe('P10');
+        for (const route of [
+            '/parent-tools', '/parent-tools/tasks', '/schedule', '/schedule/team-1/event-1',
+            '/messages', '/messages/team-1', '/profile', '/profile/settings'
+        ]) {
+            expect(workflowRouteAllowed('P10', route)).toBe(true);
+        }
+        expect(workflowRouteAllowed('P10', '/teams')).toBe(false);
+        expect(workflowRouteAllowed('P10', '/ai')).toBe(false);
+    });
+
     it('allows credential fills without putting credentials in the contract', () => {
         const signup = validContract({
             workflowId: 'P02',
