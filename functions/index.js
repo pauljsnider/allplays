@@ -17257,18 +17257,14 @@ async function listStaffTeamDocuments(caller) {
   const settledCoachTeamSnaps = await Promise.allSettled(
     coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
   );
-  // coachOf is only a candidate index. Older non-atomic invite flows could
-  // leave it behind when both their team update and rollback failed, so it is
-  // never durable authorization by itself. Loading these documents still
-  // recovers current grants whose owner/admin email aliases use legacy casing.
+  // coachOf is only a candidate index; canonical team grants remain authoritative,
+  // while loading candidates still recovers legacy-cased current grants.
   settledCoachTeamSnaps.forEach((result) => {
     if (result.status !== 'fulfilled') return;
     const teamSnap = result.value;
     if (!teamSnap.exists || teams.has(teamSnap.id)) return;
     if (hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
-      // The query path expects normalized email storage, but legacy records can
-      // contain mixed-case values. Rechecking the loaded canonical team keeps a
-      // current manager from being mistaken for a revoked invite recipient.
+      // Recheck canonical teams because legacy grant aliases can use mixed casing.
       teams.set(teamSnap.id, teamSnap);
     }
   });
@@ -17333,9 +17329,7 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
         && normalizeParentInviteEmail(invite.email) === targetEmail;
     });
     const targetUserRefs = new Map();
-    // usedBy was bound to the invited email through the caller's Auth token at
-    // redemption time. Mutable user/profile email aliases can become stale or
-    // be reassigned and must never identify a principal for revocation.
+    // Only invite-bound usedBy identifies the principal; mutable profile aliases do not.
     matchingInviteSnaps.forEach((docSnap) => {
       const usedBy = String(docSnap.data()?.usedBy || '').trim();
       if (usedBy && /^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) {

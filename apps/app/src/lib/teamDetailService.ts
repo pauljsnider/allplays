@@ -1240,9 +1240,7 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
     throw new Error('The team owner cannot be removed from staff access.');
   }
 
-  // Revocation must update the team grant, the user's coachOf index, and the
-  // accepted invite record together. A direct client update can leave a stale
-  // coachOf grant that continues to expose private team data.
+  // Revoke the team grant, coachOf index, and accepted invite atomically.
   const revokeTeamAdminAccess = httpsCallable(functions, 'revokeTeamAdminAccess');
   await revokeTeamAdminAccess({ teamId: normalizedTeamId, email: normalizedEmail });
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);

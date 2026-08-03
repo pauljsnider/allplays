@@ -109,7 +109,7 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                         adminEmailQueried = byAdmin.value;
                         return [{ id: 'team-adm', data: { name: 'Helped' } }];
                     }
-                    return [];
+                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
                 }
             }
         });

@@ -60,10 +60,8 @@ function serializeManagedTeamProfile(teamId, team = {}) {
   };
 }
 
-// Keep this recovery response intentionally explicit. Managers normally read the
-// canonical document through Firestore, but this callable is also the fallback
-// when that read is temporarily denied. Spreading the document here would make
-// every future server-only field part of the client API (billing IDs included).
+// Keep the recovery response explicit: spreading the canonical document would
+// expose every future server-only field through this fallback API.
 const MANAGED_TEAM_DOCUMENT_FIELDS = Object.freeze([
   'name',
   'teamName',

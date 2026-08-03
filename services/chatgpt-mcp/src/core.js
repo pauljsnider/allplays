@@ -102,10 +102,10 @@ export async function resolveUserContext(db, { uid, email }) {
             ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
             : Promise.resolve({ docs: [] }),
         normalizedEmail
-            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
+            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get().catch(() => ({ docs: [] }))
             : Promise.resolve({ docs: [] }),
         ...ownerEmailCandidates.map((ownerEmail) => (
-            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
+            db.collection('teams').where('ownerEmail', '==', ownerEmail).get().catch(() => ({ docs: [] }))
         ))
     ]);
 

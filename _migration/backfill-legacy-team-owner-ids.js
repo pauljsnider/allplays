@@ -95,9 +95,7 @@ export async function backfillLegacyTeamOwnerIds({ db, auth, apply = APPLY, log 
             });
         }
 
-        // Re-read after normalization. Auth accounts created before this commit are
-        // resolved here; accounts created afterward are handled by the retryable
-        // Auth onCreate trigger, which can now query ownerEmailLower exactly.
+        // Re-read for pre-normalization signups; later signups use the retryable Auth trigger.
         snapshot = await db.collection('teams')
             .select('ownerId', 'ownerEmail', 'ownerEmailLower')
             .get();
