@@ -37,11 +37,14 @@ describe('public opportunity callable wiring', () => {
     expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");
     expect(calendarProjection).not.toContain(".where('date'");
     expect(calendarProjection).toContain('orderBy(admin.firestore.FieldPath.documentId())');
-    expect(calendarProjection).toContain(".select('calendarEventUid', 'date', 'type', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus')");
+    expect(calendarProjection).toContain(".select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus')");
     expect(calendarProjection).toContain('scanBoundedPublicCalendarTrackingEvents');
     expect(calendarProjection).toContain('maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS');
     expect(calendarProjection).toContain('calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid)');
     expect(calendarProjection).toContain('type: normalizeFamilyShareText(gameSnap.data()?.type)');
+    expect(calendarProjection).toContain('location: normalizeFamilyShareText(gameSnap.data()?.location)');
+    expect(calendarProjection).toContain('opponent: normalizeFamilyShareText(gameSnap.data()?.opponent)');
+    expect(calendarProjection).toContain('title: normalizeFamilyShareText(gameSnap.data()?.title)');
     expect(calendarProjection).toContain('visibility: normalizeFamilyShareText(gameSnap.data()?.visibility)');
     expect(calendarProjection).toContain('isPrivate: gameSnap.data()?.isPrivate === true');
     expect(calendarProjection).toContain('private: gameSnap.data()?.private === true');

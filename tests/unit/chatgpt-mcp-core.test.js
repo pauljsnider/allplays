@@ -689,6 +689,31 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events.some((event) => event.gameId === 'placeholder-opaque-projection-id')).toBe(true);
     });
 
+    it('does not treat a generic practice title as a same-time discriminator', async () => {
+        const db = scheduleDb('different-legacy-source-id', {
+            type: 'practice',
+            title: 'Practice',
+            location: 'Field 2'
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'distinct-practice-projection-id',
+                type: 'practice',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                title: 'Practice',
+                location: 'Field 3'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'distinct-practice-projection-id')).toBe(true);
+    });
+
     it('keeps a projected event at a different occurrence time', async () => {
         const trackedUid = 'legacy-moved-uid__2026-07-25T17:00:00.000Z';
         const db = scheduleDb(trackedUid, { date: new Date('2026-07-26T20:00:00.000Z') });

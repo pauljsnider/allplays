@@ -81,18 +81,25 @@ test('preserves UID-backed public IDs and event keys across rollout', () => {
   assert.notEqual(edited.id, original.id);
   assert.notEqual(edited.eventKey, original.eventKey);
   assert.notEqual(edited.opponent, original.opponent);
-  assert.equal(isFamilyShareCalendarEventTracked(edited, [
-    `${original.id}__${originalStartsAt}`
-  ]), true);
+  const priorTrackedOccurrence = {
+    calendarEventUid: `${original.id}__${originalStartsAt}`,
+    type: 'game',
+    location: 'public field'
+  };
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [priorTrackedOccurrence]), true);
   assert.equal(isFamilyShareCalendarEventTracked(original, [{
     calendarEventUid: `${priorOpaqueId}__${originalStartsAt}`,
-    date: '2026-08-08T18:00:00.000Z'
+    date: '2026-08-08T18:00:00.000Z',
+    type: 'game',
+    location: 'Public Field'
   }]), true);
   // The old hash is irreversible after a title edit, but its exact embedded
-  // occurrence time remains a narrow compatibility signal.
-  assert.equal(isFamilyShareCalendarEventTracked(edited, [
-    `${priorOpaqueId}__${originalStartsAt}`
-  ]), true);
+  // occurrence time plus stable location remains a narrow compatibility signal.
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [{
+    calendarEventUid: `${priorOpaqueId}__${originalStartsAt}`,
+    type: 'game',
+    location: 'PUBLIC FIELD'
+  }]), true);
   const differentStartsAt = '2026-08-01T19:00:00.000Z';
   assert.equal(isFamilyShareCalendarEventTracked(edited, [
     `${priorOpaqueId}__${differentStartsAt}`
@@ -105,6 +112,51 @@ test('preserves UID-backed public IDs and event keys across rollout', () => {
   const uidMissingOther = buildEvent({ uid: '', summary: 'Bears vs. Falcons' });
   assert.notEqual(uidMissingOther.id, uidMissingOriginal.id);
   assert.notEqual(uidMissingOther.eventKey, uidMissingOriginal.eventKey);
+});
+
+test('does not correlate distinct same-time opaque events without a matching shape', () => {
+  const startsAt = '2026-08-01T18:00:00.000Z';
+  const event = {
+    id: 'new-opaque-event-id',
+    type: 'game',
+    startsAt,
+    location: 'Field 3',
+    opponent: 'Tigers',
+    calendarUidHash: hashFamilyShareCalendarEventUid('different-raw-uid')
+  };
+  assert.equal(isFamilyShareCalendarEventTracked(event, [{
+    calendarEventUid: `7bca28b6105ee23830c3517602e276d3__${startsAt}`,
+    type: 'game',
+    location: 'Field 2',
+    opponent: 'Hawks'
+  }]), false);
+  assert.equal(isFamilyShareCalendarEventTracked({
+    ...event,
+    location: 'TBD',
+    opponent: 'unknown'
+  }, [{
+    calendarEventUid: `7bca28b6105ee23830c3517602e276d3__${startsAt}`,
+    type: 'game',
+    location: 'unknown',
+    opponent: 'TBD'
+  }]), false);
+});
+
+test('does not treat a generic practice title as a same-time discriminator', () => {
+  const startsAt = '2026-08-01T18:00:00.000Z';
+  assert.equal(isFamilyShareCalendarEventTracked({
+    id: 'new-opaque-practice-id',
+    type: 'practice',
+    startsAt,
+    location: 'Field 3',
+    title: 'Practice',
+    calendarUidHash: hashFamilyShareCalendarEventUid('different-raw-uid')
+  }, [{
+    calendarEventUid: `7bca28b6105ee23830c3517602e276d3__${startsAt}`,
+    type: 'practice',
+    location: 'Field 2',
+    title: 'Practice'
+  }]), false);
 });
 
 test('scopes team calendar timestamp de-duplication without weakening token-level de-duplication', () => {

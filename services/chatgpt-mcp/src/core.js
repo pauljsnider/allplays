@@ -11,6 +11,9 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
 const MAX_CALENDAR_PROJECTION_PAGES = 20;
 const MAX_PLAYER_STATS = 60;
+const GENERIC_CALENDAR_DISCRIMINATORS = new Set([
+    '', 'tbd', 'unknown', 'practice', 'game', 'training', 'workout', 'scrimmage'
+]);
 
 export class DomainError extends Error {
     constructor(code, message) {
@@ -375,7 +378,7 @@ function normalizeCalendarEventType(value) {
 
 function normalizeCalendarDiscriminator(value) {
     const normalized = cleanString(value).trim().replace(/\s+/g, ' ').toLowerCase();
-    return normalized && normalized !== 'tbd' && normalized !== 'unknown' ? normalized : '';
+    return GENERIC_CALENDAR_DISCRIMINATORS.has(normalized) ? '' : normalized;
 }
 
 function hasMatchingCalendarDiscriminator(projected, tracked, type) {
