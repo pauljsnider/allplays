@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
+    loadPublicTeamCalendarProjection,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -87,6 +89,62 @@ function parentDb(extra = {}) {
 }
 
 describe('chatgpt-mcp core: resolveUserContext', () => {
+    it('loads legacy managed teams through the authenticated server-filtered callable', async () => {
+        const fetchImpl = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                result: {
+                    items: [{
+                        id: 'legacy-team',
+                        name: 'Legacy',
+                        ownerEmail: 'Coach@Example.com',
+                        ownerEmailLower: 'coach@example.com'
+                    }],
+                    isPartial: false
+                }
+            })
+        });
+        const managedTeamResult = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl
+        });
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: { teams: () => { throw new Error('Client team discovery must not run.'); } }
+        });
+
+        const context = await resolveUserContext(
+            db,
+            { uid: 'coach-1', email: 'coach@example.com' },
+            { managedTeams: managedTeamResult.teams }
+        );
+
+        expect(fetchImpl).toHaveBeenCalledWith(
+            'https://us-central1-all-plays-prod.cloudfunctions.net/listManagedTeams',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({ Authorization: 'Bearer user-id-token' }),
+                body: JSON.stringify({ data: {} })
+            })
+        );
+        expect(managedTeamResult.isPartial).toBe(false);
+        expect([...context.teams.get('legacy-team').roles]).toEqual(['owner']);
+    });
+
+    it('preserves the callable partial marker so MCP tools can fail closed', async () => {
+        const result = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ result: { items: [{ id: 'team-1' }], isPartial: true } })
+            })
+        });
+
+        expect(result).toEqual({ teams: [{ id: 'team-1' }], isPartial: true });
+    });
+
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
         const context = await resolveUserContext(parentDb(), parentIdentity);
         expect(context.uid).toBe('parent-1');
@@ -128,10 +186,10 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                     const filter = filters[0];
                     queried.push([filter.field, filter.value]);
                     if (filter.field === 'ownerEmail' && filter.value === 'Coach@Example.com') {
-                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case' } }];
+                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case', ownerEmail: 'Coach@Example.com' } }];
                     }
                     if (filter.field === 'ownerEmailLower') {
-                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower' } }];
+                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower', ownerEmailLower: 'coach@example.com' } }];
                     }
                     return [];
                 }
@@ -145,6 +203,95 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(queried).toContainEqual(['ownerEmailLower', 'coach@example.com']);
         expect([...context.teams.get('team-legacy-case').roles]).toEqual(['owner']);
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
+    });
+
+    it('rejects conflicting legacy owner aliases for an explicit authenticated email', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'conflicting-team',
+                            data: {
+                                ownerEmail: 'current@example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'former@example.com' });
+        expect(context.teams.has('conflicting-team')).toBe(false);
+    });
+
+    it('does not use a stale profile email when the authenticated email is absent', async () => {
+        const teamQuery = vi.fn(() => []);
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com', profileEmail: 'former@example.com' } },
+            queries: { teams: teamQuery }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: '' });
+
+        expect(context.teams.size).toBe(0);
+        expect(teamQuery).not.toHaveBeenCalledWith(expect.arrayContaining([
+            expect.objectContaining({ field: 'ownerEmail' })
+        ]));
+    });
+
+    it('does not derive ownership from stale owner email aliases when a canonical owner exists', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'Former@Example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'reassigned-team',
+                            data: {
+                                name: 'Reassigned',
+                                ownerId: 'current-owner',
+                                ownerEmail: 'Former@Example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'Former@Example.com' });
+
+        expect(context.teams.has('reassigned-team')).toBe(false);
+    });
+
+    it('keeps canonical and admin teams when legacy owner-email queries are denied by rules', async () => {
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerId') {
+                        return [{ id: 'owned-team', data: { ownerId: 'coach-1' } }];
+                    }
+                    if (filter.field === 'adminEmails') {
+                        return [{ id: 'admin-team', data: { ownerId: 'other-owner', adminEmails: ['coach@example.com'] } }];
+                    }
+                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' });
+
+        expect([...context.teams.get('owned-team').roles]).toEqual(['owner']);
+        expect([...context.teams.get('admin-team').roles]).toEqual(['admin']);
     });
 
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
@@ -216,7 +363,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                     const start = filters.find((f) => f.op === '>=').value;
                     const end = filters.find((f) => f.op === '<=').value;
                     const all = [
-                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
+                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid: 'teamsnap-tracked-game', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
@@ -252,11 +399,188 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events[1].myRsvp).toEqual({ response: 'not_responded', playerIds: [] });
     });
 
+    it('includes a TeamSnap-only next game without leaking the calendar source URL', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+        const loadCalendarProjection = vi.fn(async () => [{
+            id: 'teamsnap-next-game',
+            type: 'game',
+            startsAt: '2026-07-26T19:00:00.000Z',
+            endsAt: '2026-07-26T21:00:00.000Z',
+            opponent: 'Jr. Tigers',
+            location: 'Field 7',
+            status: 'scheduled',
+            calendarUrl: 'https://calendar.example.test/private-token',
+            privateNotes: 'do not expose'
+        }]);
+
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection }
+        );
+
+        expect(loadCalendarProjection).toHaveBeenCalledWith({
+            teamId: 'team-a',
+            startDate: expect.any(Date),
+            endDate: expect.any(Date)
+        });
+        expect(result.events).toContainEqual(expect.objectContaining({
+            gameId: 'teamsnap-next-game',
+            type: 'game',
+            opponent: 'Jr. Tigers',
+            location: 'Field 7',
+            sourceType: 'calendar',
+            sourceLabel: 'Imported calendar',
+            isImported: true
+        }));
+        expect(result.events.find((event) => event.gameId === 'teamsnap-next-game')?.deepLink)
+            .toContain('/app/schedule/team-a/teamsnap-next-game');
+        expect(JSON.stringify(result)).not.toContain('private-token');
+        expect(JSON.stringify(result)).not.toContain('do not expose');
+    });
+
+    it('deduplicates a projected TeamSnap event tracked by an ALL PLAYS game', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            {
+                loadCalendarProjection: async () => [{
+                    id: 'teamsnap-tracked-game',
+                    type: 'game',
+                    startsAt: '2026-07-25T17:00:00.000Z',
+                    opponent: 'Duplicate Hawks'
+                }]
+            }
+        );
+
+        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+        expect(result.events.some((event) => event.gameId === 'teamsnap-tracked-game')).toBe(false);
+    });
+
+    it('fails explicitly when imported calendar projection is unavailable', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            {
+                loadCalendarProjection: async () => {
+                    throw new DomainError('unavailable', 'Imported calendar events are temporarily unavailable.');
+                }
+            }
+        )).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('keeps Firestore games when a private team has no public calendar projection', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            {
+                loadCalendarProjection: async () => {
+                    throw new DomainError('not_found', 'Public team not found.');
+                }
+            }
+        );
+
+        expect(result.events.map((event) => event.gameId)).toEqual(['game-1', 'practice-1', 'game-end-date']);
+    });
+
     it('rejects an invalid date range', async () => {
         const db = scheduleDb();
         const context = await resolveUserContext(db, parentIdentity);
         await expect(getFamilySchedule(db, context, { startDate: '2026-07-31', endDate: '2026-07-01' }))
             .rejects.toMatchObject({ code: 'invalid_argument' });
+    });
+});
+
+describe('chatgpt-mcp public calendar projection transport', () => {
+    it('forwards the caller token and follows bounded callable pagination', async () => {
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [{ id: 'teamsnap-1' }],
+                        range: { truncated: true },
+                        nextCursor: 'calendar-page-2'
+                    }
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [{ id: 'teamsnap-2' }],
+                        range: { truncated: false },
+                        nextCursor: null
+                    }
+                })
+            });
+
+        const events = await loadPublicTeamCalendarProjection({
+            projectId: 'all-plays-prod',
+            idToken: 'caller-id-token',
+            teamId: 'team-a',
+            startDate: new Date('2026-07-24T00:00:00.000Z'),
+            endDate: new Date('2026-07-31T23:59:59.999Z'),
+            fetchImpl
+        });
+
+        expect(events).toEqual([{ id: 'teamsnap-1' }, { id: 'teamsnap-2' }]);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(fetchImpl.mock.calls[0][0]).toBe(
+            'https://us-central1-all-plays-prod.cloudfunctions.net/getPublicTeamCalendarProjection'
+        );
+        expect(fetchImpl.mock.calls[0][1]).toEqual(expect.objectContaining({
+            method: 'POST',
+            headers: expect.objectContaining({ Authorization: 'Bearer caller-id-token' })
+        }));
+        expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+            data: {
+                teamId: 'team-a',
+                from: '2026-07-24T00:00:00.000Z',
+                to: '2026-07-31T23:59:59.999Z',
+                limit: 50
+            }
+        });
+        expect(JSON.parse(fetchImpl.mock.calls[1][1].body).data.cursor).toBe('calendar-page-2');
+    });
+
+    it('fails closed when any calendar source warning makes the projection partial', async () => {
+        await expect(loadPublicTeamCalendarProjection({
+            projectId: 'all-plays-prod',
+            idToken: 'caller-id-token',
+            teamId: 'team-a',
+            startDate: new Date('2026-07-24T00:00:00.000Z'),
+            endDate: new Date('2026-07-31T23:59:59.999Z'),
+            fetchImpl: vi.fn(async () => ({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [],
+                        warnings: ['Calendar source 1 could not be loaded.'],
+                        range: { truncated: false }
+                    }
+                })
+            }))
+        })).rejects.toMatchObject({
+            code: 'unavailable',
+            message: 'Imported calendar events could not be loaded completely.'
+        });
     });
 });
 
@@ -423,6 +747,10 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;');
         expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
         expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
+        expect(source).toContain('if (managedTeamResult.isPartial)');
+        expect(source).toContain("throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.')");
+        expect(source).toContain('loadPublicTeamCalendarProjection');
+        expect(source).toContain('idToken: identity.idToken');
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });

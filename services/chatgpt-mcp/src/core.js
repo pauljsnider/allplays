@@ -9,6 +9,7 @@ export const APP_BASE_URL = 'https://allplays.ai';
 export const DEFAULT_SCHEDULE_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
+const MAX_CALENDAR_PROJECTION_PAGES = 20;
 const MAX_PLAYER_STATS = 60;
 
 export class DomainError extends Error {
@@ -39,6 +40,90 @@ function cleanString(value) {
     return typeof value === 'string' ? value : '';
 }
 
+function requireProjectionText(value, label) {
+    const normalized = cleanString(value).trim();
+    if (!normalized) throw new DomainError('invalid_argument', `${label} is required.`);
+    return normalized;
+}
+
+function callableErrorCode(payload) {
+    const status = cleanString(payload?.error?.status || payload?.error?.code).toUpperCase();
+    return status.includes('NOT_FOUND') ? 'not_found' : 'unavailable';
+}
+
+export async function loadPublicTeamCalendarProjection({
+    projectId,
+    idToken,
+    teamId,
+    startDate,
+    endDate,
+    fetchImpl = fetch
+}) {
+    const normalizedProjectId = requireProjectionText(projectId, 'Firebase project ID');
+    const normalizedIdToken = requireProjectionText(idToken, 'Authenticated ID token');
+    const normalizedTeamId = requireProjectionText(teamId, 'teamId');
+    const start = toDate(startDate);
+    const end = toDate(endDate);
+    if (!start || !end || end < start) {
+        throw new DomainError('invalid_argument', 'A valid calendar projection date range is required.');
+    }
+
+    const requestUrl = `https://us-central1-${encodeURIComponent(normalizedProjectId)}.cloudfunctions.net/getPublicTeamCalendarProjection`;
+    const events = [];
+    const seenCursors = new Set();
+    let cursor = '';
+
+    for (let page = 0; page < MAX_CALENDAR_PROJECTION_PAGES; page += 1) {
+        let response;
+        let payload;
+        try {
+            response = await fetchImpl(requestUrl, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${normalizedIdToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    data: {
+                        teamId: normalizedTeamId,
+                        from: start.toISOString(),
+                        to: end.toISOString(),
+                        limit: MAX_EVENTS_PER_TEAM,
+                        ...(cursor ? { cursor } : {})
+                    }
+                })
+            });
+            payload = await response.json();
+        } catch {
+            throw new DomainError('unavailable', 'Imported calendar events are temporarily unavailable.');
+        }
+
+        const result = payload?.result || payload?.data;
+        if (!response.ok || !result || !Array.isArray(result.events)) {
+            throw new DomainError(
+                callableErrorCode(payload),
+                response.ok ? 'Imported calendar response is invalid.' : 'Imported calendar events are temporarily unavailable.'
+            );
+        }
+        if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+            throw new DomainError('unavailable', 'Imported calendar events could not be loaded completely.');
+        }
+        events.push(...result.events);
+
+        if (result?.range?.truncated !== true || events.length >= MAX_EVENTS_PER_TEAM) {
+            return events.slice(0, MAX_EVENTS_PER_TEAM);
+        }
+        const nextCursor = cleanString(result.nextCursor).trim();
+        if (!nextCursor || seenCursors.has(nextCursor)) {
+            throw new DomainError('unavailable', 'Imported calendar pagination could not be completed.');
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+    }
+
+    throw new DomainError('unavailable', 'Imported calendar pagination exceeded its safety limit.');
+}
+
 function parseParentPlayerKey(value) {
     if (typeof value !== 'string') return null;
     const separatorIndex = value.indexOf('::');
@@ -62,16 +147,40 @@ async function safeGetDoc(db, path) {
     }
 }
 
+export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchImpl = fetch }) {
+    if (!projectId || !idToken) {
+        throw new DomainError('unauthenticated', 'Managed team discovery requires an authenticated project context.');
+    }
+    const requestUrl = `https://us-central1-${encodeURIComponent(projectId)}.cloudfunctions.net/listManagedTeams`;
+    const response = await fetchImpl(requestUrl, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${idToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ data: {} })
+    });
+    const payload = await response.json().catch(() => ({}));
+    const result = payload?.result || payload?.data;
+    if (!response.ok || !Array.isArray(result?.items)) {
+        throw new DomainError('unavailable', payload?.error?.message || 'Managed team discovery is unavailable.');
+    }
+    return {
+        teams: result.items.filter((team) => team && typeof team === 'object' && !Array.isArray(team)),
+        isPartial: result.isPartial === true
+    };
+}
+
 /**
  * Build the caller's authorization context from Firestore. Roles are always
  * re-derived per request; nothing supplied by the model is trusted.
  */
-export async function resolveUserContext(db, { uid, email }) {
+export async function resolveUserContext(db, { uid, email }, { managedTeams = null } = {}) {
     if (!uid) throw new DomainError('unauthenticated', 'Missing authenticated user.');
 
     const userSnap = await safeGetDoc(db, `users/${uid}`);
     const profile = userSnap.exists ? userSnap.data() || {} : {};
-    const normalizedEmail = normalizeEmail(email || profile.email);
+    const normalizedEmail = normalizeEmail(email);
     const legacyParentLinks = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
         .filter((link) => link && typeof link.teamId === 'string' && link.teamId);
     const parentTeamIds = new Set([
@@ -94,21 +203,6 @@ export async function resolveUserContext(db, { uid, email }) {
         if (link) addLinkedPlayer(link.teamId, link.playerId);
     }
 
-    const ownerEmailCandidates = [...new Set([email, profile.email, normalizedEmail]
-        .filter((value) => typeof value === 'string' && value))];
-    const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
-        db.collection('teams').where('ownerId', '==', uid).get(),
-        normalizedEmail
-            ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
-            : Promise.resolve({ docs: [] }),
-        normalizedEmail
-            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
-            : Promise.resolve({ docs: [] }),
-        ...ownerEmailCandidates.map((ownerEmail) => (
-            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
-        ))
-    ]);
-
     const teams = new Map();
     const addTeam = (teamId, teamData, role) => {
         if (!teams.has(teamId)) {
@@ -117,11 +211,45 @@ export async function resolveUserContext(db, { uid, email }) {
         teams.get(teamId).roles.add(role);
     };
 
-    for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
-    for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
-    for (const doc of ownerEmailLowerSnap.docs) addTeam(doc.id, doc.data(), 'owner');
-    for (const snap of ownerEmailSnaps) {
-        for (const doc of snap.docs) addTeam(doc.id, doc.data(), 'owner');
+    if (Array.isArray(managedTeams)) {
+        for (const team of managedTeams) {
+            const teamId = String(team?.id || '').trim();
+            if (!teamId) continue;
+            const ownerId = String(team.ownerId || '').trim();
+            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+            const role = ownerId === uid || (!ownerId && ownerEmails.length === 1 && normalizedEmail === ownerEmails[0])
+                ? 'owner'
+                : 'admin';
+            addTeam(teamId, team, role);
+        }
+    } else {
+        const ownerEmailCandidates = [...new Set([email, normalizedEmail]
+            .filter((value) => typeof value === 'string' && value))];
+        const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
+            db.collection('teams').where('ownerId', '==', uid).get(),
+            normalizedEmail
+                ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
+                : Promise.resolve({ docs: [] }),
+            normalizedEmail
+                ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get().catch(() => ({ docs: [] }))
+                : Promise.resolve({ docs: [] }),
+            ...ownerEmailCandidates.map((ownerEmail) => (
+                db.collection('teams').where('ownerEmail', '==', ownerEmail).get().catch(() => ({ docs: [] }))
+            ))
+        ]);
+        for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
+        for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
+        const addLegacyOwnedTeam = (doc) => {
+            const team = doc.data() || {};
+            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+            if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail) {
+                addTeam(doc.id, team, 'owner');
+            }
+        };
+        for (const doc of ownerEmailLowerSnap.docs) addLegacyOwnedTeam(doc);
+        for (const snap of ownerEmailSnaps) {
+            for (const doc of snap.docs) addLegacyOwnedTeam(doc);
+        }
     }
 
     const parentTeamSnaps = await Promise.all([...parentTeamIds].map((teamId) => safeGetDoc(db, `teams/${teamId}`)));
@@ -198,6 +326,10 @@ function gameDeepLink(teamId, gameId, { replay = false } = {}) {
     return `${APP_BASE_URL}/live-game.html?${params.toString()}`;
 }
 
+function calendarEventDeepLink(teamId, eventId) {
+    return `${APP_BASE_URL}/app/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(eventId)}`;
+}
+
 function whitelistRsvp(data, linkedPlayerIds) {
     if (!data) return null;
     const playerIds = (Array.isArray(data.playerIds) ? data.playerIds : [data.playerId])
@@ -217,11 +349,13 @@ function whitelistRsvpSummary(summary) {
     return Object.keys(out).length ? out : null;
 }
 
-export async function getFamilySchedule(db, context, args = {}, now = new Date()) {
+export async function getFamilySchedule(db, context, args = {}, now = new Date(), { loadCalendarProjection } = {}) {
     const { start, end } = parseScheduleRange(args, now);
     const events = [];
 
     for (const entry of context.teams.values()) {
+        const teamEvents = [];
+        const trackedCalendarEventIds = new Set();
         const snap = await db.collection(`teams/${entry.teamId}/games`)
             .where('date', '>=', start)
             .where('date', '<=', end)
@@ -231,6 +365,8 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
 
         for (const doc of snap.docs) {
             const data = doc.data() || {};
+            const trackedCalendarEventId = cleanString(data.calendarEventUid).trim();
+            if (trackedCalendarEventId) trackedCalendarEventIds.add(trackedCalendarEventId);
             const event = {
                 teamId: entry.teamId,
                 teamName: cleanString(entry.team.name),
@@ -252,8 +388,59 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                     : { response: 'not_responded', playerIds: [] };
             }
 
-            events.push(event);
+            teamEvents.push(event);
         }
+
+        if (typeof loadCalendarProjection === 'function') {
+            let projectedEvents;
+            try {
+                projectedEvents = await loadCalendarProjection({
+                    teamId: entry.teamId,
+                    startDate: start,
+                    endDate: end
+                });
+            } catch (error) {
+                if (error instanceof DomainError && error.code === 'not_found') {
+                    projectedEvents = [];
+                } else {
+                    throw error instanceof DomainError
+                        ? error
+                        : new DomainError('unavailable', 'Imported calendar events are temporarily unavailable.');
+                }
+            }
+
+            const projectedEventKeys = new Set();
+            for (const projected of Array.isArray(projectedEvents) ? projectedEvents : []) {
+                const eventId = cleanString(projected?.id).trim();
+                const date = toDate(projected?.startsAt);
+                if (!eventId || !date || date < start || date > end || trackedCalendarEventIds.has(eventId)) continue;
+                const eventKey = `${eventId}::${date.toISOString()}`;
+                if (projectedEventKeys.has(eventKey)) continue;
+                projectedEventKeys.add(eventKey);
+                const type = projected?.type === 'practice' ? 'practice' : 'game';
+                teamEvents.push({
+                    teamId: entry.teamId,
+                    teamName: cleanString(entry.team.name),
+                    gameId: eventId,
+                    type,
+                    date: date.toISOString(),
+                    title: type === 'practice' ? cleanString(projected?.title) || null : null,
+                    opponent: type === 'game' ? cleanString(projected?.opponent) || null : null,
+                    location: cleanString(projected?.location) || null,
+                    status: cleanString(projected?.status) || 'scheduled',
+                    rsvpSummary: null,
+                    myRsvp: null,
+                    linkedPlayerIds: [...entry.linkedPlayerIds],
+                    sourceType: 'calendar',
+                    sourceLabel: 'Imported calendar',
+                    isImported: true,
+                    deepLink: calendarEventDeepLink(entry.teamId, eventId)
+                });
+            }
+        }
+
+        teamEvents.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        events.push(...teamEvents.slice(0, MAX_EVENTS_PER_TEAM));
     }
 
     events.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
