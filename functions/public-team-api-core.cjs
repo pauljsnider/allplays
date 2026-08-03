@@ -586,6 +586,33 @@ function paginatePublicProjectionItems(items = [], limit = PUBLIC_TEAM_API_DEFAU
   };
 }
 
+function canTrackedCalendarEventSuppressPublicProjection(event = {}) {
+  return isPublicGame(event);
+}
+
+async function scanBoundedPublicCalendarTrackingEvents(loadPage, {
+  maxDocuments = 5000,
+  pageSize = 500
+} = {}) {
+  const trackedEvents = [];
+  let after = null;
+  let scannedDocuments = 0;
+  while (scannedDocuments < maxDocuments) {
+    const limit = Math.min(pageSize, maxDocuments - scannedDocuments);
+    const page = await loadPage({ after, limit });
+    const documents = Array.isArray(page?.documents) ? page.documents : [];
+    if (documents.length > limit) throw new Error('Public calendar tracking page exceeded its requested limit.');
+    trackedEvents.push(...documents.filter((event) => compactText(event?.calendarEventUid, 512)));
+    scannedDocuments += documents.length;
+    if (documents.length < limit) return trackedEvents;
+    after = page?.nextCursor || null;
+    if (!after || scannedDocuments >= maxDocuments) {
+      throw new Error('Public calendar tracking scan limit exceeded.');
+    }
+  }
+  throw new Error('Public calendar tracking scan limit exceeded.');
+}
+
 module.exports = {
   PUBLIC_TEAM_API_DEFAULT_GAMES,
   PUBLIC_TEAM_API_MAX_GAMES,
@@ -593,6 +620,7 @@ module.exports = {
   PUBLIC_TEAM_API_VERSION,
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   comparePublicProjectionItems,
   compareRosterPlayers,
@@ -608,6 +636,7 @@ module.exports = {
   parsePublicProjectionCursor,
   parsePublicGamesQuery,
   publicHttpUrl,
+  scanBoundedPublicCalendarTrackingEvents,
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
