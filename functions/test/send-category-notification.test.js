@@ -223,6 +223,47 @@ test('targeted notification delivery excludes disabled requested user IDs', asyn
         }
 });
 
+test('targeted notification delivery revalidates Auth after target resolution and emits no effects', async () => {
+        const authUsersByUid = {
+            'parent-1': { email: 'parent@example.com', disabled: false }
+        };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            parentUserIds: ['parent-1'],
+            authUsersByUid,
+            indexedTargets: [{
+                uid: 'parent-1',
+                deviceId: 'parent-device',
+                token: 'parent-token',
+                categories: { rsvp: true }
+            }]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds(
+                'team-1',
+                'rsvp',
+                ['parent-1']
+            );
+            assert.equal(targets.length, 1);
+            authUsersByUid['parent-1'].disabled = true;
+
+            const result = await internals.sendDirectTargetsNotification({
+                targets,
+                category: 'rsvp',
+                title: 'RSVP reminder',
+                body: 'This must not be delivered.',
+                teamId: 'team-1'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory returns the same recipient set from indexed resolution as the legacy scan', async () => {
         const fixture = {
             teamDoc: {
@@ -792,6 +833,82 @@ test('sendCategoryNotification preserves visible media album behavior for parent
             assert.deepEqual(env.messagingCalls[0]?.tokens.sort(), ['coach-token', 'parent-token']);
             assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['coach-1', 'parent-1']);
             assert.equal(env.auditWrites[0]?.value.targetCount, 2);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification emits no effects when Auth is disabled after indexed target resolution', async () => {
+        const authUsersByUid = {
+            'coach-1': { email: 'coach@example.com', disabled: false }
+        };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            userDocs: { 'coach-1': {} },
+            authUsersByUid,
+            indexedTargets: [{
+                uid: 'coach-1',
+                roles: ['staff'],
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { liveChat: true }
+            }],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === 3) authUsersByUid['coach-1'].disabled = true;
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'This must not be delivered.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.counts.authGetUsersCalls, 3);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification emits no effects when the canonical team grant is revoked after target resolution', async () => {
+        const teamDoc = { ownerId: 'coach-1', adminEmails: [] };
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc,
+            userDocs: { 'coach-1': {} },
+            authUsersByUid: {
+                'coach-1': { email: 'coach@example.com', disabled: false }
+            },
+            indexedTargets: [{
+                uid: 'coach-1',
+                roles: ['staff'],
+                deviceId: 'coach-device',
+                token: 'coach-token',
+                categories: { liveChat: true }
+            }],
+            onAuthGetUsersCall: ({ callCount }) => {
+                if (callCount === 3) teamDoc.ownerId = 'new-owner';
+            }
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'Team chat',
+                body: 'This must not be delivered.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.counts.authGetUsersCalls, 3);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
         } finally {
             cleanup();
         }

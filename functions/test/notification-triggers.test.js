@@ -769,8 +769,10 @@ test('notifyGameUpdated does not let a stale matching live event suppress a curr
 
 test('notifyLiveEventCreated sends one deduped big-moment notification to eligible recipients except the actor', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
-        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
         parentUserIds: ['parent-1'],
+        authUsersByEmail: { 'assistant@example.com': 'assistant-1' },
+        userDocs: { 'assistant-1': {} },
         authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', roles: ['staff'], deviceId: 'actor-device', token: 'actor-token', categories: { liveScore: true } },

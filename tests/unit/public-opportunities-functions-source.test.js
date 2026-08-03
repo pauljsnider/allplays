@@ -148,10 +148,12 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("conversation.directAccess === 'team_admin'");
     expect(source).toContain('canMessageAcceptedFriendForTeam({');
     expect(source).toContain('hasTeamAdminAccess({');
-    expect(source).toContain('initiatorId === caller.uid\n      ? caller.email');
-    expect(source).toContain('await admin.auth().getUser(recipientId)');
-    expect(source).toContain('userId: recipientId,\n    email: recipientEmail');
-    expect(source).toContain('batch.create(messageRef, message);');
+    expect(source).toContain('initiatorId === callerUid ? callerEmail : recipientEmail');
+    expect(source).toContain('admin.auth().getUser(callerUid)');
+    expect(source).toContain('admin.auth().getUser(recipientId)');
+    expect(source).toContain('userId: recipientId,\n        email: recipientEmail');
+    expect(source).toContain('firestore.runTransaction(async (transaction) => {');
+    expect(source).toContain('transaction.create(messageRef, message);');
     expect(source).toContain('if (!clientMessageId || !isAlreadyExistsError(error)) throw error;');
     expect(source).toContain('existingMessage.clientMessageId !== clientMessageId');
   });

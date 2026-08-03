@@ -102,6 +102,7 @@ function buildNotificationTestEnv({
     authUsersByEmail = {},
     authUsersByUid = {},
     authGetUsersErrors = [],
+    onAuthGetUsersCall = null,
     playerDocs = {},
     privateProfileDocs = {},
     gameDocs = {},
@@ -342,7 +343,21 @@ function buildNotificationTestEnv({
                 }
                 if (path.startsWith('users/') && !path.includes('/notificationPreferences/') && !path.includes('/notificationDevices/') && path.split('/').length === 2) {
                     counts.userRecordGets += 1;
-                    const data = userDocs[this.id];
+                    const authEmail = String(authUsersByUid[this.id]?.email || '').trim().toLowerCase();
+                    const adminEmails = Array.isArray(teamDoc.adminEmails)
+                        ? teamDoc.adminEmails.map((email) => String(email || '').trim().toLowerCase())
+                        : [];
+                    const configuredUser = userDocs[this.id] !== undefined
+                        ? userDocs[this.id]
+                        : parentUserIds.includes(this.id)
+                            ? { parentTeamIds: [teamId] }
+                            : teamDoc.ownerId === this.id || (authEmail && adminEmails.includes(authEmail))
+                                ? {}
+                                : undefined;
+                    const data = configuredUser && parentUserIds.includes(this.id)
+                        && !Array.isArray(configuredUser.parentTeamIds)
+                        ? { ...configuredUser, parentTeamIds: [teamId] }
+                        : configuredUser;
                     return makeDocSnapshot({
                         id: this.id,
                         ref: this,
@@ -872,6 +887,14 @@ function buildNotificationTestEnv({
             },
             getUsers: async (identifiers) => {
                 counts.authGetUsersCalls += 1;
+                if (typeof onAuthGetUsersCall === 'function') {
+                    await onAuthGetUsersCall({
+                        callCount: counts.authGetUsersCalls,
+                        identifiers,
+                        authUsersByUid,
+                        teamDoc
+                    });
+                }
                 const getUsersError = pendingAuthGetUsersErrors.shift();
                 if (getUsersError) throw getUsersError;
                 const users = [];
@@ -885,12 +908,12 @@ function buildNotificationTestEnv({
                         users.push({ uid, ...configured });
                         continue;
                     }
-                    if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
-                        users.push({ uid, email: userDocs[uid]?.email || null, disabled: false });
-                        continue;
-                    }
                     const matchedEmail = Object.entries(authUsersByEmail)
                         .find(([, mappedUid]) => mappedUid === uid)?.[0];
+                    if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
+                        users.push({ uid, email: userDocs[uid]?.email || matchedEmail || null, disabled: false });
+                        continue;
+                    }
                     users.push({ uid, email: matchedEmail || null, disabled: false });
                 }
                 return { users, notFound: [] };

@@ -10484,13 +10484,13 @@ async function getUserIdsByEmails(emails) {
   return Array.from(ids);
 }
 
-async function getEnabledNotificationAuthUserIds(userIds) {
+async function getEnabledNotificationAuthUsers(userIds) {
   const uniqueUserIds = Array.from(new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
       .filter((uid) => uid && uid.length <= 128 && !/[\u0000-\u001f\u007f]/.test(uid))
   ));
-  const enabledUserIds = new Set();
+  const enabledUsers = new Map();
   for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
     const identifiers = uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }));
     let result;
@@ -10520,10 +10520,14 @@ async function getEnabledNotificationAuthUserIds(userIds) {
     }
     (result.users || []).forEach((authUser) => {
       const uid = String(authUser?.uid || '').trim();
-      if (uid && authUser?.disabled !== true) enabledUserIds.add(uid);
+      if (uid && authUser?.disabled !== true) enabledUsers.set(uid, authUser);
     });
   }
-  return enabledUserIds;
+  return enabledUsers;
+}
+
+async function getEnabledNotificationAuthUserIds(userIds) {
+  return new Set((await getEnabledNotificationAuthUsers(userIds)).keys());
 }
 
 function isNotificationAuthResolutionFailure(error) {
@@ -10650,6 +10654,54 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
     return true;
   }
   return mediaAudienceAllowsUser(user, audienceContext);
+}
+
+async function revalidateNotificationEffectTargets({
+  targets,
+  teamId,
+  category,
+  audienceContext = {},
+  requireCanonicalTeamAccess = false
+}) {
+  const logicalTargets = dedupeNotificationTargets(targets);
+  const userIds = Array.from(new Set(
+    logicalTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  ));
+  if (!userIds.length) return [];
+
+  const enabledAuthUsers = await getEnabledNotificationAuthUsers(userIds);
+  if (!requireCanonicalTeamAccess) {
+    return logicalTargets.filter((target) => enabledAuthUsers.has(String(target?.uid || '').trim()));
+  }
+
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+  const userRefs = userIds.map((uid) => firestore.doc(`users/${uid}`));
+  const [teamSnap, userSnaps] = await Promise.all([
+    firestore.doc(`teams/${normalizedTeamId}`).get(),
+    userRefs.length ? firestore.getAll(...userRefs) : Promise.resolve([])
+  ]);
+  if (!teamSnap.exists) return [];
+
+  const team = teamSnap.data() || {};
+  const eligibleUserIds = new Set();
+  userSnaps.forEach((userSnap, index) => {
+    const uid = userIds[index];
+    const authUser = enabledAuthUsers.get(uid);
+    if (!authUser || !userSnap?.exists) return;
+    const roles = getNotificationRecipientRoles({
+      teamId: normalizedTeamId,
+      team,
+      user: userSnap.data() || {},
+      uid,
+      email: String(authUser.email || '').trim().toLowerCase()
+    });
+    if (canReceiveCategoryNotification(category, { uid, roles }, audienceContext)) {
+      eligibleUserIds.add(uid);
+    }
+  });
+
+  return logicalTargets.filter((target) => eligibleUserIds.has(String(target?.uid || '').trim()));
 }
 
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
@@ -11608,12 +11660,10 @@ async function sendCategoryNotification({
 
   const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
-  const targets = excludeSet.size
+  const candidateTargets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
     : allTargets;
-  const inboxTargets = getUniqueNotificationInboxTargets(targets);
-  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
-  if (!pushTargets.length && !inboxTargets.length) return null;
+  if (!candidateTargets.length) return null;
 
   const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
     .map((value) => String(value || '').trim())
@@ -11639,6 +11689,17 @@ async function sendCategoryNotification({
       return null;
     }
   }
+
+  const targets = await revalidateNotificationEffectTargets({
+    targets: candidateTargets,
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess: true
+  });
+  const inboxTargets = getUniqueNotificationInboxTargets(targets);
+  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
+  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
@@ -11987,14 +12048,30 @@ async function sendDirectTargetsNotification({
   childId = null,
   linkOverride = null,
   appRouteOverride = null,
-  timeSensitive = false
+  timeSensitive = false,
+  requireCanonicalTeamAccess = false,
+  audienceContext = {}
 }) {
   const logicalTargets = Array.isArray(targets) ? targets : [];
-  const pushTargets = logicalTargets.filter((target) => String(target?.token || '').trim());
+  const requestedInboxTargets = Array.isArray(inboxUids)
+    ? inboxUids.map((uid) => ({ uid }))
+    : logicalTargets;
+  const authorizedTargets = await revalidateNotificationEffectTargets({
+    targets: [...logicalTargets, ...requestedInboxTargets],
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess
+  });
+  const authorizedUserIds = new Set(
+    authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  );
+  const pushTargets = logicalTargets.filter((target) => (
+    authorizedUserIds.has(String(target?.uid || '').trim())
+    && String(target?.token || '').trim()
+  ));
   const inboxTargets = getUniqueNotificationInboxTargets(
-    Array.isArray(inboxUids)
-      ? inboxUids.map((uid) => ({ uid }))
-      : logicalTargets
+    requestedInboxTargets.filter((target) => authorizedUserIds.has(String(target?.uid || '').trim()))
   );
   if (!pushTargets.length && !inboxTargets.length) return null;
 
@@ -12248,6 +12325,7 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
   sendPracticePacketDueTomorrowReminders,
@@ -16922,90 +17000,20 @@ function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversati
 
 exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, context = {}) => {
   await assertSensitiveEmailVerified(context, 'send-authorized-direct-message');
-  const caller = await getOpportunityCaller(context);
-  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${caller.uid}`);
+  const callerUid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${callerUid}`);
   const teamId = normalizeDirectChatId(data?.teamId, 'team');
   const conversationId = normalizeDirectChatId(data?.conversationId, 'conversation');
   const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
-  const [teamSnap, conversationSnap] = await Promise.all([
-    firestore.doc(`teams/${teamId}`).get(),
-    conversationRef.get()
-  ]);
-  if (!teamSnap.exists || !conversationSnap.exists) {
+  const initialConversationSnap = await conversationRef.get();
+  if (!initialConversationSnap.exists) {
     throwOpportunityError('not-found', 'Direct conversation not found.');
   }
-  const team = teamSnap.data() || {};
-  const conversation = conversationSnap.data() || {};
-  const directUserIds = getDirectChatUserIds(conversation);
-  if (!directUserIds.includes(caller.uid)) {
+  const initialDirectUserIds = getDirectChatUserIds(initialConversationSnap.data() || {});
+  if (!initialDirectUserIds.includes(callerUid)) {
     throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
   }
-  const recipientId = directUserIds.find((userId) => userId !== caller.uid);
-  const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
-  const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
-  let recipientEmail = '';
-  let recipientAuthEnabled = false;
-  try {
-    const recipientAuthRecord = await admin.auth().getUser(recipientId);
-    recipientAuthEnabled = recipientAuthRecord?.disabled !== true;
-    recipientEmail = recipientAuthEnabled
-      ? String(recipientAuthRecord?.email || '').trim().toLowerCase()
-      : '';
-  } catch (error) {
-    console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
-  }
-  const teamWithId = { ...team, id: teamId };
-  const callerHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: caller.user,
-    userId: caller.uid,
-    email: caller.email
-  });
-  const recipientHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: recipient,
-    userId: recipientId,
-    email: recipientEmail
-  });
-  if (!callerHasAccess || !recipientAuthEnabled || !recipientHasAccess) {
-    throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
-  }
-  if (conversation.directAccess === 'accepted_friend') {
-    const friendshipId = directUserIds.join('__');
-    if (conversation.friendshipId !== friendshipId) {
-      throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
-    }
-    const friendshipSnap = await firestore.doc(`friendships/${friendshipId}`).get();
-    if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
-      friendship: friendshipSnap.data() || {},
-      team,
-      sender: caller.user,
-      recipient,
-      senderId: caller.uid,
-      recipientId,
-      teamId,
-      senderEmail: caller.email,
-      recipientEmail
-    })) {
-      throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
-    }
-  } else if (conversation.directAccess === 'team_admin') {
-    const initiatorId = String(conversation.initiatedBy || '');
-    const initiator = initiatorId === caller.uid ? caller.user : initiatorId === recipientId ? recipient : null;
-    const initiatorEmail = initiatorId === caller.uid
-      ? caller.email
-      : recipientEmail;
-    if (!initiator || !hasTeamAdminAccess({
-      team,
-      user: initiator,
-      uid: initiatorId,
-      email: initiatorEmail
-    })) {
-      throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
-    }
-  } else {
-    throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
-  }
+  const recipientId = initialDirectUserIds.find((userId) => userId !== callerUid);
 
   const rawText = String(data?.text || '');
   if (rawText.length > 10000) {
@@ -17020,7 +17028,7 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const attachments = rawAttachments.map((attachment) => normalizeAuthorizedDirectAttachment(attachment, {
     teamId,
     conversationId,
-    uid: caller.uid,
+    uid: callerUid,
     now
   }));
   const requestedClientMessageId = String(data?.clientMessageId || '').trim();
@@ -17033,56 +17041,156 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const messageRef = clientMessageId
     // Namespace idempotency keys by sender so one participant cannot replace
     // the other participant's message by guessing a client request ID.
-    ? conversationRef.collection('chatMessages').doc(`${caller.uid}__${clientMessageId}`)
+    ? conversationRef.collection('chatMessages').doc(`${callerUid}__${clientMessageId}`)
     : conversationRef.collection('chatMessages').doc();
-  const senderName = cleanOpportunityText(
-    caller.user?.fullName || caller.user?.displayName || context.auth?.token?.name,
-    160
-  ) || null;
-  const recipientParticipantIds = conversation.participantIds.filter(
-    (participantId) => normalizeDirectChatUserId(participantId) !== caller.uid
-  );
-  const message = {
-    clientMessageId: clientMessageId || null,
-    text,
-    senderId: caller.uid,
-    senderName,
-    senderEmail: caller.email || null,
-    senderPhotoUrl: cleanOpportunityText(caller.user?.photoUrl, 1000) || null,
-    attachments,
-    imageUrl: null,
-    imagePath: null,
-    imageName: null,
-    imageType: null,
-    imageSize: null,
-    createdAt: now,
-    editedAt: null,
-    deleted: false,
-    ai: false,
-    aiName: null,
-    aiQuestion: null,
-    aiMeta: null,
-    targetType: 'individuals',
-    recipientIds: recipientParticipantIds,
-    targetRole: null,
-    conversationId
-  };
-  const batch = firestore.batch();
-  // A caller-provided request ID is an idempotency key, not an edit handle.
-  // `create` keeps retries from overwriting or undeleting the original message
-  // through this Admin SDK path, while the batch preserves the conversation
-  // metadata update atomically for the first successful send.
-  batch.create(messageRef, message);
-  batch.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+
+  let callerAuthRecord;
+  let recipientAuthRecord;
   try {
-    await batch.commit();
+    [callerAuthRecord, recipientAuthRecord] = await Promise.all([
+      admin.auth().getUser(callerUid),
+      admin.auth().getUser(recipientId)
+    ]);
+  } catch (error) {
+    console.warn('Unable to resolve current direct-message participant Auth records', {
+      callerUid,
+      recipientId,
+      error
+    });
+  }
+  if (
+    callerAuthRecord?.uid !== callerUid
+    || callerAuthRecord?.disabled === true
+    || recipientAuthRecord?.uid !== recipientId
+    || recipientAuthRecord?.disabled === true
+  ) {
+    throwOpportunityError('permission-denied', 'Both participants must have active accounts to send direct messages.');
+  }
+  const callerEmail = String(callerAuthRecord.email || '').trim().toLowerCase();
+  const recipientEmail = String(recipientAuthRecord.email || '').trim().toLowerCase();
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${callerUid}`);
+  const recipientRef = firestore.doc(`users/${recipientId}`);
+
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const finalConversationSnap = await transaction.get(conversationRef);
+      if (!finalConversationSnap.exists) {
+        throwOpportunityError('not-found', 'Direct conversation not found.');
+      }
+      const conversation = finalConversationSnap.data() || {};
+      const directUserIds = getDirectChatUserIds(conversation);
+      const finalRecipientId = directUserIds.find((userId) => userId !== callerUid);
+      if (!directUserIds.includes(callerUid) || finalRecipientId !== recipientId) {
+        throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
+      }
+
+      const [teamSnap, callerSnap, recipientSnap] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(callerRef),
+        transaction.get(recipientRef)
+      ]);
+      if (!teamSnap.exists || !callerSnap.exists || !recipientSnap.exists) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+      const team = teamSnap.data() || {};
+      const caller = callerSnap.data() || {};
+      const recipient = recipientSnap.data() || {};
+      const teamWithId = { ...team, id: teamId };
+      const callerHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: caller,
+        userId: callerUid,
+        email: callerEmail
+      });
+      const recipientHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: recipient,
+        userId: recipientId,
+        email: recipientEmail
+      });
+      if (!callerHasAccess || !recipientHasAccess) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+
+      if (conversation.directAccess === 'accepted_friend') {
+        const friendshipId = directUserIds.join('__');
+        if (conversation.friendshipId !== friendshipId) {
+          throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
+        }
+        const friendshipSnap = await transaction.get(firestore.doc(`friendships/${friendshipId}`));
+        if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
+          friendship: friendshipSnap.data() || {},
+          team,
+          sender: caller,
+          recipient,
+          senderId: callerUid,
+          recipientId,
+          teamId,
+          senderEmail: callerEmail,
+          recipientEmail
+        })) {
+          throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
+        }
+      } else if (conversation.directAccess === 'team_admin') {
+        const initiatorId = String(conversation.initiatedBy || '');
+        const initiator = initiatorId === callerUid ? caller : initiatorId === recipientId ? recipient : null;
+        const initiatorEmail = initiatorId === callerUid ? callerEmail : recipientEmail;
+        if (!initiator || !hasTeamAdminAccess({
+          team,
+          user: initiator,
+          uid: initiatorId,
+          email: initiatorEmail
+        })) {
+          throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
+        }
+      } else {
+        throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+      }
+
+      const message = {
+        clientMessageId: clientMessageId || null,
+        text,
+        senderId: callerUid,
+        senderName: cleanOpportunityText(
+          caller.fullName || caller.displayName || context.auth?.token?.name,
+          160
+        ) || null,
+        senderEmail: callerEmail || null,
+        senderPhotoUrl: cleanOpportunityText(caller.photoUrl, 1000) || null,
+        attachments,
+        imageUrl: null,
+        imagePath: null,
+        imageName: null,
+        imageType: null,
+        imageSize: null,
+        createdAt: now,
+        editedAt: null,
+        deleted: false,
+        ai: false,
+        aiName: null,
+        aiQuestion: null,
+        aiMeta: null,
+        targetType: 'individuals',
+        recipientIds: conversation.participantIds.filter(
+          (participantId) => normalizeDirectChatUserId(participantId) !== callerUid
+        ),
+        targetRole: null,
+        conversationId
+      };
+      // A caller-provided request ID is an idempotency key, not an edit handle.
+      // Keep the final access checks and both writes in one transaction so a
+      // concurrent revoke retries the transaction against the new grant state.
+      transaction.create(messageRef, message);
+      transaction.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+    });
   } catch (error) {
     if (!clientMessageId || !isAlreadyExistsError(error)) throw error;
     const existingSnap = await messageRef.get();
     const existingMessage = existingSnap.exists ? existingSnap.data() || {} : {};
     if (
       !existingSnap.exists ||
-      existingMessage.senderId !== caller.uid ||
+      existingMessage.senderId !== callerUid ||
       existingMessage.clientMessageId !== clientMessageId ||
       existingMessage.conversationId !== conversationId
     ) {

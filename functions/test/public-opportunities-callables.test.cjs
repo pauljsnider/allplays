@@ -60,7 +60,7 @@ function comparable(value) {
     return value instanceof FakeTimestamp ? value.toMillis() : value;
 }
 
-function makeFirestore(seed = {}, { queryFailures = [] } = {}) {
+function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null } = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
     let nextAutoId = 1;
 
@@ -172,11 +172,43 @@ function makeFirestore(seed = {}, { queryFailures = [] } = {}) {
         _state: state,
         doc,
         collection,
-        runTransaction: async (callback) => callback({
-            get: (ref) => ref.get(),
-            set: (ref, value, options) => ref.set(value, options),
-            update: (ref, value) => ref.update(value)
-        }),
+        runTransaction: async (callback) => {
+            if (typeof beforeTransaction === 'function') {
+                await beforeTransaction({ state });
+            }
+            const operations = [];
+            const result = await callback({
+                get: (ref) => ref.get(),
+                create: (ref, value) => operations.push({ type: 'create', ref, value }),
+                set: (ref, value, options) => operations.push({ type: 'set', ref, value, options }),
+                update: (ref, value) => operations.push({ type: 'update', ref, value }),
+                delete: (ref) => operations.push({ type: 'delete', ref })
+            });
+            const nextState = new Map(state);
+            for (const operation of operations) {
+                const path = operation.ref.path;
+                if (operation.type === 'create') {
+                    if (nextState.has(path)) {
+                        const error = new Error(`Document already exists: ${path}`);
+                        error.code = 6;
+                        throw error;
+                    }
+                    nextState.set(path, clone(operation.value));
+                } else if (operation.type === 'set') {
+                    nextState.set(path, operation.options?.merge
+                        ? { ...(nextState.get(path) || {}), ...clone(operation.value) }
+                        : clone(operation.value));
+                } else if (operation.type === 'update') {
+                    if (!nextState.has(path)) throw new Error(`Missing document: ${path}`);
+                    nextState.set(path, { ...nextState.get(path), ...clone(operation.value) });
+                } else if (operation.type === 'delete') {
+                    nextState.delete(path);
+                }
+            }
+            state.clear();
+            nextState.forEach((value, path) => state.set(path, value));
+            return result;
+        },
         batch() {
             const operations = [];
             return {
@@ -237,9 +269,9 @@ function makeFunctionsStub() {
     };
 }
 
-function loadCallables(seed = {}, { authUsers = {}, queryFailures = [] } = {}) {
+function loadCallables(seed = {}, { authUsers = {}, queryFailures = [], beforeTransaction = null } = {}) {
     delete require.cache[repoIndexPath];
-    const firestore = makeFirestore(seed, { queryFailures });
+    const firestore = makeFirestore(seed, { queryFailures, beforeTransaction });
     const fieldValue = {
         serverTimestamp: () => new FakeTimestamp(Date.now()),
         delete: () => ({ __op: 'delete' }),
@@ -1067,6 +1099,93 @@ test('direct-message callable rechecks friendship and team access on the write p
         callables.sendAuthorizedDirectMessage({ ...input, clientMessageId: 'client-direct-2' }, context),
         (error) => error.code === 'permission-denied'
     );
+});
+
+test('direct-message transaction observes a friendship revoked immediately before commit and writes nothing', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_sender__user%3Arecipient';
+    const messagePath = `${conversationPath}/chatMessages/sender__revoked-before-commit`;
+    const seed = {
+        'users/sender': { parentTeamIds: ['team-1'], fullName: 'Sender' },
+        'users/recipient': { parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        'friendships/recipient__sender': {
+            status: 'accepted',
+            memberIds: ['recipient', 'sender'],
+            sharedTeamIds: ['team-1']
+        },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['sender', 'user:recipient'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['recipient', 'sender'],
+            friendshipId: 'recipient__sender'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed, {
+        authUsers: {
+            sender: { email: 'sender@example.com', disabled: false },
+            recipient: { email: 'recipient@example.com', disabled: false }
+        },
+        beforeTransaction: ({ state }) => {
+            state.set('friendships/recipient__sender', {
+                ...state.get('friendships/recipient__sender'),
+                status: 'removed'
+            });
+        }
+    });
+
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({
+            teamId: 'team-1',
+            conversationId: 'direct_sender__user%3Arecipient',
+            clientMessageId: 'revoked-before-commit',
+            text: 'This must not land',
+            attachments: []
+        }, authContext('sender', { email: 'sender@example.com' })),
+        (error) => error.code === 'permission-denied'
+    );
+
+    assert.equal(firestore.snapshot(messagePath), undefined);
+    assert.equal(firestore.snapshot(conversationPath).lastMessageAt, undefined);
+    assert.equal(firestore.snapshot(conversationPath).updatedAt, undefined);
+});
+
+test('direct-message callable rejects a caller disabled after token issuance and writes nothing', async () => {
+    const conversationPath = 'teams/team-1/chatConversations/direct_owner__user%3Aparent';
+    const messagePath = `${conversationPath}/chatMessages/owner__disabled-before-commit`;
+    const seed = {
+        'users/owner': { fullName: 'Owner' },
+        'users/parent': { parentTeamIds: ['team-1'] },
+        'teams/team-1': { ownerId: 'owner', adminEmails: [] },
+        [conversationPath]: {
+            type: 'direct',
+            participantIds: ['owner', 'user:parent'],
+            directAccess: 'team_admin',
+            directUserIds: ['owner', 'parent'],
+            initiatedBy: 'owner'
+        }
+    };
+    const { firestore, callables } = loadCallables(seed, {
+        authUsers: {
+            owner: { email: 'owner@example.com', disabled: true },
+            parent: { email: 'parent@example.com', disabled: false }
+        }
+    });
+
+    await assert.rejects(
+        callables.sendAuthorizedDirectMessage({
+            teamId: 'team-1',
+            conversationId: 'direct_owner__user%3Aparent',
+            clientMessageId: 'disabled-before-commit',
+            text: 'This must not land',
+            attachments: []
+        }, authContext('owner', { email: 'owner@example.com' })),
+        (error) => error.code === 'permission-denied'
+    );
+
+    assert.equal(firestore.snapshot(messagePath), undefined);
+    assert.equal(firestore.snapshot(conversationPath).lastMessageAt, undefined);
+    assert.equal(firestore.snapshot(conversationPath).updatedAt, undefined);
 });
 
 test('direct-message callable honors unbackfilled legacy parent team links', async () => {
