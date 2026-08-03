@@ -1,8 +1,11 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const test = require('node:test');
+const { deleteApp, initializeApp } = require('firebase-admin/app');
+const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const {
   createFriendInviteRedemptionCallableHandler,
   createFriendInviteRedemptionTransaction,
@@ -472,6 +475,150 @@ async function expectGenericTransactionRejection(promise) {
     return true;
   });
 }
+
+const emulatorTest = process.env.FIRESTORE_EMULATOR_HOST ? test : test.skip;
+
+function normalizeEmulatorValue(value) {
+  if (value && typeof value.toMillis === 'function') return value.toMillis();
+  if (Array.isArray(value)) return value.map(normalizeEmulatorValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, normalizeEmulatorValue(entry)])
+  );
+}
+
+async function readEmulatorRedemptionState(firestore, inviteRef, friendshipRef) {
+  const [inviteSnapshot, friendshipSnapshot] = await firestore.getAll(inviteRef, friendshipRef);
+  return {
+    invite: {
+      data: normalizeEmulatorValue(inviteSnapshot.data()),
+      updateTime: inviteSnapshot.updateTime.toMillis()
+    },
+    friendship: {
+      data: normalizeEmulatorValue(friendshipSnapshot.data()),
+      updateTime: friendshipSnapshot.updateTime.toMillis()
+    }
+  };
+}
+
+async function exerciseEmulatorRedemption(t, { inviteTarget, authToken }) {
+  const fixtureId = randomUUID().replace(/-/g, '');
+  const code = fixtureId.slice(0, 8).toUpperCase();
+  const inviterUid = `inviter-${fixtureId}`;
+  const recipientUid = `recipient-${fixtureId}`;
+  const friendshipId = [inviterUid, recipientUid].sort().join('__');
+  const app = initializeApp(
+    { projectId: process.env.GCLOUD_PROJECT || 'demo-allplays' },
+    `friend-invite-redemption-${fixtureId}`
+  );
+  const firestore = getFirestore(app);
+  const inviteRef = firestore.doc(`accessCodes/${code}`);
+  const recipientRef = firestore.doc(`users/${recipientUid}`);
+  const friendshipRef = firestore.doc(`friendships/${friendshipId}`);
+
+  t.after(async () => {
+    const cleanup = firestore.batch();
+    cleanup.delete(inviteRef);
+    cleanup.delete(recipientRef);
+    cleanup.delete(friendshipRef);
+    try {
+      await cleanup.commit();
+    } finally {
+      await deleteApp(app);
+    }
+  });
+
+  const seed = firestore.batch();
+  seed.set(inviteRef, {
+    code,
+    type: 'friend_invite',
+    generatedBy: inviterUid,
+    email: inviteTarget.email ?? null,
+    phone: inviteTarget.phone ?? null,
+    inviterProfile: {
+      displayName: 'Invite Sender',
+      discoveryTeamIds: ['team-emulator']
+    },
+    expiresAt: Timestamp.fromMillis(Date.now() + (5 * 60_000)),
+    used: false,
+    usedBy: null,
+    usedAt: null
+  });
+  seed.set(recipientRef, {
+    fullName: 'Recipient One',
+    parentTeamIds: ['team-emulator']
+  });
+  await seed.commit();
+
+  const redeemTransaction = createFriendInviteRedemptionTransaction({
+    firestore,
+    Timestamp,
+    HttpsError: TestHttpsError,
+    logger: { warn() {}, error() {} }
+  });
+  const callable = createFriendInviteRedemptionCallableHandler({
+    redeemTransaction,
+    HttpsError: TestHttpsError
+  });
+  const request = { code };
+  const context = {
+    auth: {
+      uid: recipientUid,
+      token: authToken
+    }
+  };
+
+  const result = await callable(request, context);
+  assert.deepEqual(result, {
+    success: true,
+    friendshipId,
+    inviterName: 'Invite Sender'
+  });
+
+  const afterSuccess = await readEmulatorRedemptionState(firestore, inviteRef, friendshipRef);
+  assert.equal(afterSuccess.invite.data.used, true);
+  assert.equal(afterSuccess.invite.data.usedBy, recipientUid);
+  assert.equal(typeof afterSuccess.invite.data.usedAt, 'number');
+  assert.deepEqual(afterSuccess.friendship.data.memberIds, [inviterUid, recipientUid].sort());
+  assert.equal(afterSuccess.friendship.data.requesterId, inviterUid);
+  assert.equal(afterSuccess.friendship.data.recipientId, recipientUid);
+  assert.equal(afterSuccess.friendship.data.status, 'accepted');
+  assert.equal(afterSuccess.friendship.data.inviteCodeId, code);
+  assert.equal(afterSuccess.friendship.data.source, 'friend_invite');
+  assert.deepEqual(afterSuccess.friendship.data.sharedTeamIds, ['team-emulator']);
+  assert.equal(afterSuccess.friendship.data.createdAt, afterSuccess.invite.data.usedAt);
+  assert.equal(afterSuccess.friendship.data.acceptedAt, afterSuccess.invite.data.usedAt);
+  assert.equal(afterSuccess.friendship.data.respondedAt, afterSuccess.invite.data.usedAt);
+  assert.equal(afterSuccess.friendship.data.updatedAt, afterSuccess.invite.data.usedAt);
+
+  await assertGenericCallableRejection(callable(request, context), [
+    code,
+    inviterUid,
+    recipientUid,
+    inviteTarget.email,
+    inviteTarget.phone
+  ].filter(Boolean));
+
+  const afterReplay = await readEmulatorRedemptionState(firestore, inviteRef, friendshipRef);
+  assert.deepEqual(afterReplay, afterSuccess);
+}
+
+emulatorTest('Firestore emulator atomically redeems and replay-protects a verified email invite', async (t) => {
+  await exerciseEmulatorRedemption(t, {
+    inviteTarget: { email: ' Recipient@Example.COM ' },
+    authToken: {
+      email: 'recipient@example.com',
+      email_verified: true
+    }
+  });
+});
+
+emulatorTest('Firestore emulator atomically redeems and replay-protects a verified phone invite', async (t) => {
+  await exerciseEmulatorRedemption(t, {
+    inviteTarget: { phone: '+1 (312) 555-1212' },
+    authToken: { phone_number: '+13125551212' }
+  });
+});
 
 test('atomically redeems an active invite with a matching verified email', async () => {
   const harness = createTransactionHarness({
