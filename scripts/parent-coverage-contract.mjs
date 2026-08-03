@@ -73,7 +73,17 @@ const workflowCapabilities = new Map(Object.entries({
     P07: { mode: 'readOnly', routes: ['/auth'], actions: ['clickAndExpectGoogleAuth'] },
     P08: { mode: 'lifecycle', routes: ['/home', '/accept-invite', '/parent-tools/access'], actions: ['fill', 'click'] },
     P09: { mode: 'reversible', routes: ['/parent-tools/access'], actions: ['fill', 'select', 'click'] },
-    P10: { mode: 'readOnly', routes: ['/home', '/parent-tools/*'], actions: ['clickAndExpectRoute'] },
+    P10: {
+        mode: 'readOnly',
+        routes: [
+            '/home',
+            '/parent-tools', '/parent-tools/*',
+            '/schedule', '/schedule/*',
+            '/messages', '/messages/*',
+            '/profile', '/profile/*'
+        ],
+        actions: ['clickAndExpectRoute']
+    },
     P11: { mode: 'readOnly', routes: ['/teams/{TEAM_ID}', '/players/{TEAM_ID}/{PLAYER_ID}'], actions: [] },
     P12: { mode: 'reversible', routes: ['/profile/settings'], actions: ['rememberControl', 'fill', 'click', 'restoreControl'] },
     P13: { mode: 'reversible', routes: ['/profile/settings'], actions: ['click', 'uploadSyntheticImage'] },
