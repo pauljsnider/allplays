@@ -1349,7 +1349,7 @@ test('definitively missing or disabled Auth identities remove notification targe
                 'team-1': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }
             },
             userDocs: {
-                [uid]: { displayName: 'Former admin' }
+                [uid]: { displayName: 'Former admin', email: 'admin@example.com', profileEmail: 'admin@example.com' }
             },
             deviceDocs: {
                 [uid]: [{ id: 'device-a', token: 'token-a', platform: 'ios' }]

@@ -95,7 +95,7 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
 
     const userSnap = await safeGetDoc(db, `users/${uid}`);
     const profile = userSnap.exists ? userSnap.data() || {} : {};
-    const normalizedEmail = normalizeEmail(email || profile.email);
+    const normalizedEmail = normalizeEmail(email);
     const legacyParentLinks = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
         .filter((link) => link && typeof link.teamId === 'string' && link.teamId);
     const parentTeamIds = new Set([
@@ -131,14 +131,14 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
             const teamId = String(team?.id || '').trim();
             if (!teamId) continue;
             const ownerId = String(team.ownerId || '').trim();
-            const ownerEmails = [team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean);
-            const role = ownerId === uid || (!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail))
+            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+            const role = ownerId === uid || (!ownerId && ownerEmails.length === 1 && normalizedEmail === ownerEmails[0])
                 ? 'owner'
                 : 'admin';
             addTeam(teamId, team, role);
         }
     } else {
-        const ownerEmailCandidates = [...new Set([email, profile.email, normalizedEmail]
+        const ownerEmailCandidates = [...new Set([email, normalizedEmail]
             .filter((value) => typeof value === 'string' && value))];
         const [ownedSnap, adminSnap, ownerEmailLowerSnap, ...ownerEmailSnaps] = await Promise.all([
             db.collection('teams').where('ownerId', '==', uid).get(),
@@ -156,7 +156,10 @@ export async function resolveUserContext(db, { uid, email }, { managedTeams = nu
         for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
         const addLegacyOwnedTeam = (doc) => {
             const team = doc.data() || {};
-            if (!String(team.ownerId || '').trim()) addTeam(doc.id, team, 'owner');
+            const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+            if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail) {
+                addTeam(doc.id, team, 'owner');
+            }
         };
         for (const doc of ownerEmailLowerSnap.docs) addLegacyOwnedTeam(doc);
         for (const snap of ownerEmailSnaps) {

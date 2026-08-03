@@ -9193,11 +9193,19 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     return null;
   }
 
-  const email = String(
-    options.authEmail !== undefined
-      ? options.authEmail
-      : (resolvedUser.email || resolvedUser.profileEmail || '')
-  ).trim().toLowerCase();
+  let authoritativeAuthEmail = options.authEmail;
+  if (authoritativeAuthEmail === undefined) {
+    try {
+      const authUser = await admin.auth().getUser(normalizedUid);
+      authoritativeAuthEmail = authUser?.disabled === true ? '' : (authUser?.email || '');
+    } catch (error) {
+      if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+        throw error;
+      }
+      authoritativeAuthEmail = '';
+    }
+  }
+  const email = String(authoritativeAuthEmail || '').trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
     teamId,
     team: resolvedTeam,
@@ -16671,6 +16679,7 @@ exports.redeemFriendInvite = functions.https.onCall(redeemFriendInviteHandler);
 exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   createCheckAcceptedFriendMessageAccessHandler({
     firestore,
+    auth: admin.auth(),
     HttpsError: functions.https.HttpsError
   })
 );
@@ -16811,7 +16820,8 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
       senderId: caller.uid,
       recipientId,
       teamId,
-      senderEmail: caller.email
+      senderEmail: caller.email,
+      recipientEmail
     })) {
       throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
     }
@@ -17132,10 +17142,10 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
       throwOpportunityError('permission-denied', 'Only a team owner or admin can remove team staff.');
     }
 
-    const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
       .map((email) => String(email || '').trim().toLowerCase())
-      .filter(Boolean);
-    if (!String(team.ownerId || '').trim() && ownerEmails.includes(targetEmail)) {
+      .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === targetEmail) {
       throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
     }
     const callerOwnsTeam = String(team.ownerId || '').trim() === caller.uid;

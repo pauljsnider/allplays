@@ -13,7 +13,7 @@ export function isTrackingItemAdmin(team, user = {}, canModerateChat = null) {
     if (team.ownerId && user.uid && team.ownerId === user.uid) return true;
     if (typeof canModerateChat === 'function' && canModerateChat(team, user)) return true;
 
-    const email = normalizeString(user.email || user.profileEmail).toLowerCase();
+    const email = normalizeString(user.email).toLowerCase();
     if (!email) return false;
 
     return (team.adminEmails || [])

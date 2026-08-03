@@ -541,6 +541,34 @@ test('canonical ownerId allows revoking a staff grant that matches a stale owner
     assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, true);
 });
 
+test('conflicting legacy owner aliases do not protect a stale staff grant', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/platform-admin': { email: 'platform@example.com', isAdmin: true },
+        'users/former-owner': { email: 'former@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            ownerEmail: 'current@example.com',
+            ownerEmailLower: 'former@example.com',
+            adminEmails: ['former@example.com']
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'former@example.com',
+            used: true,
+            usedBy: 'former-owner'
+        }
+    });
+
+    await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: 'former@example.com' },
+        authContext('platform-admin', { email: 'platform@example.com' })
+    );
+
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
+    assert.deepEqual(firestore.snapshot('users/former-owner').coachOf, []);
+    assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, true);
+});
+
 test('email-only team admins cannot revoke their own canonical access', async () => {
     const { firestore, callables } = loadCallables({
         'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },

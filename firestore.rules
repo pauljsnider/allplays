@@ -71,13 +71,17 @@ service cloud.firestore {
     }
 
     function currentAuthEmailMatchesTeamOwner(team) {
+      let ownerEmail = team.get('ownerEmail', '');
+      let ownerEmailLower = team.get('ownerEmailLower', '');
       return request.auth.token.email != null &&
              team.get('ownerId', '') == '' &&
+             ownerEmail is string &&
+             ownerEmailLower is string &&
+             (ownerEmail != '' || ownerEmailLower != '') &&
+             (ownerEmail == '' || ownerEmailLower == '' || ownerEmail.lower() == ownerEmailLower.lower()) &&
              (
-               (team.get('ownerEmail', '') is string &&
-                team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-               (team.get('ownerEmailLower', '') is string &&
-                team.get('ownerEmailLower', '') == request.auth.token.email.lower())
+               ownerEmail.lower() == request.auth.token.email.lower() ||
+               ownerEmailLower.lower() == request.auth.token.email.lower()
              );
     }
 

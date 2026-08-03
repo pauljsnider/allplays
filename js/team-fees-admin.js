@@ -83,7 +83,7 @@ export function isTeamFeeAdmin(team, user = {}) {
     if (user.isAdmin === true) return true;
     if (team.ownerId && user.uid && team.ownerId === user.uid) return true;
 
-    const email = normalizeString(user.email || user.profileEmail).toLowerCase();
+    const email = normalizeString(user.email).toLowerCase();
     if (!email) return false;
 
     return (team.adminEmails || [])

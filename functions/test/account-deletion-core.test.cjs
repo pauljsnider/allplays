@@ -223,6 +223,18 @@ test('canonical ownership prevents a stale owner alias from scrubbing the curren
   });
 });
 
+test('conflicting legacy owner aliases cannot trigger ownership scrubbing', () => {
+  assert.deepEqual(buildTeamAccountGrantScrubPlan({
+    ownerEmail: 'current@example.com',
+    ownerEmailLower: 'former@example.com',
+    adminEmails: []
+  }, { uid: 'former-owner', email: 'former@example.com' }), {
+    changed: false,
+    update: {},
+    fieldsToDelete: []
+  });
+});
+
 test('scrubs deleted account identifiers from shared chat conversations', () => {
   assert.deepEqual(buildChatConversationAccountScrubPlan({
     type: 'direct',

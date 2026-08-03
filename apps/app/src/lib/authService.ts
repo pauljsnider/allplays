@@ -703,7 +703,9 @@ function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
 }
 
 function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthUser {
-  const email = String(user.email || profile.email || '');
+  // AuthUser.email is an authorization input throughout the app. Never fill
+  // it from a mutable profile document when Firebase Auth has no email.
+  const email = String(user.email || '');
   const displayName = String(user.displayName || profile.fullName || profile.displayName || email || 'ALL PLAYS User');
   const coachOf = Array.isArray(profile.coachOf) ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string') : [];
 

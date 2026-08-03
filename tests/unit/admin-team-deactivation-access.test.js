@@ -8,7 +8,8 @@ describe('admin team deactivation access', () => {
         expect(adminJs).toContain('function canCurrentUserDeactivateTeam(team) {');
         expect(adminJs).toContain("const ownerId = String(team.ownerId || '').trim();");
         expect(adminJs).toContain('ownerId === currentUser.uid');
-        expect(adminJs).toContain("team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase()");
+        expect(adminJs).toContain('ownerEmails.length === 1 && currentUser.email');
+        expect(adminJs).toContain("ownerEmails[0] === currentUser.email.trim().toLowerCase()");
         expect(adminJs).toContain('>Owner only<');
         expect(adminJs).toContain('if (!canCurrentUserDeactivateTeam(team)) {');
         expect(adminJs).toContain('Team deactivation is only available to the team owner in the dashboard workflow.');

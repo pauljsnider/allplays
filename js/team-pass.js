@@ -1,6 +1,6 @@
 import { auth } from './firebase.js?v=22';
 import { getPrimaryAppCheckHeaders } from './firebase-app-check-rest.js?v=1';
-import { hasFullTeamAccess } from './team-access.js?v=5';
+import { hasFullTeamAccess } from './team-access.js?v=6';
 
 function getFunctionsBaseUrl() {
     const configured = window.__ALLPLAYS_CONFIG__?.functionsBaseUrl || window.__ALLPLAYS_CONFIG__?.functions?.baseUrl;

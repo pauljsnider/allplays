@@ -282,8 +282,11 @@ function canCurrentUserDeactivateTeam(team) {
     if (ownerId) {
         return Boolean(currentUser.uid && ownerId === currentUser.uid);
     }
-    if (team.ownerEmail && currentUser.email) {
-        return team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (ownerEmails.length === 1 && currentUser.email) {
+        return ownerEmails[0] === currentUser.email.trim().toLowerCase();
     }
     return false;
 }

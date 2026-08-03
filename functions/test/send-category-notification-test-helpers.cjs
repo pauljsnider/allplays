@@ -100,6 +100,7 @@ function buildNotificationTestEnv({
     parentUserIds = [],
     userDocs = {},
     authUsersByEmail = {},
+    authUsersByUid = {},
     playerDocs = {},
     privateProfileDocs = {},
     gameDocs = {},
@@ -845,6 +846,20 @@ function buildNotificationTestEnv({
         firestore: firestoreFactory,
         auth: () => ({
             verifyIdToken: async () => null,
+            getUser: async (uid) => {
+                const configured = authUsersByUid[uid];
+                if (configured instanceof Error) throw configured;
+                if (configured) return { uid, ...configured };
+                if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
+                    return { uid, email: userDocs[uid]?.email || null, disabled: false };
+                }
+                const matchedEmail = Object.entries(authUsersByEmail)
+                    .find(([, mappedUid]) => mappedUid === uid)?.[0];
+                if (matchedEmail) return { uid, email: matchedEmail, disabled: false };
+                const error = new Error(`Missing auth user: ${uid}`);
+                error.code = 'auth/user-not-found';
+                throw error;
+            },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
                 return uid ? { uid } : { uid: '' };

@@ -47,6 +47,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     ownerEmail: 'legacy-owner@example.com',
                     adminEmails: []
                 });
+                await firestore.doc('teams/conflicting-legacy-team').set({
+                    ownerEmail: 'current@example.com',
+                    ownerEmailLower: 'former@example.com',
+                    adminEmails: []
+                });
                 await firestore.doc('teams/team-a/mediaFolders/folder-a').set({ visibility: 'team' });
                 await firestore.doc('teams/team-b/mediaFolders/folder-b').set({ visibility: 'team' });
                 await firestore.doc('users/member-a').set({
@@ -262,6 +267,24 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
+        });
+
+        it('denies team-owned uploads to both conflicting legacy owner aliases', async () => {
+            for (const [uid, email] of [
+                ['current-alias', 'current@example.com'],
+                ['former-alias', 'former@example.com']
+            ]) {
+                const storage = testEnv.authenticatedContext(uid, {
+                    email,
+                    email_verified: true
+                }).storage();
+                await assertFails(
+                    storage.ref(`profile-photos/teams/conflicting-legacy-team/team/${uid}.jpg`).put(
+                        new Uint8Array([1]),
+                        { contentType: 'image/jpeg' }
+                    )
+                );
+            }
         });
 
         it('keeps certificate images on signed-in primary Storage with team, owner, MIME, and size boundaries', async () => {

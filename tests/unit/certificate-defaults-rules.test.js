@@ -254,6 +254,14 @@ describe('certificate defaults Firestore rules', () => {
                     ownerId: 'owner-a',
                     adminEmails: ['admin-a@example.com']
                 });
+                await setDoc(doc(firestore, 'teams/conflicting-legacy-team'), {
+                    ownerEmail: 'current@example.com',
+                    ownerEmailLower: 'former@example.com',
+                    adminEmails: []
+                });
+                await setDoc(doc(firestore, 'teams/conflicting-legacy-team/settings/certificateDefaults'), {
+                    signers: []
+                });
                 await setDoc(doc(firestore, 'teams/team-a/settings/certificateDefaults'), {
                     retiredSignatureImageObjectKeys: ['bucket\ncertificate-signatures/teams/team-a/retired.png\n1700000000000000'],
                     retiredSignatureImagePaths: ['certificate-signatures/teams/team-a/retired.png'],
@@ -307,6 +315,15 @@ describe('certificate defaults Firestore rules', () => {
             await assertFails(updateDoc(doc(ownerDb, defaultsPath), { signers: [] }));
             await assertFails(setDoc(doc(adminDb, defaultsPath), { signers: [] }));
             await assertFails(deleteDoc(doc(ownerDb, defaultsPath)));
+        });
+
+        it('denies both conflicting legacy owner aliases', async () => {
+            const defaultsPath = 'teams/conflicting-legacy-team/settings/certificateDefaults';
+            const currentAliasDb = testEnv.authenticatedContext('current-alias', { email: 'current@example.com' }).firestore();
+            const formerAliasDb = testEnv.authenticatedContext('former-alias', { email: 'former@example.com' }).firestore();
+
+            await assertFails(getDoc(doc(currentAliasDb, defaultsPath)));
+            await assertFails(getDoc(doc(formerAliasDb, defaultsPath)));
         });
 
         it('keeps cleanup tombstones private and server-writable only', async () => {

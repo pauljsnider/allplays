@@ -552,8 +552,8 @@ describe('React app schedule service contract integration', () => {
         expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable()');
         expect(staffTeamSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
         expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
-        expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && email &&');
-        expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
+        expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0])');
+        expect(scheduleServiceSource).toContain('ownerEmails.length === 1 && email === ownerEmails[0]');
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
         expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
         expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');

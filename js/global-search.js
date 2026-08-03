@@ -127,7 +127,7 @@ function buildAccessibleTeamsCacheKey(user) {
 
     return JSON.stringify({
         uid: String(user.uid || '').trim(),
-        email: String(user.email || user.profileEmail || '').trim().toLowerCase(),
+        email: String(user.email || '').trim().toLowerCase(),
         isAdmin: user.isAdmin === true,
         parentTeamIds
     });
@@ -191,7 +191,7 @@ async function loadAccessibleTeams(user) {
     if (!user) return [];
 
     const uid = String(user.uid || '').trim();
-    const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+    const email = String(user.email || '').trim().toLowerCase();
     const teamsRef = collection(db, 'teams');
     const teamQueries = [];
 

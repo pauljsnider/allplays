@@ -7181,10 +7181,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    const legacyOwnerEmails = [team.ownerEmailLower, team.ownerEmail]
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
         .map((email) => String(email || '').trim().toLowerCase())
-        .filter(Boolean);
-    if (!String(team.ownerId || '').trim() && user.email && legacyOwnerEmails.includes(user.email.trim().toLowerCase())) {
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7219,10 +7219,10 @@ export function canModerateChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    const legacyOwnerEmails = [team.ownerEmailLower, team.ownerEmail]
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
         .map((email) => String(email || '').trim().toLowerCase())
-        .filter(Boolean);
-    if (!String(team.ownerId || '').trim() && user.email && legacyOwnerEmails.includes(user.email.trim().toLowerCase())) {
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7238,7 +7238,7 @@ export function canModerateChat(user, team) {
 }
 
 function getNormalizedCertificateEmail(user) {
-    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+    return String(user?.email || '').trim().toLowerCase();
 }
 
 function hasCertificateCoachAccess(user, team) {

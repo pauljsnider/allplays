@@ -1,5 +1,7 @@
 function getNormalizedUserEmail(user) {
-  return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+  // Access by email must reflect the current Auth identity, not a mutable
+  // profile field that can outlive an Auth email change.
+  return String(user?.email || '').trim().toLowerCase();
 }
 
 export function normalizeAdminEmailList(adminEmails) {
@@ -25,11 +27,11 @@ export function hasFullTeamAccess(user, team) {
 
   const isOwner = team.ownerId === user.uid;
   const normalizedEmail = getNormalizedUserEmail(user);
-  const ownerEmails = [team.ownerEmailLower, team.ownerEmail]
+  const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
     .map((email) => String(email || '').trim().toLowerCase())
-    .filter(Boolean);
+    .filter(Boolean))];
   const hasCanonicalOwner = Boolean(String(team.ownerId || '').trim());
-  const isLegacyOwner = Boolean(!hasCanonicalOwner && normalizedEmail && ownerEmails.includes(normalizedEmail));
+  const isLegacyOwner = Boolean(!hasCanonicalOwner && ownerEmails.length === 1 && normalizedEmail === ownerEmails[0]);
   const adminEmails = normalizeAdminEmailList(team.adminEmails);
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;

@@ -96,7 +96,7 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                     items: [{
                         id: 'legacy-team',
                         name: 'Legacy',
-                        ownerEmail: 'former@example.com',
+                        ownerEmail: 'Coach@Example.com',
                         ownerEmailLower: 'coach@example.com'
                     }],
                     isPartial: false
@@ -185,10 +185,10 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                     const filter = filters[0];
                     queried.push([filter.field, filter.value]);
                     if (filter.field === 'ownerEmail' && filter.value === 'Coach@Example.com') {
-                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case' } }];
+                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case', ownerEmail: 'Coach@Example.com' } }];
                     }
                     if (filter.field === 'ownerEmailLower') {
-                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower' } }];
+                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower', ownerEmailLower: 'coach@example.com' } }];
                     }
                     return [];
                 }
@@ -202,6 +202,45 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(queried).toContainEqual(['ownerEmailLower', 'coach@example.com']);
         expect([...context.teams.get('team-legacy-case').roles]).toEqual(['owner']);
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
+    });
+
+    it('rejects conflicting legacy owner aliases for an explicit authenticated email', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'conflicting-team',
+                            data: {
+                                ownerEmail: 'current@example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'former@example.com' });
+        expect(context.teams.has('conflicting-team')).toBe(false);
+    });
+
+    it('does not use a stale profile email when the authenticated email is absent', async () => {
+        const teamQuery = vi.fn(() => []);
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com', profileEmail: 'former@example.com' } },
+            queries: { teams: teamQuery }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: '' });
+
+        expect(context.teams.size).toBe(0);
+        expect(teamQuery).not.toHaveBeenCalledWith(expect.arrayContaining([
+            expect.objectContaining({ field: 'ownerEmail' })
+        ]));
     });
 
     it('does not derive ownership from stale owner email aliases when a canonical owner exists', async () => {

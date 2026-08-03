@@ -363,6 +363,22 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.profileHydration).toBe('success');
   });
 
+  it('does not restore an absent Auth email from a stale profile document', async () => {
+    legacyAuthMocks.getUserProfile.mockResolvedValue({
+      email: 'former-admin@example.com',
+      coachOf: ['team-1']
+    });
+
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'former-admin',
+      email: '',
+      emailVerified: false
+    });
+
+    expect(hydrated.profile.email).toBe('former-admin@example.com');
+    expect(hydrated.user.email).toBe('');
+  });
+
   it('marks auth identity data as fallback when the profile document cannot be loaded', async () => {
     legacyAuthMocks.getUserProfile.mockRejectedValue(new Error('profile unavailable'));
 

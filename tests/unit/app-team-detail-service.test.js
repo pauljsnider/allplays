@@ -235,6 +235,17 @@ describe('React app team detail model', () => {
         httpsCallable.mockClear();
         getTeam.mockResolvedValue({
             id: 'team-1',
+            ownerEmail: 'current-owner@example.com',
+            ownerEmailLower: 'former-owner@example.com',
+            adminEmails: ['former-owner@example.com']
+        });
+        await revokeTeamAdminAccessForApp('team-1', 'former-owner@example.com', { uid: 'platform-admin', email: 'platform@example.com', roles: ['platformAdmin'] });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'former-owner@example.com' });
+
+        __resetTeamDetailBaseSnapshotCacheForTests();
+        httpsCallable.mockClear();
+        getTeam.mockResolvedValue({
+            id: 'team-1',
             ownerId: 'owner-1',
             ownerEmail: 'owner@example.com',
             ownerEmailLower: 'former@example.com',

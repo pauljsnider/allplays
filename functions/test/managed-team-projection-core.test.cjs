@@ -63,7 +63,7 @@ test('canonical ownership overrides stale legacy owner emails while legacy-only 
   assert.equal(hasTeamAdminAccess({ team, uid: 'admin-1', email: 'ADMIN@example.com' }), true);
   assert.equal(hasTeamAdminAccess({
     team,
-    user: { email: 'legacy@example.com' },
+    user: { email: 'admin@example.com', profileEmail: 'admin@example.com' },
     uid: 'stale-profile-1'
   }), false);
   assert.equal(hasTeamAdminAccess({ team, uid: 'stranger-1', email: 'stranger@example.com' }), false);
@@ -73,8 +73,13 @@ test('canonical ownership overrides stale legacy owner emails while legacy-only 
     ownerEmail: 'legacy@example.com',
     adminEmails: []
   };
-  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'legacy-1', email: 'LEGACY@example.com' }), true);
-  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'stale-1', email: 'STALE@example.com' }), true);
+  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'legacy-1', email: 'LEGACY@example.com' }), false);
+  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'stale-1', email: 'STALE@example.com' }), false);
+  assert.equal(hasTeamAdminAccess({
+    team: { ownerEmail: ' Legacy@Example.com ', ownerEmailLower: 'legacy@example.com' },
+    uid: 'legacy-1',
+    email: 'LEGACY@example.com'
+  }), true);
 });
 
 test('authorized detail preserves required team UI fields without exposing server-only or unknown fields', () => {

@@ -192,7 +192,8 @@ test('stale profile email cannot restore legacy owner authorization', async () =
     team: {
       ownerId: 'current-owner',
       ownerEmail: 'legacy-owner@example.com',
-      ownerEmailLower: 'legacy-owner@example.com'
+      ownerEmailLower: 'legacy-owner@example.com',
+      adminEmails: ['legacy-owner@example.com']
     }
   });
 

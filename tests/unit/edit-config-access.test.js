@@ -48,7 +48,7 @@ describe('edit config access decision', () => {
     it('denies profile-email-only admin access that Firestore would reject for config writes', () => {
         expect(getEditConfigAccessDecision({ uid: 'coach-1', profileEmail: 'coach@example.com' }, TEAM, TEAM.id, 'stat_settings')).toEqual({
             allowed: false,
-            exitUrl: 'dashboard.html',
+            exitUrl: 'index.html',
             team: TEAM
         });
     });

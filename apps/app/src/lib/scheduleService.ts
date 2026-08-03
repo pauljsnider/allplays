@@ -1685,7 +1685,8 @@ function isPublicRsvpReminderManager(team: any, user: AuthUser | null) {
   if (team.ownerId === user.uid || (user as any).isAdmin === true) return true;
   const email = normalizeEmail(user.email);
   const hasCanonicalOwner = Boolean(compactString(team.ownerId));
-  if (!hasCanonicalOwner && email && (normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email)) return true;
+  const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+  if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0]) return true;
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
   return Boolean(email && adminEmails.includes(email));
 }

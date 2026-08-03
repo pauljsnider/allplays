@@ -1233,10 +1233,10 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
     throw new Error('You do not have permission to manage admins for this team.');
   }
 
-  const ownerEmails = [team?.ownerEmail, team?.ownerEmailLower]
+  const ownerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
     .map((value) => cleanString(value).toLowerCase())
-    .filter(Boolean);
-  if (!cleanString(team?.ownerId) && ownerEmails.includes(normalizedEmail)) {
+    .filter(Boolean))];
+  if (!cleanString(team?.ownerId) && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail) {
     throw new Error('The team owner cannot be removed from staff access.');
   }
 

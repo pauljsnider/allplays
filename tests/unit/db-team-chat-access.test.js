@@ -49,6 +49,23 @@ describe('team chat access compatibility', () => {
         })).toBe(true);
     });
 
+    it('denies both legacy owner aliases when they conflict', () => {
+        const canModerateChat = Function(`${getFunctionSource('canModerateChat')
+            .replace('export function canModerateChat', 'return function canModerateChat')}`)();
+        const conflictingTeam = {
+            id: team.id,
+            adminEmails: [],
+            ownerEmail: 'current@example.com',
+            ownerEmailLower: 'former@example.com'
+        };
+
+        for (const email of ['current@example.com', 'former@example.com']) {
+            const user = { uid: email, email };
+            expect(canAccessTeamChat(user, conflictingTeam)).toBe(false);
+            expect(canModerateChat(user, conflictingTeam)).toBe(false);
+        }
+    });
+
     it('denies stale owner email chat access and moderation when a canonical owner exists', () => {
         const canModerateChat = Function(`${getFunctionSource('canModerateChat')
             .replace('export function canModerateChat', 'return function canModerateChat')}`)();

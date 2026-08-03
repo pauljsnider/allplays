@@ -64,8 +64,19 @@ describe('friend message access core', () => {
                 adminEmails: ['admin@example.com']
             },
             recipient: { email: 'ADMIN@example.com' },
-            recipientId: 'admin-1'
+            recipientId: 'admin-1',
+            recipientEmail: 'ADMIN@example.com'
         })).toBe(true);
+    });
+
+    it('does not restore email-listed access from stale profile fields', () => {
+        expect(check({
+            friendship: { ...friendship, memberIds: ['parent-1', 'admin-1'] },
+            team: { ownerId: 'owner-1', adminEmails: ['admin@example.com'] },
+            recipient: { email: 'admin@example.com', profileEmail: 'admin@example.com' },
+            recipientId: 'admin-1',
+            recipientEmail: ''
+        })).toBe(false);
     });
 
     it('denies stale friendships and recipients that are no longer messageable', () => {

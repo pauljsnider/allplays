@@ -60,7 +60,7 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'admin-1',
             authUser: { uid: 'admin-1', email: 'ADMIN@example.com' }
         }, true],
-        ['current legacy email owner with a conflicting normalized alias', {
+        ['legacy owner with conflicting normalized aliases fails closed', {
             team: {
                 ownerEmailLower: 'stale@example.com',
                 ownerEmail: 'legacy-owner@example.com',
@@ -69,7 +69,7 @@ describe('admin invite server-authoritative redemption', () => {
             user: {},
             uid: 'legacy-owner-1',
             authUser: { uid: 'legacy-owner-1', email: 'LEGACY-OWNER@example.com' }
-        }, true],
+        }, false],
         ['former owner email when canonical owner differs', {
             team: {
                 ownerId: 'current-owner-1',
@@ -125,6 +125,21 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'admin-1',
             authUser: { uid: 'admin-1' }
         })).toBe(false);
+    });
+
+    it('fails closed for conflicting legacy owner aliases', () => {
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerEmail: 'first@example.com', ownerEmailLower: 'second@example.com' },
+            user: {},
+            uid: 'legacy-owner',
+            authUser: { uid: 'legacy-owner', email: 'first@example.com' }
+        })).toBe(false);
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerEmail: ' Legacy@Example.com ', ownerEmailLower: 'legacy@example.com' },
+            user: {},
+            uid: 'legacy-owner',
+            authUser: { uid: 'legacy-owner', email: 'legacy@example.com' }
+        })).toBe(true);
     });
 
     it('routes legacy and React invite acceptance through the callable-backed adapter', () => {
