@@ -1,8 +1,10 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
 const test = require('node:test');
 const {
+  createFriendInviteRedemptionCallableHandler,
   createFriendInviteRedemptionTransaction,
   extractVerifiedFriendInviteRecipientIdentities
 } = require('../friend-invite-redemption-core.cjs');
@@ -184,6 +186,121 @@ test('rejects malformed phone claims with one generic error', () => {
       token: { phone_number }
     }, ['+13125551212', 'invite-target', 'inviter-1']);
   }
+});
+
+function createCallableHarness({ result = { success: true }, rejection } = {}) {
+  const calls = [];
+  const redeemTransaction = async (input) => {
+    calls.push(input);
+    if (rejection) throw rejection;
+    return result;
+  };
+  const handler = createFriendInviteRedemptionCallableHandler({
+    redeemTransaction,
+    HttpsError: TestHttpsError
+  });
+  return { calls, handler };
+}
+
+async function assertGenericCallableRejection(promise, sensitiveValues = []) {
+  await assert.rejects(promise, (error) => {
+    assert.equal(error.code, GENERIC_ERROR.code);
+    assert.equal(error.message, GENERIC_ERROR.message);
+    assert.equal(error.details, undefined);
+    const serialized = JSON.stringify(error, Object.getOwnPropertyNames(error));
+    for (const value of sensitiveValues) assert.equal(serialized.includes(value), false);
+    return true;
+  });
+}
+
+test('callable rejects unauthenticated and payload-only identity before redemption', async () => {
+  for (const context of [undefined, {}, { auth: { uid: 'recipient-1', token: {} } }]) {
+    const harness = createCallableHarness();
+    await assertGenericCallableRejection(harness.handler({
+      code: 'FRIEND01',
+      uid: 'payload-user',
+      email: 'payload@example.com',
+      phone: '+13125551212',
+      recipientIdentities: {
+        uid: 'payload-user',
+        email: 'payload@example.com',
+        phone: '+13125551212'
+      }
+    }, context), ['payload-user', 'payload@example.com', '+13125551212', 'FRIEND01']);
+    assert.deepEqual(harness.calls, []);
+  }
+});
+
+test('callable forwards only verified Auth identities and the request code', async () => {
+  const result = { success: true, friendshipId: 'inviter-1__recipient-1' };
+  const harness = createCallableHarness({ result });
+  const response = await harness.handler({
+    code: ' friend01 ',
+    uid: 'victim-uid',
+    userId: 'victim-user-id',
+    email: 'victim@example.com',
+    phone: '+14155550100',
+    phone_number: '+14155550101',
+    recipientIdentities: {
+      uid: 'victim-uid',
+      email: 'victim@example.com',
+      phone: '+14155550100'
+    },
+    profile: { email: 'profile@example.com', phone: '+14155550102' },
+    fallbackIdentity: { email: 'fallback@example.com' }
+  }, {
+    auth: {
+      uid: 'recipient-1',
+      token: {
+        email: ' Recipient@Example.COM ',
+        email_verified: true,
+        phone_number: '+13125551212'
+      }
+    }
+  });
+
+  assert.strictEqual(response, result);
+  assert.deepEqual(harness.calls, [{
+    code: ' friend01 ',
+    recipientIdentities: {
+      uid: 'recipient-1',
+      email: 'recipient@example.com',
+      phone: '+13125551212'
+    }
+  }]);
+});
+
+test('callable maps every redemption failure to one metadata-free public error', async () => {
+  const sensitiveValues = [
+    'target@example.com',
+    '+13125551212',
+    'inviter-1',
+    'Invite Sender',
+    'FRIEND01',
+    'identity-mismatch'
+  ];
+  for (const rejection of [
+    new TestHttpsError('failed-precondition', 'identity-mismatch', {
+      inviteTarget: 'target@example.com',
+      inviterUid: 'inviter-1'
+    }),
+    new Error('Invite Sender +13125551212 FRIEND01')
+  ]) {
+    const harness = createCallableHarness({ rejection });
+    await assertGenericCallableRejection(harness.handler({ code: 'FRIEND01' }, {
+      auth: {
+        uid: 'recipient-1',
+        token: { email: 'recipient@example.com', email_verified: true }
+      }
+    }), sensitiveValues);
+    assert.equal(harness.calls.length, 1);
+  }
+});
+
+test('functions index registers the authenticated friend invite redemption callable', () => {
+  const source = readFileSync(new URL('../index.js', `file://${__filename}`), 'utf8');
+  assert.match(source, /createFriendInviteRedemptionCallableHandler/);
+  assert.match(source, /exports\.redeemFriendInvite\s*=\s*functions\.https\.onCall\(/);
 });
 
 const NOW_MILLIS = Date.parse('2026-08-02T21:00:00.000Z');
