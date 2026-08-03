@@ -40,9 +40,9 @@ describe('scorekeeping access wiring', () => {
         const standardTracker = readFileSync(resolve(process.cwd(), 'track.html'), 'utf8');
         const basketballTracker = readFileSync(resolve(process.cwd(), 'js/track-basketball.js'), 'utf8');
 
-        expect(standardTracker).toContain("import { hasScorekeepingTeamAccess } from './js/team-access.js?v=6';");
+        expect(standardTracker).toContain("import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44336';");
         expect(standardTracker).toContain('hasScorekeepingTeamAccess(currentUser, { ...team, id: teamId }, game, scorekeepingRsvp)');
-        expect(basketballTracker).toContain("import { hasScorekeepingTeamAccess } from './team-access.js?v=6';");
+        expect(basketballTracker).toContain("import { hasScorekeepingTeamAccess } from './team-access.js?v=44336';");
         expect(basketballTracker).toContain('hasScorekeepingTeamAccess(currentUser, { ...team, id: teamId }, game, scorekeepingRsvp)');
     });
 

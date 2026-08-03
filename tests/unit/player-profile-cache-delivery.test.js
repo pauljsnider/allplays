@@ -9,14 +9,14 @@ function read(relativePath) {
 describe('player profile cache delivery', () => {
     it('bumps externally loaded entry modules whose Firebase imports changed', () => {
         const entryModules = {
-            'admin.html': 'js/admin.js?v=28',
-            'certificates.html': 'js/certificates/studio.js?v=28',
-            'live-game.html': 'js/live-game.js?v=30',
-            'live-tracker.html': 'js/live-tracker.js?v=12',
-            'team-fees.html': 'js/team-fees-admin.js?v=26',
-            'team-media.html': 'js/team-media.js?v=24',
-            'track-basketball.html': 'js/track-basketball.js?v=11',
-            'tracking-items.html': 'js/tracking-items-admin.js?v=25'
+            'admin.html': 'js/admin.js?v=443328',
+            'certificates.html': 'js/certificates/studio.js?v=443328',
+            'live-game.html': 'js/live-game.js?v=443330',
+            'live-tracker.html': 'js/live-tracker.js?v=443312',
+            'team-fees.html': 'js/team-fees-admin.js?v=443326',
+            'team-media.html': 'js/team-media.js?v=443324',
+            'track-basketball.html': 'js/track-basketball.js?v=443311',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=443325'
         };
 
         for (const [pagePath, expectedEntryModule] of Object.entries(entryModules)) {
@@ -25,10 +25,10 @@ describe('player profile cache delivery', () => {
     });
 
     it('delivers updated shared utility and nested entry-module imports', () => {
-        expect(read('js/utils.js')).toContain("import('./global-search.js?v=19')");
-        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=13');
-        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=13');
-        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=13');
-        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=11');
+        expect(read('js/utils.js')).toContain("import('./global-search.js?v=443319')");
+        expect(read('drills.html')).toContain('js/team-admin-banner.js?v=443313');
+        expect(read('game-day.html')).toContain('js/team-admin-banner.js?v=443313');
+        expect(read('js/certificates/studio.js')).toContain('team-admin-banner.js?v=443313');
+        expect(read('team.html')).toContain('js/team-staff-permissions.js?v=443311');
     });
 });

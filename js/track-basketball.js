@@ -1,8 +1,8 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=153';
+import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=4433153';
 import { db } from './firebase.js?v=22';
-import { getUrlParams, escapeHtml } from './utils.js?v=31';
-import { checkAuth } from './auth.js?v=157';
+import { getUrlParams, escapeHtml } from './utils.js?v=443331';
+import { checkAuth } from './auth.js?v=4433157';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=22';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -10,7 +10,7 @@ import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, can
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
-import { hasScorekeepingTeamAccess } from './team-access.js?v=6';
+import { hasScorekeepingTeamAccess } from './team-access.js?v=44336';
 
 let currentTeamId = null;
 let currentGameId = null;

@@ -374,7 +374,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=31';",
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443331';",
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -390,7 +390,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=6';",
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=44336';",
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
