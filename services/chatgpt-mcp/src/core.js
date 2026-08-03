@@ -161,18 +161,32 @@ export async function loadManagedTeamsFromCallable({ projectId, idToken, fetchIm
         throw new DomainError('unauthenticated', 'Managed team discovery requires an authenticated project context.');
     }
     const requestUrl = `https://us-central1-${encodeURIComponent(projectId)}.cloudfunctions.net/listManagedTeams`;
-    const response = await fetchImpl(requestUrl, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${idToken}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ data: {} })
-    });
-    const payload = await response.json().catch(() => ({}));
+    let response;
+    try {
+        response = await fetchImpl(requestUrl, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${idToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ data: {} })
+        });
+    } catch {
+        throw new DomainError('unavailable', 'Managed team discovery is unavailable.');
+    }
+    let payload = null;
+    try {
+        payload = await response?.json?.();
+    } catch {
+        // Missing endpoints can return HTML, while malformed successful
+        // responses are classified as unavailable below.
+    }
     const result = payload?.result || payload?.data;
-    if (!response.ok || !Array.isArray(result?.items)) {
-        const code = response.status === 404 ? 'not_found' : callableErrorCode(payload);
+    if (!response?.ok || !Array.isArray(result?.items)) {
+        // A pre-rollout endpoint is an empty/non-callable HTTP 404. A valid
+        // callable error envelope (including domain NOT_FOUND) must fail closed.
+        const missingEndpoint = response?.status === 404 && !payload?.error;
+        const code = missingEndpoint ? 'not_found' : 'unavailable';
         throw new DomainError(code, payload?.error?.message || 'Managed team discovery is unavailable.');
     }
     return {

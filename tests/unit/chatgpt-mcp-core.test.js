@@ -151,6 +151,54 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
             idToken: 'user-id-token',
             fetchImpl: vi.fn().mockResolvedValue({ status: 404, ok: false, json: async () => ({}) })
         })).rejects.toMatchObject({ code: 'not_found' });
+
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status: 404,
+                ok: false,
+                json: async () => { throw new SyntaxError('non-callable response'); }
+            })
+        })).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it.each([
+        ['callable domain NOT_FOUND', 404, { error: { status: 'NOT_FOUND', message: 'Domain object missing.' } }],
+        ['404 with an error marker', 404, { error: 'upstream route rejected the request' }],
+        ['unauthorized', 401, { error: { status: 'UNAUTHENTICATED' } }],
+        ['forbidden', 403, { error: { status: 'PERMISSION_DENIED' } }],
+        ['rate limited', 429, { error: { status: 'RESOURCE_EXHAUSTED' } }],
+        ['server failure', 500, { error: { status: 'INTERNAL' } }],
+        ['non-404 domain NOT_FOUND', 400, { error: { status: 'NOT_FOUND' } }]
+    ])('fails closed for %s managed-team responses', async (_label, status, payload) => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status,
+                ok: false,
+                json: async () => payload
+            })
+        })).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('fails closed for network failures and malformed successful responses', async () => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockRejectedValue(new Error('network down'))
+        })).rejects.toMatchObject({ code: 'unavailable' });
+
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status: 200,
+                ok: true,
+                json: async () => { throw new SyntaxError('malformed success'); }
+            })
+        })).rejects.toMatchObject({ code: 'unavailable' });
     });
 
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
@@ -431,6 +479,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             location: 'Field 7',
             status: 'scheduled',
             calendarUrl: 'https://calendar.example.test/private-token',
+            calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
             privateNotes: 'do not expose'
         }]);
 
@@ -459,6 +508,8 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events.find((event) => event.gameId === 'teamsnap-next-game')?.deepLink)
             .toContain('/app/#/schedule/team-a/teamsnap-next-game');
         expect(JSON.stringify(result)).not.toContain('private-token');
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_CALENDAR_UID_HASH');
+        expect(JSON.stringify(result)).not.toContain('calendarUidHash');
         expect(JSON.stringify(result)).not.toContain('do not expose');
     });
 

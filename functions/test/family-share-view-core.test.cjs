@@ -46,6 +46,34 @@ test('correlates projected events with legacy UID and current opaque occurrence 
   assert.equal(isFamilyShareCalendarEventTracked(event, ['different-event']), false);
 });
 
+test('keeps UID-backed occurrence IDs stable across summary edits and discriminates UID-missing events', () => {
+  const buildEvent = ({ uid = 'stable-provider-uid', summary }) => buildExternalCalendarEvents([
+    'BEGIN:VCALENDAR',
+    'BEGIN:VEVENT',
+    ...(uid ? [`UID:${uid}`] : []),
+    'DTSTART:20260801T180000Z',
+    'DTEND:20260801T200000Z',
+    `SUMMARY:${summary}`,
+    'LOCATION:Public Field',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n'), { sourceId: 'stable-source-id', teamName: 'Bears' })[0];
+
+  const original = buildEvent({ summary: 'Bears vs. Hawks' });
+  const edited = buildEvent({ summary: 'Bears vs. Falcons' });
+  assert.equal(edited.id, original.id);
+  assert.equal(edited.eventKey, original.eventKey);
+  assert.notEqual(edited.opponent, original.opponent);
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [
+    `${original.id}__2026-08-01T18:00:00.000Z`
+  ]), true);
+
+  const uidMissingOriginal = buildEvent({ uid: '', summary: 'Bears vs. Hawks' });
+  const uidMissingOther = buildEvent({ uid: '', summary: 'Bears vs. Falcons' });
+  assert.notEqual(uidMissingOther.id, uidMissingOriginal.id);
+  assert.notEqual(uidMissingOther.eventKey, uidMissingOriginal.eventKey);
+});
+
 test('scopes team calendar timestamp de-duplication without weakening token-level de-duplication', () => {
   const teams = [
     { teamId: 'team-a', games: [{ date: '2026-07-20T18:00:00.000Z' }] },
