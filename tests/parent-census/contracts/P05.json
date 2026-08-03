@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P05",
+  "title": "Password reset request (delivery not verified)",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "goto",
+      "actor": "lifecycle",
+      "route": "/auth"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/auth"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Forgot password?",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Forgot password?",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Password reset email",
+        "exact": true
+      }
+    },
+    {
+      "action": "fillActorEmail",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Password reset email",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send reset email",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "text",
+        "name": "If an account exists for that email, a reset email has been queued.",
+        "exact": true
+      },
+      "value": "If an account exists for that email, a reset email has been queued."
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/auth"
+    }
+  ],
+  "cleanupSteps": []
+}
