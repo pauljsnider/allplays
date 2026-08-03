@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P16",
+  "title": "Schedule list filters calendar and event deep link",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "desktop",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule?teamId={TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule?teamId={TEAM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Games, practices, RSVP",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Manage schedule tools",
+        "exact": true
+      }
+    },
+    {
+      "action": "select",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Team",
+        "exact": true
+      },
+      "option": "All Teams"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Games, practices, RSVP",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "No events in this filter",
+        "exact": true
+      }
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=game"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=game"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Edit game schedule",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Game hub",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
