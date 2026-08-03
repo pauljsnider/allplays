@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import publicTeamApiCore from '../../functions/public-team-api-core.cjs';
 import {
     DomainError,
     loadManagedTeamsFromCallable,
@@ -21,6 +22,8 @@ import {
     buildStructuredQuery,
     createUserDb
 } from '../../services/chatgpt-mcp/src/firestoreRest.js';
+
+const { parsePublicGamesQuery } = publicTeamApiCore;
 
 // Minimal fake of the db interface core.js uses (same surface as the
 // firestoreRest adapter): doc(path).get(), collection(path).where().select()...get().
@@ -918,13 +921,26 @@ describe('chatgpt-mcp public calendar projection transport', () => {
             method: 'POST',
             headers: expect.objectContaining({ Authorization: 'Bearer caller-id-token' })
         }));
-        expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+        const firstRequest = JSON.parse(fetchImpl.mock.calls[0][1].body);
+        expect(firstRequest).toEqual({
             data: {
                 teamId: 'team-a',
-                from: '2026-07-24T00:00:00.000Z',
-                to: '2026-07-31T23:59:59.999Z',
+                from: '2026-07-24',
+                to: '2026-07-31',
                 limit: 50
             }
+        });
+        const parsedRange = parsePublicGamesQuery({
+            from: firstRequest.data.from,
+            to: firstRequest.data.to,
+            limit: firstRequest.data.limit
+        }, new Date('2026-07-24T12:00:00.000Z'));
+        expect(parsedRange).not.toHaveProperty('error');
+        expect(parsedRange).toMatchObject({
+            from: '2026-07-24',
+            to: '2026-07-31',
+            fromDate: new Date('2026-07-24T00:00:00.000Z'),
+            toDate: new Date('2026-07-31T23:59:59.999Z')
         });
         expect(JSON.parse(fetchImpl.mock.calls[1][1].body).data.cursor).toBe('calendar-page-2');
     });

@@ -90,8 +90,8 @@ export async function loadPublicTeamCalendarProjection({
                 body: JSON.stringify({
                     data: {
                         teamId: normalizedTeamId,
-                        from: start.toISOString(),
-                        to: end.toISOString(),
+                        from: start.toISOString().slice(0, 10),
+                        to: end.toISOString().slice(0, 10),
                         limit: MAX_EVENTS_PER_TEAM,
                         ...(cursor ? { cursor } : {})
                     }
