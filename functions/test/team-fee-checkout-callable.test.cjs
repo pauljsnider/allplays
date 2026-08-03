@@ -131,9 +131,11 @@ function makeFunctionsStub() {
         onRun: (handler) => handler,
         document() { return this; },
         schedule() { return this; },
-        timeZone() { return this; }
+        timeZone() { return this; },
+        user() { return this; }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
 
