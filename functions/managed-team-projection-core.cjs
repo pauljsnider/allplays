@@ -37,7 +37,9 @@ function serializeStaffTeamProfile(teamId, team = {}) {
     id,
     name: cleanText(team.name || team.teamName, 160) || 'Team',
     sport: cleanText(team.sport, 80) || null,
-    photoUrl: cleanHttpUrl(team.photoUrl || team.logoUrl || team.imageUrl),
+    photoUrl: cleanHttpUrl(
+      team.photoUrl || team.teamPhotoUrl || team.logoUrl || team.teamLogoUrl || team.imageUrl
+    ),
     description: cleanText(team.description, 1000) || null,
     active: team.active !== false,
     archived: team.archived === true,
@@ -70,6 +72,7 @@ const MANAGED_TEAM_DOCUMENT_FIELDS = Object.freeze([
   'photoPath',
   'teamPhotoUrl',
   'logoUrl',
+  'teamLogoUrl',
   'imageUrl',
   'zip',
   'city',

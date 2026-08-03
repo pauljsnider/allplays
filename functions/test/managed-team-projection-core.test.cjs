@@ -66,6 +66,7 @@ test('authorized detail preserves required team UI fields without exposing serve
     zip: '66210',
     leagueUrl: 'https://league.example.test/bears',
     bracketUrl: 'https://league.example.test/bears/bracket',
+    teamLogoUrl: 'https://images.example.test/legacy-team-logo.png',
     twitchChannel: 'bears-live',
     youtubeVideoId: 'dQw4w9WgXcQ',
     scheduleNotifications: { enabled: true },
@@ -92,6 +93,7 @@ test('authorized detail preserves required team UI fields without exposing serve
   assert.equal('ownerId' in staffSummary, false);
   assert.equal('adminEmails' in staffSummary, false);
   assert.equal('privateBillingCustomerId' in staffSummary, false);
+  assert.equal(staffSummary.photoUrl, 'https://images.example.test/legacy-team-logo.png');
 
   const managerDocument = serializeManagedTeamDocument('team-1', team);
   assert.deepEqual(managerDocument, {
@@ -100,6 +102,7 @@ test('authorized detail preserves required team UI fields without exposing serve
     zip: '66210',
     leagueUrl: 'https://league.example.test/bears',
     bracketUrl: 'https://league.example.test/bears/bracket',
+    teamLogoUrl: 'https://images.example.test/legacy-team-logo.png',
     twitchChannel: 'bears-live',
     youtubeVideoId: 'dQw4w9WgXcQ',
     scheduleNotifications: { enabled: true },
