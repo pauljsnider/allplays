@@ -2,7 +2,11 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { serializeManagedTeamProfile } = require('../managed-team-projection-core.cjs');
+const {
+  serializeManagedTeamDocument,
+  serializeManagedTeamProfile,
+  serializeStaffTeamProfile
+} = require('../managed-team-projection-core.cjs');
 const { hasTeamAdminAccess } = require('../team-admin-access-core.cjs');
 
 test('managed team projection exposes only the fields required to establish team access', () => {
@@ -45,4 +49,24 @@ test('team access recognizes canonical, admin, and legacy email ownership withou
   assert.equal(hasTeamAdminAccess({ team, uid: 'legacy-1', email: 'LEGACY@example.com' }), true);
   assert.equal(hasTeamAdminAccess({ team, uid: 'admin-1', email: 'ADMIN@example.com' }), true);
   assert.equal(hasTeamAdminAccess({ team, uid: 'stranger-1', email: 'stranger@example.com' }), false);
+});
+
+test('staff summaries omit management fields while authorized detail preserves the canonical record', () => {
+  const team = {
+    name: 'Bears',
+    ownerId: 'owner-1',
+    adminEmails: ['admin@example.com'],
+    zip: '66210',
+    leagueUrl: 'https://league.example.test/bears',
+    scheduleNotifications: { enabled: true },
+    privateBillingCustomerId: 'manager-readable'
+  };
+
+  const staffSummary = serializeStaffTeamProfile('team-1', team);
+  assert.equal('ownerId' in staffSummary, false);
+  assert.equal('adminEmails' in staffSummary, false);
+  assert.equal('privateBillingCustomerId' in staffSummary, false);
+
+  const managerDocument = serializeManagedTeamDocument('team-1', team);
+  assert.deepEqual(managerDocument, { ...team, id: 'team-1' });
 });

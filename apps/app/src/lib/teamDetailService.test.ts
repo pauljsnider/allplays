@@ -914,7 +914,12 @@ describe('team detail bootstrap loading', () => {
       sport: 'Basketball',
       ownerId: 'owner-1',
       adminEmails: [],
-      active: true
+      active: true,
+      zip: '66210',
+      leagueUrl: 'https://league.example.test/bears',
+      bracketUrl: 'https://bracket.example.test/bears',
+      livestreamUrl: 'https://stream.example.test/bears',
+      scheduleNotifications: { enabled: true }
     });
 
     try {
@@ -922,6 +927,11 @@ describe('team detail bootstrap loading', () => {
 
       expect(model.canManageTeam).toBe(true);
       expect(model.team.ownerId).toBe('owner-1');
+      expect(model.team.zip).toBe('66210');
+      expect(model.team.leagueUrl).toBe('https://league.example.test/bears');
+      expect(model.team.bracketUrl).toBe('https://bracket.example.test/bears');
+      expect(model.team.streamUrl).toBe('https://stream.example.test/bears');
+      expect(model.team.scheduleNotifications).toMatchObject({ enabled: true });
       expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
         includeInactive: true
       }));

@@ -325,7 +325,11 @@ const {
   createFriendInviteRedemptionTransaction
 } = require('./friend-invite-redemption-core.cjs');
 const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
-const { serializeManagedTeamProfile } = require('./managed-team-projection-core.cjs');
+const {
+  serializeManagedTeamDocument,
+  serializeManagedTeamProfile,
+  serializeStaffTeamProfile
+} = require('./managed-team-projection-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildChatConversationAccountScrubPlan,
@@ -17031,6 +17035,22 @@ async function listOpportunityManagedTeamDocuments(caller) {
   return teams;
 }
 
+async function listStaffTeamDocuments(caller) {
+  const teams = await listOpportunityManagedTeamDocuments(caller);
+  const coachTeamIds = Array.from(new Set(
+    (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
+      .map((teamId) => String(teamId || '').trim())
+      .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
+  ));
+  const coachTeamSnaps = await Promise.all(
+    coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+  );
+  coachTeamSnaps.forEach((teamSnap) => {
+    if (teamSnap.exists) teams.set(teamSnap.id, teamSnap);
+  });
+  return teams;
+}
+
 exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');
   const filters = normalizeOpportunityFilters(data?.filters || {});
@@ -17232,9 +17252,20 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
 
 exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) => {
   const caller = await getOpportunityCaller(context);
-  const managedTeams = await listOpportunityManagedTeamDocuments(caller);
-  const items = Array.from(managedTeams.values())
-    .map((teamSnap) => serializeManagedTeamProfile(teamSnap.id, teamSnap.data() || {}))
+  const staffTeams = await listStaffTeamDocuments(caller);
+  const items = Array.from(staffTeams.values())
+    .map((teamSnap) => {
+      const team = teamSnap.data() || {};
+      const canManage = hasTeamAdminAccess({
+        team,
+        user: caller.user,
+        uid: caller.uid,
+        email: caller.email
+      });
+      return canManage
+        ? serializeManagedTeamProfile(teamSnap.id, team)
+        : serializeStaffTeamProfile(teamSnap.id, team);
+    })
     .filter(Boolean)
     .sort((left, right) => left.name.localeCompare(right.name));
   return { items };
@@ -17257,7 +17288,7 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   if (context.auth?.uid) {
     const caller = await getOpportunityCaller(context);
     if (hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
-      item = serializeManagedTeamProfile(teamSnap.id, team);
+      item = serializeManagedTeamDocument(teamSnap.id, team);
     }
   }
   if (!item && isOpportunityTeamDiscoverable(team)) {

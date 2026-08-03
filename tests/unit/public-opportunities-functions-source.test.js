@@ -89,7 +89,7 @@ describe('public opportunity callable wiring', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
     expect(source).toContain('item = serializePublicTeamProfile(teamSnap.id, team);');
-    expect(source).toContain('item = serializeManagedTeamProfile(teamSnap.id, team);');
+    expect(source).toContain('item = serializeManagedTeamDocument(teamSnap.id, team);');
     expect(source).toContain('return { item };');
   });
 

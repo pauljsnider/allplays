@@ -336,7 +336,7 @@ test('opportunity writes require authentication and verified inquiry replies', a
 
 test('managed-team callables return access fields only to current managers', async () => {
     const { callables } = loadCallables({
-        'users/owner-1': { email: 'owner@example.com' },
+        'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team'] },
         'users/stranger-1': { email: 'stranger@example.com' },
         'teams/private-team': {
             name: 'Private Bears',
@@ -352,11 +352,30 @@ test('managed-team callables return access fields only to current managers', asy
             ownerId: 'someone-else',
             active: true,
             isPublic: true
+        },
+        'teams/coach-team': {
+            name: 'Coach Bears',
+            sport: 'Basketball',
+            ownerId: 'someone-else',
+            adminEmails: ['someone@example.com'],
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'must-not-leak-to-coach'
         }
     });
 
     const managed = await callables.listManagedTeams({}, authContext('owner-1', { email: 'owner@example.com' }));
     assert.deepEqual(managed.items, [{
+        id: 'coach-team',
+        name: 'Coach Bears',
+        sport: 'Basketball',
+        photoUrl: null,
+        description: null,
+        active: true,
+        archived: false,
+        status: null,
+        isPublic: false
+    }, {
         id: 'private-team',
         name: 'Private Bears',
         sport: 'Basketball',
@@ -370,6 +389,8 @@ test('managed-team callables return access fields only to current managers', asy
         ownerEmail: null,
         adminEmails: []
     }]);
+    assert.equal('ownerId' in managed.items[0], false);
+    assert.equal('adminEmails' in managed.items[0], false);
     assert.equal('privateBillingCustomerId' in managed.items[0], false);
 
     const privateProfile = await callables.getPublicTeamProfile(
@@ -377,7 +398,7 @@ test('managed-team callables return access fields only to current managers', asy
         authContext('owner-1', { email: 'owner@example.com' })
     );
     assert.equal(privateProfile.item.ownerId, 'owner-1');
-    assert.equal('privateBillingCustomerId' in privateProfile.item, false);
+    assert.equal(privateProfile.item.privateBillingCustomerId, 'must-not-leak');
 
     const publicProfile = await callables.getPublicTeamProfile({ teamId: 'public-team' }, {});
     assert.equal(publicProfile.item.name, 'Public Bears');

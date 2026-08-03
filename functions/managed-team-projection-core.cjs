@@ -30,7 +30,7 @@ function cleanHttpUrl(value) {
   }
 }
 
-function serializeManagedTeamProfile(teamId, team = {}) {
+function serializeStaffTeamProfile(teamId, team = {}) {
   const id = cleanText(teamId, 128);
   if (!id) return null;
   return {
@@ -42,15 +42,31 @@ function serializeManagedTeamProfile(teamId, team = {}) {
     active: team.active !== false,
     archived: team.archived === true,
     status: cleanText(team.status, 32) || null,
-    isPublic: team.isPublic === true,
+    isPublic: team.isPublic === true
+  };
+}
+
+function serializeManagedTeamProfile(teamId, team = {}) {
+  const summary = serializeStaffTeamProfile(teamId, team);
+  if (!summary) return null;
+  return {
+    ...summary,
     ownerId: cleanText(team.ownerId, 160) || null,
     ownerEmail: normalizeEmail(team.ownerEmail || team.ownerEmailLower) || null,
     adminEmails: normalizeEmailList(team.adminEmails)
   };
 }
 
+function serializeManagedTeamDocument(teamId, team = {}) {
+  const id = cleanText(teamId, 128);
+  if (!id || !team || typeof team !== 'object' || Array.isArray(team)) return null;
+  return { ...team, id };
+}
+
 module.exports = {
   normalizeEmail,
   normalizeEmailList,
+  serializeManagedTeamDocument,
+  serializeStaffTeamProfile,
   serializeManagedTeamProfile
 };
