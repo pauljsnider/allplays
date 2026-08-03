@@ -90,6 +90,8 @@ describe('notification target index core helpers', () => {
         expect(syncSource).toContain('teamAccessMap.get(teamId) !== true');
         expect(syncSource).toContain('teamAccessMap.get(prefSnap.id) !== true');
         expect(syncSource).toContain('hasParentAccess || hasTeamAdminAccess');
+        expect(syncSource).toContain('const authUser = await admin.auth().getUser(uid);');
+        expect(syncSource).not.toContain('String(user.email || user.profileEmail');
         expect(syncSource).toContain('buildTeamNotificationIndexRefs');
         expect(syncSource).toContain('indexRefs.forEach((ref) => batch.set(ref, payload, { merge: true }))');
         expect(syncSource).toContain('indexRefs.forEach((ref) => batch.delete(ref));');

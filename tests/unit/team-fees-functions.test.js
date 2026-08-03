@@ -540,6 +540,8 @@ describe('team fee checkout function helpers', () => {
             source.indexOf('exports.refundStripeTeamFeePayment'),
             source.indexOf('exports.createStripeRegistrationCheckout')
         );
+        expect(refundFunction).toContain("const email = String(context.auth.token?.email || '').trim().toLowerCase();");
+        expect(refundFunction).not.toContain('context.auth.token?.email || user.email');
         expect(refundFunction).not.toContain('assertPaymentsEnabled();');
     });
 

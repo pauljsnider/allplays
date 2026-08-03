@@ -3,6 +3,9 @@
 function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   if (user?.isAdmin === true) return true;
   const normalizedEmail = String(email || user?.email || user?.profileEmail || '').trim().toLowerCase();
+  // Legacy owner aliases are an authorization boundary equivalent to
+  // request.auth.token.email. Never recover them from a mutable/stale profile.
+  const normalizedOwnerEmail = String(email || '').trim().toLowerCase();
   const ownerEmails = [team?.ownerEmailLower, team?.ownerEmail]
     .map((entry) => String(entry || '').trim().toLowerCase())
     .filter(Boolean);
@@ -10,7 +13,7 @@ function hasTeamAdminAccess({ team, user = {}, uid, email }) {
     ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
     : [];
   return Boolean(uid && team?.ownerId === uid) ||
-    Boolean(normalizedEmail && ownerEmails.includes(normalizedEmail)) ||
+    Boolean(normalizedOwnerEmail && ownerEmails.includes(normalizedOwnerEmail)) ||
     Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 

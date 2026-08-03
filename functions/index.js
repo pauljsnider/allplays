@@ -5539,8 +5539,7 @@ exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => 
   }
 
   const team = teamSnap.data() || {};
-  const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can create RSVP tokens.');
   }
@@ -5723,7 +5722,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 
   const team = { id: teamId, ...(teamSnap.data() || {}) };
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamPassPurchaser({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have team access for this purchase.');
   }
@@ -5854,7 +5853,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have access to pay this team fee.');
   }
@@ -6117,7 +6116,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const team = { id: input.teamId, ...(teamSnap.data() || {}) };
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team admins can issue team fee refunds.');
   }
@@ -9009,7 +9008,13 @@ async function getNotificationTargetTeamAccessMap(uid, teamIds) {
   }
 
   const user = userSnap.data() || {};
-  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+  let email = '';
+  try {
+    const authUser = await admin.auth().getUser(uid);
+    email = String(authUser?.email || '').trim().toLowerCase();
+  } catch (error) {
+    console.warn('Unable to resolve notification target auth email', uid, error);
+  }
   const parentTeamIds = new Set(Array.isArray(user.parentTeamIds) ? user.parentTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean) : []);
   const teamSnaps = await Promise.all(uniqueTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get()));
 
@@ -16751,14 +16756,12 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const recipientId = directUserIds.find((userId) => userId !== caller.uid);
   const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
   const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
-  let recipientEmail = String(recipient.email || recipient.profileEmail || '').trim().toLowerCase();
-  if (!recipientEmail) {
-    try {
-      const recipientAuthRecord = await admin.auth().getUser(recipientId);
-      recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
-    } catch (error) {
-      console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
-    }
+  let recipientEmail = '';
+  try {
+    const recipientAuthRecord = await admin.auth().getUser(recipientId);
+    recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
+  } catch (error) {
+    console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
   }
   const teamWithId = { ...team, id: teamId };
   const callerHasAccess = hasCurrentTeamAccess({
