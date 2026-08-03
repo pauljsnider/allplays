@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P03",
+  "title": "Email verification resend request (delivery not verified)",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "lifecycle"
+    },
+    {
+      "action": "goto",
+      "actor": "lifecycle",
+      "route": "/verify-pending"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/verify-pending"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Verify your email",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "text",
+        "name": "{LIFECYCLE_EMAIL}",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_EMAIL}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "I've verified, continue",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "I've verified, continue",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "text",
+        "name": "We could not confirm verification yet. If you just clicked the email link, wait a few seconds and try again.",
+        "exact": true
+      },
+      "value": "could not confirm verification"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Resend verification email",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Resend verification email",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "text",
+        "name": "Verification email queued. Check your inbox and spam folder shortly.",
+        "exact": true
+      },
+      "value": "Verification email queued"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/verify-pending"
+    }
+  ],
+  "cleanupSteps": []
+}
