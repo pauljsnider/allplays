@@ -362,6 +362,7 @@ const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
   isCertificateSignatureTargetReferenced,
@@ -14165,13 +14166,11 @@ async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
     String(context.auth?.uid || '').trim(),
     String(team.ownerId || '').trim()
   ].filter(Boolean));
-  const managerEmails = [...new Set([
-    team.ownerEmail,
-    team.ownerEmailLower,
-    ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
-  ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
-  if (managerEmails.length) {
-    const result = await admin.auth().getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+  const managerEmails = getCertificateLegacyManagerEmails(team);
+  for (let offset = 0; offset < managerEmails.length; offset += 100) {
+    const result = await admin.auth().getUsers(
+      managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
+    );
     result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
   }
   return [...uploaderIds];
@@ -14242,7 +14241,20 @@ async function lookupCertificateLegacySignatureBinding(reference) {
   const bindingId = getCertificateLegacySignatureInventoryId(reference);
   if (!bindingId) return null;
   const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
-  return bindingSnap.exists ? bindingSnap.data() || {} : null;
+  if (!bindingSnap.exists) return null;
+  const binding = bindingSnap.data() || {};
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(binding.teamId);
+  } catch {
+    return { ...binding, conflicted: true };
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return { ...binding, conflicted: true };
+  const authorizedUploaderIds = await getCertificateLegacyUploaderIds(teamSnap.data() || {});
+  return authorizedUploaderIds.includes(String(binding.legacyOwnerId || '').trim())
+    ? binding
+    : { ...binding, conflicted: true };
 }
 
 exports.indexCertificateLegacySignaturesOnDefaultsWrite = functions

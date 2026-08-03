@@ -86,11 +86,11 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toContain(
             'test -f "$bundle/_migration/firebase-admin-credential.mjs"'
         );
-        expect(inventoryProducer).toBeLessThan(inventoryBackfill);
-        expect(inventoryBackfill).toBeLessThan(compatibilityCleanup);
+        expect(inventoryProducer).toBeLessThan(compatibilityCleanup);
+        expect(compatibilityCleanup).toBeLessThan(inventoryBackfill);
         expect(compatibilityCleanup).toBeGreaterThan(-1);
-        expect(compatibilityCleanup).toBeLessThan(firestoreChangeBranch);
-        expect(compatibilityFunction).toBeGreaterThan(compatibilityCleanup);
+        expect(inventoryBackfill).toBeLessThan(firestoreChangeBranch);
+        expect(compatibilityFunction).toBeGreaterThan(inventoryBackfill);
         expect(compatibilityFunction).toBeGreaterThan(-1);
         expect(compatibilityRules).toBeGreaterThan(compatibilityFunction);
         expect(application).toBeGreaterThan(compatibilityRules);

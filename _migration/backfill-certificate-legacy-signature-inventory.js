@@ -14,6 +14,7 @@ import {
 const require = createRequire(import.meta.url);
 const {
     discoverLegacyImageSignatureReferences,
+    getCertificateLegacyManagerEmails,
     getCertificateLegacySignatureInventoryId,
     isMatchingCertificateLegacySignatureBinding
 } = require('../functions/certificate-signature-cleanup-core.cjs');
@@ -21,7 +22,7 @@ const {
 const APPLY = process.argv.includes('--apply');
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'game-flow-c6311';
 const LEGACY_IMAGE_BUCKET = process.env.IMAGE_STORAGE_BUCKET || 'game-flow-img.firebasestorage.app';
-const MIGRATION_MARKER_PATH = 'systemMigrations/certificateLegacySignatureInventoryV1';
+const MIGRATION_MARKER_PATH = 'systemMigrations/certificateLegacySignatureInventoryV2';
 
 function getAdminAppOptions() {
     return getMigrationAdminAppOptions({
@@ -32,13 +33,11 @@ function getAdminAppOptions() {
 
 async function getAuthorizedUploaderIds(auth, team = {}) {
     const uploaderIds = new Set([String(team.ownerId || '').trim()].filter(Boolean));
-    const managerEmails = [...new Set([
-        team.ownerEmail,
-        team.ownerEmailLower,
-        ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
-    ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
-    if (managerEmails.length) {
-        const result = await auth.getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+    const managerEmails = getCertificateLegacyManagerEmails(team);
+    for (let offset = 0; offset < managerEmails.length; offset += 100) {
+        const result = await auth.getUsers(
+            managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
+        );
         result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
     }
     return [...uploaderIds];
@@ -77,6 +76,42 @@ async function writeInventoryReference(db, reference, apply) {
     });
 }
 
+async function invalidateUnauthorizedInventoryBindings({ db, auth, apply }) {
+    const inventorySnap = await db.collection('certificateLegacySignatureInventory').get();
+    const authorizedUploaderIdsByTeam = new Map();
+    let invalidatedBindings = 0;
+
+    for (const bindingSnap of inventorySnap.docs) {
+        const binding = bindingSnap.data() || {};
+        if (binding.conflicted === true) continue;
+        const teamId = String(binding.teamId || '').trim();
+        const legacyOwnerId = String(binding.legacyOwnerId || '').trim();
+        let authorizedUploaderIds = new Set();
+        if (teamId) {
+            if (!authorizedUploaderIdsByTeam.has(teamId)) {
+                authorizedUploaderIdsByTeam.set(teamId, (async () => {
+                    const teamSnap = await db.doc(`teams/${teamId}`).get();
+                    if (!teamSnap.exists) return new Set();
+                    return new Set(await getAuthorizedUploaderIds(auth, teamSnap.data() || {}));
+                })());
+            }
+            authorizedUploaderIds = await authorizedUploaderIdsByTeam.get(teamId);
+        }
+        if (legacyOwnerId && authorizedUploaderIds.has(legacyOwnerId)) continue;
+
+        invalidatedBindings += 1;
+        if (apply) {
+            await bindingSnap.ref.set({
+                conflicted: true,
+                invalidatedAt: FieldValue.serverTimestamp(),
+                invalidationReason: 'owner-authorization-changed',
+                updatedAt: FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+    }
+    return invalidatedBindings;
+}
+
 export async function backfillCertificateLegacySignatureInventory({
     db,
     auth,
@@ -90,6 +125,7 @@ export async function backfillCertificateLegacySignatureInventory({
         return { defaultsDocuments: 0, references: 0, skippedCompleted: true };
     }
 
+    const invalidatedBindings = await invalidateUnauthorizedInventoryBindings({ db, auth, apply });
     const settingsSnap = await db.collectionGroup('settings').get();
     let defaultsDocuments = 0;
     let references = 0;
@@ -133,14 +169,16 @@ export async function backfillCertificateLegacySignatureInventory({
             defaultsDocuments,
             references,
             conflicts,
+            invalidatedBindings,
             completedAt: FieldValue.serverTimestamp()
         });
     }
     console.log(
         `[backfill-certificate-legacy-signature-inventory] ${apply ? 'Processed' : 'Would process'} ` +
-        `${defaultsDocuments} defaults document(s), ${references} reference(s), ${conflicts} conflict(s).`
+        `${defaultsDocuments} defaults document(s), ${references} reference(s), ${conflicts} conflict(s), ` +
+        `${invalidatedBindings} invalidated binding(s).`
     );
-    return { defaultsDocuments, references, conflicts, skippedCompleted: false };
+    return { defaultsDocuments, references, conflicts, invalidatedBindings, skippedCompleted: false };
 }
 
 async function main() {
