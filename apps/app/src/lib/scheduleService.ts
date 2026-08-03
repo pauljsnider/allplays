@@ -3014,18 +3014,42 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       staffTeams: []
     };
   }
-  let isPartial = false;
-  const [profile, staffTeamResult] = await Promise.all([
+  let profileLoadPartial = false;
+  const [profile, initialStaffTeamResult] = await Promise.all([
     loadProfileDocument(user.uid).catch(() => {
-      isPartial = true;
+      profileLoadPartial = true;
       return {};
     }),
     loadStaffTeams(user).catch(() => {
-      isPartial = true;
       return { teams: [], isPartial: true };
     })
   ]);
-  if (staffTeamResult.isPartial) isPartial = true;
+  let staffTeamResult = initialStaffTeamResult;
+  const declaredCoachTeamIds = [
+    ...(Array.isArray(user.coachOf) ? user.coachOf : []),
+    ...(Array.isArray((profile as any).coachOf) ? (profile as any).coachOf : [])
+  ].map(compactString).filter(Boolean);
+  const uniqueDeclaredCoachTeamIds = [...new Set(declaredCoachTeamIds)];
+  if (staffTeamResult.isPartial) {
+    try {
+      const retryResult = await loadStaffTeams({
+        ...user,
+        coachOf: uniqueDeclaredCoachTeamIds
+      });
+      const teamsById = new Map<string, any>();
+      [...staffTeamResult.teams, ...retryResult.teams].forEach((team: any) => {
+        const teamId = compactString(team?.id);
+        if (teamId) teamsById.set(teamId, team);
+      });
+      staffTeamResult = {
+        teams: [...teamsById.values()],
+        isPartial: retryResult.isPartial
+      };
+    } catch {
+      staffTeamResult = { ...staffTeamResult, isPartial: true };
+    }
+  }
+  let isPartial = profileLoadPartial || staffTeamResult.isPartial;
   const childResult = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   if (childResult.isPartial) isPartial = true;
   return {
