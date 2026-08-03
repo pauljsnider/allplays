@@ -263,6 +263,20 @@ describe('legacyScheduleDb staff team reads', () => {
         await expect(getStaffTeams({ userId: 'user-1' })).rejects.toThrow('Managed teams response is invalid.');
     });
 
+    it('preserves successful callable results while reporting partial managed-team discovery', async () => {
+        vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({
+            data: {
+                items: [{ id: 'team-owner', name: 'Owner', ownerId: 'user-1', active: true }],
+                isPartial: true
+            }
+        }) as never);
+
+        await expect(getStaffTeams({ userId: 'user-1' })).resolves.toEqual({
+            teams: [{ id: 'team-owner', name: 'Owner', ownerId: 'user-1', active: true }],
+            isPartial: true
+        });
+    });
+
     it('propagates callable failures so native callers can use the REST fallback', async () => {
         vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(new Error('callable unavailable')) as never);
 

@@ -184,7 +184,7 @@ export async function getStaffTeams(_query: StaffTeamsQuery): Promise<StaffTeams
     if (!Array.isArray(items)) throw new Error('Managed teams response is invalid.');
     return {
         teams: items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))),
-        isPartial: false
+        isPartial: (response as any)?.data?.isPartial === true
     };
 }
 

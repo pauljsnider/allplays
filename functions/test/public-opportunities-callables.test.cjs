@@ -58,7 +58,7 @@ function comparable(value) {
     return value instanceof FakeTimestamp ? value.toMillis() : value;
 }
 
-function makeFirestore(seed = {}) {
+function makeFirestore(seed = {}, { queryFailures = [] } = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
     let nextAutoId = 1;
 
@@ -110,6 +110,11 @@ function makeFirestore(seed = {}) {
                 return doc(`${path}/${id || `auto-${nextAutoId++}`}`);
             },
             async get() {
+                const forcedFailure = queryFailures.find((failure) => (
+                    failure?.path === path
+                    && filters.some(({ field, operator }) => field === failure.field && operator === failure.operator)
+                ));
+                if (forcedFailure) throw new Error(forcedFailure.message || 'Forced query failure');
                 const depth = path.split('/').length + 1;
                 let snapshots = [...state.keys()]
                     .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
@@ -228,9 +233,9 @@ function makeFunctionsStub() {
     };
 }
 
-function loadCallables(seed = {}, { authUsers = {} } = {}) {
+function loadCallables(seed = {}, { authUsers = {}, queryFailures = [] } = {}) {
     delete require.cache[repoIndexPath];
-    const firestore = makeFirestore(seed);
+    const firestore = makeFirestore(seed, { queryFailures });
     const fieldValue = {
         serverTimestamp: () => new FakeTimestamp(Date.now()),
         delete: () => ({ __op: 'delete' }),
@@ -504,6 +509,37 @@ test('team admin revocation preserves authenticated manager access before email 
     assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, []);
 });
 
+test('email-only team admins cannot revoke their own canonical access', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            ownerEmailLower: 'owner@example.com',
+            adminEmails: ['coach@example.com']
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach-1'
+        }
+    });
+
+    await assert.rejects(
+        callables.revokeTeamAdminAccess(
+            { teamId: 'team-1', email: 'coach@example.com' },
+            authContext('coach-1', { email: 'coach@example.com' })
+        ),
+        (error) => error.code === 'failed-precondition'
+            && error.message === 'Team admins cannot remove their own staff access.'
+    );
+
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, ['coach@example.com']);
+    assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, ['team-1']);
+    assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, undefined);
+});
+
 test('managed-team discovery rejects an accepted invite whose team grant was removed by an older client', async () => {
     const { callables } = loadCallables({
         'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
@@ -583,6 +619,33 @@ test('managed-team discovery preserves a current mixed-case legacy admin grant',
     assert.equal(managed.items.length, 1);
     assert.equal(managed.items[0].id, 'team-1');
     assert.deepEqual(managed.items[0].adminEmails, ['coach@example.com']);
+});
+
+test('managed-team discovery preserves successful queries and marks partial failures', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/owned-team': {
+            name: 'Owned Bears',
+            ownerId: 'owner-1',
+            active: true,
+            isPublic: false
+        }
+    }, {
+        queryFailures: [{
+            path: 'teams',
+            field: 'adminEmails',
+            operator: 'array-contains',
+            message: 'admin index temporarily unavailable'
+        }]
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.equal(managed.isPartial, true);
+    assert.deepEqual(managed.items.map((team) => team.id), ['owned-team']);
 });
 
 test('team opportunity publishing is server-authorized and returns a public-only projection', async () => {

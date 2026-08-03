@@ -17045,14 +17045,18 @@ async function listOpportunityManagedTeamDocuments(caller) {
       queries.push(firestore.collection('teams').where('ownerEmail', '==', ownerEmail).get());
     });
   }
-  const snapshots = await Promise.all(queries);
+  const settledSnapshots = await Promise.allSettled(queries);
   const teams = new Map();
-  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
-    const team = docSnap.data() || {};
-    if (hasOpportunityTeamAdminAccess(caller, team)) {
-      teams.set(docSnap.id, docSnap);
-    }
-  }));
+  settledSnapshots.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap) => {
+      const team = docSnap.data() || {};
+      if (hasOpportunityTeamAdminAccess(caller, team)) {
+        teams.set(docSnap.id, docSnap);
+      }
+    });
+  });
+  teams.isPartial = settledSnapshots.some((result) => result.status === 'rejected');
   return teams;
 }
 
@@ -17063,14 +17067,16 @@ async function listStaffTeamDocuments(caller) {
       .map((teamId) => String(teamId || '').trim())
       .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
   ));
-  const coachTeamSnaps = await Promise.all(
+  const settledCoachTeamSnaps = await Promise.allSettled(
     coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
   );
   // coachOf is only a candidate index. Older non-atomic invite flows could
   // leave it behind when both their team update and rollback failed, so it is
   // never durable authorization by itself. Loading these documents still
   // recovers current grants whose owner/admin email aliases use legacy casing.
-  coachTeamSnaps.forEach((teamSnap) => {
+  settledCoachTeamSnaps.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    const teamSnap = result.value;
     if (!teamSnap.exists || teams.has(teamSnap.id)) return;
     if (hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
       // The query path expects normalized email storage, but legacy records can
@@ -17079,6 +17085,8 @@ async function listStaffTeamDocuments(caller) {
       teams.set(teamSnap.id, teamSnap);
     }
   });
+  teams.isPartial = teams.isPartial === true
+    || settledCoachTeamSnaps.some((result) => result.status === 'rejected');
   return teams;
 }
 
@@ -17117,6 +17125,10 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
       .filter(Boolean);
     if (ownerEmails.includes(targetEmail)) {
       throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+    const callerOwnsTeam = String(team.ownerId || '').trim() === caller.uid;
+    if (caller.email === targetEmail && !callerOwnsTeam && !isOpportunityPlatformAdmin(currentCaller)) {
+      throwOpportunityError('failed-precondition', 'Team admins cannot remove their own staff access.');
     }
 
     const matchingInviteSnaps = inviteSnap.docs.filter((docSnap) => {
@@ -17382,7 +17394,7 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
     })
     .filter(Boolean)
     .sort((left, right) => left.name.localeCompare(right.name));
-  return { items };
+  return { items, isPartial: staffTeams.isPartial === true };
 });
 
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
