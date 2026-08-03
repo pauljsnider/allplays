@@ -360,20 +360,10 @@ function buildExternalCalendarEvents(icsText, { sourceId, sourceLabel = 'Shared 
     const summary = compactText(event.summary).replace(/\[CANCELED\]\s*/ig, '');
     const type = isPracticeSummary(summary) ? 'practice' : 'game';
     const date = toIso(event.dtstart);
-    const uid = compactText(event.uid, 256);
-    // Calendar summaries and opponents are mutable. Keep UID-backed occurrence
-    // IDs stable across those edits, while retaining a hashed discriminator for
-    // malformed feeds that omit UID entirely.
-    const eventDiscriminator = uid
-      ? `uid:${uid}`
-      : `uid-missing:${summary}:${toIso(event.dtend) || ''}:${compactText(event.location, 300)}`;
-    const eventKeySeed = `${sourceId || ''}:${eventDiscriminator}:${date || ''}`;
-    const publicIdSeed = uid
-      ? `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`
-      : eventKeySeed;
+    const idSeed = `${sourceId || ''}:${event.uid || ''}:${date || ''}:${summary}`;
     return {
-      eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', eventKeySeed),
-      id: hashFamilyShareOpaqueValue('calendar-event-public-id', publicIdSeed),
+      eventKey: hashFamilyShareOpaqueValue('calendar-event-instance', idSeed),
+      id: hashFamilyShareOpaqueValue('calendar-event-public-id', idSeed),
       calendarUidHash: hashFamilyShareCalendarEventUid(event.uid),
       teamId: compactText(teamId, 128),
       teamName: compactText(teamName, 160) || compactText(sourceLabel, 160),
@@ -480,6 +470,7 @@ function sanitizeFamilyShareGame(game = {}) {
 
 function sanitizeFamilyShareViewResponse({ token, children = [], teams = [], externalEvents = [], calendarWarnings = [] } = {}) {
   const externalEventFields = [
+    'eventKey',
     'id',
     'teamId',
     'teamName',

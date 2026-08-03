@@ -47,7 +47,7 @@ test('correlates projected events with legacy UID and current opaque occurrence 
   assert.equal(isFamilyShareCalendarEventTracked(event, ['different-event']), false);
 });
 
-test('preserves UID-backed public IDs and keeps internal occurrence keys stable across summary edits', () => {
+test('preserves UID-backed public IDs and event keys across rollout', () => {
   const buildEvent = ({ uid = 'stable-provider-uid', summary }) => buildExternalCalendarEvents([
     'BEGIN:VCALENDAR',
     'BEGIN:VEVENT',
@@ -67,14 +67,19 @@ test('preserves UID-backed public IDs and keeps internal occurrence keys stable 
     .update(`family-share:calendar-event-public-id:v1:stable-source-id:stable-provider-uid:${originalStartsAt}:Bears vs. Hawks`)
     .digest('hex')
     .slice(0, 32);
+  const priorEventKey = crypto.createHash('sha256')
+    .update(`family-share:calendar-event-instance:v1:stable-source-id:stable-provider-uid:${originalStartsAt}:Bears vs. Hawks`)
+    .digest('hex')
+    .slice(0, 32);
   assert.equal(original.id, priorOpaqueId);
+  assert.equal(original.eventKey, priorEventKey);
   assert.equal(Object.hasOwn(original, 'legacyOpaqueId'), false);
   assert.equal(
     `/app/#/schedule/team-1/${original.id}`,
     `/app/#/schedule/team-1/${priorOpaqueId}`
   );
   assert.notEqual(edited.id, original.id);
-  assert.equal(edited.eventKey, original.eventKey);
+  assert.notEqual(edited.eventKey, original.eventKey);
   assert.notEqual(edited.opponent, original.opponent);
   assert.equal(isFamilyShareCalendarEventTracked(edited, [
     `${original.id}__${originalStartsAt}`
@@ -161,8 +166,7 @@ test('projects bounded recurring ICS events without returning source URLs or sen
   assert.equal(payload.includes('extraCalendarUrls'), false);
   assert.equal(payload.includes('calendarUrls'), false);
   assert.equal(payload.includes('calendarUidHash'), false);
-  assert.equal(payload.includes(events[0].eventKey), false);
-  assert.equal(Object.hasOwn(response.externalEvents[0], 'eventKey'), false);
+  assert.equal(response.externalEvents[0].eventKey, events[0].eventKey);
   assert.equal(response.externalEvents[0].locationDetail, 'Field 14');
   assert.equal(response.presentation.label, 'Grandma');
 });
