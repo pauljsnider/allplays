@@ -278,8 +278,9 @@ function getVisibleTeams() {
 
 function canCurrentUserDeactivateTeam(team) {
     if (!currentUser || !team) return false;
-    if (team.ownerId && currentUser.uid) {
-        return team.ownerId === currentUser.uid;
+    const ownerId = String(team.ownerId || '').trim();
+    if (ownerId) {
+        return Boolean(currentUser.uid && ownerId === currentUser.uid);
     }
     if (team.ownerEmail && currentUser.email) {
         return team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase();

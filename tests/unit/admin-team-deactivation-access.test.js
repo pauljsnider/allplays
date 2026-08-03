@@ -6,7 +6,8 @@ describe('admin team deactivation access', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
         expect(adminJs).toContain('function canCurrentUserDeactivateTeam(team) {');
-        expect(adminJs).toContain('team.ownerId === currentUser.uid');
+        expect(adminJs).toContain("const ownerId = String(team.ownerId || '').trim();");
+        expect(adminJs).toContain('ownerId === currentUser.uid');
         expect(adminJs).toContain("team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase()");
         expect(adminJs).toContain('>Owner only<');
         expect(adminJs).toContain('if (!canCurrentUserDeactivateTeam(team)) {');

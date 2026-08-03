@@ -540,6 +540,7 @@ module.exports = {
   extractFirebaseStoragePathFromUrl,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
+  getCertificateLegacyManagerEmails,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,

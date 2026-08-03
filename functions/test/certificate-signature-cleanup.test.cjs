@@ -10,6 +10,7 @@ const {
   doesLegacyImageMetadataMatchSourceHash,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
+  getCertificateLegacyManagerEmails,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,
   getLegacyImageSignatureOwnerCandidates,
