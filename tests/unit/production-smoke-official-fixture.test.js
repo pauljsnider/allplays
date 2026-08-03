@@ -11,6 +11,7 @@ import {
     FIREBASE_REST_REQUEST_TIMEOUT_MS,
     createFirebaseRestSession,
     deleteFirestoreDocument,
+    findFirestoreDocumentsByStringArrayContains,
     isEmptyFirestoreDocument,
     patchFirestoreDocumentFields,
     restoreFirestoreDocumentFields
@@ -314,7 +315,8 @@ describe('production officials smoke fixture maintenance', () => {
                 ok: true,
                 json: vi.fn().mockResolvedValue({
                     idToken: 'redacted-token',
-                    localId: 'smoke-user'
+                    localId: 'smoke-user',
+                    email: 'Canonical.Smoke@example.com'
                 })
             });
 
@@ -326,7 +328,8 @@ describe('production officials smoke fixture maintenance', () => {
             projectId: 'runtime-project',
             storageBucket: 'runtime-bucket',
             idToken: 'redacted-token',
-            localId: 'smoke-user'
+            localId: 'smoke-user',
+            email: 'Canonical.Smoke@example.com'
         });
 
         expect(fetchMock.mock.calls[0][0]).toBe('https://allplays.ai/__/firebase/init.json');
@@ -369,6 +372,44 @@ describe('production officials smoke fixture maintenance', () => {
 
         expect(fetchMock).toHaveBeenCalledTimes(2);
         expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    });
+
+    it('runs the same array-contains query used for staff team discovery', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([
+                {
+                    document: {
+                        name: 'projects/runtime-project/databases/(default)/documents/teams/smoke-team',
+                        fields: {
+                            adminEmails: {
+                                arrayValue: {
+                                    values: [{ stringValue: 'coach@example.com' }]
+                                }
+                            }
+                        }
+                    }
+                }
+            ])
+        });
+
+        await expect(findFirestoreDocumentsByStringArrayContains(
+            { projectId: 'runtime-project', idToken: 'redacted-token' },
+            'teams',
+            'adminEmails',
+            'coach@example.com'
+        )).resolves.toHaveLength(1);
+
+        expect(fetchMock.mock.calls[0][0]).toBe(
+            'https://firestore.googleapis.com/v1/projects/runtime-project/databases/(default)/documents:runQuery'
+        );
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).structuredQuery.where).toEqual({
+            fieldFilter: {
+                field: { fieldPath: 'adminEmails' },
+                op: 'ARRAY_CONTAINS',
+                value: { stringValue: 'coach@example.com' }
+            }
+        });
     });
 
     it('keeps production fixture credentials on an exact default-branch manual workflow', () => {
