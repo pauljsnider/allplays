@@ -451,6 +451,11 @@ test('team admin revocation atomically clears reciprocal coach access and accept
             profileEmail: 'coach@example.com',
             coachOf: ['team-1', 'other-team']
         },
+        'users/legacy-coach': {
+            email: 'coach@example.com',
+            profileEmail: 'coach@example.com',
+            coachOf: ['team-1']
+        },
         'teams/team-1': {
             name: 'Private Bears',
             ownerId: 'owner-1',
@@ -476,12 +481,39 @@ test('team admin revocation atomically clears reciprocal coach access and accept
     assert.deepEqual(result, { success: true, removedUserCount: 1 });
     assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
     assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, ['other-team']);
+    assert.deepEqual(firestore.snapshot('users/legacy-coach').coachOf, ['team-1']);
     assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, true);
     assert.equal(firestore.snapshot('accessCodes/admin-invite-1').status, 'revoked');
     assert.deepEqual(
         (await callables.listManagedTeams({}, authContext('coach-1', { email: 'new-coach@example.com' }))).items,
         []
     );
+});
+
+test('team admin revocation preserves authenticated manager access before email verification', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com']
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach-1'
+        }
+    });
+
+    await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: 'coach@example.com' },
+        authContext('owner-1', { email: 'owner@example.com', verified: false })
+    );
+
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
+    assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, []);
 });
 
 test('managed-team discovery rejects an accepted invite whose team grant was removed by an older client', async () => {

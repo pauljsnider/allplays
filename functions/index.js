@@ -17087,7 +17087,7 @@ async function listStaffTeamDocuments(caller) {
 }
 
 exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}) => {
-  const caller = await getOpportunityCaller(context, { verified: true });
+  const caller = await getOpportunityCaller(context);
   const teamId = normalizeOpportunityTeamId(data?.teamId);
   const targetEmail = normalizeParentInviteEmail(data?.email);
   if (!targetEmail) {
@@ -17097,17 +17097,13 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
   const teamRef = firestore.doc(`teams/${teamId}`);
   const callerRef = firestore.doc(`users/${caller.uid}`);
   const teamInviteQuery = firestore.collection('accessCodes').where('teamId', '==', teamId);
-  const emailUserQuery = firestore.collection('users').where('email', '==', targetEmail).limit(100);
-  const profileEmailUserQuery = firestore.collection('users').where('profileEmail', '==', targetEmail).limit(100);
   let removedUserCount = 0;
 
   await firestore.runTransaction(async (transaction) => {
-    const [teamSnap, callerSnap, inviteSnap, emailUserSnap, profileEmailUserSnap] = await Promise.all([
+    const [teamSnap, callerSnap, inviteSnap] = await Promise.all([
       transaction.get(teamRef),
       transaction.get(callerRef),
-      transaction.get(teamInviteQuery),
-      transaction.get(emailUserQuery),
-      transaction.get(profileEmailUserQuery)
+      transaction.get(teamInviteQuery)
     ]);
     if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
 
@@ -17133,9 +17129,9 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
         && normalizeParentInviteEmail(invite.email) === targetEmail;
     });
     const targetUserRefs = new Map();
-    [...emailUserSnap.docs, ...profileEmailUserSnap.docs].forEach((docSnap) => {
-      targetUserRefs.set(docSnap.ref.path, docSnap.ref);
-    });
+    // usedBy was bound to the invited email through the caller's Auth token at
+    // redemption time. Mutable user/profile email aliases can become stale or
+    // be reassigned and must never identify a principal for revocation.
     matchingInviteSnaps.forEach((docSnap) => {
       const usedBy = String(docSnap.data()?.usedBy || '').trim();
       if (usedBy && /^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) {
