@@ -71,6 +71,12 @@ test('only tracked events represented by public games suppress calendar projecti
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game' }), true);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({}), true);
   assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'PRACTICE' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', visibility: 'PRIVATE' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', isPrivate: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', private: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', deleted: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', status: 'DELETED' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', liveStatus: 'deleted' }), false);
 });
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {

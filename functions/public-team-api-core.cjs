@@ -587,7 +587,7 @@ function paginatePublicProjectionItems(items = [], limit = PUBLIC_TEAM_API_DEFAU
 }
 
 function canTrackedCalendarEventSuppressPublicProjection(event = {}) {
-  return compactText(event?.type, 32).toLowerCase() !== 'practice';
+  return isPublicGame(event);
 }
 
 async function scanBoundedPublicCalendarTrackingEvents(loadPage, {

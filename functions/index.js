@@ -17337,14 +17337,20 @@ exports.getPublicTeamCalendarProjection = functions
     const trackedCalendarEvents = (await scanBoundedPublicCalendarTrackingEvents(async ({ after, limit }) => {
       let query = firestore.collection(`teams/${teamId}/games`)
         .orderBy(admin.firestore.FieldPath.documentId())
-        .select('calendarEventUid', 'date', 'type');
+        .select('calendarEventUid', 'date', 'type', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus');
       if (after) query = query.startAfter(after);
       const snapshot = await query.limit(limit).get();
       return {
         documents: snapshot.docs.map((gameSnap) => ({
           calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid),
           date: gameSnap.data()?.date || null,
-          type: normalizeFamilyShareText(gameSnap.data()?.type)
+          type: normalizeFamilyShareText(gameSnap.data()?.type),
+          visibility: normalizeFamilyShareText(gameSnap.data()?.visibility),
+          isPrivate: gameSnap.data()?.isPrivate === true,
+          private: gameSnap.data()?.private === true,
+          deleted: gameSnap.data()?.deleted === true,
+          status: normalizeFamilyShareText(gameSnap.data()?.status),
+          liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)
         })),
         nextCursor: snapshot.docs[snapshot.docs.length - 1] || null
       };
