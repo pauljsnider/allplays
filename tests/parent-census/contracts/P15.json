@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P15",
+  "title": "Athlete profile reports incentives and roster restrictions",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}?section=profile"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}?section=profile"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Incentives",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Certificates",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Only team owners and admins can edit roster details.",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save Roster Details",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
