@@ -236,16 +236,16 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=4433154';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=4433155';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443332';
-        import { checkAuth } from './js/auth.js?v=4433158';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443333';
+        import { checkAuth } from './js/auth.js?v=4433159';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443314';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443315';
         import { hasFullTeamAccess } from './js/team-access.js?v=44337';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
