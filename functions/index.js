@@ -17063,23 +17063,13 @@ async function listStaffTeamDocuments(caller) {
       .map((teamId) => String(teamId || '').trim())
       .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
   ));
-  const [coachTeamSnaps, acceptedAdminInviteSnap] = await Promise.all([
-    Promise.all(coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())),
-    coachTeamIds.length
-      ? firestore.collection('accessCodes').where('usedBy', '==', caller.uid).get()
-      : Promise.resolve({ docs: [] })
-  ]);
-  // coachOf predates reciprocal staff indexes, so preserve genuinely legacy
-  // coach-only grants. When an accepted admin invite exists, however, the
-  // current team document is authoritative: removing its admin email revokes
-  // discovery even if an older client left coachOf behind.
-  const acceptedAdminInviteTeamIds = new Set(acceptedAdminInviteSnap.docs
-    .filter((docSnap) => {
-      const invite = docSnap.data() || {};
-      return invite.type === 'admin_invite' && invite.used === true;
-    })
-    .map((docSnap) => String(docSnap.data()?.teamId || '').trim())
-    .filter(Boolean));
+  const coachTeamSnaps = await Promise.all(
+    coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+  );
+  // coachOf is only a candidate index. Older non-atomic invite flows could
+  // leave it behind when both their team update and rollback failed, so it is
+  // never durable authorization by itself. Loading these documents still
+  // recovers current grants whose owner/admin email aliases use legacy casing.
   coachTeamSnaps.forEach((teamSnap) => {
     if (!teamSnap.exists || teams.has(teamSnap.id)) return;
     if (hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
@@ -17087,10 +17077,7 @@ async function listStaffTeamDocuments(caller) {
       // contain mixed-case values. Rechecking the loaded canonical team keeps a
       // current manager from being mistaken for a revoked invite recipient.
       teams.set(teamSnap.id, teamSnap);
-      return;
     }
-    if (acceptedAdminInviteTeamIds.has(teamSnap.id)) return;
-    teams.set(teamSnap.id, teamSnap);
   });
   return teams;
 }

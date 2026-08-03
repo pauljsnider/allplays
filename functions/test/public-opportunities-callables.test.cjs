@@ -381,16 +381,6 @@ test('managed-team callables return access fields only to current managers', asy
 
     const managed = await callables.listManagedTeams({}, authContext('owner-1', { email: 'owner@example.com' }));
     assert.deepEqual(managed.items, [{
-        id: 'coach-team',
-        name: 'Coach Bears',
-        sport: 'Basketball',
-        photoUrl: null,
-        description: null,
-        active: true,
-        archived: false,
-        status: null,
-        isPublic: false
-    }, {
         id: 'private-team',
         name: 'Private Bears',
         sport: 'Basketball',
@@ -404,9 +394,7 @@ test('managed-team callables return access fields only to current managers', asy
         ownerEmail: null,
         adminEmails: []
     }]);
-    assert.equal('ownerId' in managed.items[0], false);
-    assert.equal('adminEmails' in managed.items[0], false);
-    assert.equal('privateBillingCustomerId' in managed.items[0], false);
+    assert.ok(!managed.items.some((team) => team.id === 'coach-team'));
 
     const privateProfile = await callables.getPublicTeamProfile(
         { teamId: 'private-team' },
@@ -532,6 +520,34 @@ test('managed-team discovery rejects an accepted invite whose team grant was rem
             email: 'coach@example.com',
             used: true,
             usedBy: 'coach-1'
+        }
+    });
+
+    assert.deepEqual(
+        (await callables.listManagedTeams({}, authContext('coach-1', { email: 'coach@example.com' }))).items,
+        []
+    );
+});
+
+test('managed-team discovery rejects an orphaned pre-transaction coach grant after rollback failure', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': {
+            email: 'coach@example.com',
+            roles: ['coach'],
+            coachOf: ['team-1']
+        },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: false
         }
     });
 

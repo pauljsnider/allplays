@@ -147,6 +147,20 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('managedListingSnaps.forEach');
   });
 
+  it('uses coachOf only to find candidate teams and rechecks the canonical grant', () => {
+    const resolverStart = source.indexOf('async function listStaffTeamDocuments(caller)');
+    const resolverSource = source.slice(
+      resolverStart,
+      source.indexOf('\nexports.revokeTeamAdminAccess', resolverStart)
+    );
+
+    expect(resolverSource).toContain('caller.user?.coachOf');
+    expect(resolverSource).toContain('hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})');
+    expect(resolverSource).not.toContain('acceptedAdminInviteTeamIds');
+    expect(resolverSource).not.toContain(".where('usedBy', '==', caller.uid)");
+    expect(resolverSource).toMatch(/if \(hasOpportunityTeamAdminAccess[\s\S]*teams\.set\(teamSnap\.id, teamSnap\);[\s\S]*\n    \}/);
+  });
+
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {
     expect(source).toContain(".where('expiresAt', '>', now)");
     expect(source).toContain(".orderBy('expiresAt', 'desc')");
