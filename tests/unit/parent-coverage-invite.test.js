@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
     buildRedemptionPlayerFields,
@@ -23,6 +24,15 @@ function invite(overrides = {}) {
 }
 
 describe('parent coverage lifecycle invite selection', () => {
+    it('uses admin only to discover a missing redemption team before staff-owned writes', () => {
+        const source = readFileSync('scripts/maintain-parent-coverage-invite.mjs', 'utf8');
+
+        expect(source).toContain('let teamDocument = await getFirestoreDocument(lookupSession, teamPath);');
+        expect(source).toMatch(/ensureRedemptionFixture\(\s*mode,\s*session,\s*staffSession,/);
+        expect(source).toContain('createFirestoreDocument(staffSession, teamPath');
+        expect(source).toContain('createFirestoreDocument(\n            staffSession,\n            playerPath');
+    });
+
     it('accepts only a matching unused invite with useful remaining lifetime', () => {
         const now = Date.parse('2026-08-02T00:00:00.000Z');
         const matches = (document, recipient = 'lifecycle@example.com', purpose = 'signup') =>

@@ -91,12 +91,22 @@ export function inspectRedemptionFixture(teamDocument, playerDocument, { staffUi
     };
 }
 
-async function ensureRedemptionFixture(mode, staffSession, staffEmail, teamId, playerId) {
+async function ensureRedemptionFixture(
+    mode,
+    lookupSession,
+    staffSession,
+    staffEmail,
+    teamId,
+    playerId
+) {
     assertSmokeFixtureIdentifier(teamId, 'Redemption team ID');
     assertSmokeFixtureIdentifier(playerId, 'Redemption player ID');
     const teamPath = `teams/${teamId}`;
     const playerPath = `${teamPath}/players/${playerId}`;
-    let teamDocument = await getFirestoreDocument(staffSession, teamPath);
+    // A team manager cannot read a nonexistent team path under production
+    // rules. Use the protected admin only to distinguish missing from an
+    // existing collision; all fixture writes still use the staff session.
+    let teamDocument = await getFirestoreDocument(lookupSession, teamPath);
     if (teamDocument && stringValue(teamDocument.fields, 'fixtureType') !== redemptionFixtureMarker) {
         throw new Error('redemption team ID collides with a non-census fixture');
     }
@@ -198,6 +208,7 @@ async function main() {
     ]);
     await ensureRedemptionFixture(
         mode,
+        session,
         staffSession,
         staffEmail,
         redemptionTeamId,
