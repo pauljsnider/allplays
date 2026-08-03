@@ -500,6 +500,10 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return { events: [] };
                 }
 
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
+                }
+
                 export async function sendStaffRsvpReminder() {
                     return { messageId: 'message-1', emailRecipientCount: 0 };
                 }

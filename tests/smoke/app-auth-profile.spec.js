@@ -469,6 +469,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return 'imported-practice';
                 }
 
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
+                }
+
                 export async function loadParentSchedule() {
                     return { children: [], events: [] };
                 }
