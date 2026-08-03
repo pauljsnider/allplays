@@ -418,7 +418,7 @@
                 checkAuth((u) => renderHeader(document.getElementById('header-container'), u));
 
                 const profile = await getUserProfile(user.uid);
-                const email = user.email || profile?.email;
+                const email = user.email || null;
                 const parentOf = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
                 linkedPlayersByTeam = buildLinkedPlayersByTeam(parentOf);
 

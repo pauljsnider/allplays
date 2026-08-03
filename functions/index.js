@@ -5330,7 +5330,7 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
     }
 
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || userData.email);
+    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email);
     if (!signedInEmail || invitedEmail !== signedInEmail) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
     }

@@ -10,7 +10,7 @@ describe('team management page access wiring', () => {
         const html = readRepoFile('dashboard.html');
         expect(html).toContain('import { getTeams, getUserTeamsWithAccess');
         expect(html).toContain('const canManageAllTeams = user.isAdmin === true;');
-        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email)');
     });
 
     it('backs dashboard platform-admin access with protected Firestore admin state', () => {
@@ -26,9 +26,17 @@ describe('team management page access wiring', () => {
         expect(rules).toContain('canReadTeamDocument(teamId, resource.data)');
     });
 
-    it('prefers auth email before profile fallback when loading non-admin dashboard team access', () => {
+    it('uses only the authenticated email when loading non-admin dashboard team access', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email)');
+        expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+    });
+
+    it('uses only the authenticated email for calendar team discovery and admin checks', () => {
+        const html = readRepoFile('calendar.html');
+        expect(html).toContain('const email = user.email || null;');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, email)');
+        expect(html).not.toContain('const email = user.email || profile?.email;');
     });
 
     it('uses shared full-access helper in edit roster page', () => {

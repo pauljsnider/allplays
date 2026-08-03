@@ -19,7 +19,8 @@ describe('admin invite server-authoritative redemption', () => {
         expect(handlerSource).toContain('codeData.used');
         expect(handlerSource).toContain('isParentInviteExpired(codeData.expiresAt)');
         expect(handlerSource).toContain('invitedEmail !== signedInEmail');
-        expect(handlerSource).toContain('context.auth.token?.email || userData.email');
+        expect(handlerSource).toContain('normalizeParentInviteEmail(context.auth.token?.email)');
+        expect(handlerSource).not.toContain('context.auth.token?.email || userData.email');
         expect(handlerSource).not.toContain('data?.userEmail || data?.authEmail');
         expect(handlerSource).toContain('userId !== context.auth.uid');
         expect(handlerSource).toContain('adminEmails: appendUniqueValue');
