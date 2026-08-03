@@ -9011,9 +9011,14 @@ async function getNotificationTargetTeamAccessMap(uid, teamIds) {
   let email = '';
   try {
     const authUser = await admin.auth().getUser(uid);
-    email = String(authUser?.email || '').trim().toLowerCase();
+    if (authUser?.disabled !== true) {
+      email = String(authUser?.email || '').trim().toLowerCase();
+    }
   } catch (error) {
-    console.warn('Unable to resolve notification target auth email', uid, error);
+    if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+      console.warn('Unable to resolve notification target auth email', uid, error);
+      throw error;
+    }
   }
   const parentTeamIds = new Set(Array.isArray(user.parentTeamIds) ? user.parentTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean) : []);
   const teamSnaps = await Promise.all(uniqueTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get()));
@@ -9451,7 +9456,9 @@ exports.syncTeamOwnerAccessOnCreate = functions
     fieldValue: admin.firestore.FieldValue
   }));
 
-exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
+exports.syncTeamNotificationTargetsOnPreferenceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationPreferences/{teamId}')
   .onWrite(async (change, context) => {
     const { uid, teamId } = context.params;
@@ -9463,7 +9470,9 @@ exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
     return null;
   });
 
-exports.syncTeamNotificationTargetsOnDeviceWrite = functions.firestore
+exports.syncTeamNotificationTargetsOnDeviceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationDevices/{deviceId}')
   .onWrite(async (change, context) => {
     const { uid, deviceId } = context.params;

@@ -91,10 +91,15 @@ describe('notification target index core helpers', () => {
         expect(syncSource).toContain('teamAccessMap.get(prefSnap.id) !== true');
         expect(syncSource).toContain('hasParentAccess || hasTeamAdminAccess');
         expect(syncSource).toContain('const authUser = await admin.auth().getUser(uid);');
+        expect(syncSource).toContain("if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code))");
+        expect(syncSource).toContain('if (authUser?.disabled !== true)');
+        expect(syncSource).toContain('throw error;');
         expect(syncSource).not.toContain('String(user.email || user.profileEmail');
         expect(syncSource).toContain('buildTeamNotificationIndexRefs');
         expect(syncSource).toContain('indexRefs.forEach((ref) => batch.set(ref, payload, { merge: true }))');
         expect(syncSource).toContain('indexRefs.forEach((ref) => batch.delete(ref));');
+        expect(functionsSource).toMatch(/exports\.syncTeamNotificationTargetsOnPreferenceWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)/);
+        expect(functionsSource).toMatch(/exports\.syncTeamNotificationTargetsOnDeviceWrite = functions\s+\.runWith\(\{ failurePolicy: true \}\)/);
     });
 
     it('uses team recipient indexes and repairs partial coverage through bounded fallback', () => {
