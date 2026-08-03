@@ -149,6 +149,41 @@ describe('team owner access trigger', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('never binds an Auth signup when legacy owner aliases conflict', async () => {
+    const teamRef = { path: 'teams/ambiguous-team' };
+    const update = vi.fn();
+    const set = vi.fn();
+    const transaction = {
+      get: vi.fn(async () => ({
+        exists: true,
+        data: () => ({
+          ownerEmail: 'intended@example.com',
+          ownerEmailLower: 'stale@example.com'
+        })
+      })),
+      update,
+      set
+    };
+    const firestore = {
+      collection: () => ({
+        where: () => ({ get: async () => ({ docs: [{ id: 'ambiguous-team', ref: teamRef }] }) })
+      }),
+      doc: vi.fn(),
+      runTransaction: vi.fn(async (callback) => callback(transaction))
+    };
+    const handler = createLegacyTeamOwnerAuthSyncHandler({
+      firestore,
+      fieldValue: { arrayUnion: vi.fn(), serverTimestamp: vi.fn() }
+    });
+
+    await expect(handler({ uid: 'stale-owner', email: 'stale@example.com' })).resolves.toEqual({
+      ownerId: 'stale-owner',
+      teamIds: []
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+  });
+
   it('wires retryable Auth creation binding before legacy list compatibility is removed', () => {
     expect(functionsSource).toContain('exports.syncLegacyTeamOwnershipOnAuthCreate = functions');
     expect(functionsSource).toContain('.auth\n  .user()\n  .onCreate(createLegacyTeamOwnerAuthSyncHandler({');

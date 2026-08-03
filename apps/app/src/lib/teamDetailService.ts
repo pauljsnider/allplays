@@ -1236,7 +1236,7 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
   const ownerEmails = [team?.ownerEmail, team?.ownerEmailLower]
     .map((value) => cleanString(value).toLowerCase())
     .filter(Boolean);
-  if (ownerEmails.includes(normalizedEmail)) {
+  if (!cleanString(team?.ownerId) && ownerEmails.includes(normalizedEmail)) {
     throw new Error('The team owner cannot be removed from staff access.');
   }
 

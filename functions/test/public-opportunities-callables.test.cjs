@@ -512,6 +512,35 @@ test('team admin revocation preserves authenticated manager access before email 
     assert.deepEqual(firestore.snapshot('users/coach-1').coachOf, []);
 });
 
+test('canonical ownerId allows revoking a staff grant that matches a stale owner alias', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/former-owner': { email: 'former@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            ownerEmail: 'owner@example.com',
+            ownerEmailLower: 'former@example.com',
+            adminEmails: ['former@example.com']
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'former@example.com',
+            used: true,
+            usedBy: 'former-owner'
+        }
+    });
+
+    await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: 'former@example.com' },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.deepEqual(firestore.snapshot('teams/team-1').adminEmails, []);
+    assert.deepEqual(firestore.snapshot('users/former-owner').coachOf, []);
+    assert.equal(firestore.snapshot('accessCodes/admin-invite-1').revoked, true);
+});
+
 test('email-only team admins cannot revoke their own canonical access', async () => {
     const { firestore, callables } = loadCallables({
         'users/coach-1': { email: 'coach@example.com', coachOf: ['team-1'] },

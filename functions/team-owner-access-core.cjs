@@ -56,8 +56,10 @@ function createLegacyTeamOwnerAuthSyncHandler({ firestore, fieldValue }) {
         if (!current.exists) return;
         const team = current.data() || {};
         if (String(team.ownerId || '').trim()) return;
-        const ownerEmails = [team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean);
-        if (!ownerEmails.includes(normalizedEmail)) return;
+        const ownerEmails = [...new Set(
+          [team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean)
+        )];
+        if (ownerEmails.length !== 1 || ownerEmails[0] !== normalizedEmail) return;
 
         transaction.update(teamRef, {
           ownerId,

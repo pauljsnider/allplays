@@ -17135,7 +17135,7 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
     const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
       .map((email) => String(email || '').trim().toLowerCase())
       .filter(Boolean);
-    if (ownerEmails.includes(targetEmail)) {
+    if (!String(team.ownerId || '').trim() && ownerEmails.includes(targetEmail)) {
       throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
     }
     const callerOwnsTeam = String(team.ownerId || '').trim() === caller.uid;
