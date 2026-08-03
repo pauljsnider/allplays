@@ -29,6 +29,7 @@ const runId = String(config.runId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0,
 const attemptNonce = randomUUID().replace(/-/g, '');
 const smokePrefix = `allplays-smoke-${runId}-${attemptNonce}`;
 const secretValues = [config.staffEmail, config.staffPassword, config.parentEmail, config.parentPassword];
+const LIVE_ACTION_TIMEOUT_MS = 25_000;
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 
@@ -77,6 +78,7 @@ test.afterAll(async () => {
 
 async function withAuthenticatedPage(callback) {
     const { page, issues } = staffSession;
+    page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS);
     await callback(page);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }
@@ -85,6 +87,24 @@ async function openRoute(page, route) {
     await page.goto(buildAppSmokeUrl(config.appBaseUrl, route), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('main')).toBeVisible({ timeout: 25_000 });
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
+}
+
+async function openWritableMediaAlbum(page) {
+    await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
+    const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
+    if (await photoButton.isVisible({ timeout: 15_000 }).catch(() => false)) return photoButton;
+
+    const refreshMedia = page.getByRole('button', { name: 'Refresh media' });
+    if (await refreshMedia.isVisible({ timeout: 5_000 }).catch(() => false)) {
+        await refreshMedia.click({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    } else {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: LIVE_ACTION_TIMEOUT_MS });
+    }
+    await expect(
+        photoButton,
+        'The existing smoke media album must become writable after one bounded read-only refresh'
+    ).toBeVisible({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    return photoButton;
 }
 
 async function restoreImageFieldsIfUnchanged(documentState, fieldNames = Object.keys(documentState.expectedFields)) {
@@ -208,9 +228,7 @@ test('staff image upload is persisted and removed after validation', async () =>
 
     try {
         await withAuthenticatedPage(async (page) => {
-            await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
-            const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
-            await expect(photoButton, 'The smoke team must have an existing writable media album').toBeVisible({ timeout: 25_000 });
+            await openWritableMediaAlbum(page);
             const photoInput = page.locator('input[type="file"][accept="image/*"]');
             await photoInput.setInputFiles({
                 name: mediaName,

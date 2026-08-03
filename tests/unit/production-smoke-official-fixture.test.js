@@ -8,6 +8,7 @@ import {
     officialFixtureSlotId
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
 import {
+    FIREBASE_REST_REQUEST_TIMEOUT_MS,
     createFirebaseRestSession,
     deleteFirestoreDocument,
     isEmptyFirestoreDocument,
@@ -253,6 +254,33 @@ describe('production officials smoke fixture maintenance', () => {
             method: 'DELETE',
             headers: { authorization: 'Bearer redacted-token' }
         });
+    });
+
+    it('bounds Firebase requests and retries only retry-safe cleanup operations', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+                arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0))
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200
+            });
+
+        await deleteFirestoreDocument(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'teams/allplays-smoke-team-v1/games/allplays-smoke-game-v1'
+        );
+
+        expect(FIREBASE_REST_REQUEST_TIMEOUT_MS).toBe(30_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        for (const [, request] of fetchMock.mock.calls) {
+            expect(request.signal).toBeInstanceOf(AbortSignal);
+        }
     });
 
     it('distinguishes an empty interrupted image document from a metadata-bearing fixture', () => {
