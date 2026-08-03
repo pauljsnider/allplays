@@ -1,4 +1,4 @@
-import { hasFullTeamAccess } from './team-access.js?v=1';
+import { hasFullTeamAccess } from './team-access.js?v=6';
 
 /**
  * True when an invite failed only because the code was already redeemed/used (#1808).

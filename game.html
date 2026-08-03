@@ -388,10 +388,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=151';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=153';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=29';
-        import { checkAuth } from './js/auth.js?v=154';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=31';
+        import { checkAuth } from './js/auth.js?v=157';
         import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -399,7 +399,7 @@
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=4';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=3';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=12';
 
         let currentUser = null;
         let canManageStatSheet = false;
