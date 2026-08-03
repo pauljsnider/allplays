@@ -221,7 +221,7 @@ vi.mock('./appDataCache', () => ({
 
 import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
@@ -4597,7 +4597,7 @@ describe('enableRsvpForImportedCalendarEvent', () => {
       expect.objectContaining({ path: `teams/team-1/games/${firstId}` }),
       expect.objectContaining({
         ...expectedPayload,
-        calendarEventUid: 'calendar-uid-1',
+        calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z',
         source: 'calendar',
         sourceMetadata: {
           sourceType: 'calendar',
@@ -4655,6 +4655,83 @@ describe('enableRsvpForImportedCalendarEvent', () => {
       `teams/team-1/games/${firstId}`,
       `teams/team-1/games/${laterId}`
     ]);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[1]?.calendarEventUid)).toEqual([
+      'calendar-uid-1__2026-06-04T18:00:00.000Z',
+      'calendar-uid-1__2026-06-11T18:00:00.000Z'
+    ]);
+  });
+
+  it('keeps a later shared-UID occurrence visible after reloading the materialized occurrence', async () => {
+    const parent = {
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Avery', teamName: 'Bears' }]
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parent.parentOf } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Bears',
+      ownerId: 'coach-1',
+      active: true,
+      calendarUrls: ['https://calendar.example.com/bears.ics']
+    } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { id: 'player-1', name: 'Avery', active: true }) as any);
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'tracked-first-occurrence',
+      type: 'game',
+      date: new Date('2026-06-04T18:00:00.000Z'),
+      opponent: 'Wolves',
+      calendarEventUid: 'calendar-uid-1__2026-06-04T18:00:00.000Z'
+    }] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getCalendarEventTrackingId).mockImplementation((event: any) => event.id || event.uid || '');
+    vi.mocked(isTrackedCalendarEvent).mockImplementation((event: any, trackedIds: string[]) => (
+      trackedIds.includes(event.id || event.uid || '')
+    ));
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Wolves',
+        dtstart: new Date('2026-06-04T18:00:00.000Z'),
+        dtend: new Date('2026-06-04T20:00:00.000Z')
+      },
+      {
+        id: 'calendar-uid-1',
+        uid: 'calendar-uid-1',
+        summary: 'Bears vs Tigers',
+        dtstart: new Date('2026-06-11T18:00:00.000Z'),
+        dtend: new Date('2026-06-11T20:00:00.000Z')
+      }
+    ] as any);
+
+    const reloaded = await loadParentSchedule(parent, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      includePastGames: true
+    });
+
+    expect(reloaded.events).toHaveLength(2);
+    expect(reloaded.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'tracked-first-occurrence', isDbGame: true }),
+      expect.objectContaining({
+        id: 'calendar-uid-1',
+        date: new Date('2026-06-11T18:00:00.000Z'),
+        isDbGame: false,
+        isImported: true
+      })
+    ]));
+
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => false });
+    const laterOccurrence = reloaded.events.find((event) => event.date.toISOString() === '2026-06-11T18:00:00.000Z');
+    const laterId = await enableRsvpForImportedCalendarEvent({ ...laterOccurrence, opponent: 'Tigers' } as any, user);
+
+    expect(laterId).not.toBe('tracked-first-occurrence');
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: `teams/team-1/games/${laterId}` }),
+      expect.objectContaining({ calendarEventUid: 'calendar-uid-1__2026-06-11T18:00:00.000Z' })
+    );
   });
 
   it.each([

@@ -60,6 +60,7 @@ import {
   Timestamp
 } from './adapters/legacyScheduleDb';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { getCalendarOccurrenceTrackingId, isCalendarOccurrenceTracked } from './calendarOccurrence';
 import {
   sendPublicRsvpReminderEmails,
   normalizeOfficialLinkEmail,
@@ -2601,6 +2602,7 @@ export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEv
   if (event.type === 'game' && !opponent) throw new Error('The imported game needs an opponent before RSVP can be enabled.');
 
   await requireScheduleMaterializationManager(teamId, user);
+  const calendarOccurrenceId = getCalendarOccurrenceTrackingId(calendarEventId, event.date);
   const digest = await getCalendarMaterializationDigest(teamId, calendarEventId, event.date);
   const actionId = `calendar-materialize:${digest}`;
   const trackedEventId = `calendar_${digest}`;
@@ -2630,7 +2632,7 @@ export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEv
     competitionType: event.type === 'game' ? (compactString(event.competitionType) || 'league') : null,
     countsTowardSeasonRecord: event.type === 'game' ? (event.countsTowardSeasonRecord ?? true) : null,
     statTrackerConfigId: null,
-    calendarEventUid: calendarEventId,
+    calendarEventUid: calendarOccurrenceId,
     source: 'calendar',
     sourceMetadata: {
       sourceType: 'calendar',
@@ -3861,7 +3863,11 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       : [projectedCalendarEvents];
 
     calendarResults.flat().forEach((calendarEvent: any) => {
-      if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
+      const calendarEventTrackingId = getCalendarEventTrackingId(calendarEvent);
+      if (
+        isCalendarOccurrenceTracked(calendarEventTrackingId, calendarEvent.dtstart, trackedUids)
+        || isTrackedCalendarEvent(calendarEvent, trackedUids)
+      ) return;
       const date = normalizeScheduleDate(calendarEvent.dtstart);
       if (!date) return;
       const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
@@ -3871,7 +3877,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         : isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
       const cleanSummary = calendarEvent.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
-      const id = getCalendarEventTrackingId(calendarEvent) || `ics-${date.getTime()}`;
+      const id = calendarEventTrackingId || `ics-${date.getTime()}`;
       const session = isPractice ? resolvePracticeSessionForEvent(calendarEvent, date, sessionsByEventId, sessions, matchedSessionIds) : null;
       teamChildren.forEach((child) => {
         events.push(createScheduleEvent({
