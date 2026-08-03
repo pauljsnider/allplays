@@ -4,8 +4,10 @@ import {
     assertUnprivilegedParentFixture,
     buildActivePlayerPatch,
     buildActiveTeamPatch,
+    buildCanonicalStaffAccessPatch,
     buildParentMembershipPatch,
-    inspectParentFixture
+    inspectParentFixture,
+    inspectStaffTeamDiscovery
 } from '../../scripts/maintain-production-smoke-parent-fixture.mjs';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
@@ -56,14 +58,18 @@ function buildPlayerDocument({
 function buildTeamDocument({
     active = true,
     archived = false,
-    status = 'active'
+    status = 'active',
+    ownerId = '',
+    adminEmails = []
 } = {}) {
     return {
         updateTime: '2026-07-29T18:00:00.000Z',
         fields: {
             active: { booleanValue: active },
             archived: { booleanValue: archived },
-            status: { stringValue: status }
+            status: { stringValue: status },
+            ownerId: { stringValue: ownerId },
+            adminEmails: stringArray(adminEmails)
         }
     };
 }
@@ -72,6 +78,38 @@ const teamId = 'allplays-smoke-team-v1';
 const playerId = 'allplays-smoke-player-v1';
 
 describe('production parent smoke fixture maintenance', () => {
+    it('requires the exact normalized admin value used by app discovery and Firestore rules', () => {
+        const legacyTeam = buildTeamDocument({
+            ownerId: 'other-owner',
+            adminEmails: [' Coach@Example.com ', 'other@example.com']
+        });
+
+        expect(inspectStaffTeamDiscovery(legacyTeam, {
+            uid: 'staff-1',
+            email: 'coach@example.com'
+        })).toEqual({
+            ready: false,
+            ownsTeam: false,
+            hasCanonicalAdminEmail: false
+        });
+        expect(buildCanonicalStaffAccessPatch(legacyTeam, ' Coach@Example.com ')).toEqual({
+            fields: {
+                adminEmails: stringArray(['other@example.com', 'coach@example.com'])
+            }
+        });
+        expect(inspectStaffTeamDiscovery(buildTeamDocument({ ownerId: 'staff-1' }), {
+            uid: 'staff-1',
+            email: 'coach@example.com'
+        }).ready).toBe(true);
+        expect(inspectStaffTeamDiscovery(buildTeamDocument({
+            ownerId: 'other-owner',
+            adminEmails: ['coach@example.com']
+        }), {
+            uid: 'staff-1',
+            email: 'COACH@example.com'
+        }).ready).toBe(true);
+    });
+
     it('rejects global and team-level privileges for parent-only coverage', () => {
         const teamDocument = buildTeamDocument();
         teamDocument.fields.ownerId = { stringValue: 'owner-1' };

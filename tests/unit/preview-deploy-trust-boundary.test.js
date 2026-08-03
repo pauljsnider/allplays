@@ -413,8 +413,11 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
         expect(scheduledProdSmokeWorkflow).toContain('cancel-in-progress: false');
         expect(scheduledProdSmokeWorkflow).toContain(
-            'SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}'
+            "SMOKE_EXTENDED_WRITES: ${{ github.event_name == 'workflow_dispatch' && (inputs.extended_writes && '1' || '0') || vars.SMOKE_EXTENDED_WRITES_ENABLED }}"
         );
+        expect(scheduledProdSmokeWorkflow).toContain('extended_writes:');
+        expect(scheduledProdSmokeWorkflow).toContain('type: boolean');
+        expect(scheduledProdSmokeWorkflow).toContain('default: false');
         expect(scheduledProdSmokeWorkflow).not.toContain("SMOKE_EXTENDED_WRITES: '1'");
     });
 
