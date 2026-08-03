@@ -8296,7 +8296,7 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
 }
 
 async function getCalendarTokenHolderContext(tokenData) {
-  const uid = tokenData.uid || tokenData.userId || tokenData.createdBy || null;
+  const uid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
   if (!uid) return null;
   const [userSnap, authUser] = await Promise.all([
     firestore.doc(`users/${uid}`).get(),
