@@ -306,6 +306,7 @@ describe('parent schedule child scope', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('REST auth unavailable in isolated staff-scope tests'));
     vi.mocked(isTeamActive).mockImplementation((team: any) => (
       team?.active !== false &&
       team?.archived !== true &&
@@ -543,19 +544,173 @@ describe('parent schedule child scope', () => {
   it('marks parent scope partial when the authoritative staff-team read fails', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
-    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(getStaffTeams)
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockRejectedValueOnce(new Error('network unavailable'));
 
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([]);
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries partial staff discovery with coach links from the freshly loaded profile', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockResolvedValueOnce({ teams: [], isPartial: true } as any)
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenNthCalledWith(1, {
+      userId: 'coach-1',
+      email: 'coach@example.com',
+      coachTeamIds: []
+    });
+    expect(getStaffTeams).toHaveBeenNthCalledWith(2, {
+      userId: 'coach-1',
+      email: 'coach@example.com',
+      coachTeamIds: ['team-owned']
+    });
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('recovers a profile-declared coach team when the web SDK reports an empty complete result', async () => {
+    const previousFetch = globalThis.fetch;
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token' as any);
+    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
+      if (init?.body) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => []
+        } as any;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
+          fields: {
+            name: { stringValue: 'Vipers' },
+            active: { booleanValue: true }
+          }
+        })
+      } as any;
+    });
+
+    try {
+      const scope = await loadParentScheduleScope(coachUser);
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(getNativeAuthIdToken).toHaveBeenCalledWith(true);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+      expect(scope.isPartial).toBe(false);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('verifies an empty complete staff result for a coach even when profile hydration has no team links', async () => {
+    const previousFetch = globalThis.fetch;
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token' as any);
+    (globalThis as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : null;
+      const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => fieldPath === 'ownerId' ? [{
+          document: {
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-owned',
+            fields: {
+              name: { stringValue: 'Vipers' },
+              ownerId: { stringValue: 'coach-1' },
+              active: { booleanValue: true }
+            }
+          }
+        }] : []
+      } as any;
+    });
+
+    try {
+      const scope = await loadParentScheduleScope(coachUser);
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+      expect(scope.isPartial).toBe(false);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('retries partial owner and admin discovery when the profile has no coach links', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams)
+      .mockResolvedValueOnce({ teams: [], isPartial: true } as any)
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-owned', name: 'Owned Team', ownerId: 'staff-1', active: true },
+          { id: 'team-admin', name: 'Admin Team', adminEmails: ['staff@example.com'], active: true }
+        ],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(getStaffTeams).toHaveBeenNthCalledWith(2, {
+      userId: 'staff-1',
+      email: 'staff@example.com',
+      coachTeamIds: []
+    });
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-owned', teamName: 'Owned Team' },
+      { teamId: 'team-admin', teamName: 'Admin Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('clears the staff partial flag when a rejected discovery succeeds on retry', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockRejectedValueOnce(new Error('initial Firebase read unavailable'))
+      .mockResolvedValueOnce({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      } as any);
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
   });
 
   it('marks web staff scope partial when a coach-team document read is incomplete', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned', 'team-missing'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: coachUser.coachOf } as any);
-    vi.mocked(getStaffTeams).mockResolvedValueOnce({
+    vi.mocked(getStaffTeams).mockResolvedValue({
       teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
       isPartial: true
     } as any);
@@ -565,6 +720,7 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(true);
     expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(getStaffTeams).toHaveBeenCalledTimes(2);
   });
 
   it('keeps repeated direct schedule refreshes partial when staff discovery fails', async () => {

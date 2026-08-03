@@ -82,7 +82,12 @@ const {
   getRegistrationPaidCheckoutGuardFailure,
   normalizeRegistrationCheckoutCurrency
 } = require('./registration-payment-webhook-core.cjs');
-const { createFirestoreFixedWindowRateLimiter, createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
+const {
+  createFirestoreFixedWindowRateLimitReservation,
+  createFirestoreFixedWindowRateLimiter,
+  createInMemoryRateLimiter,
+  getRequestIp
+} = require('./rate-limit.cjs');
 const {
   PUBLIC_RSVP_RATE_LIMITS,
   buildPublicRsvpRateLimitBoundaries
@@ -315,6 +320,10 @@ const {
   createCheckAcceptedFriendMessageAccessHandler,
   hasCurrentTeamAccess
 } = require('./friend-message-access-core.cjs');
+const {
+  createFriendInviteRedemptionCallableHandler,
+  createFriendInviteRedemptionTransaction
+} = require('./friend-invite-redemption-core.cjs');
 const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
@@ -353,6 +362,7 @@ const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
   isCertificateSignatureTargetReferenced,
@@ -390,6 +400,13 @@ const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
 const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
 const NOTIFICATION_INBOX_WRITE_CONCURRENCY = 10;
+function getPositiveIntegerEnvironmentValue(name, fallback) {
+  const value = Number.parseInt(process.env[name], 10);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+const TEAM_EMAIL_RATE_LIMIT_WINDOW_MS = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_RATE_LIMIT_WINDOW_MS', 10 * 60 * 1000);
+const TEAM_EMAIL_SENDER_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_SENDER_SEND_LIMIT', 3);
+const TEAM_EMAIL_TEAM_SEND_LIMIT = getPositiveIntegerEnvironmentValue('TEAM_EMAIL_TEAM_SEND_LIMIT', 10);
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -14149,13 +14166,11 @@ async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
     String(context.auth?.uid || '').trim(),
     String(team.ownerId || '').trim()
   ].filter(Boolean));
-  const managerEmails = [...new Set([
-    team.ownerEmail,
-    team.ownerEmailLower,
-    ...(Array.isArray(team.adminEmails) ? team.adminEmails : [])
-  ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
-  if (managerEmails.length) {
-    const result = await admin.auth().getUsers(managerEmails.slice(0, 100).map((email) => ({ email })));
+  const managerEmails = getCertificateLegacyManagerEmails(team);
+  for (let offset = 0; offset < managerEmails.length; offset += 100) {
+    const result = await admin.auth().getUsers(
+      managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
+    );
     result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
   }
   return [...uploaderIds];
@@ -14226,7 +14241,20 @@ async function lookupCertificateLegacySignatureBinding(reference) {
   const bindingId = getCertificateLegacySignatureInventoryId(reference);
   if (!bindingId) return null;
   const bindingSnap = await firestore.doc(`certificateLegacySignatureInventory/${bindingId}`).get();
-  return bindingSnap.exists ? bindingSnap.data() || {} : null;
+  if (!bindingSnap.exists) return null;
+  const binding = bindingSnap.data() || {};
+  let teamId;
+  try {
+    teamId = normalizeCertificateTeamId(binding.teamId);
+  } catch {
+    return { ...binding, conflicted: true };
+  }
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return { ...binding, conflicted: true };
+  const authorizedUploaderIds = await getCertificateLegacyUploaderIds(teamSnap.data() || {});
+  return authorizedUploaderIds.includes(String(binding.legacyOwnerId || '').trim())
+    ? binding
+    : { ...binding, conflicted: true };
 }
 
 exports.indexCertificateLegacySignaturesOnDefaultsWrite = functions
@@ -14565,6 +14593,46 @@ async function requireTeamEmailSender(teamId, context) {
   return { team, user, callerEmail };
 }
 
+const prepareTeamEmailSenderRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_SENDER_SEND_LIMIT
+});
+const prepareTeamEmailTeamRateLimitReservation = createFirestoreFixedWindowRateLimitReservation({
+  firestore,
+  collectionName: 'teamEmailRateLimits',
+  windowMs: TEAM_EMAIL_RATE_LIMIT_WINDOW_MS,
+  maxRequests: TEAM_EMAIL_TEAM_SEND_LIMIT
+});
+
+async function reserveTeamEmailSendCapacity(teamId, senderUid) {
+  const now = Date.now();
+  const reservations = [
+    prepareTeamEmailSenderRateLimitReservation(`sender\n${teamId}\n${senderUid}`, now),
+    prepareTeamEmailTeamRateLimitReservation(`team\n${teamId}`, now)
+  ];
+  const decisions = await firestore.runTransaction(async (transaction) => {
+    const snapshots = [];
+    for (const reservation of reservations) {
+      snapshots.push(await transaction.get(reservation.ref));
+    }
+    const evaluated = reservations.map((reservation, index) => reservation.evaluate(snapshots[index]));
+    if (evaluated.every((decision) => decision.allowed)) {
+      reservations.forEach((reservation, index) => reservation.commit(transaction, evaluated[index]));
+    }
+    return evaluated;
+  });
+  const rejection = decisions.find((decision) => !decision.allowed);
+  if (rejection) {
+    const retryMinutes = Math.max(1, Math.ceil(rejection.retryAfterSeconds / 60));
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      `Team email send limit reached. Keep this message and try again in about ${retryMinutes} minute${retryMinutes === 1 ? '' : 's'}.`
+    );
+  }
+}
+
 exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   const teamId = normalizeText(data?.teamId, 160);
   const draftId = normalizeText(data?.draftId, 160);
@@ -14620,6 +14688,8 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   } catch (error) {
     throw new functions.https.HttpsError('invalid-argument', error?.message || 'Invalid team email attachments.');
   }
+
+  await reserveTeamEmailSendCapacity(teamId, context.auth.uid);
 
   const [playersSnap, ownerSnap] = await Promise.all([
     firestore.collection(`teams/${teamId}/players`).get(),
@@ -16541,6 +16611,18 @@ async function getOpportunityCaller(context, options = {}) {
 function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
 }
+
+const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
+  firestore,
+  Timestamp: { now: () => admin.firestore.Timestamp.now() },
+  HttpsError: functions.https.HttpsError,
+  logger: functions.logger
+});
+const redeemFriendInviteHandler = createFriendInviteRedemptionCallableHandler({
+  redeemTransaction: redeemFriendInviteTransaction,
+  HttpsError: functions.https.HttpsError
+});
+exports.redeemFriendInvite = functions.https.onCall(redeemFriendInviteHandler);
 
 exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   createCheckAcceptedFriendMessageAccessHandler({

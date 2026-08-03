@@ -302,8 +302,8 @@ concurrency:
             echo "No client outage was introduced."
           }
           retry_firebase_deploy "functions:indexCertificateLegacySignaturesOnDefaultsWrite" "certificate-signature-inventory-producer" 3 15
-          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           retry_firebase_deploy "$retry_enabled_cleanup_compatibility_target" "certificate-signature-cleanup-compatibility" 3 15 true
+          node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-certificate-legacy-signature-inventory.mjs" --apply
           if [[ "$FIRESTORE_CONFIG_CHANGED" == "true" ]]; then
             if [[ "$native_callable_ready" == "true" && "$CERTIFICATE_DEFAULTS_LOCKDOWN_NEEDED" == "true" ]]; then
               FIRESTORE_CONFIG_CHANGED="true"
@@ -449,7 +449,7 @@ concurrency:
             `ensure_exact_firestore_ruleset`,
             `retry_firebase_deploy "hosting,functions" "application"
             ensure_exact_firestore_ruleset`
-        ))).toThrow('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial');
+        ))).toThrow('Production certificate defaults must deploy inventory producer, revalidating cleanup consumer, backfill, writer, transitional rules, callers, then the final denial');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15',
             'retry_firebase_deploy "firestore:rules,firestore:indexes" "firestore-indexes" 3 15'

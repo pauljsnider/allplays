@@ -13,9 +13,11 @@ import {
     deleteFirestoreDocument,
     deleteFirestoreDocumentsByStringField,
     deleteFirestoreDocumentsByStringFields,
+    deleteSmokeMediaByTitle,
     findFirestoreDocumentsByStringField,
     getFirestoreDocument,
     getFirestoreDocumentPath,
+    patchFirestoreDocumentFields,
     restoreFirestoreDocument,
     runSmokeCleanup
 } from './helpers/firebase-rest.js';
@@ -134,7 +136,96 @@ async function openRoute(page, route) {
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
 }
 
-test('staff smoke writes are deterministic and removed after validation', async () => {
+async function findSmokeChatMessages(text) {
+    const rootMessagesPath = `teams/${config.teamId}/chatMessages`;
+    const rootMessages = await findFirestoreDocumentsByStringField(
+        staffRestSession,
+        rootMessagesPath,
+        'text',
+        text
+    );
+    const conversationsPath = `teams/${config.teamId}/chatConversations`;
+    // An unfiltered collection list can include participant-only friend chats,
+    // which Firestore must reject even for team staff. Mirror the moderator-safe
+    // inbox queries so the smoke test only asks for conversations staff may list.
+    const conversationGroups = await Promise.all([
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'team'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'group'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'directAccess',
+            'team_admin'
+        )
+    ]);
+    const conversations = [
+        ...new Map(
+            conversationGroups
+                .flat()
+                .map((conversation) => [getFirestoreDocumentPath(conversation), conversation])
+        ).values()
+    ];
+    const nestedMessages = await Promise.all(conversations.map((conversation) => (
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            `${getFirestoreDocumentPath(conversation)}/chatMessages`,
+            'text',
+            text
+        )
+    )));
+    return [...rootMessages, ...nestedMessages.flat()];
+}
+
+async function softDeleteSmokeChatMessage(documentPath) {
+    const message = await getFirestoreDocument(staffRestSession, documentPath);
+    if (!message || message?.fields?.deleted?.booleanValue === true) return;
+    await patchFirestoreDocumentFields(staffRestSession, documentPath, {
+        deleted: { booleanValue: true }
+    });
+}
+
+async function softDeleteSmokeChatMessages(...texts) {
+    const messageGroups = await Promise.all(texts.map((text) => findSmokeChatMessages(text)));
+    const messages = [
+        ...new Map(messageGroups.flat().map((message) => [getFirestoreDocumentPath(message), message])).values()
+    ];
+    await Promise.all(messages.map((message) => (
+        softDeleteSmokeChatMessage(getFirestoreDocumentPath(message))
+    )));
+    return messages.length;
+}
+
+async function openWritableMediaAlbum(page) {
+    await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
+    const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
+    if (await photoButton.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false)) {
+        return photoButton;
+    }
+
+    const refreshMedia = page.getByRole('button', { name: 'Refresh media' });
+    if (await refreshMedia.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
+        await refreshMedia.click({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    } else {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: LIVE_ACTION_TIMEOUT_MS });
+    }
+    await expect(
+        photoButton,
+        'The existing smoke media album must become writable after one bounded read-only refresh'
+    ).toBeVisible({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    return photoButton;
+}
+
+test('staff smoke writes are deterministic and reversed or soft-deleted after validation', async () => {
     test.setTimeout(300_000);
     const playerName = `${smokePrefix}-player`;
     const opponentName = `${smokePrefix}-opponent`;
@@ -170,6 +261,10 @@ test('staff smoke writes are deterministic and removed after validation', async 
                     body: chatText
                 }
             )
+        },
+        {
+            recordType: 'chat-message',
+            cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)
         }
     ];
 
@@ -222,17 +317,12 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await page.getByRole('button', { name: 'Send message' }).click();
             await expect(page.getByText(chatText, { exact: true })).toBeVisible({ timeout: 25_000 });
 
-            const chatDocuments = await findFirestoreDocumentsByStringField(
-                staffRestSession,
-                `teams/${config.teamId}/chatMessages`,
-                'text',
-                chatText
-            );
+            const chatDocuments = await findSmokeChatMessages(chatText);
             expect(chatDocuments).toHaveLength(1);
             const chatDocumentPath = getFirestoreDocumentPath(chatDocuments[0]);
             cleanupTasks.push({
                 recordType: 'chat-message',
-                cleanup: () => deleteFirestoreDocument(staffRestSession, chatDocumentPath)
+                cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)
             });
 
             const messageRow = page.locator('.message-row-measure').filter({ hasText: chatText });
@@ -247,6 +337,9 @@ test('staff smoke writes are deterministic and removed after validation', async 
             page.once('dialog', (dialog) => dialog.accept());
             await editedRow.getByRole('button', { name: 'Delete' }).click();
             await expect(editedRow.getByText('Message removed')).toBeVisible({ timeout: 20_000 });
+            await expect.poll(async () => (
+                await getFirestoreDocument(staffRestSession, chatDocumentPath)
+            )?.fields?.deleted?.booleanValue).toBe(true);
 
             await openRoute(page, `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}?section=game`);
             const trackerLaunch = page.getByTestId('standard-tracker-launch');
@@ -275,6 +368,42 @@ test('staff smoke writes are deterministic and removed after validation', async 
             ).toBeVisible({ timeout: 25_000 });
             await messageDeepLink.getByRole('button').click();
             await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/messages(?:\/|\?)/);
+        });
+    } finally {
+        await runSmokeCleanup(runId, cleanupTasks);
+    }
+});
+
+test('staff image upload is persisted and removed after validation', async () => {
+    test.setTimeout(240_000);
+    const mediaName = `${smokePrefix}-media.png`;
+    const cleanupTasks = [{
+        recordType: 'team-media',
+        cleanup: () => deleteSmokeMediaByTitle(
+            staffRestSession,
+            `teams/${config.teamId}/mediaItems`,
+            mediaName
+        )
+    }];
+
+    try {
+        await withAuthenticatedPage(staffSession, async (page) => {
+            await openWritableMediaAlbum(page);
+            const photoInput = page.locator('input[type="file"][accept="image/*"]');
+            await photoInput.setInputFiles({
+                name: mediaName,
+                mimeType: 'image/png',
+                buffer: Buffer.from(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                    'base64'
+                )
+            });
+            await expect(page.getByText('Uploaded', { exact: true })).toBeVisible({ timeout: 35_000 });
+            const deleteMedia = page.getByRole('button', { name: `Delete ${mediaName}` });
+            await expect(deleteMedia).toBeVisible({ timeout: 25_000 });
+            page.once('dialog', (dialog) => dialog.accept());
+            await deleteMedia.click();
+            await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
         });
     } finally {
         await runSmokeCleanup(runId, cleanupTasks);

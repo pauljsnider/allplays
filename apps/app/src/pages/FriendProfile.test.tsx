@@ -41,6 +41,14 @@ const profile = {
   posts: []
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 describe('FriendProfile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,6 +80,29 @@ describe('FriendProfile', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy profile link' }));
     await waitFor(() => expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(`${window.location.origin}/app/#/people/user-1`));
+  });
+
+  it('replaces the loading state with one complete delayed profile', async () => {
+    const pendingProfile = deferred<typeof profile>();
+    socialMocks.loadFriendProfile.mockReturnValue(pendingProfile.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/profile']}>
+        <Routes>
+          <Route path="/profile" element={<FriendProfile auth={auth} profileUserId="user-1" />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Loading profile…')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Pat Parent' })).toBeNull();
+
+    pendingProfile.resolve(profile);
+
+    expect(await screen.findByRole('heading', { name: 'Pat Parent' })).toBeVisible();
+    expect(screen.queryByText('Loading profile…')).toBeNull();
+    expect(screen.getAllByRole('link', { name: /Bears/ })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: /Pat Star/ })).toHaveLength(1);
   });
 
   it('supports route-addressable profile sections without rendering unrelated collections', async () => {

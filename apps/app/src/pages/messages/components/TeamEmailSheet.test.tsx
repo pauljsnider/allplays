@@ -210,4 +210,21 @@ describe('TeamEmailSheet compose-first workflow', () => {
       recipientIds
     }));
   });
+
+  it('shows an actionable throttle error without clearing the composer', async () => {
+    chatServiceMocks.sendTeamEmailMessage.mockRejectedValue(Object.assign(
+      new Error('Team email send limit reached. Keep this message and try again in about 10 minutes.'),
+      { code: 'functions/resource-exhausted' }
+    ));
+    renderTeamEmailSheet();
+
+    await screen.findByText('Saved drafts');
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Schedule change' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Practice starts at six.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Keep this message and try again in about 10 minutes.');
+    expect(screen.getByLabelText('Subject')).toHaveValue('Schedule change');
+    expect(screen.getByLabelText('Message')).toHaveValue('Practice starts at six.');
+  });
 });

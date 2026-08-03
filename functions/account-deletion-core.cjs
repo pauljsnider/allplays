@@ -10,6 +10,17 @@ function normalizeConfirmation(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function isTeamOwnedByAccount(team = {}, accountIdentity) {
+  const identity = normalizeRosterContactIdentity(accountIdentity);
+  const ownerId = String(team.ownerId || '').trim();
+  if (ownerId) return Boolean(identity.uid && ownerId === identity.uid);
+  return Boolean(
+    identity.email &&
+    [team.ownerEmail, team.ownerEmailLower]
+      .some((value) => String(value || '').trim().toLowerCase() === identity.email)
+  );
+}
+
 function buildDeletionAuditId(uid) {
   return crypto.createHash('sha256').update(String(uid || '')).digest('hex');
 }
@@ -248,11 +259,7 @@ function buildTeamAccountGrantScrubPlan(team = {}, accountIdentity) {
     });
     if (permissionsChanged) update.teamPermissions = nextPermissions;
   }
-  if (
-    (identity.uid && String(team.ownerId || '').trim() === identity.uid) ||
-    (identity.email && [team.ownerEmail, team.ownerEmailLower]
-      .some((value) => String(value || '').trim().toLowerCase() === identity.email))
-  ) {
+  if (isTeamOwnedByAccount(team, identity)) {
     fieldsToDelete.push('ownerId', 'ownerEmail', 'ownerEmailLower');
   }
   return {
@@ -484,10 +491,11 @@ function assertRecentAuthentication(context, HttpsError, nowSeconds = Math.floor
   }
 }
 
-function summarizeOwnedTeams(snapshot) {
+function summarizeOwnedTeams(snapshot, accountIdentity) {
   const seenTeamIds = new Set();
   return (snapshot?.docs || [])
     .filter((doc) => doc.data()?.active !== false)
+    .filter((doc) => isTeamOwnedByAccount(doc.data() || {}, accountIdentity))
     .filter((doc) => {
       if (seenTeamIds.has(doc.id)) return false;
       seenTeamIds.add(doc.id);
@@ -536,7 +544,7 @@ async function loadOwnedTeams({ firestore, uid, email }) {
   const snapshots = await Promise.all(queries);
   return summarizeOwnedTeams({
     docs: snapshots.flatMap((snapshot) => snapshot.docs || [])
-  });
+  }, { uid, email: normalizedEmail });
 }
 
 function createAccountDeletionRequestHandler({ firestore, auth, Timestamp, HttpsError }) {

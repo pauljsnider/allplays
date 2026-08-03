@@ -6,6 +6,21 @@ const LEGACY_IMAGE_SIGNATURE_PATH_PATTERN = /^user-photos\/\d+_certificate-signa
 const LEGACY_IMAGE_STORAGE_KIND = 'legacy-image';
 const PRIMARY_STORAGE_KIND = 'primary';
 
+function getCertificateLegacyManagerEmails(team = {}) {
+  const hasCanonicalOwner = Boolean(String(team.ownerId || '').trim());
+  const normalizeEmails = (emails) => [...new Set(
+    emails.map((email) => String(email || '').trim().toLowerCase()).filter(Boolean)
+  )];
+  const adminEmails = normalizeEmails(Array.isArray(team.adminEmails) ? team.adminEmails : []);
+  if (hasCanonicalOwner) return adminEmails;
+
+  const ownerAliases = normalizeEmails([team.ownerEmail, team.ownerEmailLower]);
+  return [...new Set([
+    ...(ownerAliases.length === 1 ? ownerAliases : []),
+    ...adminEmails
+  ])];
+}
+
 function normalizeCertificateTeamId(value) {
   const teamId = String(value || '').trim();
   if (!TEAM_ID_PATTERN.test(teamId)) {
@@ -411,8 +426,16 @@ async function upgradeCertificateSignatureCleanupTarget({
 }) {
   const normalizedTeamId = normalizeCertificateTeamId(teamId);
   if (String(target.teamId || '').trim() !== normalizedTeamId) return null;
-  if (isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, target)) {
+  const isCanonicalTarget = isAuthorizedCertificateSignatureCleanupTarget(normalizedTeamId, target);
+  if (isCanonicalTarget && target.storageBucket !== LEGACY_IMAGE_STORAGE_KIND) {
     return { target, missing: false };
+  }
+  if (isCanonicalTarget) {
+    if (typeof lookupTeamObjectBinding !== 'function') return null;
+    const binding = await lookupTeamObjectBinding(target);
+    return isMatchingCertificateLegacySignatureBinding(binding, target)
+      ? { target, missing: false }
+      : null;
   }
   const storageBucket = target.storageBucket === LEGACY_IMAGE_STORAGE_KIND
     ? LEGACY_IMAGE_STORAGE_KIND
@@ -515,6 +538,7 @@ module.exports = {
   discoverLegacyImageSignatureReferences,
   doesLegacyImageMetadataMatchSourceHash,
   extractFirebaseStoragePathFromUrl,
+  getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   getCertificateSignatureObjectKey,
   getLegacySignatureOwnerId,

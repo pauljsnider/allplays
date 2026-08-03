@@ -615,14 +615,14 @@ export function validateProductionDeployCommand(deployProd) {
     const certificateFinalRules = deployProd.indexOf('certificate-defaults-rules-final');
     if (
         certificateInventoryProducer === -1
-        || certificateInventoryBackfill <= certificateInventoryProducer
-        || certificateCleanupConsumer <= certificateInventoryBackfill
-        || certificateWriterDeploy <= certificateCleanupConsumer
+        || certificateCleanupConsumer <= certificateInventoryProducer
+        || certificateInventoryBackfill <= certificateCleanupConsumer
+        || certificateWriterDeploy <= certificateInventoryBackfill
         || certificateCompatibilityRules <= certificateWriterDeploy
         || certificateApplicationDeploy <= certificateCompatibilityRules
         || certificateFinalRules <= certificateApplicationDeploy
     ) {
-        throw new Error('Production certificate defaults must deploy inventory producer, backfill, cleanup consumer, writer, transitional rules, callers, then the final denial.');
+        throw new Error('Production certificate defaults must deploy inventory producer, revalidating cleanup consumer, backfill, writer, transitional rules, callers, then the final denial.');
     }
     assertIncludes(deployProd, 'echo \'| Guaranteed not deployed | Full `hosting`, `functions` application |\'', 'Production Firestore retry-exhaustion blocked application surfaces');
     assertIncludes(

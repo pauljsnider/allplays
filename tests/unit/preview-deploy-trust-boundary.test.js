@@ -413,14 +413,17 @@ describe('preview deployment workflow trust boundary', () => {
         expect(scheduledProdSmokeWorkflow).not.toContain("cron: '*/15 * * * *'");
         expect(scheduledProdSmokeWorkflow).toContain('cancel-in-progress: false');
         expect(scheduledProdSmokeWorkflow).toContain(
-            'SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}'
+            "SMOKE_EXTENDED_WRITES: ${{ github.event_name == 'workflow_dispatch' && (inputs.extended_writes && '1' || '0') || vars.SMOKE_EXTENDED_WRITES_ENABLED }}"
         );
+        expect(scheduledProdSmokeWorkflow).toContain('extended_writes:');
+        expect(scheduledProdSmokeWorkflow).toContain('type: boolean');
+        expect(scheduledProdSmokeWorkflow).toContain('default: false');
         expect(scheduledProdSmokeWorkflow).not.toContain("SMOKE_EXTENDED_WRITES: '1'");
     });
 
     it('verifies and removes chat notifications in the same reversible smoke workflow', () => {
         const staffWorkflowStart = extendedProductionSmoke.indexOf(
-            "test('staff smoke writes are deterministic and removed after validation'"
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
         );
         const parentWorkflowStart = extendedProductionSmoke.indexOf(
             "test('parent smoke writes restore or remove every touched record'"
@@ -433,6 +436,19 @@ describe('preview deployment workflow trust boundary', () => {
         expect(staffWorkflow).toContain('`users/${parentRestSession.localId}/notificationInbox`');
         expect(staffWorkflow).toContain("category: 'liveChat'");
         expect(staffWorkflow).toContain('body: chatText');
+        expect(extendedProductionSmoke).toContain('async function findSmokeChatMessages(text)');
+        expect(extendedProductionSmoke).toContain('`teams/${config.teamId}/chatConversations`');
+        expect(extendedProductionSmoke).toContain("'type',\n            'team'");
+        expect(extendedProductionSmoke).toContain("'type',\n            'group'");
+        expect(extendedProductionSmoke).toContain("'directAccess',\n            'team_admin'");
+        expect(extendedProductionSmoke).not.toContain(
+            'listFirestoreDocuments(\n        staffRestSession,\n        `teams/${config.teamId}/chatConversations`'
+        );
+        expect(extendedProductionSmoke).toContain('`${getFirestoreDocumentPath(conversation)}/chatMessages`');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)');
+        expect(extendedProductionSmoke).toContain('cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)');
+        expect(extendedProductionSmoke).toContain("deleted: { booleanValue: true }");
+        expect(extendedProductionSmoke).not.toContain('deleteFirestoreDocument(staffRestSession, chatDocumentPath)');
         const notificationAssertion = staffWorkflow.indexOf('const messageDeepLink');
         const cleanupCall = staffWorkflow.indexOf('await runSmokeCleanup(runId, cleanupTasks)');
         expect(notificationAssertion).toBeGreaterThanOrEqual(0);
@@ -441,9 +457,9 @@ describe('preview deployment workflow trust boundary', () => {
 
     it('keeps production image writes isolated and always schedules cleanup', () => {
         const staffWorkflowStart = extendedProductionSmoke.indexOf(
-            "test('staff smoke writes are deterministic and removed after validation'"
+            "test('staff smoke writes are deterministic and reversed or soft-deleted after validation'"
         );
-        const imageWorkflowStart = imageWriteProductionSmoke.indexOf(
+        const imageWorkflowStart = extendedProductionSmoke.indexOf(
             "test('staff image upload is persisted and removed after validation'"
         );
         const profileImageWorkflowStart = imageWriteProductionSmoke.indexOf(
@@ -452,18 +468,19 @@ describe('preview deployment workflow trust boundary', () => {
         const parentWorkflowStart = extendedProductionSmoke.indexOf(
             "test('parent smoke writes restore or remove every touched record'"
         );
-        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, parentWorkflowStart);
-        const imageWorkflow = imageWriteProductionSmoke.slice(imageWorkflowStart, profileImageWorkflowStart);
+        const staffWorkflow = extendedProductionSmoke.slice(staffWorkflowStart, imageWorkflowStart);
+        const imageWorkflow = extendedProductionSmoke.slice(imageWorkflowStart, parentWorkflowStart);
         const profileImageWorkflow = imageWriteProductionSmoke.slice(profileImageWorkflowStart);
         const reconciliationWorkflow = imageWriteProductionSmoke.slice(
             imageWriteProductionSmoke.indexOf('async function reconcileDedicatedImageFixture'),
-            imageWorkflowStart
+            profileImageWorkflowStart
         );
 
         expect(staffWorkflowStart).toBeGreaterThanOrEqual(0);
         expect(parentWorkflowStart).toBeGreaterThan(staffWorkflowStart);
-        expect(imageWorkflowStart).toBeGreaterThanOrEqual(0);
-        expect(profileImageWorkflowStart).toBeGreaterThan(imageWorkflowStart);
+        expect(imageWorkflowStart).toBeGreaterThan(staffWorkflowStart);
+        expect(parentWorkflowStart).toBeGreaterThan(imageWorkflowStart);
+        expect(profileImageWorkflowStart).toBeGreaterThanOrEqual(0);
         expect(staffWorkflow).toContain('section[aria-label="Manage schedule tools"]');
         expect(staffWorkflow).toContain("locator('button[aria-controls]').first()");
         expect(staffWorkflow).toContain('manageSchedule.click({ timeout: 25_000 })');
@@ -472,13 +489,14 @@ describe('preview deployment workflow trust boundary', () => {
         expect(extendedProductionSmoke).toContain('page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS)');
         expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
         expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
+        expect(extendedProductionSmoke).toContain("test.describe.configure({ mode: 'serial' })");
         expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
         expect(imageWorkflow).toContain("recordType: 'team-media'");
         expect(imageWorkflow).toContain('await openWritableMediaAlbum(page)');
-        expect(imageWriteProductionSmoke).toContain("getByRole('button', { name: 'Refresh media' })");
-        expect(imageWriteProductionSmoke).toContain("waitFor({ state: 'visible', timeout: 15_000 })");
-        expect(imageWriteProductionSmoke).not.toContain('isVisible({ timeout:');
-        expect(imageWriteProductionSmoke).toContain('page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS)');
+        expect(imageWorkflow).toContain('withAuthenticatedPage(staffSession');
+        expect(extendedProductionSmoke).toContain("getByRole('button', { name: 'Refresh media' })");
+        expect(extendedProductionSmoke).toContain("waitFor({ state: 'visible', timeout: 15_000 })");
+        expect(extendedProductionSmoke).not.toContain('isVisible({ timeout:');
         expect(imageWorkflow).toContain('input[type="file"][accept="image/*"]');
         expect(imageWorkflow).toContain("getByText('Uploaded', { exact: true })");
         expect(imageWorkflow).toContain("getByText('Media item deleted.')");
