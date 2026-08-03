@@ -16606,7 +16606,10 @@ function requireOpportunityAuth(context, { verified = false } = {}) {
 async function getOpportunityCaller(context, options = {}) {
   const uid = requireOpportunityAuth(context, options);
   const userSnap = await firestore.doc(`users/${uid}`).get();
-  const rawEmail = String(context.auth.token?.email || userSnap.data()?.email || '').trim();
+  // Team email authorization must match Firestore's request.auth.token.email
+  // boundary. A users/{uid}.email value can outlive an Auth email change and
+  // must never restore access that the current token no longer carries.
+  const rawEmail = String(context.auth.token?.email || '').trim();
   return {
     uid,
     email: rawEmail.toLowerCase(),
@@ -16617,6 +16620,17 @@ async function getOpportunityCaller(context, options = {}) {
 
 function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
+}
+
+function hasOpportunityTeamAdminAccess(caller, team) {
+  return hasTeamAdminAccess({
+    team,
+    // isAdmin is protected server-managed state. Email-based team access must
+    // come only from the current Auth token, never a stale users/{uid} email.
+    user: { isAdmin: isOpportunityPlatformAdmin(caller) },
+    uid: caller?.uid,
+    email: caller?.email
+  });
 }
 
 const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
@@ -16990,12 +17004,7 @@ async function canManageOpportunity(caller, listing) {
   if (isOpportunityPlatformAdmin(caller) || listing.authorId === caller.uid) return true;
   if (!listing.teamId) return false;
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function resolveOpportunityTeam(input, caller) {
@@ -17006,7 +17015,7 @@ async function resolveOpportunityTeam(input, caller) {
   if (!isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('failed-precondition', 'Only active public teams can publish public opportunities.');
   }
-  if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+  if (!hasOpportunityTeamAdminAccess(caller, team)) {
     throwOpportunityError('permission-denied', 'Only a team owner or admin can publish for this team.');
   }
   return { id: teamSnap.id, ...team };
@@ -17028,7 +17037,7 @@ async function listOpportunityManagedTeamDocuments(caller) {
   const teams = new Map();
   snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => {
     const team = docSnap.data() || {};
-    if (hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+    if (hasOpportunityTeamAdminAccess(caller, team)) {
       teams.set(docSnap.id, docSnap);
     }
   }));
@@ -17256,12 +17265,7 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
   const items = Array.from(staffTeams.values())
     .map((teamSnap) => {
       const team = teamSnap.data() || {};
-      const canManage = hasTeamAdminAccess({
-        team,
-        user: caller.user,
-        uid: caller.uid,
-        email: caller.email
-      });
+      const canManage = hasOpportunityTeamAdminAccess(caller, team);
       return canManage
         ? serializeManagedTeamProfile(teamSnap.id, team)
         : serializeStaffTeamProfile(teamSnap.id, team);
@@ -17287,7 +17291,7 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   let item = null;
   if (context.auth?.uid) {
     const caller = await getOpportunityCaller(context);
-    if (hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+    if (hasOpportunityTeamAdminAccess(caller, team)) {
       item = serializeManagedTeamDocument(teamSnap.id, team);
     }
   }
@@ -17533,12 +17537,7 @@ async function canAccessOpportunityInquiry(caller, inquiry) {
     return Array.isArray(inquiry.participantIds) && inquiry.participantIds.includes(caller.uid);
   }
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(inquiry.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function requireOpportunityInquiry(inquiryId, caller) {

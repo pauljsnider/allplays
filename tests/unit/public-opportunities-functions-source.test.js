@@ -32,7 +32,8 @@ describe('public opportunity callable wiring', () => {
 
   it('server-verifies publishing roles, verified email, expiration, rate limits, and private notifications', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
-    expect(source).toContain('hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })');
+    expect(source).toContain("const rawEmail = String(context.auth.token?.email || '').trim();");
+    expect(source).toContain('hasOpportunityTeamAdminAccess(caller, team)');
     expect(source).toContain('isOpportunityTeamDiscoverable(team)');
     expect(source).toContain("status: 'active'");
     expect(source).toContain('buildOpportunityExpiry(now.toMillis())');
@@ -119,7 +120,7 @@ describe('public opportunity callable wiring', () => {
 
   it('revokes private team inquiry access and notifications from former administrators', () => {
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*isOpportunityPlatformAdmin\(caller\)[\s\S]*inquiry\.senderId === caller\.uid/);
-    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasTeamAdminAccess/);
+    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasOpportunityTeamAdminAccess/);
     expect(source).toContain('scanned.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
     expect(source).toContain("collectionRef.where('teamId', 'in', teamIds)");
     expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');

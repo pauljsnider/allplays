@@ -338,6 +338,7 @@ test('managed-team callables return access fields only to current managers', asy
     const { callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team'] },
         'users/stranger-1': { email: 'stranger@example.com' },
+        'users/stale-owner': { email: 'legacy-owner@example.com' },
         'teams/private-team': {
             name: 'Private Bears',
             sport: 'Basketball',
@@ -361,6 +362,20 @@ test('managed-team callables return access fields only to current managers', asy
             active: true,
             isPublic: false,
             privateBillingCustomerId: 'must-not-leak-to-coach'
+        },
+        'teams/stale-private-team': {
+            name: 'Stale Private Bears',
+            ownerEmail: 'legacy-owner@example.com',
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'must-not-leak-from-stale-profile'
+        },
+        'teams/stale-public-team': {
+            name: 'Stale Public Bears',
+            ownerEmailLower: 'legacy-owner@example.com',
+            active: true,
+            isPublic: true,
+            privateBillingCustomerId: 'must-not-leak-from-public-projection'
         }
     });
 
@@ -412,6 +427,20 @@ test('managed-team callables return access fields only to current managers', asy
         ),
         (error) => error.code === 'not-found'
     );
+
+    const staleProfileContext = authContext('stale-owner', { email: null });
+    assert.deepEqual((await callables.listManagedTeams({}, staleProfileContext)).items, []);
+    await assert.rejects(
+        callables.getPublicTeamProfile({ teamId: 'stale-private-team' }, staleProfileContext),
+        (error) => error.code === 'not-found'
+    );
+    const stalePublicProfile = await callables.getPublicTeamProfile(
+        { teamId: 'stale-public-team' },
+        staleProfileContext
+    );
+    assert.equal(stalePublicProfile.item.name, 'Stale Public Bears');
+    assert.equal('ownerEmailLower' in stalePublicProfile.item, false);
+    assert.equal('privateBillingCustomerId' in stalePublicProfile.item, false);
 });
 
 test('team opportunity publishing is server-authorized and returns a public-only projection', async () => {
