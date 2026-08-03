@@ -92,10 +92,12 @@ async function openRoute(page, route) {
 async function openWritableMediaAlbum(page) {
     await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
     const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
-    if (await photoButton.isVisible({ timeout: 15_000 }).catch(() => false)) return photoButton;
+    if (await photoButton.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false)) {
+        return photoButton;
+    }
 
     const refreshMedia = page.getByRole('button', { name: 'Refresh media' });
-    if (await refreshMedia.isVisible({ timeout: 5_000 }).catch(() => false)) {
+    if (await refreshMedia.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
         await refreshMedia.click({ timeout: LIVE_ACTION_TIMEOUT_MS });
     } else {
         await page.reload({ waitUntil: 'domcontentloaded', timeout: LIVE_ACTION_TIMEOUT_MS });
