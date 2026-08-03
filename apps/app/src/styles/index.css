@@ -535,7 +535,9 @@
   padding: 8px;
 }
 
-.desktop-app-page .profile-page-web .profile-section-nav button {
+.desktop-app-page .profile-page-web .profile-section-nav a {
+  display: flex;
+  align-items: center;
   justify-content: flex-start;
   border-radius: 10px;
   padding-left: 12px;

@@ -60,6 +60,7 @@ import {
   Timestamp
 } from './adapters/legacyScheduleDb';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
+import { getCalendarOccurrenceTrackingId, isCalendarOccurrenceTracked } from './calendarOccurrence';
 import {
   sendPublicRsvpReminderEmails,
   normalizeOfficialLinkEmail,
@@ -1860,6 +1861,19 @@ function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
   });
 }
 
+function requireScheduleMaterializationManager(teamId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('You need to sign in before enabling RSVP for an imported event.');
+  }
+  return loadTeam(teamId).then((team) => {
+    const teamWithId = team ? { ...team, id: team.id || teamId } : null;
+    if (!teamWithId || !isPublicRsvpReminderManager(teamWithId, user)) {
+      throw new Error('You do not have permission to enable RSVP for this team schedule.');
+    }
+    return teamWithId;
+  });
+}
+
 function parseScheduleImportDate(value: string | null | undefined, label: string) {
   const date = new Date(String(value || ''));
   if (Number.isNaN(date.getTime())) {
@@ -2560,6 +2574,77 @@ async function createIdempotentScheduleImportEvent(
     });
   }), 'Schedule import idempotent event create');
   return eventId;
+}
+
+async function getCalendarMaterializationDigest(teamId: string, calendarEventId: string, startsAt: Date) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('This device cannot safely create a stable tracked event ID.');
+  }
+  const input = new TextEncoder().encode(`${teamId}:${calendarEventId}:${startsAt.toISOString()}`);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', input);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  const teamId = compactString(event.teamId);
+  const calendarEventId = compactString(event.id);
+  if (!teamId || !calendarEventId) throw new Error('The imported calendar event is missing its team or event ID.');
+  if (event.isDbGame) throw new Error('RSVP is already enabled for this event.');
+  if (event.isCancelled) throw new Error('RSVP cannot be enabled for a cancelled event.');
+  if (!event.isImported || event.sourceType !== 'calendar') {
+    throw new Error('Only imported calendar events can be converted to tracked events.');
+  }
+  if (!(event.date instanceof Date) || Number.isNaN(event.date.getTime())) {
+    throw new Error('The imported calendar event has an invalid start time.');
+  }
+  const opponent = compactString(event.opponent);
+  const title = compactString(event.title) || 'Practice';
+  if (event.type === 'game' && !opponent) throw new Error('The imported game needs an opponent before RSVP can be enabled.');
+
+  await requireScheduleMaterializationManager(teamId, user);
+  const calendarOccurrenceId = getCalendarOccurrenceTrackingId(calendarEventId, event.date);
+  const digest = await getCalendarMaterializationDigest(teamId, calendarEventId, event.date);
+  const actionId = `calendar-materialize:${digest}`;
+  const trackedEventId = `calendar_${digest}`;
+  const importedAt = new Date().toISOString();
+  const importBatch = {
+    batchId: actionId,
+    totalCount: 1,
+    rowNumber: 1,
+    importedAt,
+    importedBy: user?.uid || null,
+    actionId
+  };
+  const payload = {
+    type: event.type,
+    date: event.date,
+    end: event.endDate || null,
+    opponent: event.type === 'game' ? opponent : null,
+    title: event.type === 'practice' ? title : null,
+    location: compactString(event.location),
+    isHome: event.type === 'game' ? (event.isHome ?? null) : null,
+    arrivalTime: event.arrivalTime || null,
+    notes: compactString(event.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: event.type === 'game' ? (compactString(event.competitionType) || 'league') : null,
+    countsTowardSeasonRecord: event.type === 'game' ? (event.countsTowardSeasonRecord ?? true) : null,
+    statTrackerConfigId: null,
+    calendarEventUid: calendarOccurrenceId,
+    source: 'calendar',
+    sourceMetadata: {
+      sourceType: 'calendar',
+      sourceLabel: compactString(event.sourceLabel) || 'Imported calendar'
+    },
+    importBatch,
+    createdBy: user?.uid || null
+  };
+
+  await createIdempotentScheduleImportEvent(teamId, trackedEventId, payload, actionId);
+  invalidateParentScheduleCaches(user);
+  return trackedEventId;
 }
 
 export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
@@ -3420,7 +3505,7 @@ function toNullableScore(value: unknown) {
 
 function getScheduleSourceLabel(game: any) {
   const metadata = game?.sourceMetadata || game?.registrationSource || {};
-  const provider = compactString(metadata.providerName || metadata.provider || metadata.sourceName || metadata.sourceType || game?.source);
+  const provider = compactString(metadata.sourceLabel || metadata.providerName || metadata.provider || metadata.sourceName || metadata.sourceType || game?.source);
   if (provider) return provider;
   if (game?.source === 'calendar') return 'Imported calendar';
   if (game?.source === 'registration') return 'Registration import';
@@ -3778,7 +3863,11 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       : [projectedCalendarEvents];
 
     calendarResults.flat().forEach((calendarEvent: any) => {
-      if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
+      const calendarEventTrackingId = getCalendarEventTrackingId(calendarEvent);
+      if (
+        isCalendarOccurrenceTracked(calendarEventTrackingId, calendarEvent.dtstart, trackedUids)
+        || isTrackedCalendarEvent(calendarEvent, trackedUids)
+      ) return;
       const date = normalizeScheduleDate(calendarEvent.dtstart);
       if (!date) return;
       const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
@@ -3788,7 +3877,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         : isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
       const cleanSummary = calendarEvent.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
-      const id = getCalendarEventTrackingId(calendarEvent) || `ics-${date.getTime()}`;
+      const id = calendarEventTrackingId || `ics-${date.getTime()}`;
       const session = isPractice ? resolvePracticeSessionForEvent(calendarEvent, date, sessionsByEventId, sessions, matchedSessionIds) : null;
       teamChildren.forEach((child) => {
         events.push(createScheduleEvent({

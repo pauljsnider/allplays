@@ -8,6 +8,7 @@ import {
   isPracticeEvent,
   isTrackedCalendarEvent
 } from './adapters/legacyScheduleHelpers';
+import { isCalendarOccurrenceTracked } from './calendarOccurrence';
 import { getCalendarLocationDetail } from './scheduleLogic';
 
 export type FamilyShareTokenErrorReason = 'missing' | 'invalid' | 'revoked' | 'expired' | 'load-failed';
@@ -362,7 +363,10 @@ async function buildTeamFamilyEvents(
   if (calendarUrls.length) {
     const calendarResults = await Promise.all(calendarUrls.map((calendarUrl) => loadCalendar(calendarUrl, teamName, calendarWarnings)));
     calendarResults.flat().forEach((calendarEvent) => {
-      if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
+      if (
+        isCalendarOccurrenceTracked(getCalendarEventTrackingId(calendarEvent), calendarEvent.dtstart, trackedUids)
+        || isTrackedCalendarEvent(calendarEvent, trackedUids)
+      ) return;
       const eventDate = toDate(calendarEvent.dtstart);
       if (!eventDate) return;
       if (dbTimestamps.some((timestamp) => Math.abs(timestamp - eventDate.getTime()) < 60000)) return;

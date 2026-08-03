@@ -175,13 +175,13 @@ describe('Profile section restore from URL', () => {
   it('restores alerts section and selects the correct team when mounted with ?section=alerts&teamId=team-2', async () => {
     renderProfileAt('?section=alerts&teamId=team-2');
 
-    // The Alerts section nav button should be visually active (aria-pressed)
-    const alertsButton = await screen.findByRole('button', { name: 'Alerts' });
-    expect(alertsButton.getAttribute('aria-pressed')).toBe('true');
+    // The Notifications section link should be visually and semantically active.
+    const alertsButton = await screen.findByRole('link', { name: 'Notifications' });
+    expect(alertsButton.getAttribute('aria-current')).toBe('page');
 
     // Account button should not be active
-    const accountButton = screen.getByRole('button', { name: 'Account' });
-    expect(accountButton.getAttribute('aria-pressed')).toBe('false');
+    const accountButton = screen.getByRole('link', { name: 'Profile' });
+    expect(accountButton.getAttribute('aria-current')).toBeNull();
 
     // Wait for teams to load and team-2 to be selected
     await waitFor(() => {
@@ -200,8 +200,8 @@ describe('Profile section restore from URL', () => {
     renderProfileAt('?section=alerts&teamId=nonexistent-team');
 
     // Should still show the Alerts section
-    const alertsButton = await screen.findByRole('button', { name: 'Alerts' });
-    expect(alertsButton.getAttribute('aria-pressed')).toBe('true');
+    const alertsButton = await screen.findByRole('link', { name: 'Notifications' });
+    expect(alertsButton.getAttribute('aria-current')).toBe('page');
 
     // Should fall back to the first team (team-1)
     await waitFor(() => {
@@ -219,11 +219,11 @@ describe('Profile section restore from URL', () => {
   it('defaults to the account section when no section param is in the URL', async () => {
     renderProfileAt('');
 
-    const accountButton = await screen.findByRole('button', { name: 'Account' });
-    expect(accountButton.getAttribute('aria-pressed')).toBe('true');
+    const accountButton = await screen.findByRole('link', { name: 'Profile' });
+    expect(accountButton.getAttribute('aria-current')).toBe('page');
 
-    const alertsButton = screen.getByRole('button', { name: 'Alerts' });
-    expect(alertsButton.getAttribute('aria-pressed')).toBe('false');
+    const alertsButton = screen.getByRole('link', { name: 'Notifications' });
+    expect(alertsButton.getAttribute('aria-current')).toBeNull();
 
     // Account form should be visible
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeTruthy();
@@ -234,8 +234,8 @@ describe('Profile section restore from URL', () => {
   it('defaults to the account section when an invalid section param is given', async () => {
     renderProfileAt('?section=badvalue');
 
-    const accountButton = await screen.findByRole('button', { name: 'Account' });
-    expect(accountButton.getAttribute('aria-pressed')).toBe('true');
+    const accountButton = await screen.findByRole('link', { name: 'Profile' });
+    expect(accountButton.getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('button', { name: 'Save profile' })).toBeTruthy();
   });
 });

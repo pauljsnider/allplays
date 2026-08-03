@@ -677,6 +677,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                 export async function createScheduledTournamentBlockForApp() { return { batchId: 'batch-new', gameIds: [] }; }
                 export async function createScheduleImportGame() { return 'import-game'; }
                 export async function createScheduleImportPractice() { return 'import-practice'; }
+                export async function enableRsvpForImportedCalendarEvent() { return 'calendar-materialized-event'; }
                 export async function finalizeScheduleImportBatch() { return { success: true }; }
                 export async function cancelPracticeOccurrenceForApp() { return { cancelled: true }; }
                 export async function cancelScheduledGameForApp() { return { cancelled: true }; }

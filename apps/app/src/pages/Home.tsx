@@ -187,6 +187,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
+  const [failedHomeDetailsUserId, setFailedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
@@ -236,6 +237,7 @@ export function Home({ auth }: { auth: AuthState }) {
             });
             setHome(secondaryHome);
             setLoadedHomeDetailsUserId(user.uid);
+            setFailedHomeDetailsUserId(null);
             setHomeLoadError(null);
             const socialHome = await loadSocialHome(user, secondaryHome);
             setSocial(socialHome);
@@ -264,9 +266,13 @@ export function Home({ auth }: { auth: AuthState }) {
                 feeCount: summary.home.fees.length,
                 error: appError.message
               });
+              setFailedHomeDetailsUserId(user.uid);
               if (!hasExistingHome) {
                 setHomeLoadError(appError);
-                setLoadedHomeDetailsUserId(null);
+                // The summary bootstrap is still useful even when a secondary
+                // permission or network request fails. Mark the attempt settled
+                // so Home does not present an infinite loading state.
+                setLoadedHomeDetailsUserId(user.uid);
                 setSocial(emptySocialHome());
                 setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
                 return;
@@ -376,6 +382,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
+  const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
   const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
 
   useViewLoadTimer({
@@ -490,8 +497,8 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsRefreshFailed ? 'bg-rose-50 text-rose-700' : homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>

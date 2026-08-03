@@ -209,6 +209,10 @@ async function mockScheduleAppModules(page) {
                     return 'import-practice';
                 }
 
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
+                }
+
                 export async function finalizeScheduleImportBatch() {
                     return { ok: true };
                 }
