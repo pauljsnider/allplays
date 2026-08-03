@@ -82,11 +82,17 @@ test('keeps UID-backed occurrence IDs stable across summary edits and discrimina
     calendarEventUid: `${priorOpaqueId}__${originalStartsAt}`,
     date: '2026-08-08T18:00:00.000Z'
   }]), true);
-  // A pre-stable-ID opaque hash created from an older summary is irreversible.
-  // Existing raw-UID records and all newly tracked stable IDs survive edits;
-  // this assertion prevents claiming compatibility the stored data cannot prove.
+  // The old hash is irreversible after a title edit, but its exact embedded
+  // occurrence time remains a narrow compatibility signal.
   assert.equal(isFamilyShareCalendarEventTracked(edited, [
     `${priorOpaqueId}__${originalStartsAt}`
+  ]), true);
+  const differentStartsAt = '2026-08-01T19:00:00.000Z';
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [
+    `${priorOpaqueId}__${differentStartsAt}`
+  ]), false);
+  assert.equal(isFamilyShareCalendarEventTracked(edited, [
+    `stable-provider-uid__${differentStartsAt}`
   ]), false);
 
   const uidMissingOriginal = buildEvent({ uid: '', summary: 'Bears vs. Hawks' });

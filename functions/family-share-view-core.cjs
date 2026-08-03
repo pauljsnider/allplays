@@ -56,8 +56,14 @@ function isFamilyShareCalendarEventTracked(event = {}, trackedEvents = []) {
       tracked.id === eventId || (baseId === eventId && occurrenceStartsAt === startsAt)
     ))) return true;
     if (!uidHash) continue;
-    if (hashFamilyShareCalendarEventUid(baseId) !== uidHash) continue;
-    if (occurrenceStartsAt ? occurrenceStartsAt === startsAt : !tracked.startsAt || tracked.startsAt === startsAt) return true;
+    if (hashFamilyShareCalendarEventUid(baseId) === uidHash) {
+      if (occurrenceStartsAt ? occurrenceStartsAt === startsAt : !tracked.startsAt || tracked.startsAt === startsAt) return true;
+      continue;
+    }
+    // Prior public IDs are irreversible 32-hex hashes. Their embedded occurrence
+    // timestamp is the only stable correlation available after a provider edits
+    // mutable summary metadata, and mirrors the existing team/time conflict guard.
+    if (/^[a-f0-9]{32}$/i.test(baseId) && occurrenceStartsAt === startsAt) return true;
   }
   return false;
 }
