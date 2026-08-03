@@ -94,6 +94,7 @@ function buildSendCategoryNotificationHarness({
     canSend = true,
     targets = [{ uid: 'user-1', token: 'token-1' }],
     getTargetsForCategoryImpl = async () => targets,
+    revalidateNotificationEffectTargetsImpl = async ({ targets: candidateTargets }) => candidateTargets,
     categories = ['schedule', 'liveScore', 'mentions', 'liveChat'],
     deliveryOptions = {},
     sendEachForMulticastImpl = async () => ({
@@ -114,6 +115,7 @@ function buildSendCategoryNotificationHarness({
     };
     const checkAndSetNotificationDedup = vi.fn(async () => canSend);
     const getTargetsForCategory = vi.fn(getTargetsForCategoryImpl);
+    const revalidateNotificationEffectTargets = vi.fn(revalidateNotificationEffectTargetsImpl);
     const buildNotificationLink = vi.fn(({ category, teamId, gameId }) => `https://allplays.ai/${category}/${teamId}/${gameId || ''}`);
     const buildNotificationAppRoute = vi.fn(({ category, teamId, gameId, eventId }) => `/${category}/${teamId}/${gameId || eventId || ''}`);
     const buildNotificationDeliveryOptions = vi.fn(() => deliveryOptions);
@@ -143,6 +145,7 @@ function buildSendCategoryNotificationHarness({
         'NOTIFICATION_CATEGORIES',
         'checkAndSetNotificationDedup',
         'getTargetsForCategory',
+        'revalidateNotificationEffectTargets',
         'buildNotificationLink',
         'buildNotificationAppRoute',
         'buildNotificationDeliveryOptions',
@@ -160,6 +163,7 @@ function buildSendCategoryNotificationHarness({
         categories,
         checkAndSetNotificationDedup,
         getTargetsForCategory,
+        revalidateNotificationEffectTargets,
         buildNotificationLink,
         buildNotificationAppRoute,
         buildNotificationDeliveryOptions,
