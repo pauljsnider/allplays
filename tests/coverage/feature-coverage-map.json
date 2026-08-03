@@ -247,6 +247,7 @@
                 "queueParentInviteEmail",
                 "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
+                "syncLegacyTeamOwnershipOnAuthCreate",
                 "syncPublicUserProfileOnUserWrite",
                 "syncPublicUserProfileProjection",
                 "syncPublicUserProfilesOnTeamWrite",
