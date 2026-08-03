@@ -1409,6 +1409,7 @@ describe('ScheduleEventDetail nav visibility', () => {
         isImported: true,
         sourceType: 'calendar',
         sourceLabel: 'Imported calendar',
+        isTeamAdmin: true,
         isTeamStaff: true
       })],
       children: []
@@ -1432,7 +1433,10 @@ describe('ScheduleEventDetail nav visibility', () => {
     confirmSpy.mockRestore();
   });
 
-  it('explains calendar-only RSVP limits to parents without exposing the staff mutation', async () => {
+  it.each([
+    ['parents', { isTeamAdmin: false, isTeamStaff: false }],
+    ['coach-only staff', { isTeamAdmin: false, isTeamStaff: true }]
+  ])('explains calendar-only RSVP limits to %s without exposing the owner/admin mutation', async (_label, access) => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'calendar-uid-1',
@@ -1440,7 +1444,7 @@ describe('ScheduleEventDetail nav visibility', () => {
         isImported: true,
         sourceType: 'calendar',
         sourceLabel: 'Imported calendar',
-        isTeamStaff: false
+        ...access
       })],
       children: []
     });
@@ -1449,7 +1453,7 @@ describe('ScheduleEventDetail nav visibility', () => {
 
     expect(await screen.findByText('Calendar-only event')).toBeTruthy();
     expect(screen.queryByText('RSVP needed')).toBeNull();
-    expect(screen.getByText('Ask a coach or team admin to enable RSVP for this event.')).toBeTruthy();
+    expect(screen.getByText('Ask a team owner or admin to enable RSVP for this event.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Enable RSVP' })).toBeNull();
     expect(scheduleServiceMocks.enableRsvpForImportedCalendarEvent).not.toHaveBeenCalled();
   });

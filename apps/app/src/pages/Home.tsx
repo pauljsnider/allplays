@@ -205,7 +205,6 @@ export function Home({ auth }: { auth: AuthState }) {
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
-    setFailedHomeDetailsUserId(null);
     setSocialStatus(null);
     const timer = startScreenMountTimer('home', {
       force,
@@ -267,13 +266,13 @@ export function Home({ auth }: { auth: AuthState }) {
                 feeCount: summary.home.fees.length,
                 error: appError.message
               });
+              setFailedHomeDetailsUserId(user.uid);
               if (!hasExistingHome) {
                 setHomeLoadError(appError);
                 // The summary bootstrap is still useful even when a secondary
                 // permission or network request fails. Mark the attempt settled
                 // so Home does not present an infinite loading state.
                 setLoadedHomeDetailsUserId(user.uid);
-                setFailedHomeDetailsUserId(user.uid);
                 setSocial(emptySocialHome());
                 setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
                 return;

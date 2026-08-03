@@ -1860,6 +1860,19 @@ function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
   });
 }
 
+function requireScheduleMaterializationManager(teamId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('You need to sign in before enabling RSVP for an imported event.');
+  }
+  return loadTeam(teamId).then((team) => {
+    const teamWithId = team ? { ...team, id: team.id || teamId } : null;
+    if (!teamWithId || !isPublicRsvpReminderManager(teamWithId, user)) {
+      throw new Error('You do not have permission to enable RSVP for this team schedule.');
+    }
+    return teamWithId;
+  });
+}
+
 function parseScheduleImportDate(value: string | null | undefined, label: string) {
   const date = new Date(String(value || ''));
   if (Number.isNaN(date.getTime())) {
@@ -2562,11 +2575,11 @@ async function createIdempotentScheduleImportEvent(
   return eventId;
 }
 
-async function getCalendarMaterializationDigest(teamId: string, calendarEventId: string) {
+async function getCalendarMaterializationDigest(teamId: string, calendarEventId: string, startsAt: Date) {
   if (!globalThis.crypto?.subtle) {
     throw new Error('This device cannot safely create a stable tracked event ID.');
   }
-  const input = new TextEncoder().encode(`${teamId}:${calendarEventId}`);
+  const input = new TextEncoder().encode(`${teamId}:${calendarEventId}:${startsAt.toISOString()}`);
   const digest = await globalThis.crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -2587,8 +2600,8 @@ export async function enableRsvpForImportedCalendarEvent(event: ParentScheduleEv
   const title = compactString(event.title) || 'Practice';
   if (event.type === 'game' && !opponent) throw new Error('The imported game needs an opponent before RSVP can be enabled.');
 
-  await requireScheduleImportStaff(teamId, user);
-  const digest = await getCalendarMaterializationDigest(teamId, calendarEventId);
+  await requireScheduleMaterializationManager(teamId, user);
+  const digest = await getCalendarMaterializationDigest(teamId, calendarEventId, event.date);
   const actionId = `calendar-materialize:${digest}`;
   const trackedEventId = `calendar_${digest}`;
   const importedAt = new Date().toISOString();

@@ -4629,6 +4629,34 @@ describe('enableRsvpForImportedCalendarEvent', () => {
     expect(mocks.runTransactionMock).not.toHaveBeenCalled();
   });
 
+  it('rejects coach-only staff because game creation requires owner/admin access', async () => {
+    const coachOnlyUser = { ...user, coachOf: ['team-1'] } as any;
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'another-user', active: true } as any);
+
+    await expect(enableRsvpForImportedCalendarEvent(calendarEvent, coachOnlyUser)).rejects.toThrow('permission');
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('materializes separate occurrences that reuse the same calendar event ID', async () => {
+    mocks.transactionGet.mockResolvedValue({ exists: () => false });
+    const laterOccurrence = {
+      ...calendarEvent,
+      eventKey: 'team-1::calendar-uid-1::player-1::2026-06-11T18:00:00.000Z::game',
+      date: new Date('2026-06-11T18:00:00.000Z'),
+      endDate: new Date('2026-06-11T20:00:00.000Z')
+    };
+
+    const firstId = await enableRsvpForImportedCalendarEvent(calendarEvent, user);
+    const laterId = await enableRsvpForImportedCalendarEvent(laterOccurrence, user);
+
+    expect(laterId).not.toBe(firstId);
+    expect(mocks.transactionSet).toHaveBeenCalledTimes(2);
+    expect(mocks.transactionSet.mock.calls.map((call) => call[0]?.path)).toEqual([
+      `teams/team-1/games/${firstId}`,
+      `teams/team-1/games/${laterId}`
+    ]);
+  });
+
   it.each([
     ['already tracked', { isDbGame: true }],
     ['cancelled', { isCancelled: true }],

@@ -1290,7 +1290,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <ReadOnlyAvailabilityPanel event={event} rsvp={visibleRsvp} />
           {isCalendarOnly ? (
             <div className="border-b border-gray-200 bg-white px-3 py-3 sm:px-4">
-              {event.isTeamStaff ? (
+              {event.isTeamAdmin ? (
                 <>
                   <p className="text-sm font-semibold leading-5 text-gray-600">Create a tracked copy of this event so families can respond. The imported calendar entry will be hidden after the tracked copy loads.</p>
                   <button
@@ -1316,7 +1316,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
                   </button>
                 </>
               ) : (
-                <p className="text-sm font-semibold leading-5 text-gray-600">Ask a coach or team admin to enable RSVP for this event.</p>
+                <p className="text-sm font-semibold leading-5 text-gray-600">Ask a team owner or admin to enable RSVP for this event.</p>
               )}
               {materializationError ? <div className="mt-2"><Status tone="error" message={materializationError} /></div> : null}
             </div>

@@ -676,6 +676,23 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
   });
 
+  it('keeps the Needs refresh badge when a secondary retry also fails', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new Error('Permission denied for Home refresh'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    expect(await screen.findByText('Home details could not refresh because access was denied.')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+    expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
+  });
+
   it('shows first-run access actions instead of an empty Today dashboard when no players or teams are linked', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
