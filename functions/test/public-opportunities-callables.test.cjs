@@ -414,6 +414,9 @@ test('managed-team callables return access fields only to current managers', asy
             ownerId: 'owner-1',
             active: true,
             isPublic: false,
+            availabilityPreferences: { defaultStatus: 'available' },
+            calendarUrls: ['https://calendar.example.test/private-team.ics'],
+            privateCalendarFeedUrl: 'https://calendar.example.test/private/private-team.ics',
             privateBillingCustomerId: 'must-not-leak'
         },
         'teams/public-team': {
@@ -453,17 +456,14 @@ test('managed-team callables return access fields only to current managers', asy
         id: 'private-team',
         name: 'Private Bears',
         sport: 'Basketball',
-        photoUrl: null,
-        description: null,
         active: true,
-        archived: false,
-        status: null,
         isPublic: false,
         ownerId: 'owner-1',
-        ownerEmail: null,
-        ownerEmailLower: null,
-        adminEmails: []
+        availabilityPreferences: { defaultStatus: 'available' },
+        calendarUrls: ['https://calendar.example.test/private-team.ics'],
+        privateCalendarFeedUrl: 'https://calendar.example.test/private/private-team.ics'
     }]);
+    assert.equal('privateBillingCustomerId' in managed.items[0], false);
     assert.ok(!managed.items.some((team) => team.id === 'coach-team'));
 
     const privateProfile = await callables.getPublicTeamProfile(
@@ -801,7 +801,7 @@ test('managed-team discovery preserves a current mixed-case legacy admin grant',
     );
     assert.equal(managed.items.length, 1);
     assert.equal(managed.items[0].id, 'team-1');
-    assert.deepEqual(managed.items[0].adminEmails, ['coach@example.com']);
+    assert.deepEqual(managed.items[0].adminEmails, ['Coach@Example.com']);
 });
 
 test('managed-team discovery preserves successful queries and marks partial failures', async () => {

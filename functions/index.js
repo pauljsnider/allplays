@@ -17712,7 +17712,7 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
       const team = teamSnap.data() || {};
       const canManage = hasOpportunityTeamAdminAccess(caller, team);
       return canManage
-        ? serializeManagedTeamProfile(teamSnap.id, team)
+        ? serializeManagedTeamDocument(teamSnap.id, team)
         : serializeStaffTeamProfile(teamSnap.id, team);
     })
     .filter(Boolean)
