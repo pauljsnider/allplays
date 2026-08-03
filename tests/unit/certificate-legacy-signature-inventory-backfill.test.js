@@ -84,6 +84,9 @@ describe('certificate legacy signature inventory backfill', () => {
             set: vi.fn(async (data) => markerWrites.push(data))
         };
         const db = {
+            collection: vi.fn(() => ({
+                get: vi.fn(async () => ({ docs: [] }))
+            })),
             collectionGroup: vi.fn(() => ({
                 get: vi.fn(async () => ({
                     docs: [{
@@ -94,7 +97,7 @@ describe('certificate legacy signature inventory backfill', () => {
                 }))
             })),
             doc: vi.fn((path) => {
-                if (path === 'systemMigrations/certificateLegacySignatureInventoryV1') return markerRef;
+                if (path === 'systemMigrations/certificateLegacySignatureInventoryV2') return markerRef;
                 if (path === 'teams/team-1') {
                     return {
                         get: vi.fn(async () => ({
@@ -132,7 +135,12 @@ describe('certificate legacy signature inventory backfill', () => {
             apply: true
         });
 
-        expect(result).toMatchObject({ defaultsDocuments: 1, references: 1, conflicts: 0 });
+        expect(result).toMatchObject({
+            defaultsDocuments: 1,
+            references: 1,
+            conflicts: 0,
+            invalidatedBindings: 0
+        });
         expect(inventoryWrites).toHaveLength(1);
         expect(inventoryWrites[0].ref.path).toMatch(/^certificateLegacySignatureInventory\/[a-f0-9]{64}$/);
         expect(inventoryWrites[0].data).toMatchObject({
@@ -151,7 +159,86 @@ describe('certificate legacy signature inventory backfill', () => {
             status: 'completed',
             defaultsDocuments: 1,
             references: 1,
-            conflicts: 0
+            conflicts: 0,
+            invalidatedBindings: 0
+        });
+    });
+
+    it('invalidates stale owner bindings before rediscovering current defaults', async () => {
+        const staleBindingSet = vi.fn(async () => {});
+        const currentBindingSet = vi.fn(async () => {});
+        const markerWrites = [];
+        const teamRef = {
+            get: vi.fn(async () => ({
+                exists: true,
+                data: () => ({
+                    ownerId: 'current-owner',
+                    ownerEmail: 'former-owner@example.test',
+                    ownerEmailLower: 'former-owner@example.test',
+                    adminEmails: ['admin@example.test']
+                })
+            }))
+        };
+        const db = {
+            collection: vi.fn((name) => {
+                expect(name).toBe('certificateLegacySignatureInventory');
+                return {
+                    get: vi.fn(async () => ({
+                        docs: [{
+                            ref: { set: staleBindingSet },
+                            data: () => ({ teamId: 'team-1', legacyOwnerId: 'former-owner' })
+                        }, {
+                            ref: { set: currentBindingSet },
+                            data: () => ({ teamId: 'team-1', legacyOwnerId: 'admin-user' })
+                        }]
+                    }))
+                };
+            }),
+            collectionGroup: vi.fn(() => ({
+                get: vi.fn(async () => ({ docs: [] }))
+            })),
+            doc: vi.fn((path) => {
+                if (path === 'systemMigrations/certificateLegacySignatureInventoryV2') {
+                    return {
+                        get: vi.fn(async () => ({ exists: false, data: () => null })),
+                        set: vi.fn(async (data) => markerWrites.push(data))
+                    };
+                }
+                if (path === 'teams/team-1') return teamRef;
+                throw new Error(`Unexpected document path: ${path}`);
+            })
+        };
+        const auth = {
+            getUsers: vi.fn(async (identifiers) => {
+                expect(identifiers).toEqual([{ email: 'admin@example.test' }]);
+                return { users: [{ uid: 'admin-user' }] };
+            })
+        };
+
+        const result = await backfillCertificateLegacySignatureInventory({
+            db,
+            auth,
+            legacyBucket: {},
+            apply: true
+        });
+
+        expect(result).toMatchObject({
+            defaultsDocuments: 0,
+            references: 0,
+            conflicts: 0,
+            invalidatedBindings: 1
+        });
+        expect(staleBindingSet).toHaveBeenCalledOnce();
+        expect(staleBindingSet).toHaveBeenCalledWith(expect.objectContaining({
+            conflicted: true,
+            invalidationReason: 'owner-authorization-changed'
+        }), { merge: true });
+        expect(currentBindingSet).not.toHaveBeenCalled();
+        expect(teamRef.get).toHaveBeenCalledOnce();
+        expect(markerWrites).toHaveLength(1);
+        expect(markerWrites[0]).toMatchObject({
+            status: 'completed',
+            invalidatedBindings: 1
         });
     });
 });

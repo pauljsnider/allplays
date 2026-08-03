@@ -27,6 +27,25 @@ const primaryBucket = 'all-plays-ai.firebasestorage.app';
 const legacyPath = 'user-photos/1700000000000_certificate-signature_owner_admin_My_Signature.png';
 const legacyUrl = `https://firebasestorage.googleapis.com/v0/b/${legacyBucket}/o/${encodeURIComponent(legacyPath)}?alt=media&token=legacy-token`;
 
+test('canonical owner IDs exclude stale owner aliases from legacy signature provenance', () => {
+  assert.deepEqual(getCertificateLegacyManagerEmails({
+    ownerId: 'current-owner',
+    ownerEmail: 'current@example.com',
+    ownerEmailLower: 'former@example.com',
+    adminEmails: [' Admin@Example.com ', 'admin@example.com']
+  }), ['admin@example.com']);
+  assert.deepEqual(getCertificateLegacyManagerEmails({
+    ownerEmail: ' Legacy@Example.com ',
+    ownerEmailLower: 'legacy@example.com',
+    adminEmails: ['admin@example.com']
+  }), ['legacy@example.com', 'admin@example.com']);
+  assert.deepEqual(getCertificateLegacyManagerEmails({
+    ownerEmail: 'former-owner@example.com',
+    ownerEmailLower: 'current-owner@example.com',
+    adminEmails: ['admin@example.com']
+  }), ['admin@example.com']);
+});
+
 test('queues removed legacy user-scoped signatures only for their original uploader', () => {
   const legacyPath = 'certificate-signatures/users/original-admin/legacy.png';
   const legacyDisplayUrl = 'https://firebasestorage.googleapis.com/v0/b/all-plays-ai.appspot.com/o/certificate-signatures%2Fusers%2Foriginal-admin%2Flegacy.png?alt=media&token=old-token';
@@ -549,7 +568,8 @@ test('wires defaults commits and cleanup through server-only tombstone and trigg
   assert.match(functionsSource, /transaction\.get\(defaultsRef\)[\s\S]*transaction\.get\(certificatesQuery\)[\s\S]*transaction\.get\(certificateBatchesQuery\)[\s\S]*referenceRecords\.some[\s\S]*isCertificateSignatureTargetReferenced[\s\S]*status: 'blocked-referenced'/);
   assert.match(functionsSource, /target\.storageBucket === 'legacy-image'[\s\S]*IMAGE_STORAGE_BUCKET[\s\S]*file\(storagePath, \{[\s\S]*preconditionOpts[\s\S]*ifGenerationMatch[\s\S]*blocked-generation-changed[\s\S]*status: 'completed'/);
   assert.match(migrationSource, /certificateLegacySignatureInventory[\s\S]*collectionGroup\('settings'\)[\s\S]*discoverLegacyImageSignatureReferences/);
-  assert.match(migrationSource, /systemMigrations\/certificateLegacySignatureInventoryV1[\s\S]*status: 'completed'/);
+  assert.match(migrationSource, /systemMigrations\/certificateLegacySignatureInventoryV2[\s\S]*status: 'completed'/);
+  assert.match(migrationSource, /collection\('certificateLegacySignatureInventory'\)[\s\S]*invalidationReason: 'owner-authorization-changed'/);
   assert.match(dbSource, /export async function setCertificateDefaults[\s\S]*return commitCertificateDefaults\(teamId, defaults\)/);
   assert.doesNotMatch(dbSource, /setDoc\(doc\(db, 'teams', teamId, 'settings', 'certificateDefaults'\)/);
   assert.match(rulesSource, /match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults[\s\S]*allow create, update, delete: if false;/);
