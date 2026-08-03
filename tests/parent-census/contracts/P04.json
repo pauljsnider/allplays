@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P04",
+  "title": "First login and onboarding",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "lifecycle"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Refresh Home",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/home"
+    }
+  ],
+  "cleanupSteps": []
+}
