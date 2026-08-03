@@ -167,6 +167,7 @@ const {
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
+  calendarTokenHasTeamAccess,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
 const {
@@ -8294,23 +8295,18 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
   return legacyRef.get();
 }
 
-async function getCalendarTokenHolderUser(tokenData) {
+async function getCalendarTokenHolderContext(tokenData) {
   const uid = tokenData.uid || tokenData.userId || tokenData.createdBy || null;
   if (!uid) return null;
-  const userSnap = await firestore.doc(`users/${uid}`).get();
-  if (!userSnap.exists) return null;
-  return { uid, ...(userSnap.data() || {}) };
-}
-
-function calendarTokenHasTeamAccess({ team, user, tokenData }) {
-  if (!team || !tokenData) return false;
-  const uid = user?.uid || tokenData.uid || tokenData.userId || tokenData.createdBy || null;
-  const email = String(user?.email || tokenData.email || tokenData.userEmail || '').trim().toLowerCase();
-  const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').toLowerCase()) : [];
-  const parentTeamIds = Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [];
-  return team.ownerId === uid ||
-    (email && adminEmails.includes(email)) ||
-    parentTeamIds.includes(tokenData.teamId);
+  const [userSnap, authUser] = await Promise.all([
+    firestore.doc(`users/${uid}`).get(),
+    admin.auth().getUser(uid).catch((error) => {
+      if (error?.code === 'auth/user-not-found') return null;
+      throw error;
+    })
+  ]);
+  if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
+  return { profile: userSnap.data() || {}, authUser };
 }
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
@@ -8349,8 +8345,13 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const tokenUser = await getCalendarTokenHolderUser(tokenData);
-    if (!calendarTokenHasTeamAccess({ team, user: tokenUser, tokenData })) {
+    const tokenHolder = await getCalendarTokenHolderContext(tokenData);
+    if (!calendarTokenHasTeamAccess({
+      team,
+      profile: tokenHolder?.profile,
+      authUser: tokenHolder?.authUser,
+      tokenData
+    })) {
       res.status(403).send('Calendar token no longer has team access');
       return;
     }
