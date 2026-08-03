@@ -28,6 +28,7 @@ function getBuildTeamChatNotificationContext() {
     return new Function(
         'firestore',
         'getUserIdsByEmails',
+        'getEnabledNotificationAuthUserIds',
         'getUserRecordsByIds',
         'notificationAudienceAllowsRoles',
         'getLegacyTargetsForCategory',
@@ -59,6 +60,7 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
         'isPreEventReminderChatMessage',
         'buildTeamChatNotificationContext',
         'buildTeamChatNotificationPlan',
+        'getEnabledNotificationAuthUserIds',
         'sendDirectTargetsNotification',
         `${slice}; return handleTeamChatMessageCreated;`
     )(
@@ -66,7 +68,14 @@ function getTeamChatMessageCreatedHandler({ senderProfile, sendNotification }) {
         (value) => value || 'team',
         () => false,
         async () => ({ members: [], mutedUids: [], targetsByCategory: { mentions: [], liveChat: [] } }),
-        () => ({ mentionedUids: [], mentionTargets: [], liveChatTargets: [{ uid: 'recipient-1', token: 'token-1' }] }),
+        () => ({
+            mentionedUids: [],
+            mentionInboxUids: [],
+            mentionTargets: [],
+            liveChatInboxUids: [],
+            liveChatTargets: [{ uid: 'recipient-1', token: 'token-1' }]
+        }),
+        async (uids) => new Set(uids),
         sendNotification
     );
 }
@@ -258,6 +267,7 @@ describe('buildTeamChatNotificationContext', () => {
                 if (normalized.length === 1 && normalized[0] === 'parent@example.com') return ['parent-1'];
                 return emailUserIds;
             },
+            async (uids = []) => new Set(uids),
             async () => new Map([
                 ['coach-1', { displayName: 'Coach Kim', teamChatState: { 'team-1': { mutedConversations: { staff: { seconds: 1 } } } } }],
                 ['assistant-1', { displayName: 'Assistant Lee', chatMuted: { 'team-1': { seconds: 2 } } }],

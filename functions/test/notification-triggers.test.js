@@ -969,6 +969,49 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
     }
 });
 
+test('notifyTeamChatMessageCreated excludes disabled indexed recipients from push, inbox, and mentions', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': { displayName: 'Jamie Parent' }
+        },
+        authUsersByUid: {
+            'coach-1': { email: 'coach@example.com', disabled: false },
+            'parent-1': { email: 'parent@example.com', disabled: true }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-disabled-recipient');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Nice work @Jamie',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        });
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, {
+            params: { teamId: 'team-1', messageId: 'message-disabled-recipient' }
+        });
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.inboxWrites.length, 0);
+        assert.equal(env.auditWrites.length, 0);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-disabled-recipient',
+            value: { mentionedUids: [] }
+        }]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyTeamChatMessageCreated writes inbox items for members without push devices', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

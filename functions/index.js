@@ -13798,6 +13798,11 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
+  const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(
+    members.map((member) => member.uid)
+  );
+  members = members.filter((member) => enabledMemberUserIds.has(member.uid));
+
   const [userRecords, memberPreferenceEntries] = await Promise.all([
     getUserRecordsByIds(members.map((member) => member.uid)),
     Promise.all(members.map(async (member) => {
@@ -14018,6 +14023,24 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     actorUid,
     recipientContext
   });
+
+  const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([
+    ...notificationPlan.mentionedUids,
+    ...notificationPlan.mentionInboxUids,
+    ...notificationPlan.mentionTargets.map((target) => target.uid),
+    ...notificationPlan.liveChatInboxUids,
+    ...notificationPlan.liveChatTargets.map((target) => target.uid)
+  ]);
+  notificationPlan.mentionedUids = notificationPlan.mentionedUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionInboxUids = notificationPlan.mentionInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionTargets = notificationPlan.mentionTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+  notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.liveChatTargets = notificationPlan.liveChatTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
 
   const mentionedUids = notificationPlan.mentionedUids;
   const results = [];

@@ -11,6 +11,7 @@ const messagesSource = [
 describe('team chat notification delivery contract', () => {
     it('builds one recipient context for mentions and live chat with per-conversation mute state', () => {
         expect(functionsSource).toContain('async function buildTeamChatNotificationContext(teamId, options = {})');
+        expect(functionsSource).toContain('const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(');
         expect(functionsSource).toContain('const { includeMentions = true, conversationId = null } = options || {};');
         expect(functionsSource).toContain("const { targetType = 'full_team', recipientIds = [] } = options || {};");
         expect(functionsSource).toContain('const normalizedConversationId = normalizeTeamChatConversationId(conversationId);');
@@ -23,6 +24,9 @@ describe('team chat notification delivery contract', () => {
     });
 
     it('sends mention pushes only to mention-enabled users and falls other mentions back to live chat', () => {
+        expect(functionsSource).toContain('const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([');
+        expect(functionsSource).toContain('notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids');
+        expect(functionsSource).toContain('notificationPlan.liveChatTargets = notificationPlan.liveChatTargets');
         expect(functionsSource).toContain('function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext })');
         expect(functionsSource).toContain('const members = Array.isArray(context.members) ? context.members : [];');
         expect(functionsSource).toContain('const mentionedUids = text');
