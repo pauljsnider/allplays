@@ -28,7 +28,8 @@ export function hasFullTeamAccess(user, team) {
   const ownerEmails = [team.ownerEmailLower, team.ownerEmail]
     .map((email) => String(email || '').trim().toLowerCase())
     .filter(Boolean);
-  const isLegacyOwner = Boolean(normalizedEmail && ownerEmails.includes(normalizedEmail));
+  const hasCanonicalOwner = Boolean(String(team.ownerId || '').trim());
+  const isLegacyOwner = Boolean(!hasCanonicalOwner && normalizedEmail && ownerEmails.includes(normalizedEmail));
   const adminEmails = normalizeAdminEmailList(team.adminEmails);
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;

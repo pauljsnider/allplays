@@ -19,8 +19,18 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 const compatibilityRules = compactFirestoreRules(buildCertificateDefaultsCompatibilityRules(rules));
 const deployWorkflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
 const repositoryInstructions = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
+const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 describe('certificate defaults Firestore rules', () => {
+    it('uses the shared canonical-owner authorization boundary in the server writer', () => {
+        const helperStart = functionsSource.indexOf('async function requireCertificateTeamAdmin');
+        const helperEnd = functionsSource.indexOf('\nfunction getCertificateSignatureCleanupId', helperStart);
+        const helperSource = functionsSource.slice(helperStart, helperEnd);
+
+        expect(helperSource).toContain('hasTeamAdminAccess({');
+        expect(helperSource).not.toContain('ownerEmails.includes(callerEmail)');
+    });
+
     it('keeps shared defaults readable to team admins but server-writable only', () => {
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults/);
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow create, update, delete: if false;/);

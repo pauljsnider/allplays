@@ -551,6 +551,8 @@ describe('React app schedule service contract integration', () => {
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail)");
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
         expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
+        expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
+        expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && email &&');
         expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
         expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");

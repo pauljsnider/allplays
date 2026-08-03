@@ -72,6 +72,7 @@ service cloud.firestore {
 
     function currentAuthEmailMatchesTeamOwner(team) {
       return request.auth.token.email != null &&
+             team.get('ownerId', '') == '' &&
              (
                (team.get('ownerEmail', '') is string &&
                 team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||

@@ -102,10 +102,10 @@ export async function resolveUserContext(db, { uid, email }) {
             ? db.collection('teams').where('adminEmails', 'array-contains', normalizedEmail).get()
             : Promise.resolve({ docs: [] }),
         normalizedEmail
-            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get()
+            ? db.collection('teams').where('ownerEmailLower', '==', normalizedEmail).get().catch(() => ({ docs: [] }))
             : Promise.resolve({ docs: [] }),
         ...ownerEmailCandidates.map((ownerEmail) => (
-            db.collection('teams').where('ownerEmail', '==', ownerEmail).get()
+            db.collection('teams').where('ownerEmail', '==', ownerEmail).get().catch(() => ({ docs: [] }))
         ))
     ]);
 
@@ -119,9 +119,13 @@ export async function resolveUserContext(db, { uid, email }) {
 
     for (const doc of ownedSnap.docs) addTeam(doc.id, doc.data(), 'owner');
     for (const doc of adminSnap.docs) addTeam(doc.id, doc.data(), 'admin');
-    for (const doc of ownerEmailLowerSnap.docs) addTeam(doc.id, doc.data(), 'owner');
+    const addLegacyOwnedTeam = (doc) => {
+        const team = doc.data() || {};
+        if (!String(team.ownerId || '').trim()) addTeam(doc.id, team, 'owner');
+    };
+    for (const doc of ownerEmailLowerSnap.docs) addLegacyOwnedTeam(doc);
     for (const snap of ownerEmailSnaps) {
-        for (const doc of snap.docs) addTeam(doc.id, doc.data(), 'owner');
+        for (const doc of snap.docs) addLegacyOwnedTeam(doc);
     }
 
     const parentTeamSnaps = await Promise.all([...parentTeamIds].map((teamId) => safeGetDoc(db, `teams/${teamId}`)));

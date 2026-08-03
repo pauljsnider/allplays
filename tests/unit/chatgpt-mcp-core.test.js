@@ -147,6 +147,56 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
     });
 
+    it('does not derive ownership from stale owner email aliases when a canonical owner exists', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'Former@Example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'reassigned-team',
+                            data: {
+                                name: 'Reassigned',
+                                ownerId: 'current-owner',
+                                ownerEmail: 'Former@Example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'Former@Example.com' });
+
+        expect(context.teams.has('reassigned-team')).toBe(false);
+    });
+
+    it('keeps canonical and admin teams when legacy owner-email queries are denied by rules', async () => {
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerId') {
+                        return [{ id: 'owned-team', data: { ownerId: 'coach-1' } }];
+                    }
+                    if (filter.field === 'adminEmails') {
+                        return [{ id: 'admin-team', data: { ownerId: 'other-owner', adminEmails: ['coach@example.com'] } }];
+                    }
+                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' });
+
+        expect([...context.teams.get('owned-team').roles]).toEqual(['owner']);
+        expect([...context.teams.get('admin-team').roles]).toEqual(['admin']);
+    });
+
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
         const db = parentDb({
             docs: {

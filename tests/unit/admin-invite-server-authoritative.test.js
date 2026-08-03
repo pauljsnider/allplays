@@ -62,7 +62,6 @@ describe('admin invite server-authoritative redemption', () => {
         }, true],
         ['current legacy email owner with a conflicting normalized alias', {
             team: {
-                ownerId: 'owner-1',
                 ownerEmailLower: 'stale@example.com',
                 ownerEmail: 'legacy-owner@example.com',
                 adminEmails: []
@@ -71,6 +70,17 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'legacy-owner-1',
             authUser: { uid: 'legacy-owner-1', email: 'LEGACY-OWNER@example.com' }
         }, true],
+        ['former owner email when canonical owner differs', {
+            team: {
+                ownerId: 'current-owner-1',
+                ownerEmailLower: 'former-owner@example.com',
+                ownerEmail: 'former-owner@example.com',
+                adminEmails: []
+            },
+            user: {},
+            uid: 'former-owner-1',
+            authUser: { uid: 'former-owner-1', email: 'FORMER-OWNER@example.com' }
+        }, false],
         ['current global administrator', {
             team: { ownerId: 'owner-1', adminEmails: [] },
             user: { isAdmin: true },

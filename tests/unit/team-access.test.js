@@ -27,22 +27,27 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
   });
 
-  it('grants full access to a legacy owner email during ownership migration', () => {
+  it('does not let a stale legacy owner email override the canonical owner', () => {
     expect(hasFullTeamAccess(
       { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
       { ...TEAM, ownerId: 'different-owner', ownerEmail: 'owner@example.com' }
-    )).toBe(true);
+    )).toBe(false);
   });
 
-  it('checks both legacy owner aliases when the normalized alias is stale', () => {
+  it('checks both owner email aliases only on truly legacy team documents', () => {
+    const legacyTeam = {
+      id: TEAM.id,
+      ownerEmailLower: 'stale@example.com',
+      ownerEmail: 'owner@example.com',
+      adminEmails: []
+    };
     expect(hasFullTeamAccess(
       { uid: 'legacy-owner', email: 'OWNER@EXAMPLE.COM' },
-      {
-        ...TEAM,
-        ownerId: 'different-owner',
-        ownerEmailLower: 'stale@example.com',
-        ownerEmail: 'owner@example.com'
-      }
+      legacyTeam
+    )).toBe(true);
+    expect(hasFullTeamAccess(
+      { uid: 'stale-owner', email: 'STALE@EXAMPLE.COM' },
+      legacyTeam
     )).toBe(true);
   });
 

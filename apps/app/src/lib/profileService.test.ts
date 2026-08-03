@@ -183,6 +183,7 @@ it('keeps native notification team loading compatible with legacy owner emails',
     expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
     expect(nativeNotificationSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
     expect(nativeNotificationSource).toContain('ownerEmailTeams.flat()');
+    expect(nativeNotificationSource).toContain('Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail))');
 });
 
 describe('loadProfileDocument telemetry', () => {

@@ -350,8 +350,20 @@ async function nativeLoadNotificationTeams(userId: string, email?: string | null
     ...ownerEmailLookups
   ]);
   const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
+  const parentTeamIds = new Set(parentTeams.map((team: any) => String(team?.id || '')).filter(Boolean));
+  const normalizeTeamEmail = (value: unknown) => String(value || '').trim().toLowerCase();
   const map = new Map<string, NotificationTeam>();
-  filterActiveTeams([...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...parentTeams]).forEach((team: any) => {
+  filterActiveTeams([...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...parentTeams])
+    .filter((team: any) => {
+      const teamId = String(team?.id || '');
+      const ownerId = String(team?.ownerId || '').trim();
+      const ownerEmails = [team?.ownerEmailLower, team?.ownerEmail].map(normalizeTeamEmail).filter(Boolean);
+      const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map(normalizeTeamEmail) : [];
+      return parentTeamIds.has(teamId) || ownerId === userId ||
+        Boolean(normalizedEmail && adminEmails.includes(normalizedEmail)) ||
+        Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail));
+    })
+    .forEach((team: any) => {
     if (team?.id) {
       map.set(team.id, { id: team.id, name: team.name || team.id });
     }

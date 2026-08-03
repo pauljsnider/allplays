@@ -39,7 +39,7 @@ test('managed team projection exposes only the fields required to establish team
   assert.equal('calendarUrls' in item, false);
 });
 
-test('team access recognizes canonical, admin, and legacy email ownership without granting strangers', () => {
+test('canonical ownership overrides stale legacy owner emails while legacy-only teams still work', () => {
   const team = {
     ownerId: 'owner-1',
     ownerEmailLower: 'stale@example.com',
@@ -47,8 +47,8 @@ test('team access recognizes canonical, admin, and legacy email ownership withou
     adminEmails: ['admin@example.com']
   };
   assert.equal(hasTeamAdminAccess({ team, uid: 'owner-1', email: 'owner@example.com' }), true);
-  assert.equal(hasTeamAdminAccess({ team, uid: 'legacy-1', email: 'LEGACY@example.com' }), true);
-  assert.equal(hasTeamAdminAccess({ team, uid: 'stale-1', email: 'STALE@example.com' }), true);
+  assert.equal(hasTeamAdminAccess({ team, uid: 'legacy-1', email: 'LEGACY@example.com' }), false);
+  assert.equal(hasTeamAdminAccess({ team, uid: 'stale-1', email: 'STALE@example.com' }), false);
   assert.equal(hasTeamAdminAccess({ team, uid: 'admin-1', email: 'ADMIN@example.com' }), true);
   assert.equal(hasTeamAdminAccess({
     team,
@@ -56,6 +56,14 @@ test('team access recognizes canonical, admin, and legacy email ownership withou
     uid: 'stale-profile-1'
   }), false);
   assert.equal(hasTeamAdminAccess({ team, uid: 'stranger-1', email: 'stranger@example.com' }), false);
+
+  const legacyTeam = {
+    ownerEmailLower: 'stale@example.com',
+    ownerEmail: 'legacy@example.com',
+    adminEmails: []
+  };
+  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'legacy-1', email: 'LEGACY@example.com' }), true);
+  assert.equal(hasTeamAdminAccess({ team: legacyTeam, uid: 'stale-1', email: 'STALE@example.com' }), true);
 });
 
 test('authorized detail preserves required team UI fields without exposing server-only or unknown fields', () => {

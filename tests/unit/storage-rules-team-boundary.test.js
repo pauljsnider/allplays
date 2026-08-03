@@ -43,6 +43,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     adminEmails: ['admin-a@example.com']
                 });
                 await firestore.doc('teams/team-b').set({ ownerId: 'owner-b', adminEmails: [] });
+                await firestore.doc('teams/legacy-team').set({
+                    ownerEmail: 'legacy-owner@example.com',
+                    adminEmails: []
+                });
                 await firestore.doc('teams/team-a/mediaFolders/folder-a').set({ visibility: 'team' });
                 await firestore.doc('teams/team-b/mediaFolders/folder-b').set({ visibility: 'team' });
                 await firestore.doc('users/member-a').set({
@@ -341,18 +345,29 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             }));
         });
 
-        it('allows legacy owner-email team chat uploads when the owner uid no longer matches', async () => {
+        it('lets canonical ownership override stale owner emails while preserving legacy-only teams', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
             });
 
-            const legacyOwnerStorage = testEnv.authenticatedContext('legacy-owner-uid', {
+            const legacyOwnerContext = testEnv.authenticatedContext('legacy-owner-uid', {
                 email: 'legacy-owner@example.com',
                 email_verified: false
-            }).storage();
+            });
+            const legacyOwnerStorage = legacyOwnerContext.storage();
+            const legacyOwnerFirestore = legacyOwnerContext.firestore();
 
+            await assertFails(legacyOwnerFirestore.doc('teams/team-a').get());
+            await assertFails(
+                legacyOwnerStorage.ref('stat-sheets/team-chat/team-a/team/legacy-owner-uid/former-owner-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+
+            await assertSucceeds(legacyOwnerFirestore.doc('teams/legacy-team').get());
             await assertSucceeds(
-                legacyOwnerStorage.ref('stat-sheets/team-chat/team-a/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
+                legacyOwnerStorage.ref('stat-sheets/team-chat/legacy-team/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )

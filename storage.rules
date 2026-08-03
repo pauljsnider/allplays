@@ -26,9 +26,11 @@ service firebase.storage {
       return isSignedIn() &&
         (team.ownerId == request.auth.uid ||
          (request.auth.token.email != null &&
+          team.get('ownerId', '') == '' &&
           team.get('ownerEmail', '') is string &&
           team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
          (request.auth.token.email != null &&
+          team.get('ownerId', '') == '' &&
           team.get('ownerEmailLower', '') is string &&
           team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
          (request.auth.token.email != null &&

@@ -14156,15 +14156,12 @@ async function requireCertificateTeamAdmin(teamId, context) {
   const team = teamSnap.data() || {};
   const user = userSnap.exists ? userSnap.data() || {} : {};
   const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
-  const adminEmails = Array.isArray(team.adminEmails)
-    ? team.adminEmails.map((email) => String(email || '').trim().toLowerCase())
-    : [];
-  const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
-    .map((email) => String(email || '').trim().toLowerCase())
-    .filter(Boolean);
-  const canManage = team.ownerId === context.auth.uid ||
-    (callerEmail && (adminEmails.includes(callerEmail) || ownerEmails.includes(callerEmail))) ||
-    user.isAdmin === true;
+  const canManage = hasTeamAdminAccess({
+    team,
+    user,
+    uid: context.auth.uid,
+    email: callerEmail
+  });
   if (!canManage) {
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can save certificate defaults.');
   }

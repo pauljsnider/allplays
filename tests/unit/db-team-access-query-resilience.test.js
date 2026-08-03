@@ -135,6 +135,11 @@ describe('team access query resilience', () => {
   it('keeps owned and owner-email teams when the optional admin-email query is denied', async () => {
     const ownedTeam = createTeamDoc('owned-1', { name: 'Falcons', ownerId: 'owner-1' });
     const emailTeam = createTeamDoc('email-1', { name: 'Vipers', ownerEmail: 'coach@example.com' });
+    const reassignedTeam = createTeamDoc('reassigned-1', {
+      name: 'Former Team',
+      ownerId: 'current-owner',
+      ownerEmail: 'coach@example.com'
+    });
     const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
       code: 'permission-denied'
     });
@@ -147,7 +152,7 @@ describe('team access query resilience', () => {
       const constraint = getWhereConstraint(queryValue);
       if (constraint.field === 'ownerId') return { docs: [ownedTeam] };
       if (constraint.field === 'adminEmails') throw permissionError;
-      if (constraint.field === 'ownerEmail') return { docs: [emailTeam] };
+      if (constraint.field === 'ownerEmail') return { docs: [emailTeam, reassignedTeam] };
       if (constraint.field === 'ownerEmailLower') return { docs: [] };
       throw new Error(`Unexpected query: ${constraint.field}`);
     });

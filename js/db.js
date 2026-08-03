@@ -1906,7 +1906,20 @@ export async function getUserTeamsWithAccess(userId, email, options = {}) {
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
 
-    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = Array.from(map.values())
+        .filter((team) => {
+            const ownerId = String(team.ownerId || '').trim();
+            const ownerEmails = [team.ownerEmailLower, team.ownerEmail]
+                .map((value) => String(value || '').trim().toLowerCase())
+                .filter(Boolean);
+            const adminEmails = Array.isArray(team.adminEmails)
+                ? team.adminEmails.map((value) => String(value || '').trim().toLowerCase())
+                : [];
+            return ownerId === userId ||
+                Boolean(normalizedEmail && adminEmails.includes(normalizedEmail)) ||
+                Boolean(!ownerId && normalizedEmail && ownerEmails.includes(normalizedEmail));
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
     return filterTeamsByActive(teams, includeInactive);
 }
 
@@ -7208,7 +7221,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean);
+    if (!String(team.ownerId || '').trim() && user.email && legacyOwnerEmails.includes(user.email.trim().toLowerCase())) {
         return true;
     }
 
@@ -7243,7 +7259,10 @@ export function canModerateChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean);
+    if (!String(team.ownerId || '').trim() && user.email && legacyOwnerEmails.includes(user.email.trim().toLowerCase())) {
         return true;
     }
 
