@@ -12349,6 +12349,8 @@ exports._internal = {
   isFeeDueReminderCandidateEligible,
   buildFeeReminderNotificationBody,
   resolveEligibleFeeReminderRecipient,
+  claimFeeDueReminder,
+  finalizeFeeDueReminderClaim,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
@@ -13234,6 +13236,60 @@ async function resolveEligibleFeeReminderRecipient({
   };
 }
 
+function buildFeeReminderClaimId() {
+  return `fee-reminder-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
+}
+
+async function claimFeeDueReminder(recipientRef, { nowMillis, reminderThresholdHours }) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
+      nowMillis,
+      reminderThresholdHours
+    })) {
+      return null;
+    }
+
+    const claimId = buildFeeReminderClaimId();
+    transaction.update(recipientRef, {
+      reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      reminderThresholdHours,
+      reminderDeliveryClaimId: claimId,
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return claimId;
+  });
+}
+
+async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
+  releaseReminder = false,
+  error = null
+} = {}) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
+    }
+
+    const update = {
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete()
+    };
+    if (releaseReminder) {
+      update.reminderSentAt = admin.firestore.FieldValue.delete();
+    }
+    if (error) {
+      update.reminderLastError = String(error?.message || error || 'Unknown fee reminder error').slice(0, 500);
+    } else {
+      update.reminderLastError = admin.firestore.FieldValue.delete();
+    }
+    transaction.update(recipientRef, update);
+    return true;
+  });
+}
+
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
   const nowMillis = now.toMillis();
@@ -13278,41 +13334,40 @@ async function sendFeeUnpaidDueReminders() {
       });
       if (!eligibleRecipient) return null;
 
-      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
-      await doc.ref.update({
-        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Atomically claim the reminder and its sent marker. Concurrent scheduler
+      // invocations cannot both claim the same fee recipient.
+      const claimId = await claimFeeDueReminder(doc.ref, {
+        nowMillis,
         reminderThresholdHours
       });
+      if (!claimId) return null;
 
-      await sendDirectTargetsNotification({
-        targets: eligibleRecipient.payerTargets,
-        category: 'fees',
-        title: `Reminder: ${title} is due soon`,
-        body,
-        teamId,
-        batchId,
-        recipientId,
-      });
-      return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
-    } catch (err) {
-      console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
-      if (isNotificationAuthResolutionFailure(err)) {
-        // Final authorization failed before any delivery effect. Release the
-        // persisted marker so the scheduled retry can attempt this reminder.
-        try {
-          await doc.ref.update({
-            reminderSentAt: admin.firestore.FieldValue.delete()
+      try {
+        await sendDirectTargetsNotification({
+          targets: eligibleRecipient.payerTargets,
+          category: 'fees',
+          title: `Reminder: ${title} is due soon`,
+          body,
+          teamId,
+          batchId,
+          recipientId,
+        });
+        await finalizeFeeDueReminderClaim(doc.ref, claimId);
+        return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
+      } catch (err) {
+        if (isNotificationAuthResolutionFailure(err)) {
+          await finalizeFeeDueReminderClaim(doc.ref, claimId, {
+            releaseReminder: true,
+            error: err
           });
-        } catch (releaseError) {
-          console.error('sendFeeUnpaidDueReminders: failed to release reminder marker', {
-            teamId,
-            batchId,
-            recipientId,
-            error: releaseError
-          });
+          throw err;
         }
+        await finalizeFeeDueReminderClaim(doc.ref, claimId, { error: err });
         throw err;
       }
+    } catch (err) {
+      console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      if (isNotificationAuthResolutionFailure(err)) throw err;
       return null;
     }
   });

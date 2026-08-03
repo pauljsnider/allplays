@@ -1540,7 +1540,7 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
         assert.equal(env.messagingCalls[0].data.category, 'fees');
         assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
         assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
-        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))], [
             'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1'
         ]);
         assert.equal(env.updatedDocs[0].value.reminderThresholdHours, 72);
@@ -1593,7 +1593,7 @@ test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee
         assert.equal(env.messagingCalls.length, 1);
         assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
         assert.equal(env.messagingCalls[0].title, 'Reminder: Open dues is due soon');
-        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))], [
             'teams/team-1/feeBatches/batch-1/feeRecipients/eligible'
         ]);
     } finally {
@@ -1637,7 +1637,7 @@ test('sendFeeUnpaidDueReminders dedupes repeated scheduler runs without suppress
             '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-a',
             '/parent-tools/fees?teamId=team-1&batchId=batch-2&recipientId=recipient-b'
         ]);
-        assert.deepEqual(env.updatedDocs.map((write) => write.path).sort(), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))].sort(), [
             'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-a',
             'teams/team-1/feeBatches/batch-2/feeRecipients/recipient-b'
         ]);
@@ -1680,6 +1680,47 @@ test('sendFeeUnpaidDueReminders releases its marker when final Auth validation f
         await moduleExports.sendFeeUnpaidDueReminders();
         assert.equal(env.messagingCalls.length, 1);
         assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('fee reminder release cannot clear a marker owned by another delivery claim', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/concurrent');
+        await ref.set({
+            status: 'unpaid',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        const failedClaimId = await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis,
+            reminderThresholdHours: 72
+        });
+        assert.ok(failedClaimId);
+        assert.equal(await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis,
+            reminderThresholdHours: 72
+        }), null);
+
+        await ref.update({
+            reminderDeliveryClaimId: 'successful-overlapping-run',
+            reminderSentAt: { __serverTimestamp: true }
+        });
+        const released = await moduleExports._internal.finalizeFeeDueReminderClaim(
+            ref,
+            failedClaimId,
+            { releaseReminder: true, error: new Error('failed overlapping run') }
+        );
+
+        assert.equal(released, false);
+        const finalRecipient = (await ref.get()).data();
+        assert.equal(finalRecipient.reminderDeliveryClaimId, 'successful-overlapping-run');
+        assert.ok(finalRecipient.reminderSentAt);
     } finally {
         cleanup();
     }

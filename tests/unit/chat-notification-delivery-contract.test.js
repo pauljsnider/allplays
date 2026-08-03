@@ -15,7 +15,8 @@ describe('team chat notification delivery contract', () => {
         expect(functionsSource).toContain('taggedError.notificationAuthResolutionFailed = true;');
         expect((functionsSource.match(/if \(isNotificationAuthResolutionFailure\([^)]*\)\) throw/g) || []).length).toBeGreaterThanOrEqual(4);
         expect(functionsSource).toContain('if (isNotificationAuthResolutionFailure(err)) {');
-        expect(functionsSource).toContain('reminderSentAt: admin.firestore.FieldValue.delete()');
+        expect(functionsSource).toContain('reminderDeliveryClaimId: claimId');
+        expect(functionsSource).toContain('update.reminderSentAt = admin.firestore.FieldValue.delete()');
         expect(functionsSource).toContain('exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyGameUpdated = retryableNotificationFunctions.firestore');
