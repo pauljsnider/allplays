@@ -858,6 +858,44 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
   });
 
+  it('recovers management access from the authoritative REST document when the web SDK returns a public projection', async () => {
+    const previousFetch = globalThis.fetch;
+    dbMocks.getTeam.mockResolvedValueOnce({
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      isPublic: true,
+      active: true
+    });
+    authServiceMocks.getNativeAuthIdToken.mockResolvedValueOnce('web-token');
+    (globalThis as any).fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        name: 'projects/test-project/databases/(default)/documents/teams/team-1',
+        fields: {
+          name: { stringValue: 'Bears' },
+          sport: { stringValue: 'Basketball' },
+          ownerId: { stringValue: 'owner-1' },
+          active: { booleanValue: true }
+        }
+      })
+    }) as any);
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1', roles: ['coach'] } as any);
+
+      expect(model.canManageTeam).toBe(true);
+      expect(model.team.ownerId).toBe('owner-1');
+      expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        includeInactive: true
+      }));
+      expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it('includes later-page players when the native roster fallback is paginated', async () => {
     const previousFetch = globalThis.fetch;
     nativeRuntimeState.isNative = true;

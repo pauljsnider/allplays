@@ -3054,7 +3054,12 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   }
   const discoveredStaffTeamIds = new Set(staffTeamResult.teams.map((team: any) => compactString(team?.id)).filter(Boolean));
   const hasMissingDeclaredCoachTeam = uniqueDeclaredCoachTeamIds.some((teamId) => !discoveredStaffTeamIds.has(teamId));
-  if (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam) {
+  const hasStaffRole = Array.isArray(user.roles) && user.roles.some((role) => (
+    role === 'coach' || role === 'admin' || role === 'platformAdmin'
+  ));
+  const shouldVerifyEmptyStaffResult = staffTeamResult.teams.length === 0
+    && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
+  if (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult) {
     try {
       const restResult = await loadStaffTeamsFromRest(staffUser);
       const teamsById = new Map<string, any>();

@@ -778,6 +778,35 @@ async function loadTeamDocument(teamId: string) {
   );
 }
 
+async function recoverAuthoritativeManagedTeam(
+  teamId: string,
+  user: AuthUser | null,
+  team: Record<string, any> | null
+) {
+  if (!user?.uid || hasFullTeamAccess(user, team)) return team;
+  if (isNativeRuntime()) return team;
+  const hasStaffRole = Array.isArray(user.roles) && user.roles.some((role) => (
+    role === 'coach' || role === 'admin' || role === 'platformAdmin'
+  ));
+  const isPotentialManager = hasStaffRole
+    || (Array.isArray(user.coachOf) && user.coachOf.length > 0)
+    || user.isAdmin === true
+    || user.isPlatformAdmin === true;
+  if (!isPotentialManager) return team;
+
+  const authoritativeTeam = await nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch((error) => {
+    logger.warn('Unable to verify authoritative team management access.', {
+      operation: 'team-management-access-recovery',
+      teamId,
+      error
+    });
+    return null;
+  });
+  return authoritativeTeam && hasFullTeamAccess(user, authoritativeTeam)
+    ? authoritativeTeam
+    : team;
+}
+
 async function loadTeamPlayers(teamId: string) {
   return readWithNativeFallback(
     `team players ${teamId}`,
@@ -1928,7 +1957,8 @@ export async function loadParentTeamDetail(
   options: { includeDeferredData?: boolean } = {}
 ): Promise<TeamDetailModel> {
   const includeDeferredData = options.includeDeferredData === true;
-  const { team, players: publicPlayers, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
+  const { team: loadedTeam, players: publicPlayers, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
+  const team = await recoverAuthoritativeManagedTeam(teamId, user, loadedTeam);
 
   if (!team) throw new Error('Team not found.');
 
@@ -1995,7 +2025,8 @@ async function loadTeamDetailOverviewSchedule(teamId: string, teamName: string, 
 }
 
 export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
-  const { team, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
+  const { team: loadedTeam, players: publicPlayers } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
+  const team = await recoverAuthoritativeManagedTeam(teamId, user, loadedTeam);
 
   if (!team) throw new Error('Team not found.');
 
