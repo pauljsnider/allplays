@@ -109,5 +109,7 @@ describe('parent coverage provisioning workflow trust boundary', () => {
         );
         expect(inviteStep.env.PARENT_CENSUS_REDEMPTION_TEAM_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_TEAM_ID }}');
         expect(inviteStep.env.PARENT_CENSUS_REDEMPTION_PLAYER_ID).toBe('${{ vars.PARENT_CENSUS_REDEMPTION_PLAYER_ID }}');
+        expect(inviteStep.env.PARENT_CENSUS_STAFF_EMAIL).toBe('${{ secrets.SMOKE_STAFF_EMAIL }}');
+        expect(inviteStep.env.PARENT_CENSUS_STAFF_PASSWORD).toBe('${{ secrets.SMOKE_STAFF_PASSWORD }}');
     });
 });
