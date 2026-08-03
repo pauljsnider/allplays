@@ -17,7 +17,6 @@ import {
     findFirestoreDocumentsByStringField,
     getFirestoreDocument,
     getFirestoreDocumentPath,
-    listFirestoreDocuments,
     restoreFirestoreDocument,
     runSmokeCleanup
 } from './helpers/firebase-rest.js';
@@ -144,10 +143,37 @@ async function findSmokeChatMessages(text) {
         'text',
         text
     );
-    const conversations = await listFirestoreDocuments(
-        staffRestSession,
-        `teams/${config.teamId}/chatConversations`
-    );
+    const conversationsPath = `teams/${config.teamId}/chatConversations`;
+    // An unfiltered collection list can include participant-only friend chats,
+    // which Firestore must reject even for team staff. Mirror the moderator-safe
+    // inbox queries so the smoke test only asks for conversations staff may list.
+    const conversationGroups = await Promise.all([
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'team'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'group'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'directAccess',
+            'team_admin'
+        )
+    ]);
+    const conversations = [
+        ...new Map(
+            conversationGroups
+                .flat()
+                .map((conversation) => [getFirestoreDocumentPath(conversation), conversation])
+        ).values()
+    ];
     const nestedMessages = await Promise.all(conversations.map((conversation) => (
         findFirestoreDocumentsByStringField(
             staffRestSession,

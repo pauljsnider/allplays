@@ -438,6 +438,12 @@ describe('preview deployment workflow trust boundary', () => {
         expect(staffWorkflow).toContain('body: chatText');
         expect(extendedProductionSmoke).toContain('async function findSmokeChatMessages(text)');
         expect(extendedProductionSmoke).toContain('`teams/${config.teamId}/chatConversations`');
+        expect(extendedProductionSmoke).toContain("'type',\n            'team'");
+        expect(extendedProductionSmoke).toContain("'type',\n            'group'");
+        expect(extendedProductionSmoke).toContain("'directAccess',\n            'team_admin'");
+        expect(extendedProductionSmoke).not.toContain(
+            'listFirestoreDocuments(\n        staffRestSession,\n        `teams/${config.teamId}/chatConversations`'
+        );
         expect(extendedProductionSmoke).toContain('`${getFirestoreDocumentPath(conversation)}/chatMessages`');
         expect(extendedProductionSmoke).toContain('cleanup: () => deleteSmokeChatMessages(chatText)');
         const notificationAssertion = staffWorkflow.indexOf('const messageDeepLink');
