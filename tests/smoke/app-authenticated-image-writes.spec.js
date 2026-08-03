@@ -16,6 +16,7 @@ import {
     deleteSmokeMediaByTitle,
     getFirestoreDocument,
     getFirestoreStringField,
+    isEmptyFirestoreDocument,
     patchFirestoreDocumentFields,
     restoreFirestoreDocumentFields,
     runSmokeCleanup,
@@ -177,11 +178,12 @@ async function reconcileDedicatedImageFixture(target) {
             expect(getFirestoreStringField(document, fieldName)).toBe('');
         }
         if (documentTarget.removeIfCreated) {
-            // This dedicated fixture's canonical private-profile baseline is missing.
-            // Remove only an authoritatively empty document left by an interrupted run.
+            // An interrupted image smoke can leave an empty private-profile shell after
+            // its abandoned image field is cleared. Existing fixture metadata is a real
+            // baseline and must survive reconciliation.
             const cleanupSession = documentTarget.cleanupRestSession || target.restSession;
             const cleanupDocument = await getFirestoreDocument(cleanupSession, documentTarget.documentPath);
-            expect(Object.keys(cleanupDocument?.fields || {})).toEqual([]);
+            if (!isEmptyFirestoreDocument(cleanupDocument)) continue;
             await deleteFirestoreDocument(cleanupSession, documentTarget.documentPath, {
                 updateTime: cleanupDocument.updateTime
             });
