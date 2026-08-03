@@ -581,7 +581,6 @@
       "collectionGroup": "accessCodes",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "usedBy", "order": "ASCENDING" }
       ]
@@ -590,7 +589,6 @@
       "collectionGroup": "accessCodes",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "email", "order": "ASCENDING" }
       ]

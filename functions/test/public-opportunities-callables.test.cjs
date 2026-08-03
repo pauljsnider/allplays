@@ -62,6 +62,7 @@ function comparable(value) {
 
 function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null } = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
+    const queryLog = [];
     let nextAutoId = 1;
 
     function makeSnapshot(path) {
@@ -112,6 +113,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                 return doc(`${path}/${id || `auto-${nextAutoId++}`}`);
             },
             async get() {
+                queryLog.push({ path, filters: clone(filters), limitCount });
                 const forcedFailure = queryFailures.find((failure) => (
                     failure?.path === path
                     && filters.some(({ field, operator }) => field === failure.field && operator === failure.operator)
@@ -170,6 +172,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
 
     return {
         _state: state,
+        _queryLog: queryLog,
         doc,
         collection,
         runTransaction: async (callback) => {
@@ -404,7 +407,7 @@ test('opportunity writes require authentication and verified inquiry replies', a
 });
 
 test('managed-team callables return access fields only to current managers', async () => {
-    const { callables } = loadCallables({
+    const { firestore, callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team'] },
         'users/stranger-1': { email: 'stranger@example.com' },
         'users/stale-owner': { email: 'legacy-owner@example.com' },
@@ -482,6 +485,15 @@ test('managed-team callables return access fields only to current managers', asy
     assert.equal('adminEmails' in coachTeam, false);
     assert.equal('privateBillingCustomerId' in coachTeam, false);
     assert.equal('privateBillingCustomerId' in privateTeam, false);
+    const evidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
+        path === 'accessCodes' && filters.some(({ field, value }) => field === 'type' && value === 'admin_invite')
+    ));
+    assert.equal(evidenceQueries.length, 2);
+    assert.ok(evidenceQueries.every(({ limitCount }) => limitCount === 201));
+    assert.deepEqual(
+        evidenceQueries.map(({ filters }) => filters.map(({ field }) => field)),
+        [['type', 'usedBy'], ['type', 'email']]
+    );
 
     const privateProfile = await callables.getPublicTeamProfile(
         { teamId: 'private-team' },
@@ -834,7 +846,7 @@ test('managed-team discovery fails closed when legacy coach grant evidence canno
     }, {
         queryFailures: [{
             path: 'accessCodes',
-            field: 'teamId',
+            field: 'usedBy',
             operator: '==',
             message: 'invite evidence unavailable'
         }]
@@ -846,6 +858,62 @@ test('managed-team discovery fails closed when legacy coach grant evidence canno
     );
     assert.deepEqual(managed.items, []);
     assert.equal(managed.isPartial, true);
+});
+
+test('managed-team discovery fails closed when invite evidence exceeds its fixed read bound', async () => {
+    const inviteHistory = Object.fromEntries(Array.from({ length: 201 }, (_, index) => [
+        `accessCodes/history-${index}`,
+        {
+            type: 'admin_invite',
+            teamId: `former-team-${index}`,
+            email: `former-${index}@example.com`,
+            usedBy: 'legacy-coach'
+        }
+    ]));
+    const { firestore, callables } = loadCallables({
+        ...inviteHistory,
+        'users/legacy-coach': { email: 'legacy@example.com', roles: ['coach'], coachOf: ['team-1'] },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('legacy-coach', { email: 'legacy@example.com' })
+    );
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, true);
+    const evidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
+        path === 'accessCodes' && filters.some(({ field, value }) => field === 'type' && value === 'admin_invite')
+    ));
+    assert.equal(evidenceQueries.length, 2);
+    assert.ok(evidenceQueries.every(({ limitCount }) => limitCount === 201));
+});
+
+test('managed-team discovery reports partial instead of trusting coachOf when Auth email is absent', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/legacy-coach': { email: 'stale-profile@example.com', roles: ['coach'], coachOf: ['team-1'] },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('legacy-coach', { email: null })
+    );
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, true);
+    assert.equal(firestore._queryLog.filter(({ path }) => path === 'accessCodes').length, 0);
 });
 
 test('managed-team discovery preserves a current mixed-case legacy admin grant', async () => {

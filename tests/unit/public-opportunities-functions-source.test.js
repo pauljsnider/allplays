@@ -200,14 +200,14 @@ describe('public opportunity callable wiring', () => {
 
     expect(resolverSource).toContain('caller.user?.coachOf');
     expect(resolverSource).toContain("firestore.collection('accessCodes')");
-    expect(resolverSource).toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
     expect(resolverSource).toContain(".where('usedBy', '==', caller.uid)");
     expect(resolverSource).toContain(".where('email', '==', caller.email)");
-    expect(resolverSource.match(/\.limit\(1\)/g)).toHaveLength(2);
-    expect(resolverSource).not.toMatch(/\.where\('teamId', '==', teamSnap\.id\)\s*\.get\(\)/);
-    expect(resolverSource).toMatch(/if \(result\.status !== 'fulfilled' \|\| result\.value\.hasAdminInviteLifecycleEvidence\) return;\s+teams\.set\(result\.value\.teamSnap\.id, result\.value\.teamSnap\);/);
-    expect(resolverSource).toContain("settledCoachGrantEvidence.some((result) => result.status === 'rejected')");
+    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(2);
+    expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
+    expect(resolverSource).toContain('snapshot.size > legacyCoachInviteEvidenceLimit');
+    expect(resolverSource).toContain('teamsWithAdminInviteEvidence.add(teamId)');
+    expect(resolverSource).toContain('if (!coachGrantEvidenceIsIncomplete)');
     expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
     expect(listManagedTeamsSource).toContain('? serializeManagedTeamDocument(teamSnap.id, team)');
     expect(listManagedTeamsSource).toContain(': serializeStaffTeamProfile(teamSnap.id, team)');
@@ -219,8 +219,8 @@ describe('public opportunity callable wiring', () => {
     ));
     const fieldSignature = (index) => index.fields.map(({ fieldPath }) => fieldPath).join(',');
 
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'teamId,type,usedBy')).toBe(true);
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'teamId,type,email')).toBe(true);
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type,usedBy')).toBe(true);
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type,email')).toBe(true);
   });
 
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {

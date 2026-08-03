@@ -17854,6 +17854,7 @@ async function listOpportunityManagedTeamDocuments(caller, { allowPartial = fals
 }
 
 async function listStaffTeamDocuments(caller) {
+  const legacyCoachInviteEvidenceLimit = 200;
   const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
   const coachTeamIds = Array.from(new Set(
     (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
@@ -17879,33 +17880,39 @@ async function listStaffTeamDocuments(caller) {
   });
   const legacyCoachCandidates = loadedCoachTeamSnaps
     .filter((teamSnap) => !teams.has(teamSnap.id));
-  const settledCoachGrantEvidence = await Promise.allSettled(
-    legacyCoachCandidates.map(async (teamSnap) => {
-      if (!caller.email) {
-        return { teamSnap, hasAdminInviteLifecycleEvidence: true };
-      }
-      const usedByQuery = firestore.collection('accessCodes')
-        .where('teamId', '==', teamSnap.id)
+  let settledCoachGrantEvidence = [];
+  let coachGrantEvidenceIsIncomplete = legacyCoachCandidates.length > 0 && !caller.email;
+  const teamsWithAdminInviteEvidence = new Set();
+  if (legacyCoachCandidates.length > 0 && caller.email) {
+    settledCoachGrantEvidence = await Promise.allSettled([
+      firestore.collection('accessCodes')
         .where('type', '==', 'admin_invite')
         .where('usedBy', '==', caller.uid)
-        .limit(1);
-      const currentEmailQuery = firestore.collection('accessCodes')
-        .where('teamId', '==', teamSnap.id)
+        .limit(legacyCoachInviteEvidenceLimit + 1)
+        .get(),
+      firestore.collection('accessCodes')
         .where('type', '==', 'admin_invite')
         .where('email', '==', caller.email)
-        .limit(1);
-      const [usedBySnap, currentEmailSnap] = await Promise.all([
-        usedByQuery.get(),
-        currentEmailQuery.get()
-      ]);
-      const hasAdminInviteLifecycleEvidence = !usedBySnap.empty || !currentEmailSnap.empty;
-      return { teamSnap, hasAdminInviteLifecycleEvidence };
-    })
-  );
-  settledCoachGrantEvidence.forEach((result) => {
-    if (result.status !== 'fulfilled' || result.value.hasAdminInviteLifecycleEvidence) return;
-    teams.set(result.value.teamSnap.id, result.value.teamSnap);
-  });
+        .limit(legacyCoachInviteEvidenceLimit + 1)
+        .get()
+    ]);
+    const evidenceSnapshots = settledCoachGrantEvidence
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+    coachGrantEvidenceIsIncomplete = settledCoachGrantEvidence.some((result) => result.status === 'rejected')
+      || evidenceSnapshots.some((snapshot) => snapshot.size > legacyCoachInviteEvidenceLimit);
+    if (!coachGrantEvidenceIsIncomplete) {
+      evidenceSnapshots.forEach((snapshot) => snapshot.docs.forEach((inviteDoc) => {
+        const teamId = String(inviteDoc.data()?.teamId || '').trim();
+        if (teamId) teamsWithAdminInviteEvidence.add(teamId);
+      }));
+    }
+  }
+  if (!coachGrantEvidenceIsIncomplete) {
+    legacyCoachCandidates.forEach((teamSnap) => {
+      if (!teamsWithAdminInviteEvidence.has(teamSnap.id)) teams.set(teamSnap.id, teamSnap);
+    });
+  }
   teams.discoveryQueryCount += settledCoachTeamSnaps.length;
   teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
     .filter((result) => result.status === 'fulfilled').length;
@@ -17920,7 +17927,7 @@ async function listStaffTeamDocuments(caller) {
     .map((result) => result.reason));
   teams.isPartial = teams.isPartial === true
     || settledCoachTeamSnaps.some((result) => result.status === 'rejected')
-    || settledCoachGrantEvidence.some((result) => result.status === 'rejected');
+    || coachGrantEvidenceIsIncomplete;
   if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
     throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
   }
