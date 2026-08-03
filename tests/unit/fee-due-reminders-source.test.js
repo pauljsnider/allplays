@@ -136,11 +136,12 @@ describe('fee due reminder source wiring', () => {
     it('leaves reminders unmarked when no payer targets can receive them', () => {
         const candidateGuardIndex = functionsSource.indexOf('if (!candidateUserIds.length) return null;');
         const targetGuardIndex = functionsSource.indexOf('if (!payerTargets.length) return null;');
-        const markSentIndex = functionsSource.indexOf('await doc.ref.update({');
+        const markSentIndex = functionsSource.indexOf('const claimId = await claimFeeDueReminder(doc.ref, {');
 
         expect(candidateGuardIndex).toBeGreaterThan(-1);
         expect(targetGuardIndex).toBeGreaterThan(candidateGuardIndex);
         expect(markSentIndex).toBeGreaterThan(targetGuardIndex);
+        expect(functionsSource).toContain('recipient.reminderDeliveryClaimId !== claimId');
     });
 
     it('formats the reminder amount and attaches fee-specific routing identifiers', () => {
