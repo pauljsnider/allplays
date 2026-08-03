@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P09",
+  "title": "Player search and parent access request",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [],
+  "cleanupSteps": []
+}
