@@ -468,10 +468,17 @@ describe('preview deployment workflow trust boundary', () => {
         expect(staffWorkflow).toContain("locator('button[aria-controls]').first()");
         expect(staffWorkflow).toContain('manageSchedule.click({ timeout: 25_000 })');
         expect(staffWorkflow).toContain("toHaveAttribute('aria-expanded', 'true'");
+        expect(staffWorkflow).toContain("test.step('create and verify a schedule game'");
+        expect(extendedProductionSmoke).toContain('page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS)');
         expect(staffWorkflow).not.toContain('input[type="file"][accept="image/*"]');
         expect(imageWriteProductionSmoke).not.toContain("test.describe.configure({ mode: 'serial' })");
         expect(scheduledProdSmokeWorkflow).toContain('tests/smoke/app-authenticated-image-writes.spec.js');
         expect(imageWorkflow).toContain("recordType: 'team-media'");
+        expect(imageWorkflow).toContain('await openWritableMediaAlbum(page)');
+        expect(imageWriteProductionSmoke).toContain("getByRole('button', { name: 'Refresh media' })");
+        expect(imageWriteProductionSmoke).toContain("waitFor({ state: 'visible', timeout: 15_000 })");
+        expect(imageWriteProductionSmoke).not.toContain('isVisible({ timeout:');
+        expect(imageWriteProductionSmoke).toContain('page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS)');
         expect(imageWorkflow).toContain('input[type="file"][accept="image/*"]');
         expect(imageWorkflow).toContain("getByText('Uploaded', { exact: true })");
         expect(imageWorkflow).toContain("getByText('Media item deleted.')");

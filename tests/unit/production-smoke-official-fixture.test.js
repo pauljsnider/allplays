@@ -8,6 +8,7 @@ import {
     officialFixtureSlotId
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
 import {
+    FIREBASE_REST_REQUEST_TIMEOUT_MS,
     createFirebaseRestSession,
     deleteFirestoreDocument,
     isEmptyFirestoreDocument,
@@ -255,6 +256,33 @@ describe('production officials smoke fixture maintenance', () => {
         });
     });
 
+    it('bounds Firebase requests and retries only retry-safe cleanup operations', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+                arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0))
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200
+            });
+
+        await deleteFirestoreDocument(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'teams/allplays-smoke-team-v1/games/allplays-smoke-game-v1'
+        );
+
+        expect(FIREBASE_REST_REQUEST_TIMEOUT_MS).toBe(30_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        for (const [, request] of fetchMock.mock.calls) {
+            expect(request.signal).toBeInstanceOf(AbortSignal);
+        }
+    });
+
     it('distinguishes an empty interrupted image document from a metadata-bearing fixture', () => {
         expect(isEmptyFirestoreDocument({ fields: {} })).toBe(true);
         expect(isEmptyFirestoreDocument({
@@ -317,6 +345,30 @@ describe('production officials smoke fixture maintenance', () => {
             password: 'exact password',
             returnSecureToken: true
         });
+    });
+
+    it('does not retry authentication POST requests when their result is uncertain', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    apiKey: 'runtime-api-key',
+                    projectId: 'runtime-project'
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503
+            });
+
+        await expect(createFirebaseRestSession({
+            appBaseUrl: 'https://allplays.ai/app/',
+            email: 'smoke@example.com',
+            password: 'exact password'
+        })).rejects.toThrow('Firebase smoke authentication failed with status 503');
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][1].method).toBe('POST');
     });
 
     it('keeps production fixture credentials on an exact default-branch manual workflow', () => {
