@@ -234,7 +234,7 @@ function buildServer(identity) {
         description: 'Score, status, summary, and aggregated player statistics for one game on a team the user belongs to.',
         inputSchema: {
             teamId: z.string().describe('Team id from get_profile'),
-            gameId: z.string().describe('Game id from list_schedule')
+            gameId: z.string().describe('Non-imported gameId from list_schedule. Imported calendar events have no gameId and do not support game summaries.')
         },
         annotations: { readOnlyHint: true }
     }, run((context, args) => getGameSummary(db, context, args)));

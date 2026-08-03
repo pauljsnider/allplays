@@ -9,6 +9,7 @@ export const APP_BASE_URL = 'https://allplays.ai';
 export const DEFAULT_SCHEDULE_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_EVENTS_PER_TEAM = 50;
+const MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM = 5000;
 const MAX_CALENDAR_PROJECTION_PAGES = 20;
 const MAX_PLAYER_STATS = 60;
 const GENERIC_CALENDAR_DISCRIMINATORS = new Set([
@@ -429,13 +430,38 @@ function whitelistRsvpSummary(summary) {
     return Object.keys(out).length ? out : null;
 }
 
+async function loadTrackedCalendarEvents(db, teamId) {
+    const snap = await db.collection(`teams/${teamId}/games`)
+        .orderBy('__name__')
+        .select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title')
+        .limit(MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM + 1)
+        .get();
+    if (snap.docs.length > MAX_TRACKED_CALENDAR_EVENTS_PER_TEAM) {
+        throw new DomainError('unavailable', 'Calendar tracking scan exceeded its safe limit.');
+    }
+    return snap.docs
+        .map((doc) => {
+            const data = doc.data() || {};
+            const id = cleanString(data.calendarEventUid).trim();
+            if (!id) return null;
+            return {
+                id,
+                type: normalizeCalendarEventType(data.type),
+                date: toDate(data.date),
+                location: cleanString(data.location) || null,
+                opponent: cleanString(data.opponent) || null,
+                title: cleanString(data.title) || null
+            };
+        })
+        .filter(Boolean);
+}
+
 export async function getFamilySchedule(db, context, args = {}, now = new Date(), { loadCalendarProjection } = {}) {
     const { start, end } = parseScheduleRange(args, now);
     const events = [];
 
     for (const entry of context.teams.values()) {
         const teamEvents = [];
-        const trackedCalendarEvents = [];
         const snap = await db.collection(`teams/${entry.teamId}/games`)
             .where('date', '>=', start)
             .where('date', '<=', end)
@@ -445,11 +471,11 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
 
         for (const doc of snap.docs) {
             const data = doc.data() || {};
-            const trackedCalendarEventId = cleanString(data.calendarEventUid).trim();
             const event = {
                 teamId: entry.teamId,
                 teamName: cleanString(entry.team.name),
                 gameId: doc.id,
+                gameSummaryAvailable: true,
                 type: data.type === 'practice' ? 'practice' : 'game',
                 date: toIso(data.date),
                 opponent: cleanString(data.opponent) || cleanString(data.opponentTeamName) || null,
@@ -459,16 +485,6 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 linkedPlayerIds: [...entry.linkedPlayerIds],
                 deepLink: gameDeepLink(entry.teamId, doc.id)
             };
-            if (trackedCalendarEventId) {
-                trackedCalendarEvents.push({
-                    id: trackedCalendarEventId,
-                    type: event.type,
-                    date: toDate(data.date),
-                    location: event.location,
-                    opponent: event.opponent,
-                    title: cleanString(data.title) || null
-                });
-            }
 
             if (entry.roles.has('parent')) {
                 const rsvpSnap = await safeGetDoc(db, `teams/${entry.teamId}/games/${doc.id}/rsvps/${context.uid}`);
@@ -498,8 +514,12 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 }
             }
 
+            const normalizedProjectedEvents = Array.isArray(projectedEvents) ? projectedEvents : [];
+            const trackedCalendarEvents = normalizedProjectedEvents.length
+                ? await loadTrackedCalendarEvents(db, entry.teamId)
+                : [];
             const projectedEventKeys = new Set();
-            for (const projected of Array.isArray(projectedEvents) ? projectedEvents : []) {
+            for (const projected of normalizedProjectedEvents) {
                 const eventId = cleanString(projected?.id).trim();
                 const date = toDate(projected?.startsAt);
                 if (
@@ -513,7 +533,9 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 teamEvents.push({
                     teamId: entry.teamId,
                     teamName: cleanString(entry.team.name),
-                    gameId: eventId,
+                    gameId: null,
+                    calendarEventId: eventId,
+                    gameSummaryAvailable: false,
                     type,
                     date: date.toISOString(),
                     title: type === 'practice' ? cleanString(projected?.title) || null : null,

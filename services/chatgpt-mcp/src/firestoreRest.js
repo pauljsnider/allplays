@@ -62,8 +62,15 @@ function throwForStatus(status, path) {
     throw new Error(`Firestore request failed (${status}) for ${path}`);
 }
 
-export function buildStructuredQuery(collectionId, { filters = [], orderBy = null, limit = null } = {}) {
+export function buildStructuredQuery(collectionId, { filters = [], orderBy = null, limit = null, select = [] } = {}) {
     const structuredQuery = { from: [{ collectionId }] };
+    const selectedFields = (Array.isArray(select) ? select : [])
+        .filter((field) => typeof field === 'string' && field);
+    if (selectedFields.length) {
+        structuredQuery.select = {
+            fields: selectedFields.map((fieldPath) => ({ fieldPath }))
+        };
+    }
     const fieldFilters = filters.map(({ field, op, value }) => ({
         fieldFilter: {
             field: { fieldPath: field },
@@ -87,7 +94,7 @@ export function buildStructuredQuery(collectionId, { filters = [], orderBy = nul
 
 /**
  * Firestore handle scoped to one user's ID token. Interface matches what
- * core.js expects: doc(path).get(), collection(path).where().orderBy().limit().get().
+ * core.js expects: doc(path).get(), collection(path).where().orderBy().select().limit().get().
  */
 export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
     const baseUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
@@ -127,6 +134,9 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
                 orderBy(field, direction = 'asc') {
                     return makeQuery({ ...options, orderBy: { field, direction } });
                 },
+                select(...fields) {
+                    return makeQuery({ ...options, select: fields.flat() });
+                },
                 limit(count) {
                     return makeQuery({ ...options, limit: count });
                 },
@@ -148,7 +158,7 @@ export function createUserDb({ projectId, idToken, fetchImpl = fetch }) {
                 }
             });
 
-            return makeQuery({ filters: [] });
+            return makeQuery({ filters: [], select: [] });
         }
     };
 }

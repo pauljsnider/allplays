@@ -23,7 +23,7 @@ import {
 } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 
 // Minimal fake of the db interface core.js uses (same surface as the
-// firestoreRest adapter): doc(path).get(), collection(path).where()...get().
+// firestoreRest adapter): doc(path).get(), collection(path).where().select()...get().
 // Set docs[path] = DENIED to simulate a Firestore-rules denial.
 const DENIED = Symbol('permission-denied');
 
@@ -43,22 +43,37 @@ function fakeDb({ docs = {}, queries = {} } = {}) {
             };
         },
         collection(path) {
-            const makeQuery = (filters) => ({
+            const makeQuery = (options) => ({
                 where(field, op, value) {
-                    return makeQuery([...filters, { field, op, value }]);
+                    return makeQuery({ ...options, filters: [...options.filters, { field, op, value }] });
                 },
-                orderBy() { return makeQuery(filters); },
-                limit() { return makeQuery(filters); },
+                orderBy(field, direction = 'asc') {
+                    return makeQuery({ ...options, orderBy: { field, direction } });
+                },
+                select(...fields) {
+                    return makeQuery({ ...options, select: fields.flat() });
+                },
+                limit(count) {
+                    return makeQuery({ ...options, limit: count });
+                },
                 async get() {
                     const resolver = queries[path];
                     if (resolver === DENIED) throw new DomainError('permission_denied', 'You do not have access to this data.');
-                    const rows = resolver ? resolver(filters) : [];
+                    const rows = resolver ? resolver(options.filters, options) : [];
+                    const limitedRows = Number.isInteger(options.limit) ? rows.slice(0, options.limit) : rows;
                     return {
-                        docs: rows.map(({ id, data }) => ({ id, data: () => data }))
+                        docs: limitedRows.map(({ id, data }) => ({
+                            id,
+                            data: () => options.select.length
+                                ? Object.fromEntries(options.select
+                                    .filter((field) => Object.hasOwn(data, field))
+                                    .map((field) => [field, data[field]]))
+                                : data
+                        }))
                     };
                 }
             });
-            return makeQuery([]);
+            return makeQuery({ filters: [], orderBy: null, select: [], limit: null });
         }
     };
 }
@@ -418,7 +433,8 @@ describe('chatgpt-mcp core: listMyTeams', () => {
 describe('chatgpt-mcp core: getFamilySchedule', () => {
     function scheduleDb(
         calendarEventUid = 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z',
-        trackedGameOverrides = {}
+        trackedGameOverrides = {},
+        queryLog = []
     ) {
         return parentDb({
             docs: {
@@ -430,15 +446,17 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             },
             queries: {
                 teams: () => [],
-                'teams/team-a/games': (filters) => {
-                    const start = filters.find((f) => f.op === '>=').value;
-                    const end = filters.find((f) => f.op === '<=').value;
+                'teams/team-a/games': (filters, options) => {
+                    queryLog.push(options);
                     const all = [
                         { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid, privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' }, ...trackedGameOverrides } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
                     ];
+                    if (!filters.length) return all;
+                    const start = filters.find((f) => f.op === '>=').value;
+                    const end = filters.find((f) => f.op === '<=').value;
                     return all.filter(({ data }) => data.date >= start && data.date <= end);
                 }
             }
@@ -470,7 +488,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events[1].myRsvp).toEqual({ response: 'not_responded', playerIds: [] });
     });
 
-    it('includes a TeamSnap-only next game without leaking the calendar source URL', async () => {
+    it('includes a TeamSnap-only next game without leaking its source or advertising a game-summary id', async () => {
         const db = scheduleDb();
         const context = await resolveUserContext(db, parentIdentity);
         const loadCalendarProjection = vi.fn(async () => [{
@@ -502,7 +520,9 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             endDate: expect.any(Date)
         });
         expect(result.events).toContainEqual(expect.objectContaining({
-            gameId: 'teamsnap-next-game',
+            gameId: null,
+            calendarEventId: 'teamsnap-next-game',
+            gameSummaryAvailable: false,
             type: 'game',
             opponent: 'Jr. Tigers',
             location: 'Field 7',
@@ -510,8 +530,12 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             sourceLabel: 'Imported calendar',
             isImported: true
         }));
-        expect(result.events.find((event) => event.gameId === 'teamsnap-next-game')?.deepLink)
+        const importedEvent = result.events.find((event) => event.calendarEventId === 'teamsnap-next-game');
+        expect(importedEvent?.deepLink)
             .toContain('/app/#/schedule/team-a/teamsnap-next-game');
+        expect(result.events.find((event) => event.gameId === 'game-1')).toMatchObject({
+            gameSummaryAvailable: true
+        });
         expect(JSON.stringify(result)).not.toContain('private-token');
         expect(JSON.stringify(result)).not.toContain('SENTINEL_CALENDAR_UID_HASH');
         expect(JSON.stringify(result)).not.toContain('calendarUidHash');
@@ -543,7 +567,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             );
 
             expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
-            expect(result.events.some((event) => event.gameId === 'opaque-projected-id')).toBe(false);
+            expect(result.events.some((event) => event.calendarEventId === 'opaque-projected-id')).toBe(false);
         }
     });
 
@@ -570,7 +594,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
-        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
         expect(JSON.stringify(result)).not.toContain(trackedUid);
         expect(JSON.stringify(result)).not.toContain('SENTINEL_PRIVATE_CORRELATION_HASH');
         expect(JSON.stringify(result)).not.toContain('calendarUidHash');
@@ -596,8 +620,81 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
-        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
         expect(JSON.stringify(result)).not.toContain(trackedUid);
+    });
+
+    it.each([
+        ['practice', { type: 'practice' }],
+        ['private game', { visibility: 'private' }]
+    ])('uses an independent tracking scan when a materialized %s moves outside the requested window', async (_label, overrides) => {
+        const originalStartsAt = '2026-07-25T17:00:00.000Z';
+        const trackedUid = `legacy-moved-uid__${originalStartsAt}`;
+        const queryLog = [];
+        const db = scheduleDb(trackedUid, {
+            date: new Date('2026-08-05T20:00:00.000Z'),
+            ...overrides
+        }, queryLog);
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: overrides.type === 'practice' ? 'practice' : 'game',
+                startsAt: originalStartsAt,
+                title: overrides.type === 'practice' ? 'Practice' : null,
+                opponent: overrides.type === 'practice' ? null : 'Hawks',
+                location: 'Field 2'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
+        const trackingQuery = queryLog.find((options) => options.filters.length === 0);
+        expect(trackingQuery).toMatchObject({
+            orderBy: { field: '__name__', direction: 'asc' },
+            select: ['calendarEventUid', 'date', 'type', 'location', 'opponent', 'title'],
+            limit: 5001
+        });
+    });
+
+    it('fails closed when the independent tracking scan exceeds its cap', async () => {
+        const trackingRows = Array.from({ length: 5001 }, (_, index) => ({
+            id: `tracked-${index}`,
+            data: {
+                calendarEventUid: `legacy-uid-${index}`,
+                date: new Date('2026-08-05T20:00:00.000Z'),
+                type: 'game',
+                location: 'Field 2',
+                opponent: 'Hawks'
+            }
+        }));
+        const db = parentDb({
+            queries: {
+                'teams/team-a/games': (filters) => filters.length ? [] : trackingRows
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Hawks',
+                location: 'Field 2'
+            }] }
+        )).rejects.toMatchObject({
+            code: 'unavailable',
+            message: 'Calendar tracking scan exceeded its safe limit.'
+        });
     });
 
     it.each([
@@ -620,7 +717,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'distinct-opaque-projection-id')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'distinct-opaque-projection-id')).toBe(true);
     });
 
     it('deduplicates a same-time event with a meaningful case-insensitive location match', async () => {
@@ -641,7 +738,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
     });
 
     it('keeps exact ID deduplication unconditional when event shape differs', async () => {
@@ -662,7 +759,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'exact-projected-id')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'exact-projected-id')).toBe(false);
     });
 
     it('does not collapse placeholder-only events that share a start time', async () => {
@@ -686,7 +783,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'placeholder-opaque-projection-id')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'placeholder-opaque-projection-id')).toBe(true);
     });
 
     it('does not treat a generic practice title as a same-time discriminator', async () => {
@@ -711,7 +808,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'distinct-practice-projection-id')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'distinct-practice-projection-id')).toBe(true);
     });
 
     it('keeps a projected event at a different occurrence time', async () => {
@@ -732,7 +829,7 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         );
 
         expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
-        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(true);
         expect(JSON.stringify(result)).not.toContain(trackedUid);
     });
 
@@ -1025,6 +1122,7 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('idToken: identity.idToken');
         expect(source).toContain("error.code !== 'not_found'");
         expect(source).toContain('managedTeamResult = { teams: null, isPartial: false }');
+        expect(source).toContain('Non-imported gameId from list_schedule. Imported calendar events have no gameId');
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });
@@ -1041,8 +1139,9 @@ describe('chatgpt-mcp firestore REST adapter', () => {
         expect(decodeValue(encodeValue({ a: [1, 'b'] }))).toEqual({ a: [1, 'b'] });
     });
 
-    it('builds structured queries with filters, order, and limit', () => {
+    it('builds structured queries with selected fields, filters, order, and limit', () => {
         const query = buildStructuredQuery('games', {
+            select: ['calendarEventUid', 'date', 'type'],
             filters: [
                 { field: 'date', op: '>=', value: new Date('2026-07-24T00:00:00Z') },
                 { field: 'date', op: '<=', value: new Date('2026-07-31T00:00:00Z') }
@@ -1051,6 +1150,13 @@ describe('chatgpt-mcp firestore REST adapter', () => {
             limit: 50
         });
         expect(query.from).toEqual([{ collectionId: 'games' }]);
+        expect(query.select).toEqual({
+            fields: [
+                { fieldPath: 'calendarEventUid' },
+                { fieldPath: 'date' },
+                { fieldPath: 'type' }
+            ]
+        });
         expect(query.where.compositeFilter.op).toBe('AND');
         expect(query.where.compositeFilter.filters[0].fieldFilter.op).toBe('GREATER_THAN_OR_EQUAL');
         expect(query.orderBy).toEqual([{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]);
@@ -1112,10 +1218,14 @@ describe('chatgpt-mcp firestore REST adapter', () => {
         const snap = await db.collection('teams/team-a/games')
             .where('date', '>=', new Date('2026-07-24T00:00:00Z'))
             .orderBy('date')
+            .select('opponent')
             .limit(10)
             .get();
         expect(captured.url).toContain('/documents/teams/team-a:runQuery');
         expect(captured.body.structuredQuery.from).toEqual([{ collectionId: 'games' }]);
+        expect(captured.body.structuredQuery.select).toEqual({
+            fields: [{ fieldPath: 'opponent' }]
+        });
         expect(snap.docs).toHaveLength(1);
         expect(snap.docs[0].id).toBe('game-1');
         expect(snap.docs[0].data()).toEqual({ opponent: 'Hawks' });
