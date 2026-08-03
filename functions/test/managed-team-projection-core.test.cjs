@@ -67,6 +67,8 @@ test('authorized detail preserves required team UI fields without exposing serve
     leagueUrl: 'https://league.example.test/bears',
     bracketUrl: 'https://league.example.test/bears/bracket',
     teamLogoUrl: 'https://images.example.test/legacy-team-logo.png',
+    primaryColor: '#112233',
+    secondaryColor: '#aabbcc',
     twitchChannel: 'bears-live',
     youtubeVideoId: 'dQw4w9WgXcQ',
     scheduleNotifications: { enabled: true },
@@ -84,6 +86,8 @@ test('authorized detail preserves required team UI fields without exposing serve
     playerProfileFields: [{ key: 'height', label: 'Height' }],
     customRosterFields: [{ key: 'medicalClearance', label: 'Medical clearance' }],
     rosterFieldDefinitions: [{ key: 'school', label: 'School' }],
+    seasonId: 'season-legacy',
+    currentSeasonId: 'season-current',
     privateBillingCustomerId: 'must-not-leak',
     stripeCustomerId: 'must-not-leak-either',
     unknownFutureSecret: 'must-default-to-private'
@@ -103,6 +107,8 @@ test('authorized detail preserves required team UI fields without exposing serve
     leagueUrl: 'https://league.example.test/bears',
     bracketUrl: 'https://league.example.test/bears/bracket',
     teamLogoUrl: 'https://images.example.test/legacy-team-logo.png',
+    primaryColor: '#112233',
+    secondaryColor: '#aabbcc',
     twitchChannel: 'bears-live',
     youtubeVideoId: 'dQw4w9WgXcQ',
     scheduleNotifications: { enabled: true },
@@ -120,6 +126,8 @@ test('authorized detail preserves required team UI fields without exposing serve
     playerProfileFields: [{ key: 'height', label: 'Height' }],
     customRosterFields: [{ key: 'medicalClearance', label: 'Medical clearance' }],
     rosterFieldDefinitions: [{ key: 'school', label: 'School' }],
+    seasonId: 'season-legacy',
+    currentSeasonId: 'season-current',
     ownerId: 'owner-1',
     adminEmails: ['admin@example.com']
   });
