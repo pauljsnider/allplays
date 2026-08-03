@@ -95,6 +95,10 @@ export function getFirestoreStringField(document, fieldName) {
     return String(document?.fields?.[fieldName]?.stringValue || '');
 }
 
+export function isEmptyFirestoreDocument(document) {
+    return Boolean(document) && Object.keys(document.fields || {}).length === 0;
+}
+
 function buildStructuredQuery(collectionPath, fields) {
     const segments = String(collectionPath || '').split('/').filter(Boolean);
     const collectionId = segments.pop();
