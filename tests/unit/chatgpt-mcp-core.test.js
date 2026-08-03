@@ -590,13 +590,103 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
                 id: 'opaque-safe-projection-id',
                 type: 'game',
                 startsAt: '2026-07-25T17:00:00.000Z',
-                opponent: 'Original Hawks'
+                opponent: 'Original Hawks',
+                location: 'FIELD 2'
             }] }
         );
 
         expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
         expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
         expect(JSON.stringify(result)).not.toContain(trackedUid);
+    });
+
+    it.each([
+        ['game', { opponent: 'Hawks', location: 'Field 2' }, { opponent: 'Tigers', location: 'Field 3' }],
+        ['practice', { title: 'Batting practice', location: 'Field 2' }, { title: 'Defense practice', location: 'Field 3' }]
+    ])('keeps a distinct same-time %s with different discriminators', async (type, overrides, projectedFields) => {
+        const db = scheduleDb('different-legacy-source-id', { type, ...overrides });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'distinct-opaque-projection-id',
+                type,
+                startsAt: '2026-07-25T17:00:00.000Z',
+                ...projectedFields
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'distinct-opaque-projection-id')).toBe(true);
+    });
+
+    it('deduplicates a same-time event with a meaningful case-insensitive location match', async () => {
+        const db = scheduleDb('different-legacy-source-id');
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Different opponent',
+                location: '  FIELD   2  '
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'opaque-safe-projection-id')).toBe(false);
+    });
+
+    it('keeps exact ID deduplication unconditional when event shape differs', async () => {
+        const db = scheduleDb('exact-projected-id');
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'exact-projected-id',
+                type: 'practice',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                title: 'Unrelated practice',
+                location: 'Different complex'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'exact-projected-id')).toBe(false);
+    });
+
+    it('does not collapse placeholder-only events that share a start time', async () => {
+        const db = scheduleDb('different-legacy-source-id', {
+            opponent: 'unknown',
+            location: 'TBD'
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'placeholder-opaque-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'TBD',
+                location: 'unknown'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.gameId === 'placeholder-opaque-projection-id')).toBe(true);
     });
 
     it('keeps a projected event at a different occurrence time', async () => {

@@ -369,18 +369,41 @@ function parseCalendarOccurrenceId(sourceId) {
     };
 }
 
-function isProjectedCalendarEventTracked(projectedId, projectedStartsAt, trackedEvents) {
-    const eventId = cleanString(projectedId).trim();
-    const startsAt = toDate(projectedStartsAt);
+function normalizeCalendarEventType(value) {
+    return cleanString(value).trim().toLowerCase() === 'practice' ? 'practice' : 'game';
+}
+
+function normalizeCalendarDiscriminator(value) {
+    const normalized = cleanString(value).trim().replace(/\s+/g, ' ').toLowerCase();
+    return normalized && normalized !== 'tbd' && normalized !== 'unknown' ? normalized : '';
+}
+
+function hasMatchingCalendarDiscriminator(projected, tracked, type) {
+    const projectedLocation = normalizeCalendarDiscriminator(projected?.location);
+    const trackedLocation = normalizeCalendarDiscriminator(tracked?.location);
+    if (projectedLocation && projectedLocation === trackedLocation) return true;
+
+    const field = type === 'practice' ? 'title' : 'opponent';
+    const projectedValue = normalizeCalendarDiscriminator(projected?.[field]);
+    const trackedValue = normalizeCalendarDiscriminator(tracked?.[field]);
+    return Boolean(projectedValue && projectedValue === trackedValue);
+}
+
+function isProjectedCalendarEventTracked(projected, trackedEvents) {
+    const eventId = cleanString(projected?.id).trim();
+    const startsAt = toDate(projected?.startsAt);
     if (!eventId || !startsAt) return false;
     const occurrenceId = calendarOccurrenceId(eventId, startsAt);
     const occurrenceTime = startsAt.getTime();
+    const type = normalizeCalendarEventType(projected?.type);
 
     return trackedEvents.some((tracked) => {
         if (tracked.id === eventId || tracked.id === occurrenceId) return true;
+        if (normalizeCalendarEventType(tracked.type) !== type) return false;
         const parsed = parseCalendarOccurrenceId(tracked.id);
-        if (parsed.startsAt) return parsed.startsAt.getTime() === occurrenceTime;
-        return tracked.date?.getTime() === occurrenceTime;
+        const trackedOccurrenceTime = parsed.startsAt?.getTime() ?? tracked.date?.getTime();
+        return trackedOccurrenceTime === occurrenceTime
+            && hasMatchingCalendarDiscriminator(projected, tracked, type);
     });
 }
 
@@ -439,7 +462,8 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                     type: event.type,
                     date: toDate(data.date),
                     location: event.location,
-                    opponent: event.opponent
+                    opponent: event.opponent,
+                    title: cleanString(data.title) || null
                 });
             }
 
@@ -477,7 +501,7 @@ export async function getFamilySchedule(db, context, args = {}, now = new Date()
                 const date = toDate(projected?.startsAt);
                 if (
                     !eventId || !date || date < start || date > end
-                    || isProjectedCalendarEventTracked(eventId, date, trackedCalendarEvents)
+                    || isProjectedCalendarEventTracked(projected, trackedCalendarEvents)
                 ) continue;
                 const eventKey = `${eventId}::${date.toISOString()}`;
                 if (projectedEventKeys.has(eventKey)) continue;
