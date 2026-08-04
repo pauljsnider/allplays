@@ -2009,14 +2009,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     aliases: ['get_schedule'],
     resolve: async (user, args, context) => {
       const range = compactText(args.range).toLowerCase();
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: range === 'all',
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
       });
       return summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
       }, context?.requestText));
     }
   },
@@ -2026,14 +2027,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
     aliases: ['last_game', 'get_previous_game'],
     resolve: async (user, args, context) => {
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: true,
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
       });
       return summarizeLastGame(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
       }, context?.requestText));
     }
   },
@@ -2061,14 +2063,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'RSVP status and summaries for schedule events. Args: range, type, teamId, teamName, playerId, playerName, limit.',
     resolve: async (user, args, context) => {
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: compactText(args.range).toLowerCase() === 'all',
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
       });
       const summary = summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
       }, context?.requestText));
       return {
         ...pickFields(summary, ['query', 'totalMatchingEvents', 'returnedEventCount', 'hasMoreEvents', 'resultComplete', 'absenceConfirmed']),
@@ -5661,17 +5664,26 @@ function collectSchedulePlayerMentions(schedule: any) {
   return Array.from(mentions.values());
 }
 
-function findUniqueScheduleMention(
+function findUniqueScheduleMention<T extends { id: string; name: string }>(
   normalizedRequest: string,
-  candidates: Array<{ id: string; name: string }>,
+  candidates: T[],
   label: 'team' | 'player'
-) {
+): T | null {
   const matches = candidates
     .map((candidate) => ({
       ...candidate,
       normalizedName: normalizeScheduleMentionText(candidate.name)
     }))
-    .filter((candidate) => candidate.normalizedName && (` ${normalizedRequest} `).includes(` ${candidate.normalizedName} `))
+    .filter((candidate) => {
+      if (!candidate.normalizedName) return false;
+      const paddedRequest = ` ${normalizedRequest} `;
+      if (label !== 'player' || candidate.normalizedName.includes(' ')) {
+        return paddedRequest.includes(` ${candidate.normalizedName} `);
+      }
+      return paddedRequest.includes(` ${candidate.normalizedName} s `)
+        || paddedRequest.includes(` for ${candidate.normalizedName} `)
+        || paddedRequest.includes(` player ${candidate.normalizedName} `);
+    })
     .sort((left, right) => right.normalizedName.length - left.normalizedName.length);
   if (!matches.length) return null;
   const longestLength = matches[0].normalizedName.length;
@@ -5682,29 +5694,88 @@ function findUniqueScheduleMention(
   return longestMatches[0];
 }
 
-async function resolvePrivateAiScheduleTargetTeamId(
+function collectAccessibleSchedulePlayerMentions(access: AccessibleAiTeamsResult, teamId = '') {
+  return access.schedulePlayers.filter((player) => !teamId || player.teamId === teamId);
+}
+
+function resolveExplicitSchedulePlayer(
+  args: Record<string, unknown>,
+  access: AccessibleAiTeamsResult,
+  teamId = ''
+) {
+  const requestedPlayerId = compactText(args.playerId || args.childId);
+  const requestedPlayerName = normalizeScheduleMentionText(args.playerName || args.childName);
+  if (!requestedPlayerId && !requestedPlayerName) return null;
+  const candidates = collectAccessibleSchedulePlayerMentions(access, teamId)
+    .filter((candidate) => !requestedPlayerId || candidate.playerId === requestedPlayerId)
+    .filter((candidate) => !requestedPlayerName || normalizeScheduleMentionText(candidate.name) === requestedPlayerName);
+  if (candidates.length > 1) {
+    throw new Error('More than one accessible player matches that schedule request. Choose the team and player.');
+  }
+  return candidates[0] || null;
+}
+
+async function resolvePrivateAiScheduleTargetScope(
   user: AuthUser,
   args: Record<string, unknown>,
   context: PrivateAiToolContext = {}
 ) {
-  const explicitTeamId = compactText(args.teamId || context.teamId);
-  if (explicitTeamId) return explicitTeamId;
-
-  const explicitTeamName = compactText(args.teamName || context.teamName);
-  if (explicitTeamName) {
-    const resolvedTeamId = await resolveAccessibleTeamId(user, { teamName: explicitTeamName });
-    if (!resolvedTeamId) throw new Error(`No accessible team matches "${explicitTeamName}".`);
-    return resolvedTeamId;
+  const normalizedRequest = normalizeScheduleMentionText(context.requestText);
+  const access = await loadAccessibleAiTeams(user);
+  const mentionedTeam = normalizedRequest
+    ? findUniqueScheduleMention(normalizedRequest, access.scheduleTeams, 'team')
+    : null;
+  const mentionedPlayer = normalizedRequest
+    ? findUniqueScheduleMention(
+        normalizedRequest,
+        collectAccessibleSchedulePlayerMentions(access),
+        'player'
+      )
+    : null;
+  const unavailablePlayer = normalizedRequest && !mentionedPlayer
+    ? findUniqueScheduleMention(normalizedRequest, access.unavailableSchedulePlayers, 'player')
+    : null;
+  if (unavailablePlayer) {
+    throw new Error('That player is not available in this account schedule. Choose an active linked player.');
+  }
+  if (mentionedTeam && mentionedPlayer && mentionedTeam.id !== mentionedPlayer.teamId) {
+    throw new Error('The named team and player do not match. Choose the correct team or player.');
+  }
+  if (mentionedTeam || mentionedPlayer) {
+    return {
+      teamId: mentionedTeam?.id || mentionedPlayer?.teamId || '',
+      playerId: mentionedPlayer?.playerId || ''
+    };
   }
 
-  const normalizedRequest = normalizeScheduleMentionText(context.requestText);
-  if (!normalizedRequest) return '';
-  const access = await loadAccessibleAiTeams(user);
-  const mentionedTeam = findUniqueScheduleMention(normalizedRequest, access.teams.map((team) => ({
-    id: team.teamId,
-    name: team.teamName
-  })), 'team');
-  return mentionedTeam?.id || '';
+  const explicitTeamId = compactText(args.teamId);
+  const explicitTeamName = compactText(args.teamName);
+  let resolvedExplicitTeamId = explicitTeamId;
+  if (!resolvedExplicitTeamId && explicitTeamName) {
+    resolvedExplicitTeamId = await resolveAccessibleTeamId(user, { teamName: explicitTeamName }) || '';
+    if (!resolvedExplicitTeamId) throw new Error(`No accessible team matches "${explicitTeamName}".`);
+  }
+  const hasExplicitPlayerSelector = Boolean(compactText(args.playerId || args.childId || args.playerName || args.childName));
+  const explicitPlayer = resolveExplicitSchedulePlayer(args, access, resolvedExplicitTeamId);
+  if (hasExplicitPlayerSelector && !explicitPlayer) {
+    throw new Error('No accessible player matches that schedule request.');
+  }
+  if (resolvedExplicitTeamId || explicitPlayer) {
+    return {
+      teamId: resolvedExplicitTeamId || explicitPlayer?.teamId || '',
+      playerId: explicitPlayer?.playerId || ''
+    };
+  }
+
+  const launcherTeamId = compactText(context.teamId);
+  if (launcherTeamId) return { teamId: launcherTeamId, playerId: '' };
+  const launcherTeamName = compactText(context.teamName);
+  if (launcherTeamName) {
+    const launcherResolvedTeamId = await resolveAccessibleTeamId(user, { teamName: launcherTeamName });
+    if (!launcherResolvedTeamId) throw new Error(`No accessible team matches "${launcherTeamName}".`);
+    return { teamId: launcherResolvedTeamId, playerId: '' };
+  }
+  return { teamId: '', playerId: '' };
 }
 
 function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
@@ -6054,8 +6125,18 @@ type AccessibleAiTeam = {
   detail: any;
 };
 
+type AccessibleAiSchedulePlayer = {
+  id: string;
+  name: string;
+  teamId: string;
+  playerId: string;
+};
+
 type AccessibleAiTeamsResult = {
   teams: AccessibleAiTeam[];
+  scheduleTeams: Array<{ id: string; name: string }>;
+  schedulePlayers: AccessibleAiSchedulePlayer[];
+  unavailableSchedulePlayers: AccessibleAiSchedulePlayer[];
   isPartial: boolean;
   partialError?: unknown;
   managerTeamsPartial: boolean;
@@ -6085,6 +6166,44 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
   const scheduleScope = scheduleScopeResult.status === 'fulfilled'
     ? scheduleScopeResult.value
     : { children: [], staffTeams: [], isPartial: true, staffTeamsPartial: true };
+  const scheduleTeams = new Map<string, { id: string; name: string }>();
+  const schedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const unavailableSchedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const addScheduleTeam = (value: unknown) => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const id = compactText(candidate.teamId || candidate.id);
+    const name = compactText(candidate.teamName || candidate.name) || id;
+    if (id && name && !scheduleTeams.has(id)) scheduleTeams.set(id, { id, name });
+  };
+  const addSchedulePlayer = (value: unknown, teamIdOverride = '', teamNameOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const teamName = compactText(teamNameOverride || candidate.teamName);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id)) {
+      schedulePlayers.set(id, { id, name, teamId, playerId });
+      unavailableSchedulePlayers.delete(id);
+      addScheduleTeam({ teamId, teamName });
+    }
+  };
+  const addUnavailableSchedulePlayer = (value: unknown, teamIdOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id) && !unavailableSchedulePlayers.has(id)) {
+      unavailableSchedulePlayers.set(id, { id, name, teamId, playerId });
+    }
+  };
+  (home.teams || []).forEach(addScheduleTeam);
+  (scheduleScope.staffTeams || []).forEach(addScheduleTeam);
+  (scheduleScope.children || []).forEach((child) => {
+    addScheduleTeam(child);
+    addSchedulePlayer(child);
+  });
   if (scheduleScope.isPartial === true) isPartial = true;
   let managerTeamsPartial = scheduleScopeResult.status === 'rejected'
     || (scheduleScope.staffTeamsPartial ?? scheduleScope.isPartial) === true;
@@ -6153,8 +6272,29 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
       }
     }
   });
+  details.forEach((team) => {
+    addScheduleTeam({ teamId: team.teamId, teamName: team.teamName });
+    (team.detail?.linkedPlayers || []).forEach((player: unknown) => {
+      addSchedulePlayer(player, team.teamId, team.teamName);
+    });
+    if (team.canManageTeam) {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addSchedulePlayer(player, team.teamId, team.teamName);
+      });
+    } else {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addUnavailableSchedulePlayer(player, team.teamId);
+      });
+    }
+    (team.detail?.inactivePlayers || []).forEach((player: unknown) => {
+      addUnavailableSchedulePlayer(player, team.teamId);
+    });
+  });
   return {
     teams: details,
+    scheduleTeams: Array.from(scheduleTeams.values()),
+    schedulePlayers: Array.from(schedulePlayers.values()),
+    unavailableSchedulePlayers: Array.from(unavailableSchedulePlayers.values()),
     isPartial,
     managerTeamsPartial,
     ...(partialError ? { partialError } : {}),

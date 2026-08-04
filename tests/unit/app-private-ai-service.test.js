@@ -1166,6 +1166,304 @@ describe('private AI service', () => {
         });
     });
 
+    it.each([
+        {
+            toolName: 'list_schedule',
+            args: { range: 'upcoming', type: 'game', limit: 8 },
+            requestText: "When is Target Team's next game?",
+            expectedPath: ['events', 0]
+        },
+        {
+            toolName: 'get_last_game',
+            args: {},
+            requestText: "What was Target Team's last game?",
+            expectedPath: ['lastGame']
+        },
+        {
+            toolName: 'list_rsvps',
+            args: { range: 'upcoming', limit: 8 },
+            requestText: "Show Target Team's RSVPs.",
+            expectedPath: ['events', 0]
+        }
+    ])('lets the current question override launch context for $toolName', async ({
+        toolName,
+        args,
+        requestText,
+        expectedPath
+    }) => {
+        const targetFutureGame = futureEvent({
+            id: 'target-future',
+            teamId: 'team-target',
+            teamName: 'Target Team',
+            date: new Date('2099-04-01T18:00:00Z')
+        });
+        const targetPastGame = futureEvent({
+            id: 'target-past',
+            teamId: 'team-target',
+            teamName: 'Target Team',
+            date: new Date('2026-01-01T18:00:00Z')
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [],
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team', players: [] },
+                { teamId: 'team-target', teamName: 'Target Team', players: [] }
+            ],
+            upcomingEvents: [],
+            fees: []
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-target' ? 'Target Team' : 'Launch Team' },
+            players: [],
+            inactivePlayers: [],
+            canManageTeam: false
+        }));
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.targetTeamId !== 'team-target') throw new Error('The launch team must not override the current question.');
+            return { children: [], events: [targetPastGame, targetFutureGame], isPartial: false };
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: toolName, args }, {
+            teamId: 'team-launch',
+            requestText
+        });
+        const scopedEvent = expectedPath.reduce((value, key) => value?.[key], result.data);
+
+        expect(result.ok).toBe(true);
+        expect(scopedEvent).toMatchObject({ teamId: 'team-target', teamName: 'Target Team' });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-target'
+        }));
+    });
+
+    it.each([
+        {
+            toolName: 'list_schedule',
+            args: { range: 'upcoming', type: 'game', limit: 8 },
+            requestText: "When is Madison's next game?",
+            expectedPath: ['events', 0]
+        },
+        {
+            toolName: 'get_last_game',
+            args: {},
+            requestText: "What was Madison's last game?",
+            expectedPath: ['lastGame']
+        },
+        {
+            toolName: 'list_rsvps',
+            args: { range: 'upcoming', limit: 8 },
+            requestText: "Show Madison's RSVPs.",
+            expectedPath: ['events', 0]
+        }
+    ])('resolves a named player before loading and limiting $toolName', async ({
+        toolName,
+        args,
+        requestText,
+        expectedPath
+    }) => {
+        const teammateEvents = Array.from({ length: 8 }, (_, index) => futureEvent({
+            eventKey: `team-current:teammate-${index}:teammate-player-${index}`,
+            id: `teammate-${index}`,
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date(`2099-03-${String(index + 1).padStart(2, '0')}T18:00:00Z`),
+            childId: `teammate-player-${index}`,
+            childName: `Teammate ${index}`
+        }));
+        const madisonFutureGame = futureEvent({
+            id: 'madison-future',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2099-05-01T18:00:00Z'),
+            childId: 'player-current',
+            childName: 'Madison'
+        });
+        const madisonPastGame = futureEvent({
+            id: 'madison-past',
+            teamId: 'team-current',
+            teamName: 'Jr KC Current',
+            date: new Date('2026-01-01T18:00:00Z'),
+            childId: 'player-current',
+            childName: 'Madison'
+        });
+        homeMocks.loadParentHome.mockResolvedValue({
+            metrics: {},
+            actionItems: [],
+            players: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [{ name: 'Madison' }] }],
+            upcomingEvents: [],
+            fees: []
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
+            players: [{ id: 'player-current', name: 'Madison' }],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+        scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
+            if (options.targetTeamId !== 'team-current') throw new Error('The named player team must be loaded directly.');
+            return {
+                children: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+                events: [madisonPastGame, ...teammateEvents, madisonFutureGame],
+                isPartial: false
+            };
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: toolName, args }, { requestText });
+        const scopedEvent = expectedPath.reduce((value, key) => value?.[key], result.data);
+
+        expect(result.ok).toBe(true);
+        expect(scopedEvent).toMatchObject({ childId: 'player-current', childName: 'Madison' });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-current'
+        }));
+    });
+
+    it.each([
+        ['list_schedule', { range: 'upcoming' }, "When is Madison's next game for Target Team?"],
+        ['get_last_game', {}, "What was Madison's last game for Target Team?"],
+        ['list_rsvps', { range: 'upcoming' }, "Show Madison's RSVPs for Target Team."]
+    ])('rejects conflicting current-question team and player scope for %s', async (toolName, args, requestText) => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-current', teamName: 'Jr KC Current' },
+                { teamId: 'team-target', teamName: 'Target Team' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-current' ? 'Jr KC Current' : 'Target Team' },
+            linkedPlayers: teamId === 'team-current' ? [{ id: 'player-current', name: 'Madison' }] : [],
+            players: teamId === 'team-current' ? [{ id: 'player-current', name: 'Madison' }] : [],
+            inactivePlayers: [],
+            canManageTeam: false
+        }));
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: toolName, args }, { requestText })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('do not match')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it.each(['list_schedule', 'get_last_game', 'list_rsvps'])(
+        'rejects an invalid explicit player even when %s has a valid team',
+        async (toolName) => {
+            homeMocks.loadParentHome.mockResolvedValue({
+                teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+            });
+            teamMocks.loadParentTeamDetail.mockResolvedValue({
+                team: { id: 'team-current', name: 'Jr KC Current' },
+                linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
+                players: [{ id: 'player-current', name: 'Madison' }],
+                inactivePlayers: [],
+                canManageTeam: false
+            });
+
+            const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+            await expect(runPrivateAiTool(authUser, {
+                name: toolName,
+                args: { teamId: 'team-current', playerId: 'missing-player' }
+            })).resolves.toMatchObject({
+                ok: false,
+                error: expect.stringContaining('No accessible player')
+            });
+            expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+        }
+    );
+
+    it.each([
+        ['Jordan', [{ id: 'player-teammate', name: 'Jordan' }], []],
+        ['Casey', [], [{ id: 'player-inactive', name: 'Casey' }]]
+    ])('does not confirm schedule absence for unavailable player %s', async (playerName, players, inactivePlayers) => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
+            players,
+            inactivePlayers,
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: `When is ${playerName}'s next game?`
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('not available in this account schedule')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
+    it('does not treat a single-token player name as an ordinary word', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team' },
+                { teamId: 'team-current', teamName: 'Jr KC Current' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => ({
+            team: { id: teamId, name: teamId === 'team-launch' ? 'Launch Team' : 'Jr KC Current' },
+            linkedPlayers: [],
+            players: teamId === 'team-current' ? [{ id: 'player-will', name: 'Will' }] : [],
+            inactivePlayers: [],
+            canManageTeam: teamId === 'team-current'
+        }));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: false });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            teamId: 'team-launch',
+            requestText: 'Will there be a game?'
+        });
+
+        expect(result.ok).toBe(true);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-launch'
+        }));
+    });
+
+    it('keeps a named team target when unrelated access discovery is partial', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                { teamId: 'team-launch', teamName: 'Launch Team' },
+                { teamId: 'team-target', teamName: 'Target Team' }
+            ]
+        });
+        teamMocks.loadParentTeamDetail.mockImplementation(async (teamId) => {
+            if (teamId === 'team-target') throw new Error('Target detail temporarily unavailable.');
+            return {
+                team: { id: 'team-launch', name: 'Launch Team' },
+                linkedPlayers: [],
+                players: [],
+                inactivePlayers: [],
+                canManageTeam: false
+            };
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: false });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            teamId: 'team-launch',
+            requestText: "When is Target Team's next game?"
+        });
+
+        expect(result.ok).toBe(true);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
+            targetTeamId: 'team-target'
+        }));
+    });
+
     it('does not confirm schedule absence when the targeted load is partial', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [], isPartial: true });
 
@@ -2924,7 +3222,10 @@ describe('private AI service', () => {
                 ]
             }
         });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, { includePastGames: true });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, {
+            includePastGames: true,
+            targetTeamId: 'team-1'
+        });
     });
 
     it('preloads the last game lookup before answering last-game RSVP questions', async () => {
