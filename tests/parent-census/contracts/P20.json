@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P20",
+  "title": "Task claim peer visibility and release",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=assignments"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=assignments"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Assignments",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Snacks",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Open",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Claim",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Claim",
+        "exact": true
+      },
+      "mutationId": "task-claim",
+      "scope": "Snacks",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Snacks claimed.",
+        "exact": true
+      },
+      "value": "claimed"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "You",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Release",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=assignments"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=assignments"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Assignments",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Claimed by primary",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Open",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Claim",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Release",
+        "exact": true
+      },
+      "scope": "Snacks"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Release",
+        "exact": true
+      },
+      "mutationId": "task-claim",
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Claim",
+        "exact": true
+      },
+      "scope": "Snacks"
+    }
+  ]
+}
