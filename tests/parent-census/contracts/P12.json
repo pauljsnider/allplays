@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P12",
+  "title": "Parent name and phone update restores original state",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/profile/settings"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/profile/settings"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Your Account",
+        "exact": true
+      }
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Name",
+        "exact": true
+      },
+      "option": "profile-name"
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Phone",
+        "exact": true
+      },
+      "option": "profile-phone"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Name",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "profile-fields"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Phone",
+        "exact": true
+      },
+      "value": "5550101234",
+      "mutationId": "profile-fields"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "profile-fields",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Profile saved.",
+        "exact": true
+      },
+      "value": "Profile saved."
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Name",
+        "exact": true
+      },
+      "option": "profile-name",
+      "mutationId": "profile-fields"
+    },
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Phone",
+        "exact": true
+      },
+      "option": "profile-phone",
+      "mutationId": "profile-fields"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "profile-fields"
+    }
+  ]
+}
