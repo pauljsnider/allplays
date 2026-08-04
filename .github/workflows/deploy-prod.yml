@@ -803,11 +803,13 @@ jobs:
           project_id: game-flow-c6311
           create_credentials_file: true
           cleanup_credentials: true
+          token_format: access_token
 
       - name: Canonicalize legacy team owners before authorization lockdown
         run: node "$FIREBASE_PRODUCTION_BUNDLE/_migration/backfill-legacy-team-owner-ids.mjs" --apply
         env:
           FIREBASE_PROJECT_ID: game-flow-c6311
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_owner_migration.outputs.access_token }}
 
       - name: Remove legacy owner migration credential
         env:

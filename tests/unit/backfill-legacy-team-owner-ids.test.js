@@ -297,6 +297,9 @@ describe('legacy team ownerId migration planning', () => {
         expect(workflow).toContain('cp _migration/backfill-legacy-team-owner-ids.js');
         expect(workflow).toContain('test ! -L "$bundle/_migration/backfill-legacy-team-owner-ids.mjs"');
         expect(migrationCommand).toBeGreaterThan(-1);
+        expect(workflow).toMatch(
+            /id: google_auth_owner_migration[\s\S]*?token_format: access_token[\s\S]*?GOOGLE_OAUTH_ACCESS_TOKEN: \$\{\{ steps\.google_auth_owner_migration\.outputs\.access_token \}\}/
+        );
         expect(storageRulesDeploy).toBeGreaterThan(migrationCommand);
         expect(rulesBranch).toBeGreaterThan(migrationCommand);
     });
