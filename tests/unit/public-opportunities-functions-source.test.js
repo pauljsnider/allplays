@@ -203,11 +203,10 @@ describe('public opportunity callable wiring', () => {
     expect(resolverSource).toContain('const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;');
     expect(resolverSource).toContain("firestore.collection('accessCodes')");
     expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
-    expect(resolverSource).toContain(".where('usedBy', '==', caller.uid)");
-    expect(resolverSource).toContain('[caller.rawEmail, caller.email]');
-    expect(resolverSource).toContain(".where('email', 'in', coachInviteEmailCandidates)");
+    expect(resolverSource).not.toContain(".where('usedBy', '==', caller.uid)");
+    expect(resolverSource).not.toContain(".where('email', 'in', coachInviteEmailCandidates)");
     expect(resolverSource).toContain(".where('teamId', 'in', candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize))");
-    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(3);
+    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(1);
     expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain('snapshot.size > legacyCoachInviteEvidenceLimit');
     expect(resolverSource).toContain('if (teamId) teamsWithAdminInviteEvidence.add(teamId);');
@@ -226,8 +225,6 @@ describe('public opportunity callable wiring', () => {
       .map(({ fieldPath, order }) => `${fieldPath}:${order}`)
       .join(',');
 
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,usedBy:ASCENDING')).toBe(true);
-    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,email:ASCENDING')).toBe(true);
     expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,teamId:ASCENDING')).toBe(true);
   });
 
