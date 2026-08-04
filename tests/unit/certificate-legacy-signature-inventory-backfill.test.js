@@ -61,6 +61,7 @@ describe('certificate legacy signature inventory backfill', () => {
     it('routes every automatically deployed Admin SDK backfill through the workload-identity helper', () => {
         for (const migrationName of [
             'backfill-certificate-legacy-signature-inventory.js',
+            'backfill-legacy-team-owner-ids.js',
             'backfill-team-fee-checkout-attempts.js',
             'backfill-registration-checkout-attempts.js'
         ]) {
