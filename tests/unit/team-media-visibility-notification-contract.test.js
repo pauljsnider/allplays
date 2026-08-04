@@ -61,7 +61,9 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext)');
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {');
-        expect(functionsSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const rawCategoryRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([');
+        expect(functionsSource).toContain('const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (');
         expect(functionsSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
         expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext);');
         expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');

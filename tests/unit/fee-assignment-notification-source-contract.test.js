@@ -5,7 +5,7 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 
 describe('fee assignment notification source contract', () => {
     it('routes new fee recipients to payer-only fees notifications', () => {
-        expect(functionsSource).toContain('exports.notifyFeeAssigned = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')");
         expect(functionsSource).toContain('const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);');
         expect(functionsSource).toContain("const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);");

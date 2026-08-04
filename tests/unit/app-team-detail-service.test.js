@@ -52,8 +52,10 @@ vi.mock('../../js/firebase.js', () => ({
     collection: vi.fn((db, name) => ({ db, name })),
     db: {},
     doc: vi.fn((db, ...segments) => ({ db, path: segments.join('/'), id: segments.at(-1) })),
+    functions: { name: 'functions' },
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    httpsCallable: vi.fn(() => vi.fn().mockResolvedValue({ data: { success: true } })),
     query: vi.fn((...parts) => parts),
     where: vi.fn((field, op, value) => ({ field, op, value }))
 }));
@@ -92,7 +94,7 @@ vi.mock('../../apps/app/src/lib/profileService.ts', () => ({
 }));
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, applyRosterImportPlanForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantTeamMediaManagerAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, retryRosterParentInviteEmailForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeTeamMediaManagerAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
-import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
+import { collection, doc, functions, getDoc, getDocs, httpsCallable, query, where } from '../../js/firebase.js';
 import { addPlayer, applyRosterCsvImportOperations, deleteLegacyImageUpload, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPlayersWithPrivateRosterContacts, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantTeamMediaManagerAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeTeamMediaManagerAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 import { queueInviteEmail } from '../../js/invite-email.js';
@@ -188,7 +190,6 @@ describe('React app team detail model', () => {
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
         getConfigs.mockResolvedValue([]);
-        updateTeam.mockResolvedValue(undefined);
         inviteAdmin.mockResolvedValue({ code: 'CODE1', teamName: 'Bears', existingUser: false });
         addTeamAdminEmail.mockResolvedValue(undefined);
         sendInviteEmail.mockResolvedValue({ success: true });
@@ -204,36 +205,54 @@ describe('React app team detail model', () => {
         // of drifting into a narrower, owner/platform-admin-only check.
         await expect(inviteTeamAdminForApp('team-1', 'newcoach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).resolves.toMatchObject({ email: 'newcoach@example.com' });
         await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] });
-        expect(updateTeam).toHaveBeenCalledWith('team-1', {
-            adminEmails: [],
-            updatedAt: expect.any(Date)
-        });
+        expect(httpsCallable).toHaveBeenCalledWith(functions, 'revokeTeamAdminAccess');
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'coach@example.com' });
+        expect(updateTeam).not.toHaveBeenCalled();
 
-        updateTeam.mockClear();
+        httpsCallable.mockClear();
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: [' coach@example.com ', 'COACH@example.com '] });
         await revokeTeamAdminAccessForApp('team-1', ' Coach@Example.com ', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
-        expect(updateTeam).toHaveBeenCalledWith('team-1', {
-            adminEmails: [],
-            updatedAt: expect.any(Date)
-        });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'coach@example.com' });
 
-        updateTeam.mockClear();
+        httpsCallable.mockClear();
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: ['coach@example.com'] });
         await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'admin-1', email: 'admin@example.com', isPlatformAdmin: true, roles: [] });
-        expect(updateTeam).toHaveBeenCalledWith('team-1', {
-            adminEmails: [],
-            updatedAt: expect.any(Date)
-        });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'coach@example.com' });
 
-        updateTeam.mockClear();
+        httpsCallable.mockClear();
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: ['coach@example.com'] });
         await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'admin-2', email: 'platform@example.com', roles: ['platformAdmin'] });
-        expect(updateTeam).toHaveBeenCalledWith('team-1', {
-            adminEmails: [],
-            updatedAt: expect.any(Date)
-        });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'coach@example.com' });
 
-        await expect(revokeTeamAdminAccessForApp('team-1', 'owner@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] })).rejects.toThrow('The team owner cannot be removed from staff access.');
+        httpsCallable.mockClear();
+        await revokeTeamAdminAccessForApp('team-1', 'owner@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'owner@example.com' });
+
+        getTeam.mockResolvedValue({ id: 'team-1', ownerEmail: 'legacy-owner@example.com', adminEmails: ['legacy-owner@example.com'] });
+        await expect(revokeTeamAdminAccessForApp('team-1', 'legacy-owner@example.com', { uid: 'legacy-owner', email: 'legacy-owner@example.com', roles: ['coach'] })).rejects.toThrow('The team owner cannot be removed from staff access.');
+
+        __resetTeamDetailBaseSnapshotCacheForTests();
+        httpsCallable.mockClear();
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            ownerEmail: 'current-owner@example.com',
+            ownerEmailLower: 'former-owner@example.com',
+            adminEmails: ['former-owner@example.com']
+        });
+        await revokeTeamAdminAccessForApp('team-1', 'former-owner@example.com', { uid: 'platform-admin', email: 'platform@example.com', roles: ['platformAdmin'] });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'former-owner@example.com' });
+
+        __resetTeamDetailBaseSnapshotCacheForTests();
+        httpsCallable.mockClear();
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            ownerId: 'owner-1',
+            ownerEmail: 'owner@example.com',
+            ownerEmailLower: 'former@example.com',
+            adminEmails: ['former@example.com']
+        });
+        await revokeTeamAdminAccessForApp('team-1', 'former@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
+        expect(httpsCallable.mock.results.at(-1).value).toHaveBeenCalledWith({ teamId: 'team-1', email: 'former@example.com' });
     });
 
     it('requires full team access before creating parent invites in the app helper', async () => {

@@ -46,6 +46,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const profileMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn(),
     loadProfileDocument: vi.fn(),
     saveProfileDocument: vi.fn()
 }));
@@ -61,6 +62,10 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const managedTeamMocks = vi.hoisted(() => ({
+    listManagedTeams: vi.fn()
+}));
+
 const firebaseMocks = vi.hoisted(() => {
     const makeMissingSnapshot = (id = '') => ({
         id,
@@ -70,6 +75,14 @@ const firebaseMocks = vi.hoisted(() => {
 
     return {
         db: {},
+        functions: { name: 'functions' },
+        httpsCallable: vi.fn((_functions, name) => async () => ({
+            data: {
+                items: name === 'listManagedTeams'
+                    ? await managedTeamMocks.listManagedTeams()
+                    : []
+            }
+        })),
         doc: vi.fn((...parts) => ({
             path: parts.filter((part) => typeof part === 'string').join('/')
         })),
@@ -270,6 +283,8 @@ beforeEach(() => {
     dbMocks.getMyRsvps.mockImplementation((teamId, gameId) => dbMocks.getRsvps(teamId, gameId));
     vi.unstubAllGlobals();
     installWindow();
+    managedTeamMocks.listManagedTeams.mockResolvedValue([]);
+    profileMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({ teams: [], isPartial: false });
     profileMocks.loadProfileDocument.mockResolvedValue({
         parentOf: [
             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
@@ -534,15 +549,14 @@ describe('React app schedule service contract integration', () => {
 
         expect(staffTeamSource).toContain('getStaffTeams({');
         expect(staffTeamSource).not.toContain('getTeams(');
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)");
-        expect(staffTeamSource).toContain("nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)");
-        expect(scheduleServiceSource).toContain('normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email');
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
-        expect(legacyScheduleDbSource).toContain("legacyFirebaseWhere('ownerEmail', '==', ownerEmail)");
-        expect(legacyScheduleDbSource).toContain('Promise.allSettled([');
-        expect(legacyScheduleDbSource).toContain('legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs)');
+        expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable()');
+        expect(staffTeamSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
+        expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
+        expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0])');
+        expect(scheduleServiceSource).toContain('ownerEmails.length === 1 && email === ownerEmails[0]');
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
+        expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
+        expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
@@ -722,6 +736,7 @@ describe('React app schedule service contract integration', () => {
             { id: 'player-1', name: 'Pat', active: true },
             { id: 'player-2', name: 'Sam', active: true }
         ]);
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentPlayerSchedule({
             ...user(),
@@ -838,6 +853,7 @@ describe('React app schedule service contract integration', () => {
             opponent: 'Falcons',
             status: 'scheduled'
         });
+        managedTeamMocks.listManagedTeams.mockImplementation(async () => [await dbMocks.getTeam('team-1')]);
 
         const result = await loadParentScheduleEventDetail({
             ...user(),

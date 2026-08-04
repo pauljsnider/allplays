@@ -48,6 +48,12 @@ describe('team pass function helpers', () => {
             uid: 'parent_1'
         })).toBe(true);
         expect(isEligibleTeamPassPurchaser({ team, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
+        expect(isEligibleTeamPassPurchaser({
+            team,
+            user: { email: 'coach@example.com', profileEmail: 'coach@example.com' },
+            uid: 'former_admin',
+            email: ''
+        })).toBe(false);
     });
 
     it('builds a team-entitlement-scoped attempt id and reservation-scoped idempotency key', () => {

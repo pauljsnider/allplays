@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const {
-    buildTeamCalendarIcs,
-    expandRecurringCalendarEvent,
+  buildTeamCalendarIcs,
+  calendarTokenHasTeamAccess,
+  expandRecurringCalendarEvent,
     formatRsvpSummary,
     hashCalendarToken,
     normalizeCalendarRequest
@@ -509,11 +510,88 @@ describe('team calendar subscription feed', () => {
         expect(request.tokenHash).not.toBe('secret-token');
     });
 
+    it('revalidates private calendar token access against the current Auth identity', () => {
+        const tokenData = { teamId: 'team-1', uid: 'admin-1', email: 'stale@example.com' };
+        const team = { ownerId: 'owner-1', adminEmails: ['current@example.com'] };
+
+        expect(calendarTokenHasTeamAccess({
+            team,
+            profile: { email: 'stale@example.com' },
+            authUser: { uid: 'admin-1', email: 'CURRENT@example.com', disabled: false },
+            tokenData
+        })).toBe(true);
+        expect(calendarTokenHasTeamAccess({
+            team,
+            profile: { email: 'current@example.com' },
+            authUser: { uid: 'admin-1', email: 'changed@example.com', disabled: false },
+            tokenData
+        })).toBe(false);
+    });
+
+    it('recognizes one unambiguous legacy owner alias from the current enabled Auth identity', () => {
+        const tokenData = { teamId: 'team-1', uid: 'legacy-owner' };
+
+        expect(calendarTokenHasTeamAccess({
+            team: {
+                ownerEmail: ' Legacy.Owner@Example.com ',
+                ownerEmailLower: 'legacy.owner@example.com'
+            },
+            profile: {},
+            authUser: { uid: 'legacy-owner', email: 'LEGACY.OWNER@example.com', disabled: false },
+            tokenData
+        })).toBe(true);
+    });
+
+    it('fails closed for conflicting or stale legacy owner aliases', () => {
+        const tokenData = { teamId: 'team-1', uid: 'legacy-owner' };
+        const authUser = { uid: 'legacy-owner', email: 'owner@example.com', disabled: false };
+
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerEmail: 'owner@example.com', ownerEmailLower: 'former@example.com' },
+            profile: {},
+            authUser,
+            tokenData
+        })).toBe(false);
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerId: 'current-owner', ownerEmail: 'owner@example.com' },
+            profile: {},
+            authUser,
+            tokenData
+        })).toBe(false);
+        expect(calendarTokenHasTeamAccess({
+            team: { ownerEmail: 'owner@example.com' },
+            profile: {},
+            authUser: { ...authUser, disabled: true },
+            tokenData
+        })).toBe(false);
+    });
+
+    it('rejects private calendar tokens for disabled, deleted, or mismatched Auth identities', () => {
+        const tokenData = { teamId: 'team-1', uid: 'owner-1', userEmail: 'owner@example.com' };
+        const team = { ownerId: 'owner-1', adminEmails: ['owner@example.com'] };
+
+        expect(calendarTokenHasTeamAccess({
+            team,
+            profile: { parentTeamIds: ['team-1'] },
+            authUser: { uid: 'owner-1', email: 'owner@example.com', disabled: true },
+            tokenData
+        })).toBe(false);
+        expect(calendarTokenHasTeamAccess({ team, profile: {}, authUser: null, tokenData })).toBe(false);
+        expect(calendarTokenHasTeamAccess({
+            team,
+            profile: { parentTeamIds: ['team-1'] },
+            authUser: { uid: 'different-user', email: 'owner@example.com', disabled: false },
+            tokenData
+        })).toBe(false);
+    });
+
     it('registers an HTTPS endpoint that rejects missing, invalid, and revoked tokens', () => {
         expect(functionsSource).toContain('exports.teamCalendarFeed = functions.https.onRequest');
         expect(functionsSource).toContain("res.status(401).send('Missing calendar token')");
         expect(functionsSource).toContain("res.status(403).send('Invalid calendar token')");
         expect(functionsSource).toContain("res.status(403).send('Revoked calendar token')");
+        expect(functionsSource).toContain('admin.auth().getUser(uid)');
+        expect(functionsSource).not.toContain('user?.email || tokenData.email || tokenData.userEmail');
         expect(functionsSource).toContain("res.set('Content-Type', 'text/calendar; charset=utf-8')");
         expect(functionsSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
     });

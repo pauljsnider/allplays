@@ -10,11 +10,22 @@ describe('dashboard chat unread wiring', () => {
         const html = readRepoFile('dashboard.html');
 
         expect(html).toContain('const unreadLookupUser = {');
-        expect(html).toContain('email: user.email || user.profileEmail || profile?.email || null');
+        expect(html).toContain('email: user.email || null');
+        expect(html).not.toContain('email: user.email || user.profileEmail');
+        expect(html).not.toContain('email: user.email || profile?.email');
         expect(html).toContain('const conversationLookupByTeam = allTeams.reduce((acc, team) => {');
         expect(html).toContain("canModerate: team._access === 'full'");
         expect(html).toContain('await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam })');
         expect(html).not.toContain('await getUnreadChatCounts(user.uid, teamIds) : {}');
+    });
+
+    it('keeps Firebase Auth email authoritative for dashboard team access', () => {
+        const html = readRepoFile('dashboard.html');
+
+        expect(html).toContain('user.profileEmail = profile.email;');
+        expect(html).not.toContain('user.email = profile.email;');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email)');
+        expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
     });
 
     it('passes participant lookup context from the parent dashboard', () => {

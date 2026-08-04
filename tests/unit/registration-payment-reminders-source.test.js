@@ -21,7 +21,7 @@ describe('registration failed payment reminder wiring', () => {
     });
 
     it('schedules follow-up reminders and stops them once the registration is no longer collectible', () => {
-        expect(source).toContain('exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub');
+        expect(source).toContain('exports.queueDueRegistrationFailedPaymentReminders = retryableNotificationFunctions.pubsub');
         expect(source).toContain(".schedule('every 6 hours')");
         expect(source).toContain(".collectionGroup('registrations')");
         expect(source).toContain(".where('paymentReminder.nextReminderAt', '<=', dueIso)");

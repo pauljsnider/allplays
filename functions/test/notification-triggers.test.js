@@ -137,6 +137,7 @@ test('notifyGameCreated sends one team summary for schedule import batches over 
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
         parentUserIds: ['parent-1'],
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } },
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
@@ -168,7 +169,17 @@ test('notifyGameCreated sends one team summary for schedule import batches over 
                 }
             });
             const context = { params: { teamId: 'team-1', gameId: event.id } };
-            const result = await moduleExports.notifyGameCreated(snapshot, context);
+            let result;
+            if (index === importedEvents.length - 1) {
+                await assert.rejects(moduleExports.notifyGameCreated(snapshot, context),
+                    (error) => error.notificationAuthResolutionFailed === true);
+                const released = (await env.firestoreState.doc(
+                    `teams/team-1/scheduleImportNotificationBatches/${importBatchId}`
+                ).get()).data();
+                assert.equal(released.notificationClaimedAt, undefined);
+                assert.equal(released.notificationClaimedByGameId, undefined);
+            }
+            result = await moduleExports.notifyGameCreated(snapshot, context);
 
             if (index < importedEvents.length - 1) {
                 assert.equal(result, null);
@@ -288,7 +299,7 @@ test('notifyGameCreated respects schedule preferences for practices and skips se
         assert.equal(result, null);
         assert.equal(env.messagingCalls.length, 0);
         assert.equal(env.auditWrites.length, 0);
-        assert.equal(env.counts.dedupTransactions, 1);
+        assert.equal(env.counts.dedupTransactions, 0);
     } finally {
         cleanup();
     }
@@ -659,6 +670,7 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         parentUserIds: ['parent-1'],
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveScore: true } },
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveScore: true } }
@@ -670,6 +682,9 @@ test('notifyGameUpdated sends liveScore notifications and records once-only audi
         const change = makeChange(ref, { homeScore: 10, awayScore: 8 }, { homeScore: 12, awayScore: 8, updatedBy: 'coach-1' });
         const context = { params: { teamId: 'team-1', gameId: 'game-2' } };
 
+        await assert.rejects(moduleExports.notifyGameUpdated(change, context),
+            (error) => error.notificationAuthResolutionFailed === true);
+        assert.equal(env.counts.dedupTransactions, 0);
         const result = await moduleExports.notifyGameUpdated(change, context);
 
         assert.equal(result?.successCount, 1);
@@ -754,8 +769,11 @@ test('notifyGameUpdated does not let a stale matching live event suppress a curr
 
 test('notifyLiveEventCreated sends one deduped big-moment notification to eligible recipients except the actor', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
-        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
         parentUserIds: ['parent-1'],
+        authUsersByEmail: { 'assistant@example.com': 'assistant-1' },
+        userDocs: { 'assistant-1': {} },
+        authGetUsersErrors: Array.from({ length: 3 }, () => Object.assign(new Error('Auth outage'), { code: 'auth/internal-error' })),
         indexedTargets: [
             { uid: 'coach-1', roles: ['staff'], deviceId: 'actor-device', token: 'actor-token', categories: { liveScore: true } },
             { uid: 'assistant-1', roles: ['staff'], deviceId: 'assistant-device', token: 'assistant-token', categories: { liveScore: true } },
@@ -782,6 +800,9 @@ test('notifyLiveEventCreated sends one deduped big-moment notification to eligib
         });
         const context = { params: { teamId: 'team-1', gameId: 'game-3', eventId: 'doc-event-1' } };
 
+        await assert.rejects(moduleExports.notifyLiveEventCreated(snapshot, context),
+            (error) => error.notificationAuthResolutionFailed === true);
+        assert.equal(env.counts.dedupTransactions, 0);
         const firstResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
         const duplicateResult = await moduleExports.notifyLiveEventCreated(snapshot, context);
 
@@ -964,6 +985,49 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-1', value: { mentionedUids: ['parent-1'] } }]);
         assert.equal(env.auditWrites.length, 2);
         assert.deepEqual(env.auditWrites.map((entry) => entry.value.category).sort(), ['liveChat', 'mentions']);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyTeamChatMessageCreated excludes disabled indexed recipients from push, inbox, and mentions', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': { displayName: 'Jamie Parent' }
+        },
+        authUsersByUid: {
+            'coach-1': { email: 'coach@example.com', disabled: false },
+            'parent-1': { email: 'parent@example.com', disabled: true }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-disabled-recipient');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Nice work @Jamie',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'team'
+        });
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, {
+            params: { teamId: 'team-1', messageId: 'message-disabled-recipient' }
+        });
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.inboxWrites.length, 0);
+        assert.equal(env.auditWrites.length, 0);
+        assert.deepEqual(env.updatedDocs, [{
+            path: 'teams/team-1/chatMessages/message-disabled-recipient',
+            value: { mentionedUids: [] }
+        }]);
     } finally {
         cleanup();
     }
@@ -1449,7 +1513,7 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
-            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
         },
         indexedTargets: [
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
@@ -1476,10 +1540,10 @@ test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with 
         assert.equal(env.messagingCalls[0].data.category, 'fees');
         assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
         assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
-        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))], [
             'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1'
         ]);
-        assert.equal(env.updatedDocs[0].value.reminderThresholdHours, 72);
+        assert.equal(env.updatedDocs.some((write) => write.value.reminderThresholdHours === 72), true);
     } finally {
         cleanup();
     }
@@ -1489,9 +1553,9 @@ test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
-            'parent-1': { parentPlayerKeys: ['team-1::player-1'] },
-            'parent-2': { parentPlayerKeys: ['team-1::player-2'] },
-            'parent-3': { parentPlayerKeys: ['team-1::player-3'] }
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] },
+            'parent-2': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-2'] },
+            'parent-3': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-3'] }
         },
         indexedTargets: [
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } },
@@ -1529,7 +1593,7 @@ test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee
         assert.equal(env.messagingCalls.length, 1);
         assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
         assert.equal(env.messagingCalls[0].title, 'Reminder: Open dues is due soon');
-        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))], [
             'teams/team-1/feeBatches/batch-1/feeRecipients/eligible'
         ]);
     } finally {
@@ -1541,7 +1605,7 @@ test('sendFeeUnpaidDueReminders dedupes repeated scheduler runs without suppress
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
-            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
         },
         indexedTargets: [
             { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
@@ -1573,10 +1637,819 @@ test('sendFeeUnpaidDueReminders dedupes repeated scheduler runs without suppress
             '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-a',
             '/parent-tools/fees?teamId=team-1&batchId=batch-2&recipientId=recipient-b'
         ]);
-        assert.deepEqual(env.updatedDocs.map((write) => write.path).sort(), [
+        assert.deepEqual([...new Set(env.updatedDocs.map((write) => write.path))].sort(), [
             'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-a',
             'teams/team-1/feeBatches/batch-2/feeRecipients/recipient-b'
         ]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders sends a new 24-hour reminder after an earlier 72-hour reminder', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: {
+            ownerId: 'coach-1',
+            adminEmails: [],
+            scheduleNotifications: { reminderHours: 24 }
+        },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/later-threshold');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z',
+            reminderSentAt: { seconds: 1 },
+            reminderThresholdHours: 72
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(recipient.reminderThresholdHours, 24);
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders releases its lease when final Auth validation fails', async () => {
+    const authError = () => Object.assign(new Error('temporary Auth outage'), { code: 'auth/internal-error' });
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'], parentTeamIds: ['team-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        authGetUsersErrors: [null, authError(), authError(), authError()],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/retryable');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Retryable dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.notificationAuthResolutionFailed === true
+        );
+        const failedRecipient = (await ref.get()).data();
+        assert.equal(failedRecipient.reminderSentAt, undefined);
+        assert.equal(failedRecipient.reminderDeliveryClaimId, undefined);
+        assert.equal(env.messagingCalls.length, 0);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders blocks a parent disabled after lease acquisition', async () => {
+    const userDocs = {
+        'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+    };
+    const authUsersByUid = {
+        'parent-1': { email: 'parent@example.com', disabled: false }
+    };
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs,
+        authUsersByUid,
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        onAuthGetUsersCall: ({ callCount }) => {
+            if (callCount === 2) authUsersByUid['parent-1'].disabled = true;
+        },
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/disabled-after-claim');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Private dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(recipient.reminderSentAt, undefined);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders blocks team access revoked after lease acquisition', async () => {
+    const userDocs = {
+        'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+    };
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs,
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        onAuthGetUsersCall: ({ callCount }) => {
+            if (callCount === 2) {
+                userDocs['parent-1'].parentTeamIds = [];
+                userDocs['parent-1'].parentPlayerKeys = [];
+            }
+        },
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/revoked-after-claim');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Private dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(recipient.reminderSentAt, undefined);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders rechecks payment state after lease acquisition', async () => {
+    let recipientRef;
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        onAuthGetUsersCall: async ({ callCount }) => {
+            if (callCount === 2) {
+                await recipientRef.update({ status: 'paid', amountPaidCents: 2500 });
+            }
+        },
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        recipientRef = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/paid-after-claim');
+        await recipientRef.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Private dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await recipientRef.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(recipient.status, 'paid');
+        assert.equal(recipient.reminderSentAt, undefined);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders rejects an inactive player link even when a sibling keeps team access', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': {
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::inactive-player', 'team-1::active-sibling']
+            }
+        },
+        playerDocs: {
+            'inactive-player': { active: false },
+            'active-sibling': { active: true }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/inactive-player-fee');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::inactive-player',
+            feeTitle: 'Inactive player dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(recipient.reminderSentAt, undefined);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders filters an unlinked parent while delivering to the linked co-parent', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'removed-parent': {
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::active-sibling']
+            },
+            'linked-parent': {
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::fee-player']
+            }
+        },
+        playerDocs: {
+            'fee-player': { active: true },
+            'active-sibling': { active: true }
+        },
+        indexedTargets: [
+            { uid: 'removed-parent', deviceId: 'removed-device', token: 'removed-token', categories: { fees: true } },
+            { uid: 'linked-parent', deviceId: 'linked-device', token: 'linked-token', categories: { fees: true } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/coparent-filter');
+        await ref.set({
+            status: 'unpaid',
+            parentUserId: 'removed-parent',
+            playerKey: 'team-1::fee-player',
+            feeTitle: 'Player dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.deepEqual(env.messagingCalls.map((call) => call.tokens), [['linked-token']]);
+        assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['linked-parent']);
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('fee reminder claim lease expires after an interrupted Auth-failure release', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/stale-lease');
+        await ref.set({
+            status: 'unpaid',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        const abandonedClaimId = await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis,
+            reminderThresholdHours: 72
+        });
+        assert.ok(abandonedClaimId);
+
+        const replacementClaimId = await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis: nowMillis + moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1,
+            reminderThresholdHours: 72
+        });
+        assert.ok(replacementClaimId);
+        assert.notEqual(replacementClaimId, abandonedClaimId);
+        assert.equal((await ref.get()).data().reminderSentAt, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders retries an orphan lease and sends once after expiry', async () => {
+    let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: {
+            ownerId: 'coach-1',
+            adminEmails: [],
+            scheduleNotifications: { reminderHours: 24 }
+        },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis: currentNowMillis,
+        nowMillisProvider: () => currentNowMillis
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/orphan-lease');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: new Date(currentNowMillis + 60 * 1000).toISOString(),
+            reminderDeliveryClaimId: 'orphaned-attempt',
+            reminderDeliveryClaimExpiresAtMillis: currentNowMillis + moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.feeReminderClaimActive === true
+        );
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal((await ref.get()).data().reminderSentAt, undefined);
+
+        currentNowMillis += moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1;
+        await moduleExports.sendFeeUnpaidDueReminders();
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders retries a transient sent-marker transaction failure', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        transactionErrors: [null, new Error('temporary marker transaction failure')],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/marker-retry');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.feeReminderPreEffectFailed === true
+        );
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal((await ref.get()).data().reminderSentAt, undefined);
+        assert.equal((await ref.get()).data().reminderDeliveryClaimId, undefined);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders reconciles an ambiguously committed sent marker before delivery', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        transactionPostCommitErrors: [null, new Error('marker commit acknowledgement lost')],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/marker-reconcile');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+        assert.equal(recipient.reminderSentClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders clears a claim-owned marker when acknowledgement reconciliation fails', async () => {
+    const recipientPath = 'teams/team-1/feeBatches/batch-1/feeRecipients/marker-release';
+    let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        transactionPostCommitErrors: [null, new Error('marker commit acknowledgement lost')],
+        transactionErrors: [null, null, new Error('release transaction failed')],
+        docGetErrors: {
+            [recipientPath]: [null, null, new Error('marker reconciliation read failed')]
+        },
+        nowMillis: currentNowMillis,
+        nowMillisProvider: () => currentNowMillis
+    });
+
+    try {
+        const ref = env.firestoreState.doc(recipientPath);
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.feeReminderPreEffectFailed === true
+        );
+        const strandedRecipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.ok(strandedRecipient.reminderSentAt);
+        assert.ok(strandedRecipient.reminderSentClaimId);
+        assert.ok(strandedRecipient.reminderDeliveryClaimId);
+        assert.equal(strandedRecipient.reminderEffectsStartedAt, undefined);
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.feeReminderClaimActive === true
+        );
+        assert.equal(env.messagingCalls.length, 0);
+
+        currentNowMillis += moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1;
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+        const recoveredRecipient = (await ref.get()).data();
+        assert.ok(recoveredRecipient.reminderSentAt);
+        assert.equal(recoveredRecipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('expired prepared recovery cannot clear a claim after its effects boundary starts', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const claimId = 'effect-started-claim';
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/effect-race');
+        await ref.set({
+            status: 'unpaid',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z',
+            reminderDeliveryClaimId: claimId,
+            reminderDeliveryClaimExpiresAtMillis: nowMillis - 1,
+            reminderSentAt: { seconds: 1 },
+            reminderThresholdHours: 72,
+            reminderSentClaimId: claimId,
+            reminderSentTargetUserIds: ['parent-1'],
+            reminderEffectsStartedAt: { seconds: 2 }
+        });
+
+        const released = await moduleExports._internal.releaseFeeDueReminderClaim(
+            ref,
+            claimId,
+            new Error('stale recovery'),
+            {
+                requireExpiredAtMillis: nowMillis,
+                requireNoEffectsStarted: true,
+                requirePreparedMarker: true
+            }
+        );
+
+        const recipient = (await ref.get()).data();
+        assert.equal(released, false);
+        assert.equal(recipient.reminderDeliveryClaimId, claimId);
+        assert.equal(recipient.reminderSentClaimId, claimId);
+        assert.ok(recipient.reminderEffectsStartedAt);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        const finalizedRecipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(finalizedRecipient.reminderDeliveryClaimId, undefined);
+        assert.equal(finalizedRecipient.reminderDeliveryClaimExpiresAtMillis, undefined);
+        assert.equal(finalizedRecipient.reminderSentClaimId, undefined);
+        assert.equal(finalizedRecipient.reminderEffectsStartedAt, undefined);
+        assert.ok(finalizedRecipient.reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders leaves an active effects-started claim intact until expiry', async () => {
+    let currentNowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        nowMillis: currentNowMillis,
+        nowMillisProvider: () => currentNowMillis
+    });
+
+    try {
+        const claimId = 'active-effect-claim';
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/active-effect');
+        await ref.set({
+            status: 'unpaid',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z',
+            reminderDeliveryClaimId: claimId,
+            reminderDeliveryClaimExpiresAtMillis: currentNowMillis + moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS,
+            reminderSentAt: { seconds: 1 },
+            reminderThresholdHours: 72,
+            reminderSentClaimId: claimId,
+            reminderSentTargetUserIds: ['parent-1'],
+            reminderEffectsStartedAt: { seconds: 2 }
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        const activeRecipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(activeRecipient.reminderDeliveryClaimId, claimId);
+        assert.ok(activeRecipient.reminderDeliveryClaimExpiresAtMillis);
+        assert.equal(activeRecipient.reminderSentClaimId, claimId);
+        assert.ok(activeRecipient.reminderEffectsStartedAt);
+
+        currentNowMillis += moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1;
+        await moduleExports.sendFeeUnpaidDueReminders();
+        const finalizedRecipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.ok(finalizedRecipient.reminderSentAt);
+        assert.equal(finalizedRecipient.reminderDeliveryClaimId, undefined);
+        assert.equal(finalizedRecipient.reminderDeliveryClaimExpiresAtMillis, undefined);
+        assert.equal(finalizedRecipient.reminderSentClaimId, undefined);
+        assert.equal(finalizedRecipient.reminderEffectsStartedAt, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders clears an expired terminally ineligible lease', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/paid-stale-lease');
+        await ref.set({
+            status: 'paid',
+            amountCents: 4500,
+            amountPaidCents: 4500,
+            dueDate: '2026-06-27T12:00:00.000Z',
+            reminderDeliveryClaimId: 'stale-paid-claim',
+            reminderDeliveryClaimExpiresAtMillis: nowMillis - 1
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+        assert.equal(recipient.reminderDeliveryClaimExpiresAtMillis, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders reconciles an ambiguously committed lease acquisition', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        transactionPostCommitErrors: [new Error('claim commit acknowledgement lost')],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/claim-reconcile');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        const recipient = (await ref.get()).data();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders retries a transient lease-acquisition transaction failure', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        transactionErrors: [new Error('temporary claim transaction failure')],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/claim-retry');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await assert.rejects(
+            moduleExports.sendFeeUnpaidDueReminders(),
+            (error) => error.feeReminderPreEffectFailed === true
+        );
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal((await ref.get()).data().reminderSentAt, undefined);
+        assert.equal((await ref.get()).data().reminderDeliveryClaimId, undefined);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+        assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('fee reminder sent marker prevents duplicates when finalization is interrupted', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/interrupted-finalize');
+        await ref.set({
+            status: 'unpaid',
+            parentUserId: 'parent-1',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        const claimId = await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis,
+            reminderThresholdHours: 72
+        });
+        assert.ok(claimId);
+        assert.deepEqual(await moduleExports._internal.markFeeDueReminderClaimSent(ref, claimId, {
+            nowMillis,
+            reminderThresholdHours: 72,
+            teamId: 'team-1',
+            authorizedPayerUserIds: ['parent-1']
+        }), ['parent-1']);
+        assert.equal(await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis: nowMillis + moduleExports._internal.FEE_REMINDER_CLAIM_LEASE_MS + 1,
+            reminderThresholdHours: 72
+        }), null);
+        assert.ok((await ref.get()).data().reminderSentAt);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders retains its sent marker after an ambiguous delivery failure', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        sendEachErrors: [new Error('ambiguous messaging failure')],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/ambiguous-send');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Private dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        const recipient = (await ref.get()).data();
+        assert.ok(recipient.reminderSentAt);
+        assert.equal(recipient.reminderDeliveryClaimId, undefined);
+        assert.match(recipient.reminderLastError, /ambiguous messaging failure/);
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        assert.equal(env.messagingCalls.length, 1);
+    } finally {
+        cleanup();
+    }
+});
+
+test('fee reminder finalization cannot clear a marker owned by another delivery claim', async () => {
+    const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+    const { moduleExports, env, cleanup } = loadNotificationInternals({ nowMillis });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/concurrent');
+        await ref.set({
+            status: 'unpaid',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        const failedClaimId = await moduleExports._internal.claimFeeDueReminder(ref, {
+            nowMillis,
+            reminderThresholdHours: 72
+        });
+        assert.ok(failedClaimId);
+        await assert.rejects(
+            moduleExports._internal.claimFeeDueReminder(ref, {
+                nowMillis,
+                reminderThresholdHours: 72
+            }),
+            (error) => error.feeReminderClaimActive === true
+        );
+
+        await ref.update({
+            reminderDeliveryClaimId: 'successful-overlapping-run',
+            reminderSentAt: { __serverTimestamp: true }
+        });
+        const released = await moduleExports._internal.finalizeFeeDueReminderClaim(
+            ref,
+            failedClaimId,
+            { error: new Error('failed overlapping run') }
+        );
+
+        assert.equal(released, false);
+        const finalRecipient = (await ref.get()).data();
+        assert.equal(finalRecipient.reminderDeliveryClaimId, 'successful-overlapping-run');
+        assert.ok(finalRecipient.reminderSentAt);
     } finally {
         cleanup();
     }

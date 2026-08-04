@@ -132,7 +132,8 @@ function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = 
     if (!normalizedUid) return false;
 
     const normalizedTeamId = normalizeString(teamId || team.id);
-    const normalizedEmail = normalizeEmail(email || user.email || user.profileEmail);
+    // Email-based authority must come from the caller's current Auth token.
+    const normalizedEmail = normalizeEmail(email);
     if (team.ownerId === normalizedUid) return true;
     if (user.isAdmin === true) return true;
 

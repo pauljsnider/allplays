@@ -14,11 +14,10 @@ function isTeamOwnedByAccount(team = {}, accountIdentity) {
   const identity = normalizeRosterContactIdentity(accountIdentity);
   const ownerId = String(team.ownerId || '').trim();
   if (ownerId) return Boolean(identity.uid && ownerId === identity.uid);
-  return Boolean(
-    identity.email &&
-    [team.ownerEmail, team.ownerEmailLower]
-      .some((value) => String(value || '').trim().toLowerCase() === identity.email)
-  );
+  const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+  return Boolean(identity.email && ownerEmails.length === 1 && ownerEmails[0] === identity.email);
 }
 
 function buildDeletionAuditId(uid) {
@@ -528,6 +527,11 @@ function getAccountReauthenticationProvider(userRecord = {}, authToken = {}) {
   return 'unknown';
 }
 
+function getCurrentEnabledAuthEmail(authUser) {
+  if (!authUser || authUser.disabled === true) return '';
+  return String(authUser.email || '').trim();
+}
+
 async function loadOwnedTeams({ firestore, uid, email }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const emailCandidates = getAccountEmailQueryCandidates(email);
@@ -633,6 +637,7 @@ module.exports = {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountReauthenticationProvider,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,

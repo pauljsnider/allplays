@@ -24,7 +24,7 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=443325"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=443326"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
@@ -36,7 +36,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('CSVs up to 10 MB each');
         expect(pageHtml).toContain('Save video link');
         expect(pageJs).toMatch(/import \{ checkAuth \} from '\.\/auth\.js\?v=\d+';/);
-        expect(pageJs).toContain("from './db.js?v=4433154'");
+        expect(pageJs).toContain("from './db.js?v=4433155'");
         expect(pageJs).toContain('normalizeTeamMediaVideoDraft');
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');

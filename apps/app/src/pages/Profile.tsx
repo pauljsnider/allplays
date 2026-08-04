@@ -121,6 +121,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoPreview, setPhotoPreview] = useState('');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoChanged, setPhotoChanged] = useState(false);
+  const [profileSaveNeedsRefresh, setProfileSaveNeedsRefresh] = useState(false);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [profilePhotoOwnershipLoaded, setProfilePhotoOwnershipLoaded] = useState(useAuthProfile);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
@@ -416,6 +417,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
         setPhotoChanged(false);
+        setProfileSaveNeedsRefresh(false);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -806,6 +808,13 @@ export function Profile({ auth }: { auth: AuthState }) {
     if (!user) {
       return;
     }
+    if (profileSaveNeedsRefresh) {
+      setProfileStatus({
+        message: 'Refresh the profile before retrying this save so the preserved photo can be reconciled safely.',
+        tone: 'error'
+      });
+      return;
+    }
 
     setBusy('profile');
     setProfileStatus(null);
@@ -858,6 +867,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       } catch (documentError) {
         const authoritativeProfile = await loadProfileDocument(user.uid).catch(() => null);
         if (!authoritativeProfile) {
+          setProfileSaveNeedsRefresh(true);
           setProfileStatus({
             message: 'The profile save status is unknown. The new photo was preserved; refresh before retrying.',
             tone: 'error'
@@ -1496,7 +1506,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="submit" className="primary-button" disabled={busy === 'profile'}>
+            <button type="submit" className="primary-button" disabled={busy === 'profile' || profileSaveNeedsRefresh}>
               {busy === 'profile' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
               Save profile
             </button>

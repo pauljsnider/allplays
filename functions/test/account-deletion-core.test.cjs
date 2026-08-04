@@ -17,6 +17,7 @@ const {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
@@ -38,6 +39,12 @@ class HttpsError extends Error {
 test('normalizes explicit account deletion confirmation', () => {
   assert.equal(normalizeConfirmation(' delete '), 'DELETE');
   assert.equal(buildDeletionAuditId('user-1').length, 64);
+});
+
+test('uses only a current enabled Auth email for legacy ownership checks', () => {
+  assert.equal(getCurrentEnabledAuthEmail({ email: ' Current@Example.com ', disabled: false }), 'Current@Example.com');
+  assert.equal(getCurrentEnabledAuthEmail({ email: 'disabled@example.com', disabled: true }), '');
+  assert.equal(getCurrentEnabledAuthEmail(null), '');
 });
 
 test('processes new and retried queued deletion requests only once', () => {
@@ -219,6 +226,18 @@ test('canonical ownership prevents a stale owner alias from scrubbing the curren
   }, { uid: 'former-owner', email: 'former@example.com' }), {
     changed: true,
     update: { adminEmails: ['remaining@example.com'] },
+    fieldsToDelete: []
+  });
+});
+
+test('conflicting legacy owner aliases cannot trigger ownership scrubbing', () => {
+  assert.deepEqual(buildTeamAccountGrantScrubPlan({
+    ownerEmail: 'current@example.com',
+    ownerEmailLower: 'former@example.com',
+    adminEmails: []
+  }, { uid: 'former-owner', email: 'former@example.com' }), {
+    changed: false,
+    update: {},
     fieldsToDelete: []
   });
 });
@@ -633,6 +652,14 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.match(teamLoaderSource, /where\('ownerEmailLower', '==', candidate\)/);
   assert.match(functionsSource, /collectionGroup\('chatConversations'\)\.where\('mutedBy', 'array-contains', uid\)/);
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
+  assert.match(
+    workerSource,
+    /const ownerEmail = getCurrentEnabledAuthEmail\(authUser\);/
+  );
+  assert.doesNotMatch(
+    workerSource,
+    /authUser\?\.email \|\| userDoc\.data\(\)\?\.email \|\| snapshot\.data\(\)\?\.email/
+  );
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));

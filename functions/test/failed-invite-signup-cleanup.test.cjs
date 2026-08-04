@@ -225,9 +225,11 @@ function makeFunctionsStub() {
     schedule() { return this; },
     timeZone() { return this; },
     region() { return this; },
+    user() { return this; },
     object() { return this; }
   };
   triggerChain.https = triggerChain;
+  triggerChain.auth = triggerChain;
   triggerChain.firestore = triggerChain;
   triggerChain.pubsub = triggerChain;
   triggerChain.storage = triggerChain;

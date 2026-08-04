@@ -6,6 +6,7 @@ const firebaseMocks = vi.hoisted(() => ({
   doc: vi.fn((_database, path, id) => ({ path: `${path}/${id}` })),
   getDoc: vi.fn(),
   getDocs: vi.fn(),
+  listManagedTeams: vi.fn(),
   listPublicTeams: vi.fn(),
   getPublicTeamProfile: vi.fn(),
   getPublicTeamGamesProjection: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock('../../js/firebase.js?v=23', () => ({
   functions: {},
   httpsCallable: vi.fn((_functions, name) => {
     if (name === 'listPublicTeams') return firebaseMocks.listPublicTeams;
+    if (name === 'listManagedTeams') return firebaseMocks.listManagedTeams;
     if (name === 'getPublicTeamProfile') return firebaseMocks.getPublicTeamProfile;
     if (name === 'getPublicTeamGamesProjection') return firebaseMocks.getPublicTeamGamesProjection;
     if (name === 'getPublicTeamCalendarProjection') return firebaseMocks.getPublicTeamCalendarProjection;
@@ -88,7 +90,7 @@ const {
   getTeam,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433154');
+} = await import('../../js/db.js?v=4433155');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -100,6 +102,7 @@ describe('team access query resilience', () => {
     firebaseMocks.listPublicTeams.mockResolvedValue({
       data: { items: [], nextCursor: null }
     });
+    firebaseMocks.listManagedTeams.mockResolvedValue({ data: { items: [], isPartial: false } });
   });
 
   it('keeps public and owned teams when the optional admin-email query is denied', async () => {
@@ -132,34 +135,37 @@ describe('team access query resilience', () => {
     expect(firebaseMocks.listPublicTeams).toHaveBeenCalled();
   });
 
-  it('keeps owned and owner-email teams when the optional admin-email query is denied', async () => {
-    const ownedTeam = createTeamDoc('owned-1', { name: 'Falcons', ownerId: 'owner-1' });
-    const emailTeam = createTeamDoc('email-1', { name: 'Vipers', ownerEmail: 'coach@example.com' });
-    const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
-      code: 'permission-denied'
-    });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    firebaseMocks.getDoc.mockResolvedValue({
-      exists: () => true,
-      data: () => ({ email: 'coach@example.com' })
-    });
-    firebaseMocks.getDocs.mockImplementation(async (queryValue) => {
-      const constraint = getWhereConstraint(queryValue);
-      if (constraint.field === 'ownerId') return { docs: [ownedTeam] };
-      if (constraint.field === 'adminEmails') throw permissionError;
-      if (constraint.field === 'ownerEmail') return { docs: [emailTeam] };
-      if (constraint.field === 'ownerEmailLower') return { docs: [] };
-      throw new Error(`Unexpected query: ${constraint.field}`);
+  it('loads legacy and canonical managed teams through the server-filtered callable', async () => {
+    firebaseMocks.listManagedTeams.mockResolvedValue({
+      data: {
+        items: [
+          { id: 'email-1', name: 'Vipers', ownerEmail: 'coach@example.com' },
+          { id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }
+        ],
+        isPartial: false
+      }
     });
 
     await expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).resolves.toEqual([
       { id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' },
       { id: 'email-1', name: 'Vipers', ownerEmail: 'coach@example.com' }
     ]);
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Optional team access query failed (adminEmails:coach@example.com).',
-      permissionError
-    );
+    expect(firebaseMocks.listManagedTeams).toHaveBeenCalledWith({});
+    expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+  });
+
+  it('rejects partial managed-team discovery instead of returning an authoritative incomplete array', async () => {
+    firebaseMocks.listManagedTeams.mockResolvedValue({
+      data: {
+        items: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }],
+        isPartial: true
+      }
+    });
+
+    await expect(getUserTeamsWithAccess('owner-1', 'coach@example.com')).rejects.toMatchObject({
+      code: 'managed-team-discovery-partial',
+      partialTeams: [{ id: 'owned-1', name: 'Falcons', ownerId: 'owner-1' }]
+    });
   });
 
   it('recognizes namespaced permission errors when loading a public team projection', async () => {

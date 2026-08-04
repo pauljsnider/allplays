@@ -114,6 +114,13 @@ describe('team fee checkout function helpers', () => {
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'parent_2', user: { parentPlayerKeys: ['team_123::player_1'] } })).toBe(true);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'other_parent', user: { parentTeamIds: ['team_123'] } })).toBe(false);
+        expect(isEligibleTeamFeePayer({
+            team,
+            recipient,
+            uid: 'former_admin',
+            email: '',
+            user: { email: 'coach@example.com', profileEmail: 'coach@example.com' }
+        })).toBe(false);
     });
 
     it('builds parent-dashboard return URLs and safe Stripe metadata', () => {
@@ -540,6 +547,8 @@ describe('team fee checkout function helpers', () => {
             source.indexOf('exports.refundStripeTeamFeePayment'),
             source.indexOf('exports.createStripeRegistrationCheckout')
         );
+        expect(refundFunction).toContain("const email = String(context.auth.token?.email || '').trim().toLowerCase();");
+        expect(refundFunction).not.toContain('context.auth.token?.email || user.email');
         expect(refundFunction).not.toContain('assertPaymentsEnabled();');
     });
 

@@ -18,7 +18,7 @@ function extractNotifyFeeMarkedPaid() {
         extractChunk('function formatMoneyFromCents(', 'function normalizeTeamChatConversationId'),
         extractChunk('function getFeePaymentAmountCents(', 'function getFeePayerIdentity'),
         extractChunk('function getFeePayerIdentity(', 'function normalizeTeamChatConversationId'),
-        extractChunk('exports.notifyFeeMarkedPaid = functions.firestore', 'exports.notifyFeeAssigned = functions.firestore')
+        extractChunk('exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore', 'exports.notifyFeeAssigned = retryableNotificationFunctions.firestore')
     ].join('\n');
 }
 
@@ -49,7 +49,7 @@ function buildTriggerHarness({
         'getTargetsForCategory',
         'getCandidateUsersForTeam',
         'sendDirectTargetsNotification',
-        `${extractNotifyFeeMarkedPaid()}\nreturn exports.notifyFeeMarkedPaid;`
+        `${extractNotifyFeeMarkedPaid().replaceAll('retryableNotificationFunctions.', 'functions.')}\nreturn exports.notifyFeeMarkedPaid;`
     );
     const trigger = factory(
         exportsObject,

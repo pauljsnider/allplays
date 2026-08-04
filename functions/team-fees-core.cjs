@@ -341,7 +341,8 @@ function isEligibleTeamFeePayer({ team = {}, user = {}, uid = '', email = '', re
     if (team.ownerId && team.ownerId === uid) return true;
     if (user.isAdmin === true) return true;
 
-    const normalizedEmail = normalizeString(email || user.email || user.profileEmail).toLowerCase();
+    // Email-based authority must come from the caller's current Auth token.
+    const normalizedEmail = normalizeString(email).toLowerCase();
     const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
     if (normalizedEmail && adminEmails.some((adminEmail) => normalizeString(adminEmail).toLowerCase() === normalizedEmail)) {
         return true;

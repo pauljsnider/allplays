@@ -167,6 +167,7 @@ const {
 } = require('./public-rsvp-idempotency-core.cjs');
 const {
   buildTeamCalendarIcs,
+  calendarTokenHasTeamAccess,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
 const {
@@ -328,6 +329,11 @@ const {
   createFriendInviteRedemptionTransaction
 } = require('./friend-invite-redemption-core.cjs');
 const { hasAdminInviteIssuerAccess, hasTeamAdminAccess } = require('./team-admin-access-core.cjs');
+const {
+  serializeManagedTeamDocument,
+  serializeManagedTeamProfile,
+  serializeStaffTeamProfile
+} = require('./managed-team-projection-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildChatConversationAccountScrubPlan,
@@ -343,13 +349,18 @@ const {
   getAccountDeletionCollectionQueries,
   getAccountDeletionCollectionGroupQueries,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   loadOwnedTeams,
   shouldProcessAccountDeletionRequest,
   summarizeOwnedTeams
 } = require('./account-deletion-core.cjs');
-const { createTeamOwnerAccessSyncHandler } = require('./team-owner-access-core.cjs');
+const {
+  createLegacyTeamOwnerAuthSyncHandler,
+  createLegacyTeamOwnerReconciliationHandler,
+  createTeamOwnerAccessSyncHandler
+} = require('./team-owner-access-core.cjs');
 const {
   buildAdminUserSearchHashes,
   haveAdminUserSearchFieldsChanged
@@ -365,6 +376,7 @@ const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const {
   authenticatePrimaryCertificateSignatureReferences,
   discoverLegacyImageSignatureReferences,
+  getEnabledCertificateAuthUserIds,
   getCertificateLegacyManagerEmails,
   getCertificateLegacySignatureInventoryId,
   isAuthorizedCertificateSignatureCleanupTarget,
@@ -3781,6 +3793,7 @@ exports.sweepIneligiblePublicUserProfiles = functions
           : null;
         const currentEmail = String(authIdentity.email || '').trim().toLowerCase();
         const isIneligible = authIdentity.userMissing === true
+          || authIdentity.userDisabled === true
           || authIdentity.emailVerified !== true;
         if (!isIneligible && indexedEmail === currentEmail) return null;
 
@@ -3872,7 +3885,8 @@ async function loadPublicUserProfileAuthIdentity(userId) {
       email: authRecord.email || null,
       displayName: authRecord.displayName || null,
       photoUrl: authRecord.photoURL || null,
-      emailVerified: authRecord.emailVerified === true
+      emailVerified: authRecord.emailVerified === true,
+      userDisabled: authRecord.disabled === true
     };
   } catch (error) {
     if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error)) {
@@ -3908,7 +3922,11 @@ async function loadPublicProfileStaffTeamIdsForIdentity(userId, email = '') {
 async function removePublicProfileAuthorizationForIneligibleAuth(userId, authIdentity) {
   const normalizedUserId = String(userId || '').trim();
   const publicProfileRef = firestore.doc(`publicUserProfiles/${normalizedUserId}`);
-  if (authIdentity.userMissing !== true && authIdentity.emailVerified === true) return false;
+  if (
+    authIdentity.userMissing !== true &&
+    authIdentity.userDisabled !== true &&
+    authIdentity.emailVerified === true
+  ) return false;
 
   const authIdentityRef = firestore.doc(`publicProfileAuthIdentities/${normalizedUserId}`);
   const [cleanupScope, indexedAuthIdentitySnap] = await Promise.all([
@@ -4046,7 +4064,11 @@ async function syncPublicUserProfileProjectionForUser(userId, options = {}) {
   if (removedForIneligibleAuth) {
     functions.logger.info('Public profile projection removed for ineligible Auth identity.', {
       userId: normalizedUserId,
-      reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'
+      reason: authIdentity.userMissing === true
+        ? 'auth-user-missing'
+        : authIdentity.userDisabled === true
+          ? 'auth-user-disabled'
+          : 'email-unverified'
     });
     return null;
   }
@@ -5310,7 +5332,7 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('permission-denied', 'The admin invite issuer no longer has access to this team.');
     }
 
-    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || userData.email);
+    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email);
     if (!signedInEmail || invitedEmail !== signedInEmail) {
       throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
     }
@@ -5537,8 +5559,7 @@ exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => 
   }
 
   const team = teamSnap.data() || {};
-  const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can create RSVP tokens.');
   }
@@ -5721,7 +5742,7 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 
   const team = { id: teamId, ...(teamSnap.data() || {}) };
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamPassPurchaser({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have team access for this purchase.');
   }
@@ -5852,7 +5873,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const user = await getUserForEligibility(context.auth.uid);
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient })) {
     throw new functions.https.HttpsError('permission-denied', 'You do not have access to pay this team fee.');
   }
@@ -6115,7 +6136,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   }
 
   const team = { id: input.teamId, ...(teamSnap.data() || {}) };
-  const email = context.auth.token?.email || user.email || '';
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
   if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
     throw new functions.https.HttpsError('permission-denied', 'Only team admins can issue team fee refunds.');
   }
@@ -8275,23 +8296,18 @@ async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
   return legacyRef.get();
 }
 
-async function getCalendarTokenHolderUser(tokenData) {
-  const uid = tokenData.uid || tokenData.userId || tokenData.createdBy || null;
+async function getCalendarTokenHolderContext(tokenData) {
+  const uid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
   if (!uid) return null;
-  const userSnap = await firestore.doc(`users/${uid}`).get();
-  if (!userSnap.exists) return null;
-  return { uid, ...(userSnap.data() || {}) };
-}
-
-function calendarTokenHasTeamAccess({ team, user, tokenData }) {
-  if (!team || !tokenData) return false;
-  const uid = user?.uid || tokenData.uid || tokenData.userId || tokenData.createdBy || null;
-  const email = String(user?.email || tokenData.email || tokenData.userEmail || '').trim().toLowerCase();
-  const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').toLowerCase()) : [];
-  const parentTeamIds = Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [];
-  return team.ownerId === uid ||
-    (email && adminEmails.includes(email)) ||
-    parentTeamIds.includes(tokenData.teamId);
+  const [userSnap, authUser] = await Promise.all([
+    firestore.doc(`users/${uid}`).get(),
+    admin.auth().getUser(uid).catch((error) => {
+      if (error?.code === 'auth/user-not-found') return null;
+      throw error;
+    })
+  ]);
+  if (!userSnap.exists || !authUser || authUser.disabled === true) return null;
+  return { profile: userSnap.data() || {}, authUser };
 }
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
@@ -8330,8 +8346,13 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const tokenUser = await getCalendarTokenHolderUser(tokenData);
-    if (!calendarTokenHasTeamAccess({ team, user: tokenUser, tokenData })) {
+    const tokenHolder = await getCalendarTokenHolderContext(tokenData);
+    if (!calendarTokenHasTeamAccess({
+      team,
+      profile: tokenHolder?.profile,
+      authUser: tokenHolder?.authUser,
+      tokenData
+    })) {
       res.status(403).send('Calendar token no longer has team access');
       return;
     }
@@ -9007,7 +9028,18 @@ async function getNotificationTargetTeamAccessMap(uid, teamIds) {
   }
 
   const user = userSnap.data() || {};
-  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+  let email = '';
+  try {
+    const authUser = await admin.auth().getUser(uid);
+    if (authUser?.disabled !== true) {
+      email = String(authUser?.email || '').trim().toLowerCase();
+    }
+  } catch (error) {
+    if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+      console.warn('Unable to resolve notification target auth email', uid, error);
+      throw error;
+    }
+  }
   const parentTeamIds = new Set(Array.isArray(user.parentTeamIds) ? user.parentTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean) : []);
   const teamSnaps = await Promise.all(uniqueTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get()));
 
@@ -9092,6 +9124,18 @@ async function teamNotificationRecipientIndexIsEmpty(teamId) {
   return !(recipientSnap.docs || []).some((docSnap) => isAggregateNotificationRecipientDoc(docSnap));
 }
 
+function hasCurrentTeamOwnerIdentity({ team, uid, email = '' }) {
+  const normalizedUid = String(uid || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const ownerId = String(team?.ownerId || '').trim();
+  if (ownerId) return Boolean(normalizedUid && ownerId === normalizedUid);
+
+  const ownerEmails = [...new Set([team?.ownerEmail, team?.ownerEmailLower]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean))];
+  return Boolean(normalizedEmail && ownerEmails.length === 1 && ownerEmails[0] === normalizedEmail);
+}
+
 function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
   const normalizedTeamId = String(teamId || '').trim();
   const normalizedUid = String(uid || '').trim();
@@ -9099,7 +9143,7 @@ function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) 
   if (!normalizedTeamId || !normalizedUid || !team || !user) return [];
 
   const roles = new Set();
-  if (team.ownerId === normalizedUid) {
+  if (hasCurrentTeamOwnerIdentity({ team, uid: normalizedUid, email: normalizedEmail })) {
     roles.add('staff');
   }
 
@@ -9178,11 +9222,29 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     return null;
   }
 
-  const email = String(
-    options.authEmail !== undefined
-      ? options.authEmail
-      : (resolvedUser.email || resolvedUser.profileEmail || '')
-  ).trim().toLowerCase();
+  let authoritativeAuthEmail = options.authEmail;
+  let authUserEnabled = true;
+  if (authoritativeAuthEmail === undefined) {
+    try {
+      const authUser = await admin.auth().getUser(normalizedUid);
+      authUserEnabled = authUser?.disabled !== true;
+      authoritativeAuthEmail = authUserEnabled ? (authUser?.email || '') : '';
+    } catch (error) {
+      if (!['auth/user-not-found', 'auth/user-disabled'].includes(error?.code)) {
+        throw error;
+      }
+      authUserEnabled = false;
+      authoritativeAuthEmail = '';
+    }
+  }
+  if (!authUserEnabled) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
+  }
+  const email = String(authoritativeAuthEmail || '').trim().toLowerCase();
   const roles = getNotificationRecipientRoles({
     teamId,
     team: resolvedTeam,
@@ -9248,6 +9310,7 @@ async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = 
   const authIdentity = await loadPublicUserProfileAuthIdentity(normalizedUid);
   const forceRemove = !user
     || authIdentity.userMissing === true
+    || authIdentity.userDisabled === true
     || authIdentity.emailVerified !== true;
   if (forceRemove) {
     const indexedStaffTeamIds = await loadPublicProfileStaffTeamIds(firestore, normalizedUid);
@@ -9444,7 +9507,32 @@ exports.syncTeamOwnerAccessOnCreate = functions
     fieldValue: admin.firestore.FieldValue
   }));
 
-exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
+const legacyTeamOwnerAuthSyncHandler = createLegacyTeamOwnerAuthSyncHandler({
+  firestore,
+  fieldValue: admin.firestore.FieldValue
+});
+
+exports.syncLegacyTeamOwnershipOnAuthCreate = functions
+  .runWith({ failurePolicy: true })
+  .auth
+  .user()
+  .onCreate(legacyTeamOwnerAuthSyncHandler);
+
+exports.reconcileLegacyTeamOwnership = functions
+  .runWith({ timeoutSeconds: 540, memory: '512MB', failurePolicy: true })
+  .pubsub
+  .schedule('every 24 hours')
+  .onRun(createLegacyTeamOwnerReconciliationHandler({
+    firestore,
+    auth: admin.auth(),
+    documentIdField: () => admin.firestore.FieldPath.documentId(),
+    checkpointRef: firestore.doc('systemJobs/legacyTeamOwnerReconciliation'),
+    syncAuthUser: legacyTeamOwnerAuthSyncHandler
+  }));
+
+exports.syncTeamNotificationTargetsOnPreferenceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationPreferences/{teamId}')
   .onWrite(async (change, context) => {
     const { uid, teamId } = context.params;
@@ -9456,7 +9544,9 @@ exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
     return null;
   });
 
-exports.syncTeamNotificationTargetsOnDeviceWrite = functions.firestore
+exports.syncTeamNotificationTargetsOnDeviceWrite = functions
+  .runWith({ failurePolicy: true })
+  .firestore
   .document('users/{uid}/notificationDevices/{deviceId}')
   .onWrite(async (change, context) => {
     const { uid, deviceId } = context.params;
@@ -10376,6 +10466,7 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
     } catch (error) {
       await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
       console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+      if (isNotificationAuthResolutionFailure(error)) throw error;
     }
   }
 
@@ -10395,12 +10486,68 @@ async function getUserIdsByEmails(emails) {
     uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
   );
   lookupResults.forEach((result) => {
-    if (result.status === 'fulfilled' && result.value?.uid) {
+    if (
+      result.status === 'fulfilled'
+      && result.value?.uid
+      && result.value?.disabled !== true
+    ) {
       ids.add(result.value.uid);
     }
   });
   return Array.from(ids);
 }
+
+async function getEnabledNotificationAuthUsers(userIds) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter((uid) => uid && uid.length <= 128 && !/[\u0000-\u001f\u007f]/.test(uid))
+  ));
+  const enabledUsers = new Map();
+  for (let offset = 0; offset < uniqueUserIds.length; offset += 100) {
+    const identifiers = uniqueUserIds.slice(offset, offset + 100).map((uid) => ({ uid }));
+    let result;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        result = await admin.auth().getUsers(identifiers);
+        break;
+      } catch (error) {
+        const code = String(error?.code || error?.errorInfo?.code || '').toLowerCase();
+        const retryable = [
+          'auth/internal-error',
+          'auth/network-request-failed',
+          'auth/too-many-requests',
+          'auth/service-unavailable',
+          'unavailable',
+          'deadline-exceeded'
+        ].some((candidate) => code === candidate || code.endsWith(`/${candidate}`));
+        if (!retryable || attempt === 2) {
+          const taggedError = error instanceof Error
+            ? error
+            : new Error(String(error || 'Firebase Auth user resolution failed.'));
+          taggedError.notificationAuthResolutionFailed = true;
+          throw taggedError;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50 * (2 ** attempt)));
+      }
+    }
+    (result.users || []).forEach((authUser) => {
+      const uid = String(authUser?.uid || '').trim();
+      if (uid && authUser?.disabled !== true) enabledUsers.set(uid, authUser);
+    });
+  }
+  return enabledUsers;
+}
+
+async function getEnabledNotificationAuthUserIds(userIds) {
+  return new Set((await getEnabledNotificationAuthUsers(userIds)).keys());
+}
+
+function isNotificationAuthResolutionFailure(error) {
+  return error?.notificationAuthResolutionFailed === true;
+}
+
+const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });
 
 async function getCandidateUsersForTeam(teamId) {
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
@@ -10424,7 +10571,8 @@ async function getCandidateUsersForTeam(teamId) {
   const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
   adminUserIds.forEach((id) => addRole(id, 'staff'));
 
-  return Array.from(users.values()).map((entry) => ({
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(Array.from(users.keys()));
+  return Array.from(users.values()).filter((entry) => enabledUserIds.has(entry.uid)).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
@@ -10521,8 +10669,60 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
   return mediaAudienceAllowsUser(user, audienceContext);
 }
 
+async function revalidateNotificationEffectTargets({
+  targets,
+  teamId,
+  category,
+  audienceContext = {},
+  requireCanonicalTeamAccess = false
+}) {
+  const logicalTargets = dedupeNotificationTargets(targets);
+  const userIds = Array.from(new Set(
+    logicalTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  ));
+  if (!userIds.length) return [];
+
+  const enabledAuthUsers = await getEnabledNotificationAuthUsers(userIds);
+  if (!requireCanonicalTeamAccess) {
+    return logicalTargets.filter((target) => enabledAuthUsers.has(String(target?.uid || '').trim()));
+  }
+
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+  const userRefs = userIds.map((uid) => firestore.doc(`users/${uid}`));
+  const [teamSnap, userSnaps] = await Promise.all([
+    firestore.doc(`teams/${normalizedTeamId}`).get(),
+    userRefs.length ? firestore.getAll(...userRefs) : Promise.resolve([])
+  ]);
+  if (!teamSnap.exists) return [];
+
+  const team = teamSnap.data() || {};
+  const eligibleUserIds = new Set();
+  userSnaps.forEach((userSnap, index) => {
+    const uid = userIds[index];
+    const authUser = enabledAuthUsers.get(uid);
+    if (!authUser || !userSnap?.exists) return;
+    const roles = getNotificationRecipientRoles({
+      teamId: normalizedTeamId,
+      team,
+      user: userSnap.data() || {},
+      uid,
+      email: String(authUser.email || '').trim().toLowerCase()
+    });
+    if (canReceiveCategoryNotification(category, { uid, roles }, audienceContext)) {
+      eligibleUserIds.add(uid);
+    }
+  });
+
+  return logicalTargets.filter((target) => eligibleUserIds.has(String(target?.uid || '').trim()));
+}
+
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
+  const enabledUserIds = await getEnabledNotificationAuthUserIds(
+    (Array.isArray(users) ? users : []).map((user) => user?.uid)
+  );
   const queryTasks = users
+    .filter((user) => enabledUserIds.has(String(user?.uid || '').trim()))
     .filter((user) => user?.uid && user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
     .map(async (user) => {
       const uid = user.uid;
@@ -10716,7 +10916,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const categoryRecipientDocs = targetSnap.docs || [];
+  const rawCategoryRecipientDocs = targetSnap.docs || [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds([
+    ...rawCategoryRecipientDocs.map((docSnap) => getNotificationRecipientDocUid(docSnap)),
+    ...(Array.isArray(additionalUsers) ? additionalUsers.map((user) => user?.uid) : [])
+  ]);
+  const categoryRecipientDocs = rawCategoryRecipientDocs.filter((docSnap) => (
+    enabledAuthUserIds.has(getNotificationRecipientDocUid(docSnap))
+  ));
+  const enabledAdditionalUsers = (Array.isArray(additionalUsers) ? additionalUsers : [])
+    .filter((user) => enabledAuthUserIds.has(String(user?.uid || '').trim()));
   const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
     const { eligibleUsers, fallbackTargets } = await resolveMixedNotificationRecipientIndex({
@@ -10725,7 +10934,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       isLegacyTargetNotificationRecipientDoc(docSnap)
@@ -10752,7 +10961,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const legacyTargets = legacyTargetRecipientDocs
       .filter((docSnap) => eligibleUsers.has(getNotificationRecipientDocUid(docSnap)))
@@ -10771,7 +10980,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       actorUid,
       audienceContext,
       recipientDocs: categoryRecipientDocs,
-      additionalUsers
+      additionalUsers: enabledAdditionalUsers
     });
     const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
       !isAggregateNotificationRecipientDoc(docSnap)
@@ -10786,7 +10995,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const candidateUsers = await getCandidateUsersForTeam(teamId);
   const mergedUsers = new Map();
   candidateUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
-  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
+  enabledAdditionalUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
 
   const users = Array.from(mergedUsers.values()).map((entry) => ({
     uid: entry.uid,
@@ -10812,10 +11021,11 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+  const enabledAuthUserIds = await getEnabledNotificationAuthUserIds(userIds);
   const recipientUserIds = new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
-      .filter(Boolean)
+      .filter((uid) => uid && enabledAuthUserIds.has(uid))
   );
   if (!recipientUserIds.size) return [];
 
@@ -11454,29 +11664,57 @@ async function sendCategoryNotification({
   actorUid = null,
   linkOverride = null,
   dedupKey = null,
+  dedupKeys = [],
   excludeUids = [],
   audienceContext = {},
   timeSensitive = false
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
 
+  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
+  const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
+  const candidateTargets = excludeSet.size
+    ? allTargets.filter((t) => !excludeSet.has(t.uid))
+    : allTargets;
+  if (!candidateTargets.length) return null;
+
+  // Resolve final recipients before claiming dedup. If current Auth or team
+  // authorization cannot be verified, the event must remain retryable.
+  const targets = await revalidateNotificationEffectTargets({
+    targets: candidateTargets,
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess: true
+  });
+  const inboxTargets = getUniqueNotificationInboxTargets(targets);
+  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
+  if (!pushTargets.length && !inboxTargets.length) return null;
+
+  const normalizedDedupKeys = [...new Set((Array.isArray(dedupKeys) ? dedupKeys : [dedupKeys])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (normalizedDedupKeys.length) {
+    const canSend = await checkAndSetNotificationDedupKeys(teamId, category, gameId, normalizedDedupKeys);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate send', {
+        teamId,
+        category,
+        gameId,
+        dedupKeys: normalizedDedupKeys
+      });
+      return null;
+    }
+  }
+
   const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
-  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
+  if (!ALWAYS_SEND_CATEGORIES.has(category) && !normalizedDedupKeys.length) {
     const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
       functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
       return null;
     }
   }
-
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
-  const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
-  const targets = excludeSet.size
-    ? allTargets.filter((t) => !excludeSet.has(t.uid))
-    : allTargets;
-  const inboxTargets = getUniqueNotificationInboxTargets(targets);
-  const pushTargets = targets.filter((target) => String(target?.token || '').trim());
-  if (!pushTargets.length && !inboxTargets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
@@ -11745,7 +11983,10 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     const totalCount = current.importCompletedAt && currentTotalCount > 0
       ? currentTotalCount
       : Math.max(batch.totalCount, currentTotalCount);
-    const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
+    const claimBelongsToCurrentEvent = current.notificationClaimedByGameId === gameId;
+    const shouldSendSummary = !current.sentAt
+      && (!current.notificationClaimedAt || claimBelongsToCurrentEvent)
+      && nextEventIds.length >= totalCount;
 
     txn.set(batchRef, {
       batchId: batch.batchId,
@@ -11774,14 +12015,37 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     return null;
   }
 
-  return sendScheduleImportBatchNotifications({
-    teamId,
-    batchId: batch.batchId,
-    batch: {
-      ...batchState,
-      finalizedBy: game.createdBy || null
+  try {
+    return await sendScheduleImportBatchNotifications({
+      teamId,
+      batchId: batch.batchId,
+      batch: {
+        ...batchState,
+        finalizedBy: game.createdBy || null
+      }
+    });
+  } catch (error) {
+    try {
+      await firestore.runTransaction(async (txn) => {
+        const latestSnap = await txn.get(batchRef);
+        const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+        if (latest.sentAt || latest.notificationClaimedByGameId !== gameId) return;
+        txn.update(batchRef, {
+          notificationClaimedAt: admin.firestore.FieldValue.delete(),
+          notificationClaimedByGameId: admin.firestore.FieldValue.delete(),
+          notificationLastFailedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+    } catch (releaseError) {
+      functions.logger.error('Failed to release schedule import notification claim', {
+        teamId,
+        batchId: batch.batchId,
+        gameId,
+        error: releaseError?.message || String(releaseError || 'Unknown error')
+      });
     }
-  });
+    throw error;
+  }
 }
 
 async function sendDirectTargetsNotification({
@@ -11799,16 +12063,57 @@ async function sendDirectTargetsNotification({
   childId = null,
   linkOverride = null,
   appRouteOverride = null,
-  timeSensitive = false
+  timeSensitive = false,
+  requireCanonicalTeamAccess = false,
+  audienceContext = {},
+  beforeEffects = null,
+  onEffectsStarting = null
 }) {
   const logicalTargets = Array.isArray(targets) ? targets : [];
-  const pushTargets = logicalTargets.filter((target) => String(target?.token || '').trim());
-  const inboxTargets = getUniqueNotificationInboxTargets(
-    Array.isArray(inboxUids)
-      ? inboxUids.map((uid) => ({ uid }))
-      : logicalTargets
+  const requestedInboxTargets = Array.isArray(inboxUids)
+    ? inboxUids.map((uid) => ({ uid }))
+    : logicalTargets;
+  const authorizedTargets = await revalidateNotificationEffectTargets({
+    targets: [...logicalTargets, ...requestedInboxTargets],
+    teamId,
+    category,
+    audienceContext,
+    requireCanonicalTeamAccess
+  });
+  const authorizedUserIds = new Set(
+    authorizedTargets.map((target) => String(target?.uid || '').trim()).filter(Boolean)
+  );
+  let pushTargets = logicalTargets.filter((target) => (
+    authorizedUserIds.has(String(target?.uid || '').trim())
+    && String(target?.token || '').trim()
+  ));
+  let inboxTargets = getUniqueNotificationInboxTargets(
+    requestedInboxTargets.filter((target) => authorizedUserIds.has(String(target?.uid || '').trim()))
   );
   if (!pushTargets.length && !inboxTargets.length) return null;
+
+  // Callers that need durable dedup can commit their marker after the final
+  // authorization check but before any inbox or push effect becomes visible.
+  if (typeof beforeEffects === 'function') {
+    const beforeEffectsResult = await beforeEffects({ authorizedTargets, pushTargets, inboxTargets });
+    if (beforeEffectsResult === false) return null;
+    if (Array.isArray(beforeEffectsResult?.allowedUserIds)) {
+      const allowedUserIds = new Set(
+        beforeEffectsResult.allowedUserIds.map((uid) => String(uid || '').trim()).filter(Boolean)
+      );
+      pushTargets = pushTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      inboxTargets = inboxTargets.filter((target) => allowedUserIds.has(String(target?.uid || '').trim()));
+      if (!pushTargets.length && !inboxTargets.length) return null;
+    }
+  }
+  if (typeof onEffectsStarting === 'function') {
+    const canStartEffects = await onEffectsStarting();
+    if (canStartEffects === false) {
+      const effectsStartError = new Error('Notification effects could not acquire their delivery boundary.');
+      effectsStartError.code = 'notification/effects-start-failed';
+      throw effectsStartError;
+    }
+  }
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
@@ -12051,6 +12356,9 @@ function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
     .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
 }
 
+const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;
+const FEE_REMINDER_STALE_RECOVERY_GRACE_MS = 48 * 60 * 60 * 1000;
+
 exports._internal = {
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
@@ -12060,6 +12368,7 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
   sendPracticePacketDueTomorrowReminders,
@@ -12068,6 +12377,12 @@ exports._internal = {
   isFeeDueReminderCandidateEligible,
   buildFeeReminderNotificationBody,
   resolveEligibleFeeReminderRecipient,
+  claimFeeDueReminder,
+  markFeeDueReminderClaimSent,
+  releaseFeeDueReminderClaim,
+  finalizeFeeDueReminderClaim,
+  FEE_REMINDER_CLAIM_LEASE_MS,
+  FEE_REMINDER_STALE_RECOVERY_GRACE_MS,
   FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
   NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
   NOTIFICATION_INBOX_WRITE_CONCURRENCY,
@@ -12082,7 +12397,7 @@ exports.sweepStaleNotificationDeviceTokens = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sweepStaleNotificationDeviceTokens());
 
-exports.notifyOfficiatingNotificationCreated = functions.firestore
+exports.notifyOfficiatingNotificationCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/officiatingNotifications/{notificationId}')
   .onCreate(async (snapshot, context) => {
     const record = snapshot.data() || {};
@@ -12106,7 +12421,7 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
     });
   });
 
-exports.notifyOpenOfficiatingSlots = functions.firestore
+exports.notifyOpenOfficiatingSlots = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onWrite(async (change, context) => {
     if (!change.after?.exists) return null;
@@ -12151,7 +12466,7 @@ exports.queueTeamMediaNotificationBatch = functions.firestore
     return null;
   });
 
-exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub
+exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .timeZone('America/Chicago')
   .onRun(() => dispatchDueTeamMediaNotificationBatches());
@@ -12502,6 +12817,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
         } catch (pushError) {
           rsvpPushError = pushError;
           console.error('Failed to send RSVP reminder push notifications', { teamId, gameId, error: pushError });
+          if (isNotificationAuthResolutionFailure(pushError)) throw pushError;
         }
         await markReminderSent(eventRef, claimId, {
           ...sendResult,
@@ -12529,6 +12845,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       } catch (error) {
         await markReminderPendingAfterFailure(eventRef, claimId, error);
         console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+        if (isNotificationAuthResolutionFailure(error)) throw error;
         return null;
       }
     }
@@ -12537,11 +12854,11 @@ async function dispatchDuePreEventReminders(now = new Date()) {
   return drainSummary.results.filter(Boolean);
 }
 
-exports.dispatchDuePreEventReminders = functions.pubsub
+exports.dispatchDuePreEventReminders = retryableNotificationFunctions.pubsub
   .schedule('every 15 minutes')
   .onRun(() => dispatchDuePreEventReminders());
 
-exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
+exports.queueDueRegistrationFailedPaymentReminders = retryableNotificationFunctions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
@@ -12762,6 +13079,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
             playerId,
             error: error?.message || error
           });
+          if (isNotificationAuthResolutionFailure(error)) throw error;
         }
       }
     }
@@ -12830,7 +13148,7 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
   return results;
 }
 
-exports.sendPracticePacketDueTomorrowReminders = functions.pubsub
+exports.sendPracticePacketDueTomorrowReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendPracticePacketDueTomorrowReminders());
 
@@ -12879,7 +13197,8 @@ function getFeeReminderDueDateMillis(recipient = {}) {
 
 function isFeeDueReminderCandidateEligible(recipient = {}, {
   nowMillis = Date.now(),
-  reminderThresholdHours = 72
+  reminderThresholdHours = 72,
+  allowRecentlyOverdueRecovery = false
 } = {}) {
   const status = String(recipient?.status || '').trim().toLowerCase();
   if (!['unpaid', 'pending'].includes(status)) return false;
@@ -12889,7 +13208,13 @@ function isFeeDueReminderCandidateEligible(recipient = {}, {
   if (!Number.isFinite(dueDateMillis)) return false;
 
   const effectiveNowMillis = Number(nowMillis);
-  if (!Number.isFinite(effectiveNowMillis) || dueDateMillis < effectiveNowMillis) return false;
+  if (!Number.isFinite(effectiveNowMillis)) return false;
+  if (dueDateMillis < effectiveNowMillis) {
+    if (
+      !allowRecentlyOverdueRecovery
+      || dueDateMillis < effectiveNowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+    ) return false;
+  }
 
   const reminderThresholdMillis = Number(reminderThresholdHours) * 60 * 60 * 1000;
   if (!Number.isFinite(reminderThresholdMillis) || reminderThresholdMillis <= 0) return false;
@@ -12927,9 +13252,14 @@ async function resolveEligibleFeeReminderRecipient({
   recipientId,
   recipient,
   nowMillis,
-  reminderThresholdHours
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
 }) {
-  if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {
+  if (!isFeeDueReminderCandidateEligible(recipient, {
+    nowMillis,
+    reminderThresholdHours,
+    allowRecentlyOverdueRecovery
+  })) {
     return null;
   }
 
@@ -12950,27 +13280,394 @@ async function resolveEligibleFeeReminderRecipient({
   };
 }
 
+function buildFeeReminderClaimId() {
+  return `fee-reminder-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
+}
+
+function isFeeReminderDeliveryClaimActive(recipient = {}, nowMillis = Date.now()) {
+  const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+  if (!existingClaimId) return false;
+  const existingClaimExpiresAtMillis = Number(recipient.reminderDeliveryClaimExpiresAtMillis);
+  const existingClaimDate = coerceDate(recipient.reminderDeliveryClaimedAt);
+  const existingClaimMillis = existingClaimDate?.getTime();
+  return Number.isFinite(existingClaimExpiresAtMillis)
+    ? existingClaimExpiresAtMillis > nowMillis
+    : !Number.isFinite(existingClaimMillis)
+      || existingClaimMillis > nowMillis - FEE_REMINDER_CLAIM_LEASE_MS;
+}
+
+async function claimFeeDueReminder(recipientRef, {
+  nowMillis,
+  reminderThresholdHours,
+  allowRecentlyOverdueRecovery = false
+}) {
+  const claimId = buildFeeReminderClaimId();
+  let claimResult;
+  try {
+    claimResult = await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || !isFeeDueReminderCandidateEligible(recipient, {
+        nowMillis,
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
+      })) {
+        return null;
+      }
+
+      const existingClaimId = String(recipient.reminderDeliveryClaimId || '').trim();
+      const existingClaimIsActive = isFeeReminderDeliveryClaimActive(recipient, nowMillis);
+      if (existingClaimIsActive) {
+        if (existingClaimId === claimId) return claimId;
+        return { activeClaimId: existingClaimId };
+      }
+
+      transaction.update(recipientRef, {
+        reminderDeliveryClaimId: claimId,
+        reminderDeliveryClaimedAt: admin.firestore.Timestamp.fromMillis(nowMillis),
+        reminderDeliveryClaimExpiresAtMillis: nowMillis + FEE_REMINDER_CLAIM_LEASE_MS
+      });
+      return claimId;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (reconciledRecipient.reminderDeliveryClaimId === claimId) return claimId;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder claim acquisition', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    error.code = error.code || 'fee-reminder/pre-effect-failed';
+    error.feeReminderPreEffectFailed = true;
+    throw error;
+  }
+
+  if (claimResult && typeof claimResult === 'object' && claimResult.activeClaimId) {
+    const activeClaimError = new Error('Fee reminder delivery is already leased by another attempt.');
+    activeClaimError.code = 'fee-reminder/claim-active';
+    activeClaimError.feeReminderClaimActive = true;
+    throw activeClaimError;
+  }
+  return claimResult;
+}
+
+function isFeeReminderClaimActiveFailure(error) {
+  return error?.feeReminderClaimActive === true || error?.code === 'fee-reminder/claim-active';
+}
+
+function isFeeReminderPreEffectFailure(error) {
+  return error?.feeReminderPreEffectFailed === true || error?.code === 'fee-reminder/pre-effect-failed';
+}
+
+function feeReminderSentMarkerBelongsToClaim(recipient = {}, claimId, reminderThresholdHours) {
+  return recipient.reminderDeliveryClaimId === claimId
+    && recipient.reminderSentClaimId === claimId
+    && wasFeeReminderSentForThreshold(recipient, reminderThresholdHours);
+}
+
+function getFeeReminderSentTargetUserIds(recipient = {}, authorizedUserIdSet = new Set()) {
+  return normalizeNotificationAudienceUserIds(recipient.reminderSentTargetUserIds)
+    .filter((uid) => authorizedUserIdSet.has(uid));
+}
+
+async function markFeeDueReminderClaimSent(
+  recipientRef,
+  claimId,
+  {
+    nowMillis,
+    reminderThresholdHours,
+    teamId,
+    authorizedPayerUserIds = [],
+    allowRecentlyOverdueRecovery = false
+  }
+) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) return false;
+      const authorizedUserIdSet = new Set(
+        (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+          .map((uid) => String(uid || '').trim())
+          .filter(Boolean)
+      );
+      if (feeReminderSentMarkerBelongsToClaim(recipient, claimId, reminderThresholdHours)) {
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(recipient, authorizedUserIdSet);
+        return reconciledTargetUserIds.length ? reconciledTargetUserIds : false;
+      }
+      if (
+        wasFeeReminderSentForThreshold(recipient, reminderThresholdHours)
+        || !isFeeDueReminderCandidateEligible(recipient, {
+          nowMillis,
+          reminderThresholdHours,
+          allowRecentlyOverdueRecovery
+        })
+      ) {
+        return false;
+      }
+
+      if (!authorizedUserIdSet.size) return false;
+
+      const playerKey = getFeeReminderPlayerKey(recipient, teamId);
+      let deliverablePayerUserIds = [];
+      if (playerKey) {
+        const [playerTeamId, playerId] = playerKey.split('::');
+        if (!playerTeamId || playerTeamId !== String(teamId || '').trim() || !playerId) return false;
+        const playerRef = firestore.doc(`teams/${playerTeamId}/players/${playerId}`);
+        const linkedParentsQuery = firestore.collection('users')
+          .where('parentPlayerKeys', 'array-contains', playerKey);
+        const [playerSnap, linkedParentsSnap] = await Promise.all([
+          transaction.get(playerRef),
+          transaction.get(linkedParentsQuery)
+        ]);
+        const player = playerSnap.exists ? (playerSnap.data() || {}) : {};
+        if (!playerSnap.exists || player.active === false) return false;
+        const linkedParentUserIds = new Set(linkedParentsSnap.docs.map((docSnap) => docSnap.id));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => linkedParentUserIds.has(uid));
+      } else {
+        const directPayerIds = new Set(buildFeeReminderCandidateUserIds(recipient));
+        deliverablePayerUserIds = [...authorizedUserIdSet]
+          .filter((uid) => directPayerIds.has(uid));
+      }
+      if (!deliverablePayerUserIds.length) return false;
+
+      transaction.update(recipientRef, {
+        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        reminderThresholdHours,
+        reminderSentClaimId: claimId,
+        reminderSentTargetUserIds: deliverablePayerUserIds
+      });
+      return deliverablePayerUserIds;
+    });
+  } catch (error) {
+    // A transaction commit can succeed even when its acknowledgement is lost.
+    // Reconcile the claim-owned marker before treating the pre-effect write as failed.
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (feeReminderSentMarkerBelongsToClaim(
+        reconciledRecipient,
+        claimId,
+        reminderThresholdHours
+      )) {
+        const authorizedUserIdSet = new Set(
+          (Array.isArray(authorizedPayerUserIds) ? authorizedPayerUserIds : [])
+            .map((uid) => String(uid || '').trim())
+            .filter(Boolean)
+        );
+        const reconciledTargetUserIds = getFeeReminderSentTargetUserIds(
+          reconciledRecipient,
+          authorizedUserIdSet
+        );
+        if (reconciledTargetUserIds.length) return reconciledTargetUserIds;
+      }
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder sent marker', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function markFeeDueReminderEffectsStarted(recipientRef, claimId) {
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const recipientSnap = await transaction.get(recipientRef);
+      const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+      if (
+        !recipientSnap.exists
+        || recipient.reminderDeliveryClaimId !== claimId
+        || recipient.reminderSentClaimId !== claimId
+      ) return false;
+      if (recipient.reminderEffectsStartedAt) return true;
+      transaction.update(recipientRef, {
+        reminderEffectsStartedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      return true;
+    });
+  } catch (error) {
+    try {
+      const reconciledSnap = await recipientRef.get();
+      const reconciledRecipient = reconciledSnap.exists ? (reconciledSnap.data() || {}) : {};
+      if (
+        reconciledRecipient.reminderDeliveryClaimId === claimId
+        && reconciledRecipient.reminderSentClaimId === claimId
+        && reconciledRecipient.reminderEffectsStartedAt
+      ) return true;
+    } catch (reconciliationError) {
+      functions.logger.error('Failed to reconcile fee reminder effects boundary', {
+        claimId,
+        error: reconciliationError?.message || String(reconciliationError || 'Unknown error')
+      });
+    }
+    throw error;
+  }
+}
+
+async function releaseFeeDueReminderClaim(recipientRef, claimId, error = null, {
+  requireExpiredAtMillis = null,
+  requireNoEffectsStarted = false,
+  requirePreparedMarker = false
+} = {}) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
+    }
+    if (requireNoEffectsStarted && recipient.reminderEffectsStartedAt) return false;
+    if (
+      requireExpiredAtMillis !== null
+      && Number.isFinite(Number(requireExpiredAtMillis))
+      && isFeeReminderDeliveryClaimActive(recipient, Number(requireExpiredAtMillis))
+    ) return false;
+    if (
+      requirePreparedMarker
+      && (
+        recipient.reminderSentClaimId !== claimId
+        || !recipient.reminderSentAt
+      )
+    ) return false;
+
+    transaction.update(recipientRef, {
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      ...(recipient.reminderSentClaimId === claimId ? {
+        reminderSentAt: admin.firestore.FieldValue.delete(),
+        reminderThresholdHours: admin.firestore.FieldValue.delete(),
+        reminderSentClaimId: admin.firestore.FieldValue.delete(),
+        reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+        reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
+      } : {}),
+      ...(error ? {
+        reminderLastError: String(error?.message || error || 'Unknown fee reminder error').slice(0, 500)
+      } : {})
+    });
+    return true;
+  });
+}
+
+async function finalizeFeeDueReminderClaim(recipientRef, claimId, {
+  error = null
+} = {}) {
+  return firestore.runTransaction(async (transaction) => {
+    const recipientSnap = await transaction.get(recipientRef);
+    const recipient = recipientSnap.exists ? (recipientSnap.data() || {}) : {};
+    if (!recipientSnap.exists || recipient.reminderDeliveryClaimId !== claimId) {
+      return false;
+    }
+
+    const update = {
+      reminderDeliveryClaimId: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimedAt: admin.firestore.FieldValue.delete(),
+      reminderDeliveryClaimExpiresAtMillis: admin.firestore.FieldValue.delete(),
+      reminderSentClaimId: admin.firestore.FieldValue.delete(),
+      reminderSentTargetUserIds: admin.firestore.FieldValue.delete(),
+      reminderEffectsStartedAt: admin.firestore.FieldValue.delete()
+    };
+    if (error) {
+      update.reminderLastError = String(error?.message || error || 'Unknown fee reminder error').slice(0, 500);
+    } else {
+      update.reminderLastError = admin.firestore.FieldValue.delete();
+    }
+    transaction.update(recipientRef, update);
+    return true;
+  });
+}
+
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
   const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
 
-  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
-  const snap = await firestore.collectionGroup('feeRecipients')
-    .where('status', 'in', ['unpaid', 'pending'])
-    .where('dueDate', '>=', now)
-    .where('dueDate', '<=', maxReminderThresholdLater)
-    .get();
+  // Keep leased recipients in the retry set even if they cross their due time
+  // while a crashed attempt's lease is active.
+  const [upcomingSnap, leasedSnap] = await Promise.all([
+    firestore.collectionGroup('feeRecipients')
+      .where('status', 'in', ['unpaid', 'pending'])
+      .where('dueDate', '>=', now)
+      .where('dueDate', '<=', maxReminderThresholdLater)
+      .get(),
+    firestore.collectionGroup('feeRecipients')
+      .where('reminderDeliveryClaimExpiresAtMillis', '>', 0)
+      .get()
+  ]);
+  const reminderDocs = [...new Map(
+    [...upcomingSnap.docs, ...leasedSnap.docs].map((docSnap) => [docSnap.ref.path, docSnap])
+  ).values()];
 
-  const promises = snap.docs.map(async (doc) => {
-    const data = doc.data();
+  const promises = reminderDocs.map(async (doc) => {
+    let data = doc.data();
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
     const teamId = pathParts[1];
     const batchId = pathParts[3];
     const recipientId = pathParts[5];
     if (!teamId) return null;
+
+    let recoveredExpiredLease = false;
+    const preparedClaimId = String(data.reminderDeliveryClaimId || '').trim();
+    const hasPreparedMarker = Boolean(
+      preparedClaimId
+      && data.reminderSentClaimId === preparedClaimId
+      && data.reminderSentAt
+    );
+    if (hasPreparedMarker && data.reminderEffectsStartedAt) {
+      if (isFeeReminderDeliveryClaimActive(data, nowMillis)) return null;
+      try {
+        await finalizeFeeDueReminderClaim(doc.ref, preparedClaimId);
+        return null;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+    if (hasPreparedMarker && isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      const activeClaimError = new Error('Prepared fee reminder delivery is still leased by another attempt.');
+      activeClaimError.code = 'fee-reminder/claim-active';
+      activeClaimError.feeReminderClaimActive = true;
+      throw activeClaimError;
+    }
+    if (preparedClaimId && !isFeeReminderDeliveryClaimActive(data, nowMillis)) {
+      try {
+        const released = await releaseFeeDueReminderClaim(
+          doc.ref,
+          preparedClaimId,
+          new Error('Recovering an expired fee reminder claim with no started effects.'),
+          {
+            requireExpiredAtMillis: nowMillis,
+            requireNoEffectsStarted: true,
+            requirePreparedMarker: hasPreparedMarker
+          }
+        );
+        if (!released) {
+          return null;
+        }
+        const refreshedSnap = await doc.ref.get();
+        data = refreshedSnap.exists ? (refreshedSnap.data() || {}) : {};
+        recoveredExpiredLease = true;
+      } catch (error) {
+        error.code = error.code || 'fee-reminder/pre-effect-failed';
+        error.feeReminderPreEffectFailed = true;
+        throw error;
+      }
+    }
+
+    const dueDateMillis = getFeeReminderDueDateMillis(data);
+    const hasDeliveryLease = Boolean(String(data.reminderDeliveryClaimId || '').trim());
+    const allowRecentlyOverdueRecovery = Number.isFinite(dueDateMillis)
+      && dueDateMillis < nowMillis
+      && dueDateMillis >= nowMillis - FEE_REMINDER_STALE_RECOVERY_GRACE_MS
+      && (hasDeliveryLease || recoveredExpiredLease);
 
     let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
     if (!reminderThresholdHours) {
@@ -12990,38 +13687,109 @@ async function sendFeeUnpaidDueReminders() {
         recipientId,
         recipient: data,
         nowMillis,
-        reminderThresholdHours
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
       if (!eligibleRecipient) return null;
 
-      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
-      await doc.ref.update({
-        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
-        reminderThresholdHours
+      // Acquire a short lease without marking the reminder sent. Concurrent
+      // scheduler invocations cannot deliver the same fee recipient.
+      const claimId = await claimFeeDueReminder(doc.ref, {
+        nowMillis,
+        reminderThresholdHours,
+        allowRecentlyOverdueRecovery
       });
+      if (!claimId) return null;
 
-      await sendDirectTargetsNotification({
-        targets: eligibleRecipient.payerTargets,
-        category: 'fees',
-        title: `Reminder: ${title} is due soon`,
-        body,
-        teamId,
-        batchId,
-        recipientId,
-      });
-      return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
+      let sentMarkerCommitted = false;
+      let effectsStarted = false;
+      try {
+        await sendDirectTargetsNotification({
+          targets: eligibleRecipient.payerTargets,
+          category: 'fees',
+          title: `Reminder: ${title} is due soon`,
+          body,
+          teamId,
+          batchId,
+          recipientId,
+          requireCanonicalTeamAccess: true,
+          beforeEffects: async ({ authorizedTargets }) => {
+            const deliverablePayerUserIds = await markFeeDueReminderClaimSent(
+              doc.ref,
+              claimId,
+              {
+                nowMillis,
+                reminderThresholdHours,
+                teamId,
+                authorizedPayerUserIds: authorizedTargets.map((target) => target.uid),
+                allowRecentlyOverdueRecovery
+              }
+            );
+            sentMarkerCommitted = Array.isArray(deliverablePayerUserIds)
+              && deliverablePayerUserIds.length > 0;
+            return sentMarkerCommitted
+              ? { allowedUserIds: deliverablePayerUserIds }
+              : false;
+          },
+          onEffectsStarting: async () => {
+            effectsStarted = await markFeeDueReminderEffectsStarted(doc.ref, claimId);
+            return effectsStarted;
+          }
+        });
+        if (!sentMarkerCommitted || !effectsStarted) {
+          await releaseFeeDueReminderClaim(doc.ref, claimId);
+          return null;
+        }
+        await finalizeFeeDueReminderClaim(doc.ref, claimId);
+        return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
+      } catch (err) {
+        if (!effectsStarted && !isNotificationAuthResolutionFailure(err) && !isFeeReminderClaimActiveFailure(err)) {
+          err.code = err.code || 'fee-reminder/pre-effect-failed';
+          err.feeReminderPreEffectFailed = true;
+        }
+        try {
+          if (effectsStarted) {
+            await finalizeFeeDueReminderClaim(doc.ref, claimId, { error: err });
+          } else {
+            await releaseFeeDueReminderClaim(doc.ref, claimId, err);
+          }
+        } catch (claimError) {
+          functions.logger.error('Failed to finalize fee reminder delivery claim', {
+            teamId,
+            batchId,
+            recipientId,
+            claimId,
+            error: claimError?.message || String(claimError || 'Unknown error')
+          });
+        }
+        throw err;
+      }
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      if (
+        isNotificationAuthResolutionFailure(err)
+        || isFeeReminderClaimActiveFailure(err)
+        || isFeeReminderPreEffectFailure(err)
+      ) throw err;
       return null;
     }
   });
 
   const results = await Promise.allSettled(promises);
+  const retryableFailure = results.find((result) => (
+    result.status === 'rejected'
+    && (
+      isNotificationAuthResolutionFailure(result.reason)
+      || isFeeReminderClaimActiveFailure(result.reason)
+      || isFeeReminderPreEffectFailure(result.reason)
+    )
+  ));
+  if (retryableFailure) throw retryableFailure.reason;
   const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
-  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+  console.log(`sendFeeUnpaidDueReminders: processed ${reminderDocs.length} docs, sent ${sent} reminders`);
 }
 
-exports.sendFeeUnpaidDueReminders = functions.pubsub
+exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
 
@@ -13687,6 +14455,11 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     members = members.filter((member) => scopedParticipantUids.has(member.uid));
   }
 
+  const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(
+    members.map((member) => member.uid)
+  );
+  members = members.filter((member) => enabledMemberUserIds.has(member.uid));
+
   const [userRecords, memberPreferenceEntries] = await Promise.all([
     getUserRecordsByIds(members.map((member) => member.uid)),
     Promise.all(members.map(async (member) => {
@@ -13908,6 +14681,24 @@ async function handleTeamChatMessageCreated(snapshot, context) {
     recipientContext
   });
 
+  const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([
+    ...notificationPlan.mentionedUids,
+    ...notificationPlan.mentionInboxUids,
+    ...notificationPlan.mentionTargets.map((target) => target.uid),
+    ...notificationPlan.liveChatInboxUids,
+    ...notificationPlan.liveChatTargets.map((target) => target.uid)
+  ]);
+  notificationPlan.mentionedUids = notificationPlan.mentionedUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionInboxUids = notificationPlan.mentionInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.mentionTargets = notificationPlan.mentionTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+  notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids
+    .filter((uid) => enabledDeliveryUids.has(uid));
+  notificationPlan.liveChatTargets = notificationPlan.liveChatTargets
+    .filter((target) => enabledDeliveryUids.has(target.uid));
+
   const mentionedUids = notificationPlan.mentionedUids;
   const results = [];
 
@@ -13944,11 +14735,11 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   return results;
 }
 
-exports.notifyTeamChatMessageCreated = functions.firestore
+exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
-exports.notifyConversationChatMessageCreated = functions.firestore
+exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
@@ -14140,15 +14931,12 @@ async function requireCertificateTeamAdmin(teamId, context) {
   const team = teamSnap.data() || {};
   const user = userSnap.exists ? userSnap.data() || {} : {};
   const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
-  const adminEmails = Array.isArray(team.adminEmails)
-    ? team.adminEmails.map((email) => String(email || '').trim().toLowerCase())
-    : [];
-  const ownerEmails = [team.ownerEmail, team.ownerEmailLower]
-    .map((email) => String(email || '').trim().toLowerCase())
-    .filter(Boolean);
-  const canManage = team.ownerId === context.auth.uid ||
-    (callerEmail && (adminEmails.includes(callerEmail) || ownerEmails.includes(callerEmail))) ||
-    user.isAdmin === true;
+  const canManage = hasTeamAdminAccess({
+    team,
+    user,
+    uid: context.auth.uid,
+    email: callerEmail
+  });
   if (!canManage) {
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can save certificate defaults.');
   }
@@ -14165,16 +14953,17 @@ function getCertificateSignatureCleanupId(teamId, target = {}) {
 }
 
 async function getCertificateLegacyUploaderIds(team = {}, context = {}) {
-  const uploaderIds = new Set([
+  const uploaderIds = new Set();
+  const managerIdentifiers = [...new Map([
     String(context.auth?.uid || '').trim(),
     String(team.ownerId || '').trim()
-  ].filter(Boolean));
-  const managerEmails = getCertificateLegacyManagerEmails(team);
-  for (let offset = 0; offset < managerEmails.length; offset += 100) {
-    const result = await admin.auth().getUsers(
-      managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
-    );
-    result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
+  ].filter(Boolean).map((uid) => [`uid:${uid}`, { uid }])).values()];
+  getCertificateLegacyManagerEmails(team).forEach((email) => {
+    managerIdentifiers.push({ email });
+  });
+  for (let offset = 0; offset < managerIdentifiers.length; offset += 100) {
+    const result = await admin.auth().getUsers(managerIdentifiers.slice(offset, offset + 100));
+    getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
   }
   return [...uploaderIds];
 }
@@ -14189,7 +14978,7 @@ async function discoverCertificateLegacySignatureReferences({ defaults, teamId, 
     allowedUploaderIds: await getCertificateLegacyUploaderIds(team, context),
     lookupExistingUserIds: async (candidates) => {
       const result = await admin.auth().getUsers(candidates.map((uid) => ({ uid })));
-      return result.users.map((userRecord) => userRecord.uid);
+      return getEnabledCertificateAuthUserIds(result.users);
     },
     getObjectMetadata: async (storagePath) => {
       const [metadata] = await legacyImageBucket.file(storagePath).getMetadata();
@@ -14828,7 +15617,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   };
 });
 
-exports.notifyGameUpdated = functions.firestore
+exports.notifyGameUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -14853,20 +15642,6 @@ exports.notifyGameUpdated = functions.firestore
         });
         return null;
       }
-      const canSendLiveScore = await checkAndSetNotificationDedupKeys(teamId, category, gameId, [
-        liveScoreDedupKey,
-        liveScoreStateDedupKey
-      ]);
-      if (!canSendLiveScore) {
-        functions.logger.info('Notification dedup: skipping duplicate live score send', {
-          teamId,
-          category,
-          gameId,
-          dedupKey: liveScoreDedupKey
-        });
-        return null;
-      }
-
       return sendCategoryNotification({
         teamId,
         gameId,
@@ -14874,7 +15649,8 @@ exports.notifyGameUpdated = functions.firestore
         title: 'Live score update',
         body: `Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}`,
         actorUid,
-        dedupKey: liveScoreDedupKey
+        dedupKey: liveScoreDedupKey,
+        dedupKeys: [liveScoreDedupKey, liveScoreStateDedupKey]
       });
     }
 
@@ -14890,7 +15666,7 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
-exports.notifyLiveEventCreated = functions.firestore
+exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/liveEvents/{eventId}')
   .onCreate(async (snapshot, context) => {
     const event = snapshot.data() || {};
@@ -14913,18 +15689,6 @@ exports.notifyLiveEventCreated = functions.firestore
     const dedupKey = buildLiveEventNotificationDedupKey(event, documentEventId);
     if (!dedupKey) return null;
     const scoreStateDedupKey = buildLiveScoreStateNotificationDedupKey(event);
-    const canSend = await checkAndSetNotificationDedupKeys(teamId, 'liveScore', gameId, [dedupKey, scoreStateDedupKey]);
-    if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate live event send', {
-        teamId,
-        gameId,
-        eventId: documentEventId,
-        dedupKey,
-        scoreStateDedupKey
-      });
-      return null;
-    }
-
     return sendCategoryNotification({
       teamId,
       gameId,
@@ -14933,11 +15697,12 @@ exports.notifyLiveEventCreated = functions.firestore
       title: payload.title,
       body: payload.body,
       actorUid: getLiveEventActorUid(event),
-      dedupKey
+      dedupKey,
+      dedupKeys: [dedupKey, scoreStateDedupKey]
     });
   });
 
-const notifyGameCreated = functions.firestore
+const notifyGameCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onCreate(async (snapshot, context) => {
     const game = snapshot.data() || {};
@@ -14956,7 +15721,7 @@ const notifyGameCreated = functions.firestore
 
 exports.notifyGameCreated = notifyGameCreated;
 
-const notifyScheduleImportBatchCompleted = functions.firestore
+const notifyScheduleImportBatchCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
   .onWrite(async (change, context) => {
     const after = change.after.exists ? (change.after.data() || {}) : null;
@@ -14973,7 +15738,7 @@ const notifyScheduleImportBatchCompleted = functions.firestore
 
 exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 
-const notifyRideOfferCreated = functions.firestore
+const notifyRideOfferCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onCreate(async (snapshot, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -15010,7 +15775,7 @@ const notifyRideOfferCreated = functions.firestore
 
 exports.notifyRideOfferCreated = notifyRideOfferCreated;
 
-const notifyRideClaimCreated = functions.firestore
+const notifyRideClaimCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onCreate(async (snapshot, context) => {
     return sendRideClaimNotification(snapshot.data() || {}, context);
@@ -15018,7 +15783,7 @@ const notifyRideClaimCreated = functions.firestore
 
 exports.notifyRideClaimCreated = notifyRideClaimCreated;
 
-const notifyRideClaimUpdated = functions.firestore
+const notifyRideClaimUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onUpdate(async (change, context) => {
     const before = change.before.data() || {};
@@ -15029,7 +15794,7 @@ const notifyRideClaimUpdated = functions.firestore
 
 exports.notifyRideClaimUpdated = notifyRideClaimUpdated;
 
-const notifyRideOfferCancelled = functions.firestore
+const notifyRideOfferCancelled = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
   .onUpdate(async (change, context) => {
     if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
@@ -15141,7 +15906,7 @@ exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestCreated = functions.firestore
+exports.notifyParentMembershipRequestCreated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -15170,7 +15935,7 @@ exports.notifyParentMembershipRequestCreated = functions.firestore
     return null;
   });
 
-exports.notifyParentMembershipRequestUpdated = functions.firestore
+exports.notifyParentMembershipRequestUpdated = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15208,7 +15973,7 @@ exports.notifyParentMembershipRequestUpdated = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationSubmitted = functions.firestore
+exports.notifyRegistrationSubmitted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
@@ -15238,7 +16003,7 @@ exports.notifyRegistrationSubmitted = functions.firestore
     return null;
   });
 
-exports.notifyRegistrationStatusChanged = functions.firestore
+exports.notifyRegistrationStatusChanged = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15291,7 +16056,7 @@ exports.notifyRegistrationStatusChanged = functions.firestore
     return null;
   });
 
-exports.notifyInviteRedeemed = functions.firestore
+exports.notifyInviteRedeemed = retryableNotificationFunctions.firestore
   .document('accessCodes/{codeId}')
   .onUpdate(async (change, context) => {
     const beforeData = change.before.data() || {};
@@ -15339,7 +16104,7 @@ exports.notifyInviteRedeemed = functions.firestore
     return null;
   });
 
-exports.notifyFeeMarkedPaid = functions.firestore
+exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onWrite(async (change, context) => {
     const before = change.before.exists ? change.before.data() : null;
@@ -15424,7 +16189,7 @@ exports.notifyFeeMarkedPaid = functions.firestore
     return null;
   });
 
-exports.notifyPublishedCertificateAward = functions.firestore
+exports.notifyPublishedCertificateAward = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/certificates/{certificateId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -15486,7 +16251,7 @@ exports.notifyPublishedCertificateAward = functions.firestore
     return null;
   });
 
-exports.notifyFeeAssigned = functions.firestore
+exports.notifyFeeAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -15564,7 +16329,7 @@ exports.notifyFeeAssigned = functions.firestore
     }
   });
 
-exports.notifyPracticePacketCompleted = functions.firestore
+exports.notifyPracticePacketCompleted = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}/packetCompletions/{completionId}')
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data();
@@ -15629,7 +16394,7 @@ const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_MAX_BODY_BYTES = 4096;
 
-exports.notifyPracticePacketAssigned = functions.firestore
+exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
   .onWrite(async (change, context) => {
     const beforeData = change.before.exists ? (change.before.data() || null) : null;
@@ -16604,15 +17369,31 @@ function requireOpportunityAuth(context, { verified = false } = {}) {
 async function getOpportunityCaller(context, options = {}) {
   const uid = requireOpportunityAuth(context, options);
   const userSnap = await firestore.doc(`users/${uid}`).get();
+  // Team email authorization must match Firestore's request.auth.token.email
+  // boundary. A users/{uid}.email value can outlive an Auth email change and
+  // must never restore access that the current token no longer carries.
+  const rawEmail = String(context.auth.token?.email || '').trim();
   return {
     uid,
-    email: String(context.auth.token?.email || userSnap.data()?.email || '').trim().toLowerCase(),
+    email: rawEmail.toLowerCase(),
+    rawEmail,
     user: userSnap.exists ? userSnap.data() || {} : {}
   };
 }
 
 function isOpportunityPlatformAdmin(caller) {
   return caller?.user?.isAdmin === true;
+}
+
+function hasOpportunityTeamAdminAccess(caller, team) {
+  return hasTeamAdminAccess({
+    team,
+    // isAdmin is protected server-managed state. Email-based team access must
+    // come only from the current Auth token, never a stale users/{uid} email.
+    user: { isAdmin: isOpportunityPlatformAdmin(caller) },
+    uid: caller?.uid,
+    email: caller?.email
+  });
 }
 
 const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
@@ -16630,6 +17411,7 @@ exports.redeemFriendInvite = functions.https.onCall(redeemFriendInviteHandler);
 exports.checkAcceptedFriendMessageAccess = functions.https.onCall(
   createCheckAcceptedFriendMessageAccessHandler({
     firestore,
+    auth: admin.auth(),
     HttpsError: functions.https.HttpsError
   })
 );
@@ -16712,87 +17494,20 @@ function normalizeAuthorizedDirectAttachment(rawAttachment, { teamId, conversati
 
 exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, context = {}) => {
   await assertSensitiveEmailVerified(context, 'send-authorized-direct-message');
-  const caller = await getOpportunityCaller(context);
-  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${caller.uid}`);
+  const callerUid = requireOpportunityAuth(context);
+  assertOpportunityRateLimit(checkPublicOpportunityMessageRateLimit, context, `direct-message:${callerUid}`);
   const teamId = normalizeDirectChatId(data?.teamId, 'team');
   const conversationId = normalizeDirectChatId(data?.conversationId, 'conversation');
   const conversationRef = firestore.doc(`teams/${teamId}/chatConversations/${conversationId}`);
-  const [teamSnap, conversationSnap] = await Promise.all([
-    firestore.doc(`teams/${teamId}`).get(),
-    conversationRef.get()
-  ]);
-  if (!teamSnap.exists || !conversationSnap.exists) {
+  const initialConversationSnap = await conversationRef.get();
+  if (!initialConversationSnap.exists) {
     throwOpportunityError('not-found', 'Direct conversation not found.');
   }
-  const team = teamSnap.data() || {};
-  const conversation = conversationSnap.data() || {};
-  const directUserIds = getDirectChatUserIds(conversation);
-  if (!directUserIds.includes(caller.uid)) {
+  const initialDirectUserIds = getDirectChatUserIds(initialConversationSnap.data() || {});
+  if (!initialDirectUserIds.includes(callerUid)) {
     throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
   }
-  const recipientId = directUserIds.find((userId) => userId !== caller.uid);
-  const recipientSnap = await firestore.doc(`users/${recipientId}`).get();
-  const recipient = recipientSnap.exists ? recipientSnap.data() || {} : {};
-  let recipientEmail = String(recipient.email || recipient.profileEmail || '').trim().toLowerCase();
-  if (!recipientEmail) {
-    try {
-      const recipientAuthRecord = await admin.auth().getUser(recipientId);
-      recipientEmail = String(recipientAuthRecord?.email || '').trim().toLowerCase();
-    } catch (error) {
-      console.warn('Unable to resolve direct-message recipient auth email', recipientId, error);
-    }
-  }
-  const teamWithId = { ...team, id: teamId };
-  const callerHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: caller.user,
-    userId: caller.uid,
-    email: caller.email
-  });
-  const recipientHasAccess = hasCurrentTeamAccess({
-    team: teamWithId,
-    user: recipient,
-    userId: recipientId,
-    email: recipientEmail
-  });
-  if (!callerHasAccess || !recipientHasAccess) {
-    throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
-  }
-  if (conversation.directAccess === 'accepted_friend') {
-    const friendshipId = directUserIds.join('__');
-    if (conversation.friendshipId !== friendshipId) {
-      throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
-    }
-    const friendshipSnap = await firestore.doc(`friendships/${friendshipId}`).get();
-    if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
-      friendship: friendshipSnap.data() || {},
-      team,
-      sender: caller.user,
-      recipient,
-      senderId: caller.uid,
-      recipientId,
-      teamId,
-      senderEmail: caller.email
-    })) {
-      throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
-    }
-  } else if (conversation.directAccess === 'team_admin') {
-    const initiatorId = String(conversation.initiatedBy || '');
-    const initiator = initiatorId === caller.uid ? caller.user : initiatorId === recipientId ? recipient : null;
-    const initiatorEmail = initiatorId === caller.uid
-      ? caller.email
-      : recipientEmail;
-    if (!initiator || !hasTeamAdminAccess({
-      team,
-      user: initiator,
-      uid: initiatorId,
-      email: initiatorEmail
-    })) {
-      throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
-    }
-  } else {
-    throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
-  }
+  const recipientId = initialDirectUserIds.find((userId) => userId !== callerUid);
 
   const rawText = String(data?.text || '');
   if (rawText.length > 10000) {
@@ -16807,7 +17522,7 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const attachments = rawAttachments.map((attachment) => normalizeAuthorizedDirectAttachment(attachment, {
     teamId,
     conversationId,
-    uid: caller.uid,
+    uid: callerUid,
     now
   }));
   const requestedClientMessageId = String(data?.clientMessageId || '').trim();
@@ -16820,56 +17535,156 @@ exports.sendAuthorizedDirectMessage = functions.https.onCall(async (data, contex
   const messageRef = clientMessageId
     // Namespace idempotency keys by sender so one participant cannot replace
     // the other participant's message by guessing a client request ID.
-    ? conversationRef.collection('chatMessages').doc(`${caller.uid}__${clientMessageId}`)
+    ? conversationRef.collection('chatMessages').doc(`${callerUid}__${clientMessageId}`)
     : conversationRef.collection('chatMessages').doc();
-  const senderName = cleanOpportunityText(
-    caller.user?.fullName || caller.user?.displayName || context.auth?.token?.name,
-    160
-  ) || null;
-  const recipientParticipantIds = conversation.participantIds.filter(
-    (participantId) => normalizeDirectChatUserId(participantId) !== caller.uid
-  );
-  const message = {
-    clientMessageId: clientMessageId || null,
-    text,
-    senderId: caller.uid,
-    senderName,
-    senderEmail: caller.email || null,
-    senderPhotoUrl: cleanOpportunityText(caller.user?.photoUrl, 1000) || null,
-    attachments,
-    imageUrl: null,
-    imagePath: null,
-    imageName: null,
-    imageType: null,
-    imageSize: null,
-    createdAt: now,
-    editedAt: null,
-    deleted: false,
-    ai: false,
-    aiName: null,
-    aiQuestion: null,
-    aiMeta: null,
-    targetType: 'individuals',
-    recipientIds: recipientParticipantIds,
-    targetRole: null,
-    conversationId
-  };
-  const batch = firestore.batch();
-  // A caller-provided request ID is an idempotency key, not an edit handle.
-  // `create` keeps retries from overwriting or undeleting the original message
-  // through this Admin SDK path, while the batch preserves the conversation
-  // metadata update atomically for the first successful send.
-  batch.create(messageRef, message);
-  batch.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+
+  let callerAuthRecord;
+  let recipientAuthRecord;
   try {
-    await batch.commit();
+    [callerAuthRecord, recipientAuthRecord] = await Promise.all([
+      admin.auth().getUser(callerUid),
+      admin.auth().getUser(recipientId)
+    ]);
+  } catch (error) {
+    console.warn('Unable to resolve current direct-message participant Auth records', {
+      callerUid,
+      recipientId,
+      error
+    });
+  }
+  if (
+    callerAuthRecord?.uid !== callerUid
+    || callerAuthRecord?.disabled === true
+    || recipientAuthRecord?.uid !== recipientId
+    || recipientAuthRecord?.disabled === true
+  ) {
+    throwOpportunityError('permission-denied', 'Both participants must have active accounts to send direct messages.');
+  }
+  const callerEmail = String(callerAuthRecord.email || '').trim().toLowerCase();
+  const recipientEmail = String(recipientAuthRecord.email || '').trim().toLowerCase();
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${callerUid}`);
+  const recipientRef = firestore.doc(`users/${recipientId}`);
+
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const finalConversationSnap = await transaction.get(conversationRef);
+      if (!finalConversationSnap.exists) {
+        throwOpportunityError('not-found', 'Direct conversation not found.');
+      }
+      const conversation = finalConversationSnap.data() || {};
+      const directUserIds = getDirectChatUserIds(conversation);
+      const finalRecipientId = directUserIds.find((userId) => userId !== callerUid);
+      if (!directUserIds.includes(callerUid) || finalRecipientId !== recipientId) {
+        throwOpportunityError('permission-denied', 'You are not a participant in this direct conversation.');
+      }
+
+      const [teamSnap, callerSnap, recipientSnap] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(callerRef),
+        transaction.get(recipientRef)
+      ]);
+      if (!teamSnap.exists || !callerSnap.exists || !recipientSnap.exists) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+      const team = teamSnap.data() || {};
+      const caller = callerSnap.data() || {};
+      const recipient = recipientSnap.data() || {};
+      const teamWithId = { ...team, id: teamId };
+      const callerHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: caller,
+        userId: callerUid,
+        email: callerEmail
+      });
+      const recipientHasAccess = hasCurrentTeamAccess({
+        team: teamWithId,
+        user: recipient,
+        userId: recipientId,
+        email: recipientEmail
+      });
+      if (!callerHasAccess || !recipientHasAccess) {
+        throwOpportunityError('permission-denied', 'Both participants must still have access to this team.');
+      }
+
+      if (conversation.directAccess === 'accepted_friend') {
+        const friendshipId = directUserIds.join('__');
+        if (conversation.friendshipId !== friendshipId) {
+          throwOpportunityError('permission-denied', 'This friend conversation is no longer authorized.');
+        }
+        const friendshipSnap = await transaction.get(firestore.doc(`friendships/${friendshipId}`));
+        if (!friendshipSnap.exists || !canMessageAcceptedFriendForTeam({
+          friendship: friendshipSnap.data() || {},
+          team,
+          sender: caller,
+          recipient,
+          senderId: callerUid,
+          recipientId,
+          teamId,
+          senderEmail: callerEmail,
+          recipientEmail
+        })) {
+          throwOpportunityError('permission-denied', 'This friend connection is no longer authorized for direct messages.');
+        }
+      } else if (conversation.directAccess === 'team_admin') {
+        const initiatorId = String(conversation.initiatedBy || '');
+        const initiator = initiatorId === callerUid ? caller : initiatorId === recipientId ? recipient : null;
+        const initiatorEmail = initiatorId === callerUid ? callerEmail : recipientEmail;
+        if (!initiator || !hasTeamAdminAccess({
+          team,
+          user: initiator,
+          uid: initiatorId,
+          email: initiatorEmail
+        })) {
+          throwOpportunityError('permission-denied', 'The team administrator who started this conversation no longer has access.');
+        }
+      } else {
+        throwOpportunityError('permission-denied', 'This direct conversation is not authorized.');
+      }
+
+      const message = {
+        clientMessageId: clientMessageId || null,
+        text,
+        senderId: callerUid,
+        senderName: cleanOpportunityText(
+          caller.fullName || caller.displayName || context.auth?.token?.name,
+          160
+        ) || null,
+        senderEmail: callerEmail || null,
+        senderPhotoUrl: cleanOpportunityText(caller.photoUrl, 1000) || null,
+        attachments,
+        imageUrl: null,
+        imagePath: null,
+        imageName: null,
+        imageType: null,
+        imageSize: null,
+        createdAt: now,
+        editedAt: null,
+        deleted: false,
+        ai: false,
+        aiName: null,
+        aiQuestion: null,
+        aiMeta: null,
+        targetType: 'individuals',
+        recipientIds: conversation.participantIds.filter(
+          (participantId) => normalizeDirectChatUserId(participantId) !== callerUid
+        ),
+        targetRole: null,
+        conversationId
+      };
+      // A caller-provided request ID is an idempotency key, not an edit handle.
+      // Keep the final access checks and both writes in one transaction so a
+      // concurrent revoke retries the transaction against the new grant state.
+      transaction.create(messageRef, message);
+      transaction.update(conversationRef, { lastMessageAt: now, updatedAt: now });
+    });
   } catch (error) {
     if (!clientMessageId || !isAlreadyExistsError(error)) throw error;
     const existingSnap = await messageRef.get();
     const existingMessage = existingSnap.exists ? existingSnap.data() || {} : {};
     if (
       !existingSnap.exists ||
-      existingMessage.senderId !== caller.uid ||
+      existingMessage.senderId !== callerUid ||
       existingMessage.clientMessageId !== clientMessageId ||
       existingMessage.conversationId !== conversationId
     ) {
@@ -16986,12 +17801,7 @@ async function canManageOpportunity(caller, listing) {
   if (isOpportunityPlatformAdmin(caller) || listing.authorId === caller.uid) return true;
   if (!listing.teamId) return false;
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(listing.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function resolveOpportunityTeam(input, caller) {
@@ -17002,20 +17812,275 @@ async function resolveOpportunityTeam(input, caller) {
   if (!isOpportunityTeamDiscoverable(team)) {
     throwOpportunityError('failed-precondition', 'Only active public teams can publish public opportunities.');
   }
-  if (!hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })) {
+  if (!hasOpportunityTeamAdminAccess(caller, team)) {
     throwOpportunityError('permission-denied', 'Only a team owner or admin can publish for this team.');
   }
   return { id: teamSnap.id, ...team };
 }
 
-async function listOpportunityManagedTeamDocuments(caller) {
+async function listOpportunityManagedTeamDocuments(caller, { allowPartial = false } = {}) {
   const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
-  if (caller.email) queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get());
-  const snapshots = await Promise.all(queries);
+  if (caller.email) {
+    queries.push(
+      firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get(),
+      firestore.collection('teams').where('ownerEmailLower', '==', caller.email).get()
+    );
+    const ownerEmailCandidates = Array.from(new Set([caller.rawEmail, caller.email].filter(Boolean)));
+    ownerEmailCandidates.forEach((ownerEmail) => {
+      queries.push(firestore.collection('teams').where('ownerEmail', '==', ownerEmail).get());
+    });
+  }
+  const settledSnapshots = await Promise.allSettled(queries);
   const teams = new Map();
-  snapshots.forEach((snapshot) => snapshot.docs.forEach((docSnap) => teams.set(docSnap.id, docSnap)));
+  settledSnapshots.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap) => {
+      const team = docSnap.data() || {};
+      if (hasOpportunityTeamAdminAccess(caller, team)) {
+        teams.set(docSnap.id, docSnap);
+      }
+    });
+  });
+  teams.discoveryQueryCount = settledSnapshots.length;
+  teams.successfulDiscoveryQueryCount = settledSnapshots.filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors = settledSnapshots
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
+  teams.isPartial = settledSnapshots.some((result) => result.status === 'rejected');
+  if (teams.isPartial && !allowPartial) {
+    throw settledSnapshots.find((result) => result.status === 'rejected').reason;
+  }
   return teams;
 }
+
+function normalizeStablePrincipalUid(value) {
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  return value.length > 0 && value.length <= 128 && !value.includes('/') ? value : '';
+}
+
+async function listStaffTeamDocuments(caller) {
+  const legacyCoachInviteEvidenceLimit = 200;
+  const legacyCoachInviteTeamChunkSize = 30;
+  const legacyCoachTeamLimit = 180;
+  const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
+  const allCoachTeamIds = Array.from(new Set(
+    (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
+      .map((teamId) => String(teamId || '').trim())
+      .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
+  ));
+  const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;
+  const coachTeamIds = allCoachTeamIds.slice(0, legacyCoachTeamLimit);
+  const settledCoachTeamSnaps = await Promise.allSettled(
+    coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+  );
+  // coachOf is a server-managed legacy staff grant. Before accepting its
+  // limited projection, reject one-sided admin-invite writes whose canonical
+  // team grant is absent (revoked invites and interrupted redemption alike).
+  const loadedCoachTeamSnaps = settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+    .filter((teamSnap) => teamSnap.exists);
+  loadedCoachTeamSnaps.forEach((teamSnap) => {
+    if (!teams.has(teamSnap.id) && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {})) {
+      // Recover canonical grants whose stored email uses legacy casing and was
+      // therefore missed by Firestore's case-sensitive discovery query.
+      teams.set(teamSnap.id, teamSnap);
+    }
+  });
+  const legacyCoachCandidates = loadedCoachTeamSnaps
+    .filter((teamSnap) => !teams.has(teamSnap.id));
+  let settledCoachGrantEvidence = [];
+  let coachGrantEvidenceIsIncomplete = coachTeamIdsAreIncomplete;
+  const teamsWithCallerBoundInviteEvidence = new Set();
+  const teamsWithUnresolvedInviteEvidence = new Set();
+  if (legacyCoachCandidates.length > 0) {
+    const candidateTeamIds = legacyCoachCandidates.map((teamSnap) => teamSnap.id);
+    const candidateTeamInviteQueries = [];
+    for (let index = 0; index < candidateTeamIds.length; index += legacyCoachInviteTeamChunkSize) {
+      const teamIds = candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize);
+      candidateTeamInviteQueries.push({
+        teamIds,
+        query: firestore.collection('accessCodes')
+          .where('type', '==', 'admin_invite')
+          .where('teamId', 'in', teamIds)
+          .limit(legacyCoachInviteEvidenceLimit + 1)
+      });
+    }
+    // Candidate-team lifecycle evidence is stable across Auth email changes
+    // and bounds reads to the resources that could invalidate this response.
+    // Caller-wide email/usedBy history is neither necessary nor relevant: a
+    // long-tenured coach can have hundreds of unrelated historical invites.
+    settledCoachGrantEvidence = await Promise.allSettled(
+      candidateTeamInviteQueries.map(({ query }) => query.get())
+    );
+    settledCoachGrantEvidence.forEach((result, index) => {
+      const chunkTeamIds = candidateTeamInviteQueries[index].teamIds;
+      if (result.status === 'rejected' || result.value.size > legacyCoachInviteEvidenceLimit) {
+        coachGrantEvidenceIsIncomplete = true;
+        chunkTeamIds.forEach((teamId) => teamsWithUnresolvedInviteEvidence.add(teamId));
+        return;
+      }
+      result.value.docs.forEach((inviteDoc) => {
+        const invite = inviteDoc.data() || {};
+        const teamId = String(invite.teamId || '').trim();
+        const usedBy = normalizeStablePrincipalUid(invite.usedBy);
+        if (!teamId) return;
+        // A caller-bound usedBy proves a revoked/stale accepted grant even when
+        // that same caller originally generated the invite.
+        if (usedBy === caller.uid) {
+          teamsWithCallerBoundInviteEvidence.add(teamId);
+          return;
+        }
+        // A valid stable usedBy belonging to another principal cannot be the
+        // source of this caller's coachOf grant. generatedBy is intentionally
+        // not evidence about the recipient: historical clients allowed a team
+        // admin to issue an invite to themselves.
+        if (usedBy) return;
+        // An unbound or malformed row is deliberately fail-closed: historical
+        // pre-transaction clients could write coachOf before marking the invite,
+        // and after an Auth email change that orphan is indistinguishable from
+        // another pending invite.
+        teamsWithCallerBoundInviteEvidence.add(teamId);
+      });
+    });
+  }
+  legacyCoachCandidates.forEach((teamSnap) => {
+    if (!teamsWithCallerBoundInviteEvidence.has(teamSnap.id)
+      && !teamsWithUnresolvedInviteEvidence.has(teamSnap.id)) {
+      teams.set(teamSnap.id, teamSnap);
+    }
+  });
+  teams.discoveryQueryCount += settledCoachTeamSnaps.length;
+  teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachTeamSnaps
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
+  teams.discoveryQueryCount += settledCoachGrantEvidence.length;
+  teams.successfulDiscoveryQueryCount += settledCoachGrantEvidence
+    .filter((result) => result.status === 'fulfilled').length;
+  teams.discoveryErrors.push(...settledCoachGrantEvidence
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason));
+  teams.isPartial = teams.isPartial === true
+    || settledCoachTeamSnaps.some((result) => result.status === 'rejected')
+    || coachGrantEvidenceIsIncomplete;
+  if (teams.discoveryQueryCount > 0 && teams.successfulDiscoveryQueryCount === 0) {
+    throw teams.discoveryErrors[0] || new Error('Managed team discovery failed.');
+  }
+  return teams;
+}
+
+exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  const teamId = normalizeOpportunityTeamId(data?.teamId);
+  const targetEmail = normalizeParentInviteEmail(data?.email);
+  if (!targetEmail) {
+    throwOpportunityError('invalid-argument', 'Admin email is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const callerRef = firestore.doc(`users/${caller.uid}`);
+  const teamInviteQuery = firestore.collection('accessCodes').where('teamId', '==', teamId);
+  let targetAuthUid = '';
+  try {
+    const targetAuthUser = await admin.auth().getUserByEmail(targetEmail);
+    const resolvedUid = String(targetAuthUser?.uid || '').trim();
+    if (!resolvedUid || resolvedUid.includes('/') || resolvedUid.length > 128) {
+      throw new Error('Resolved team admin Auth user ID is invalid.');
+    }
+    targetAuthUid = resolvedUid;
+  } catch (error) {
+    if (!['auth/user-not-found', 'user-not-found', 'auth/invalid-email'].includes(String(error?.code || ''))) {
+      throw error;
+    }
+  }
+  let removedUserCount = 0;
+
+  await firestore.runTransaction(async (transaction) => {
+    const [teamSnap, callerSnap, inviteSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(callerRef),
+      transaction.get(teamInviteQuery)
+    ]);
+    if (!teamSnap.exists) throwOpportunityError('not-found', 'Team not found.');
+
+    const team = teamSnap.data() || {};
+    const currentCaller = {
+      ...caller,
+      user: callerSnap.exists ? callerSnap.data() || {} : {}
+    };
+    if (!hasOpportunityTeamAdminAccess(currentCaller, team)) {
+      throwOpportunityError('permission-denied', 'Only a team owner or admin can remove team staff.');
+    }
+
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && ownerEmails.length === 1 && ownerEmails[0] === targetEmail) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+    const callerOwnsTeam = String(team.ownerId || '').trim() === caller.uid;
+    if (caller.email === targetEmail && !callerOwnsTeam && !isOpportunityPlatformAdmin(currentCaller)) {
+      throwOpportunityError('failed-precondition', 'Team admins cannot remove their own staff access.');
+    }
+    if (targetAuthUid && String(team.ownerId || '').trim() === targetAuthUid) {
+      throwOpportunityError('failed-precondition', 'The team owner cannot be removed from staff access.');
+    }
+
+    const matchingInviteSnaps = inviteSnap.docs.filter((docSnap) => {
+      const invite = docSnap.data() || {};
+      return invite.type === 'admin_invite'
+        && normalizeParentInviteEmail(invite.email) === targetEmail;
+    });
+    const targetUserRefs = new Map();
+    // Current Auth identity and invite-bound usedBy identify principals. Mutable
+    // profile email aliases must never authorize destructive reciprocal cleanup.
+    if (targetAuthUid) {
+      const targetAuthUserRef = firestore.doc(`users/${targetAuthUid}`);
+      targetUserRefs.set(targetAuthUserRef.path, targetAuthUserRef);
+    }
+    matchingInviteSnaps.forEach((docSnap) => {
+      const usedBy = normalizeStablePrincipalUid(docSnap.data()?.usedBy);
+      if (usedBy) {
+        const userRef = firestore.doc(`users/${usedBy}`);
+        targetUserRefs.set(userRef.path, userRef);
+      }
+    });
+    const targetUserSnaps = await Promise.all(
+      [...targetUserRefs.values()].map((userRef) => transaction.get(userRef))
+    );
+    const now = admin.firestore.Timestamp.now();
+    const nextAdminEmails = Array.from(new Set(
+      (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter((email) => email && email !== targetEmail)
+    ));
+    transaction.update(teamRef, { adminEmails: nextAdminEmails, updatedAt: now });
+
+    removedUserCount = 0;
+    targetUserSnaps.forEach((userSnap) => {
+      if (!userSnap.exists) return;
+      const user = userSnap.data() || {};
+      const coachOf = Array.isArray(user.coachOf) ? user.coachOf.map(String) : [];
+      if (!coachOf.includes(teamId)) return;
+      transaction.update(userSnap.ref, {
+        coachOf: coachOf.filter((value) => value !== teamId),
+        updatedAt: now
+      });
+      removedUserCount += 1;
+    });
+    matchingInviteSnaps.forEach((inviteDocSnap) => transaction.update(inviteDocSnap.ref, {
+      revoked: true,
+      status: 'revoked',
+      revokedAt: now,
+      revokedBy: caller.uid,
+      updatedAt: now
+    }));
+  });
+
+  return { success: true, removedUserCount };
+});
 
 exports.listPublicOpportunities = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'list');
@@ -17216,6 +18281,27 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) => {
+  const caller = await getOpportunityCaller(context);
+  const staffTeams = await listStaffTeamDocuments(caller);
+  const items = Array.from(staffTeams.values())
+    .map((teamSnap) => {
+      const team = teamSnap.data() || {};
+      const canManage = hasOpportunityTeamAdminAccess(caller, team);
+      const item = canManage
+        ? serializeManagedTeamDocument(teamSnap.id, team)
+        : serializeStaffTeamProfile(teamSnap.id, team);
+      if (!item) return null;
+      return {
+        ...item,
+        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team'
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+  return { items, isPartial: staffTeams.isPartial === true };
+});
+
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');
   let teamId;
@@ -17226,10 +18312,19 @@ exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {})
   }
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   const team = teamSnap.data() || {};
-  if (!teamSnap.exists || !isOpportunityTeamDiscoverable(team)) {
+  if (!teamSnap.exists) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
-  const item = serializePublicTeamProfile(teamSnap.id, team);
+  let item = null;
+  if (context.auth?.uid) {
+    const caller = await getOpportunityCaller(context);
+    if (hasOpportunityTeamAdminAccess(caller, team)) {
+      item = serializeManagedTeamDocument(teamSnap.id, team);
+    }
+  }
+  if (!item && isOpportunityTeamDiscoverable(team)) {
+    item = serializePublicTeamProfile(teamSnap.id, team);
+  }
   if (!item) {
     throwOpportunityError('not-found', 'Public team not found.');
   }
@@ -17508,12 +18603,7 @@ async function canAccessOpportunityInquiry(caller, inquiry) {
     return Array.isArray(inquiry.participantIds) && inquiry.participantIds.includes(caller.uid);
   }
   const teamSnap = await firestore.doc(`teams/${normalizeOpportunityTeamId(inquiry.teamId)}`).get();
-  return teamSnap.exists && hasTeamAdminAccess({
-    team: teamSnap.data() || {},
-    user: caller.user,
-    uid: caller.uid,
-    email: caller.email
-  });
+  return teamSnap.exists && hasOpportunityTeamAdminAccess(caller, teamSnap.data() || {});
 }
 
 async function requireOpportunityInquiry(inquiryId, caller) {
@@ -17965,7 +19055,9 @@ exports.processAccountDeletionRequest = functions
           throw error;
         })
       ]);
-      const ownerEmail = authUser?.email || userDoc.data()?.email || snapshot.data()?.email || '';
+      // A disabled or deleted Auth identity cannot claim an ownerId-less team
+      // through stale profile/request email snapshots.
+      const ownerEmail = getCurrentEnabledAuthEmail(authUser);
       const ownedTeams = await loadOwnedTeams({ firestore, uid, email: ownerEmail });
       if (ownedTeams.length) {
         throw new Error('Account still owns one or more teams.');
