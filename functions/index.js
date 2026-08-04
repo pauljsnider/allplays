@@ -17855,12 +17855,16 @@ async function listOpportunityManagedTeamDocuments(caller, { allowPartial = fals
 
 async function listStaffTeamDocuments(caller) {
   const legacyCoachInviteEvidenceLimit = 200;
+  const legacyCoachInviteTeamChunkSize = 30;
+  const legacyCoachTeamLimit = 180;
   const teams = await listOpportunityManagedTeamDocuments(caller, { allowPartial: true });
-  const coachTeamIds = Array.from(new Set(
+  const allCoachTeamIds = Array.from(new Set(
     (Array.isArray(caller.user?.coachOf) ? caller.user.coachOf : [])
       .map((teamId) => String(teamId || '').trim())
       .filter((teamId) => /^[A-Za-z0-9_-]{1,128}$/.test(teamId))
   ));
+  const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;
+  const coachTeamIds = allCoachTeamIds.slice(0, legacyCoachTeamLimit);
   const settledCoachTeamSnaps = await Promise.allSettled(
     coachTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
   );
@@ -17881,12 +17885,23 @@ async function listStaffTeamDocuments(caller) {
   const legacyCoachCandidates = loadedCoachTeamSnaps
     .filter((teamSnap) => !teams.has(teamSnap.id));
   let settledCoachGrantEvidence = [];
-  let coachGrantEvidenceIsIncomplete = legacyCoachCandidates.length > 0 && !caller.email;
+  let coachGrantEvidenceIsIncomplete = coachTeamIdsAreIncomplete
+    || (legacyCoachCandidates.length > 0 && !caller.email);
   const teamsWithAdminInviteEvidence = new Set();
   if (legacyCoachCandidates.length > 0 && caller.email) {
     const coachInviteEmailCandidates = Array.from(new Set(
       [caller.rawEmail, caller.email].map((email) => String(email || '').trim()).filter(Boolean)
     ));
+    const candidateTeamIds = legacyCoachCandidates.map((teamSnap) => teamSnap.id);
+    const candidateTeamInviteQueries = [];
+    for (let index = 0; index < candidateTeamIds.length; index += legacyCoachInviteTeamChunkSize) {
+      candidateTeamInviteQueries.push(
+        firestore.collection('accessCodes')
+          .where('type', '==', 'admin_invite')
+          .where('teamId', 'in', candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize))
+          .limit(legacyCoachInviteEvidenceLimit + 1)
+      );
+    }
     settledCoachGrantEvidence = await Promise.allSettled([
       firestore.collection('accessCodes')
         .where('type', '==', 'admin_invite')
@@ -17897,17 +17912,28 @@ async function listStaffTeamDocuments(caller) {
         .where('type', '==', 'admin_invite')
         .where('email', 'in', coachInviteEmailCandidates)
         .limit(legacyCoachInviteEvidenceLimit + 1)
-        .get()
+        .get(),
+      ...candidateTeamInviteQueries.map((inviteQuery) => inviteQuery.get())
     ]);
     const evidenceSnapshots = settledCoachGrantEvidence
       .filter((result) => result.status === 'fulfilled')
       .map((result) => result.value);
-    coachGrantEvidenceIsIncomplete = settledCoachGrantEvidence.some((result) => result.status === 'rejected')
+    coachGrantEvidenceIsIncomplete = coachGrantEvidenceIsIncomplete
+      || settledCoachGrantEvidence.some((result) => result.status === 'rejected')
       || evidenceSnapshots.some((snapshot) => snapshot.size > legacyCoachInviteEvidenceLimit);
     if (!coachGrantEvidenceIsIncomplete) {
       evidenceSnapshots.forEach((snapshot) => snapshot.docs.forEach((inviteDoc) => {
-        const teamId = String(inviteDoc.data()?.teamId || '').trim();
-        if (teamId) teamsWithAdminInviteEvidence.add(teamId);
+        const invite = inviteDoc.data() || {};
+        const teamId = String(invite.teamId || '').trim();
+        const usedBy = String(invite.usedBy || '').trim();
+        // A legacy coachOf-only grant cannot be distinguished from a failed
+        // pre-transaction redemption when an unused invite for the candidate
+        // team outlives an Auth email change. Treat that ambiguous historical
+        // state as deny-only evidence. Current redemptions write the canonical
+        // team grant, user grant, and usedBy atomically on the server.
+        if (teamId && (usedBy === caller.uid || invite.used !== true)) {
+          teamsWithAdminInviteEvidence.add(teamId);
+        }
       }));
     }
   }

@@ -510,11 +510,11 @@ test('managed-team callables return access fields only to current managers', asy
     const evidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
         path === 'accessCodes' && filters.some(({ field, value }) => field === 'type' && value === 'admin_invite')
     ));
-    assert.equal(evidenceQueries.length, 2);
+    assert.equal(evidenceQueries.length, 3);
     assert.ok(evidenceQueries.every(({ limitCount }) => limitCount === 201));
     assert.deepEqual(
         evidenceQueries.map(({ filters }) => filters.map(({ field }) => field)),
-        [['type', 'usedBy'], ['type', 'email']]
+        [['type', 'usedBy'], ['type', 'email'], ['type', 'teamId']]
     );
 
     const privateProfile = await callables.getPublicTeamProfile(
@@ -855,6 +855,44 @@ test('managed-team discovery rejects an orphaned pre-transaction coach grant aft
     );
 });
 
+test('managed-team discovery rejects an old-email orphan after the caller changes Auth email', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/coach-1': {
+            email: 'new-coach@example.com',
+            roles: ['coach'],
+            coachOf: ['team-1']
+        },
+        'teams/team-1': {
+            name: 'Private Bears',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-1': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'old-coach@example.com',
+            used: false
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('coach-1', { email: 'new-coach@example.com' })
+    );
+
+    assert.deepEqual(managed.items, []);
+    const teamEvidenceQuery = firestore._queryLog.find(({ path, filters }) => (
+        path === 'accessCodes' && filters.some(({ field }) => field === 'teamId')
+    ));
+    assert.deepEqual(teamEvidenceQuery.filters, [
+        { field: 'type', operator: '==', value: 'admin_invite' },
+        { field: 'teamId', operator: 'in', value: ['team-1'] }
+    ]);
+    assert.equal(teamEvidenceQuery.limitCount, 201);
+});
+
 test('managed-team discovery fails closed when legacy coach grant evidence cannot be checked', async () => {
     const { callables } = loadCallables({
         'users/legacy-coach': { email: 'legacy@example.com', roles: ['coach'], coachOf: ['team-1'] },
@@ -913,8 +951,49 @@ test('managed-team discovery fails closed when invite evidence exceeds its fixed
     const evidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
         path === 'accessCodes' && filters.some(({ field, value }) => field === 'type' && value === 'admin_invite')
     ));
-    assert.equal(evidenceQueries.length, 2);
+    assert.equal(evidenceQueries.length, 3);
     assert.ok(evidenceQueries.every(({ limitCount }) => limitCount === 201));
+});
+
+test('managed-team discovery caps legacy coach candidates and candidate-team evidence queries', async () => {
+    const coachTeamIds = Array.from({ length: 181 }, (_, index) => `team-${index}`);
+    const teamDocuments = Object.fromEntries(coachTeamIds.map((teamId) => [
+        `teams/${teamId}`,
+        {
+            name: `Legacy Team ${teamId}`,
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        }
+    ]));
+    const { firestore, callables } = loadCallables({
+        ...teamDocuments,
+        'users/legacy-coach': {
+            email: 'legacy@example.com',
+            roles: ['coach'],
+            coachOf: coachTeamIds
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('legacy-coach', { email: 'legacy@example.com' })
+    );
+
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, true);
+    const teamEvidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
+        path === 'accessCodes' && filters.some(({ field }) => field === 'teamId')
+    ));
+    assert.equal(teamEvidenceQueries.length, 6);
+    assert.ok(teamEvidenceQueries.every(({ filters, limitCount }) => {
+        const teamFilter = filters.find(({ field }) => field === 'teamId');
+        return teamFilter.operator === 'in'
+            && teamFilter.value.length > 0
+            && teamFilter.value.length <= 30
+            && limitCount === 201;
+    }));
 });
 
 test('managed-team discovery reports partial instead of trusting coachOf when Auth email is absent', async () => {

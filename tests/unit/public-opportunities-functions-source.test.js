@@ -199,14 +199,18 @@ describe('public opportunity callable wiring', () => {
     );
 
     expect(resolverSource).toContain('caller.user?.coachOf');
+    expect(resolverSource).toContain('const legacyCoachTeamLimit = 180;');
+    expect(resolverSource).toContain('const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;');
     expect(resolverSource).toContain("firestore.collection('accessCodes')");
     expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
     expect(resolverSource).toContain(".where('usedBy', '==', caller.uid)");
     expect(resolverSource).toContain('[caller.rawEmail, caller.email]');
     expect(resolverSource).toContain(".where('email', 'in', coachInviteEmailCandidates)");
-    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(2);
+    expect(resolverSource).toContain(".where('teamId', 'in', candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize))");
+    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(3);
     expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain('snapshot.size > legacyCoachInviteEvidenceLimit');
+    expect(resolverSource).toContain("usedBy === caller.uid || invite.used !== true");
     expect(resolverSource).toContain('teamsWithAdminInviteEvidence.add(teamId)');
     expect(resolverSource).toContain('if (!coachGrantEvidenceIsIncomplete)');
     expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
@@ -224,6 +228,7 @@ describe('public opportunity callable wiring', () => {
 
     expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,usedBy:ASCENDING')).toBe(true);
     expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,email:ASCENDING')).toBe(true);
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,teamId:ASCENDING')).toBe(true);
   });
 
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {
