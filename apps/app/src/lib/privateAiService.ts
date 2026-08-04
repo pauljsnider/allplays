@@ -1751,7 +1751,7 @@ export async function generatePrivateAiAnswer(
       args: { range: 'upcoming', type: 'game', limit: 3 }
     }, toolContext));
     const groundedAnswer = buildGroundedNextGameAnswer(toolResults[toolResults.length - 1]);
-    if (groundedAnswer) {
+    if (groundedAnswer && !imperativeWriteRequest) {
       return { answer: groundedAnswer, toolResults };
     }
   }
