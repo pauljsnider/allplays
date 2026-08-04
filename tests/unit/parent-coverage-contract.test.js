@@ -7,6 +7,7 @@ import {
     classifyParentCoverageError,
     CONTRACT_SCHEMA_VERSION,
     interpolateTemplate,
+    parentCoverageAuthoringContext,
     parentCoverageEvidenceScope,
     redactParentCoverageValue,
     stableFailureSignature,
@@ -131,6 +132,48 @@ function validP13Contract() {
 }
 
 describe('parent coverage contract boundary', () => {
+    it('exports JSON-safe workflow-specific authoring constraints', () => {
+        const context = parentCoverageAuthoringContext('P21');
+        expect(context).toMatchObject({
+            schemaVersion: 'parent-coverage-authoring-context-v1',
+            workflowId: 'P21',
+            mode: 'reversible',
+            routes: ['/schedule/{TEAM_ID}/{EVENT_ID}']
+        });
+        expect(context.allowedActions).toContain('click');
+        expect(context.actionFields.click).toContain('mutationId');
+        expect(context.actionConstraints.click).toMatchObject({
+            phases: ['execution', 'cleanup'],
+            target: { kinds: ['role'], roles: ['button', 'link'], exact: true }
+        });
+        expect(new RegExp(
+            context.mutationTargetPatterns.primary.pattern,
+            context.mutationTargetPatterns.primary.flags
+        ).test('Create offer')).toBe(true);
+        expect(context.orderedEvidence.map(({ action }) => action).filter(Boolean)).toEqual([
+            'fill', 'click', 'click', 'click', 'click'
+        ]);
+        expect(context.reversibleClickInverses).toContainEqual(['create offer', 'cancel']);
+        expect(() => parentCoverageAuthoringContext('P99')).toThrow(/unknown parent coverage workflow/);
+        expect(JSON.parse(JSON.stringify(context))).toEqual(context);
+
+        const profile = parentCoverageAuthoringContext('P12');
+        expect(profile.actionConstraints.rememberControl).toMatchObject({
+            phases: ['execution'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
+        expect(profile.actionConstraints.restoreControl).toMatchObject({
+            phases: ['cleanup'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
+
+        const image = parentCoverageAuthoringContext('P13');
+        expect(image.actionConstraints.uploadSyntheticImage).toMatchObject({
+            phases: ['execution'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
+    });
+
     it('locks a unique ordered catalog of every initial parent workflow', () => {
         const validated = validateCatalog(catalog);
         expect(validated.workflows).toHaveLength(37);
