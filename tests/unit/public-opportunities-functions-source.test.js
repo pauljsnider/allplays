@@ -210,7 +210,7 @@ describe('public opportunity callable wiring', () => {
     expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(3);
     expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain('snapshot.size > legacyCoachInviteEvidenceLimit');
-    expect(resolverSource).toContain("usedBy === caller.uid || invite.used !== true");
+    expect(resolverSource).toContain('if (teamId) teamsWithAdminInviteEvidence.add(teamId);');
     expect(resolverSource).toContain('teamsWithAdminInviteEvidence.add(teamId)');
     expect(resolverSource).toContain('if (!coachGrantEvidenceIsIncomplete)');
     expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');

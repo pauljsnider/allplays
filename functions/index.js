@@ -17925,15 +17925,13 @@ async function listStaffTeamDocuments(caller) {
       evidenceSnapshots.forEach((snapshot) => snapshot.docs.forEach((inviteDoc) => {
         const invite = inviteDoc.data() || {};
         const teamId = String(invite.teamId || '').trim();
-        const usedBy = String(invite.usedBy || '').trim();
         // A legacy coachOf-only grant cannot be distinguished from a failed
         // pre-transaction redemption when an unused invite for the candidate
-        // team outlives an Auth email change. Treat that ambiguous historical
-        // state as deny-only evidence. Current redemptions write the canonical
+        // team outlives an Auth email change or is later consumed by another
+        // principal. Treat every lifecycle record for a noncanonical candidate
+        // team as deny-only evidence. Current redemptions write the canonical
         // team grant, user grant, and usedBy atomically on the server.
-        if (teamId && (usedBy === caller.uid || invite.used !== true)) {
-          teamsWithAdminInviteEvidence.add(teamId);
-        }
+        if (teamId) teamsWithAdminInviteEvidence.add(teamId);
       }));
     }
   }

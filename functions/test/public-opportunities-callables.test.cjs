@@ -893,6 +893,51 @@ test('managed-team discovery rejects an old-email orphan after the caller change
     assert.equal(teamEvidenceQuery.limitCount, 201);
 });
 
+test('managed-team discovery rejects candidate-team invite lifecycle evidence regardless of consumer state', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': {
+            email: 'new-coach@example.com',
+            roles: ['coach'],
+            coachOf: ['team-used-by-other', 'team-used-without-principal']
+        },
+        'teams/team-used-by-other': {
+            name: 'Used By Other',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'teams/team-used-without-principal': {
+            name: 'Used Without Principal',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-used-by-other': {
+            type: 'admin_invite',
+            teamId: 'team-used-by-other',
+            email: 'old-coach@example.com',
+            used: true,
+            usedBy: 'other-user'
+        },
+        'accessCodes/admin-invite-used-without-principal': {
+            type: 'admin_invite',
+            teamId: 'team-used-without-principal',
+            email: 'older-coach@example.com',
+            used: true
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('coach-1', { email: 'new-coach@example.com' })
+    );
+
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, false);
+});
+
 test('managed-team discovery fails closed when legacy coach grant evidence cannot be checked', async () => {
     const { callables } = loadCallables({
         'users/legacy-coach': { email: 'legacy@example.com', roles: ['coach'], coachOf: ['team-1'] },
