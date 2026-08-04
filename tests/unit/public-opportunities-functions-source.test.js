@@ -210,7 +210,8 @@ describe('public opportunity callable wiring', () => {
     expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
     expect(resolverSource).toContain('result.value.size > legacyCoachInviteEvidenceLimit');
     expect(resolverSource).toContain('if (usedBy === caller.uid)');
-    expect(resolverSource).toContain("/^[A-Za-z0-9_-]{1,128}$/.test(usedBy)");
+    expect(resolverSource).toContain('normalizeStablePrincipalUid(invite.usedBy)');
+    expect(resolverSource).not.toContain("String(invite.usedBy || '').trim()");
     expect(resolverSource).toContain('generatedBy is intentionally');
     expect(resolverSource).toContain('teamsWithCallerBoundInviteEvidence.add(teamId)');
     expect(resolverSource).toContain('teamsWithUnresolvedInviteEvidence.add(teamId)');

@@ -17853,6 +17853,11 @@ async function listOpportunityManagedTeamDocuments(caller, { allowPartial = fals
   return teams;
 }
 
+function normalizeStablePrincipalUid(value) {
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  return value.length > 0 && value.length <= 128 && !value.includes('/') ? value : '';
+}
+
 async function listStaffTeamDocuments(caller) {
   const legacyCoachInviteEvidenceLimit = 200;
   const legacyCoachInviteTeamChunkSize = 30;
@@ -17918,7 +17923,7 @@ async function listStaffTeamDocuments(caller) {
       result.value.docs.forEach((inviteDoc) => {
         const invite = inviteDoc.data() || {};
         const teamId = String(invite.teamId || '').trim();
-        const usedBy = String(invite.usedBy || '').trim();
+        const usedBy = normalizeStablePrincipalUid(invite.usedBy);
         if (!teamId) return;
         // A caller-bound usedBy proves a revoked/stale accepted grant even when
         // that same caller originally generated the invite.
@@ -17930,7 +17935,7 @@ async function listStaffTeamDocuments(caller) {
         // source of this caller's coachOf grant. generatedBy is intentionally
         // not evidence about the recipient: historical clients allowed a team
         // admin to issue an invite to themselves.
-        if (/^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) return;
+        if (usedBy) return;
         // An unbound or malformed row is deliberately fail-closed: historical
         // pre-transaction clients could write coachOf before marking the invite,
         // and after an Auth email change that orphan is indistinguishable from
@@ -18036,8 +18041,8 @@ exports.revokeTeamAdminAccess = functions.https.onCall(async (data, context = {}
       targetUserRefs.set(targetAuthUserRef.path, targetAuthUserRef);
     }
     matchingInviteSnaps.forEach((docSnap) => {
-      const usedBy = String(docSnap.data()?.usedBy || '').trim();
-      if (usedBy && /^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) {
+      const usedBy = normalizeStablePrincipalUid(docSnap.data()?.usedBy);
+      if (usedBy) {
         const userRef = firestore.doc(`users/${usedBy}`);
         targetUserRefs.set(userRef.path, userRef);
       }

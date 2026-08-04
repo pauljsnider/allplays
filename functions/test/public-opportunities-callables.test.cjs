@@ -632,6 +632,41 @@ test('team admin revocation atomically clears reciprocal coach access and accept
     );
 });
 
+test('team admin revocation accepts slash-free principal IDs and rejects non-string bindings', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'users/coach.user:1': { email: 'coach@example.com', coachOf: ['team-1'] },
+        'users/12345': { email: 'unrelated@example.com', coachOf: ['team-1'] },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com']
+        },
+        'accessCodes/dotted-principal': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 'coach.user:1'
+        },
+        'accessCodes/non-string-principal': {
+            type: 'admin_invite',
+            teamId: 'team-1',
+            email: 'coach@example.com',
+            used: true,
+            usedBy: 12345
+        }
+    });
+
+    const result = await callables.revokeTeamAdminAccess(
+        { teamId: 'team-1', email: 'coach@example.com' },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.deepEqual(result, { success: true, removedUserCount: 1 });
+    assert.deepEqual(firestore.snapshot('users/coach.user:1').coachOf, []);
+    assert.deepEqual(firestore.snapshot('users/12345').coachOf, ['team-1']);
+});
+
 test('team admin revocation clears reciprocal coach access for a current Auth grant without an invite binding', async () => {
     const { firestore, callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com' },
@@ -906,8 +941,10 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
             coachOf: [
                 'team-used-by-caller',
                 'team-used-by-other',
+                'team-used-by-dotted-principal',
                 'team-used-without-principal',
                 'team-malformed-principal',
+                'team-non-string-principal',
                 'team-outbound'
             ]
         },
@@ -932,6 +969,13 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
             isPublic: false,
             active: true
         },
+        'teams/team-used-by-dotted-principal': {
+            name: 'Used By Dotted Principal',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
         'teams/team-outbound': {
             name: 'Outbound Invite',
             ownerId: 'owner-1',
@@ -941,6 +985,13 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
         },
         'teams/team-malformed-principal': {
             name: 'Malformed Principal',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'teams/team-non-string-principal': {
+            name: 'Non-string Principal',
             ownerId: 'owner-1',
             adminEmails: [],
             isPublic: false,
@@ -961,6 +1012,13 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
             used: true,
             usedBy: 'other-user'
         },
+        'accessCodes/admin-invite-used-by-dotted-principal': {
+            type: 'admin_invite',
+            teamId: 'team-used-by-dotted-principal',
+            email: 'old-coach@example.com',
+            used: true,
+            usedBy: 'other.user:1'
+        },
         'accessCodes/admin-invite-used-without-principal': {
             type: 'admin_invite',
             teamId: 'team-used-without-principal',
@@ -980,6 +1038,13 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
             email: 'unknown-coach@example.com',
             used: true,
             usedBy: 'not/a/uid'
+        },
+        'accessCodes/admin-invite-non-string-principal': {
+            type: 'admin_invite',
+            teamId: 'team-non-string-principal',
+            email: 'unknown-coach@example.com',
+            used: true,
+            usedBy: 12345
         }
     });
 
@@ -988,7 +1053,10 @@ test('managed-team discovery rejects caller-bound or ambiguous invites without h
         authContext('coach-1', { email: 'new-coach@example.com' })
     );
 
-    assert.deepEqual(managed.items.map((team) => team.id), ['team-used-by-other']);
+    assert.deepEqual(managed.items.map((team) => team.id), [
+        'team-used-by-dotted-principal',
+        'team-used-by-other'
+    ]);
     assert.equal(managed.isPartial, false);
 });
 
