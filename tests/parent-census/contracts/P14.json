@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P14",
+  "title": "Child image and private child details restore original state",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}?section=profile"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/players/{TEAM_ID}/{PLAYER_ID}?section=profile"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Player profile",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      }
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Details",
+        "exact": true
+      },
+      "option": "private-details"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Details",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "child-profile"
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Upload image",
+        "exact": true
+      },
+      "mutationId": "child-profile",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save changes",
+        "exact": true
+      },
+      "mutationId": "child-profile"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Player profile saved.",
+        "exact": true
+      },
+      "value": "Player profile saved."
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      },
+      "mutationId": "child-profile",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Details",
+        "exact": true
+      },
+      "option": "private-details",
+      "mutationId": "child-profile"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save changes",
+        "exact": true
+      },
+      "mutationId": "child-profile"
+    }
+  ]
+}
