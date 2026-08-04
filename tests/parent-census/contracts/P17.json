@@ -1,0 +1,178 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P17",
+  "title": "RSVP notes and sibling responses restore original state",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=availability"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=availability"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Availability",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "testId",
+        "name": "family-rsvp-controls",
+        "exact": true
+      }
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "RSVP",
+        "exact": true
+      },
+      "option": "original-rsvp"
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Note",
+        "exact": true
+      },
+      "option": "original-note"
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Sibling",
+        "exact": true
+      },
+      "option": "original-sibling"
+    },
+    {
+      "action": "select",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "RSVP",
+        "exact": true
+      },
+      "option": "Going",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Note",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Sibling",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "family-rsvp",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "saved",
+        "exact": false
+      },
+      "value": "saved"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "RSVP",
+        "exact": true
+      },
+      "option": "original-rsvp",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Note",
+        "exact": true
+      },
+      "option": "original-note",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Sibling",
+        "exact": true
+      },
+      "option": "original-sibling",
+      "mutationId": "family-rsvp"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "family-rsvp"
+    }
+  ]
+}
