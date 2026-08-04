@@ -125,6 +125,10 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(ownerMigrationStep).toBeGreaterThan(ownerMigrationAuth);
         expect(ownerMigration).toBeGreaterThan(ownerMigrationStep);
         expect(ownerMigrationCleanup).toBeGreaterThan(ownerMigration);
+        expect(production.slice(ownerMigrationAuth, ownerMigrationStep)).toContain('token_format: access_token');
+        expect(production.slice(ownerMigrationStep, ownerMigrationCleanup)).toContain(
+            'GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.google_auth_owner_migration.outputs.access_token }}'
+        );
         expect(storageAuth).toBeGreaterThan(ownerMigrationCleanup);
         expect(production.slice(ownerMigrationAuth, ownerMigrationStep)).not.toContain('run:');
         expect(storageAuth).toBeGreaterThan(functionsExtract);
