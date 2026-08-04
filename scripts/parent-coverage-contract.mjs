@@ -513,6 +513,50 @@ const stepKeysByAction = new Map([
     ['logout', ['action', 'actor']]
 ]);
 
+function serializeAuthoringValue(value) {
+    if (value instanceof RegExp) {
+        return { pattern: value.source, flags: value.flags };
+    }
+    if (Array.isArray(value)) return value.map(serializeAuthoringValue);
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, child]) => [key, serializeAuthoringValue(child)])
+        );
+    }
+    return value;
+}
+
+/**
+ * Return a JSON-safe, workflow-specific view of the same trusted boundaries
+ * enforced by validateContract. Contract authors consume this instead of
+ * reconstructing private module maps from source text.
+ */
+export function parentCoverageAuthoringContext(workflowId) {
+    const capability = workflowCapabilities.get(workflowId);
+    if (!capability) throw new Error(`unknown parent coverage workflow ${workflowId}`);
+
+    const allowedActions = [...new Set([...baseWorkflowActions, ...capability.actions])];
+    const mutationTargets = mutationTargetCapabilities.get(workflowId) || {};
+    const interactionTargets = readOnlyInteractionTargetCapabilities.get(workflowId) || {};
+
+    return serializeAuthoringValue({
+        schemaVersion: 'parent-coverage-authoring-context-v1',
+        workflowId,
+        mode: capability.mode,
+        routes: capability.routes,
+        allowedActions,
+        allowedLocatorKinds: [...locatorKinds],
+        allowedRoles: [...allowedRoles],
+        actionFields: Object.fromEntries(
+            allowedActions.map((action) => [action, stepKeysByAction.get(action)])
+        ),
+        mutationTargetPatterns: mutationTargets,
+        interactionTargetPatterns: interactionTargets,
+        orderedEvidence: workflowCoverageRequirements.get(workflowId) || [],
+        reversibleClickInverses: reversibleClickInversePairs.get(workflowId) || []
+    });
+}
+
 function assertPlainObject(value, label) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         throw new Error(`${label} must be an object`);
