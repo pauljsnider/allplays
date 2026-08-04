@@ -308,7 +308,7 @@ type PrivateAiToolDefinition = {
     summary?: string;
     previewSummary?: Record<string, unknown>;
   }>;
-  resolve: (user: AuthUser, args: Record<string, unknown>) => Promise<unknown>;
+  resolve: (user: AuthUser, args: Record<string, unknown>, context?: PrivateAiToolContext) => Promise<unknown>;
 };
 
 type PrivateAiToolContext = {
@@ -316,6 +316,9 @@ type PrivateAiToolContext = {
   confirmationGroupId?: string;
   allowedToolNames?: string[];
   preparedArtifact?: PrivateAiTeamArtifactDraft;
+  requestText?: string;
+  teamId?: string;
+  teamName?: string;
 };
 
 type PrivateAiPreparedWrite = {
@@ -511,7 +514,9 @@ export async function sendPrivateAiMessage(
 
   try {
     const aiResult = await generatePrivateAiAnswer(user, question, priorMessages, {
-      conversationId: activeConversationId
+      conversationId: activeConversationId,
+      teamId: compactText(requestContext.teamId),
+      teamName: compactText(requestContext.teamName)
     });
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
@@ -1721,7 +1726,8 @@ export async function generatePrivateAiAnswer(
   const confirmationGroupId = createConfirmationGroupId();
   const toolContext = {
     ...context,
-    confirmationGroupId
+    confirmationGroupId,
+    requestText: question
   };
   const imperativeWriteRequest = looksLikeImperativePrivateAiWriteRequest(question);
   if (looksLikeFunctionalHelpQuestion(question) && !looksLikeImperativePrivateAiWriteRequest(question)) {
@@ -1738,6 +1744,16 @@ export async function generatePrivateAiAnswer(
       name: 'get_last_game',
       args: {}
     }, toolContext));
+  }
+  if (looksLikeNextGameQuestion(question)) {
+    toolResults.push(await runPrivateAiTool(user, {
+      name: 'list_schedule',
+      args: { range: 'upcoming', type: 'game', limit: 3 }
+    }, toolContext));
+    const groundedAnswer = buildGroundedNextGameAnswer(toolResults[toolResults.length - 1]);
+    if (groundedAnswer && !imperativeWriteRequest) {
+      return { answer: groundedAnswer, toolResults };
+    }
   }
   let plannerInput = buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities });
 
@@ -1937,7 +1953,7 @@ async function runPrivateAiToolInternal(
         rowCount: Array.isArray(args.rows) ? args.rows.length : 0
       });
     }
-    const data = await definition.resolve(user, args);
+    const data = await definition.resolve(user, args, context);
     scheduleImportTimer?.end({ success: true });
     if (definition.mode === 'write') {
       await savePrivateAiActionAudit(user, definition.name, args, data).catch(() => {});
@@ -1989,13 +2005,20 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   {
     name: 'list_schedule',
     mode: 'read',
-    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context.',
+    description: 'Schedule events with RSVP, rideshare, assignments, score, location, and player context. Args: range, type, teamId, teamName, playerName, limit. Include the requested team/player and game/practice scope; results report whether the matching set is complete.',
     aliases: ['get_schedule'],
-    resolve: async (user, args) => {
+    resolve: async (user, args, context) => {
       const range = compactText(args.range).toLowerCase();
-      return summarizeSchedule(await loadParentSchedule(user, {
-        includePastGames: range === 'all'
-      }), args);
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: range === 'all',
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      return summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
     }
   },
   {
@@ -2003,9 +2026,18 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
     aliases: ['last_game', 'get_previous_game'],
-    resolve: async (user, args) => summarizeLastGame(await loadParentSchedule(user, {
-      includePastGames: true
-    }), args)
+    resolve: async (user, args, context) => {
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: true,
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      return summarizeLastGame(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
+    }
   },
   {
     name: 'get_schedule_event',
@@ -2029,11 +2061,21 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
   {
     name: 'list_rsvps',
     mode: 'read',
-    description: 'RSVP status and summaries for schedule events.',
-    resolve: async (user, args) => {
-      const schedule = await loadParentSchedule(user, { includePastGames: compactText(args.range).toLowerCase() === 'all' });
+    description: 'RSVP status and summaries for schedule events. Args: range, type, teamId, teamName, playerId, playerName, limit.',
+    resolve: async (user, args, context) => {
+      const targetScope = await resolvePrivateAiScheduleTargetScope(user, args, context);
+      const schedule = await loadParentSchedule(user, {
+        includePastGames: compactText(args.range).toLowerCase() === 'all',
+        ...(targetScope.teamId ? { targetTeamId: targetScope.teamId } : {})
+      });
+      const summary = summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
+        ...args,
+        ...(targetScope.teamId ? { teamId: targetScope.teamId } : {}),
+        ...(targetScope.playerId ? { playerId: targetScope.playerId } : {})
+      }, context?.requestText));
       return {
-        events: summarizeSchedule(schedule, args).events.map((event: any) => pickFields(event, [
+        ...pickFields(summary, ['query', 'totalMatchingEvents', 'returnedEventCount', 'hasMoreEvents', 'resultComplete', 'absenceConfirmed']),
+        events: summary.events.map((event: any) => pickFields(event, [
           'eventId',
           'teamId',
           'teamName',
@@ -5366,8 +5408,10 @@ function buildPlannerPrompt({
     `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
     `Use only the available tools; never ask for or invent Firestore paths.\n` +
     `Return strict JSON only, with no markdown.\n` +
-    `If you need data, return {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","limit":8}}]}.\n` +
+    `For schedule data, include the exact requested team/player and game/practice type in list_schedule args whenever the question supplies them.\n` +
+    `Example: {"toolCalls":[{"name":"list_schedule","args":{"range":"upcoming","type":"game","teamName":"Bears","limit":8}}]}.\n` +
     `For last/previous game questions, call get_last_game. For game-specific questions, do not answer with practices as substitutes.\n` +
+    `Never claim that no matching schedule event exists unless the tool result says absenceConfirmed is true. If schedule coverage is partial, say the complete schedule could not be verified.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `Imperative requests that ask to add, invite, create, update, remove, cancel, or send something are write requests, not help questions. Call the matching write tool instead of get_help.\n` +
     (roleCapabilities.isTeamManager
@@ -5405,6 +5449,7 @@ function buildFinalAnswerPrompt({
     `If a tool result requires confirmation, state the proposed change clearly and tell the user they can reply "yes" to confirm. Do not mention internal confirmation IDs or codes.\n` +
     `For schedule confirmations, restate the team, game or practice, date and time, time zone, opponent or title, and location when those details are present. Never answer with only a confirmation instruction.\n` +
     `When the user asks for a game, answer from game records only; if only practices are available, say no matching game was found.\n` +
+    `Never claim that no matching schedule event exists unless the schedule result says absenceConfirmed is true. If coverage is incomplete, say the complete schedule could not be verified.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
@@ -5556,6 +5601,183 @@ function summarizeHome(home: any) {
   };
 }
 
+function inferPrivateAiScheduleArgs(
+  schedule: any,
+  args: Record<string, unknown>,
+  requestText = ''
+) {
+  const inferred = { ...args };
+  const normalizedRequest = normalizeScheduleMentionText(requestText);
+  const requestedType = compactText(args.type || args.eventType).toLowerCase();
+  if (!requestedType && normalizedRequest) {
+    const mentionsGame = /\b(?:game|games|match|matches)\b/.test(normalizedRequest);
+    const mentionsPractice = /\b(?:practice|practices|training|workout|workouts)\b/.test(normalizedRequest);
+    if (mentionsGame !== mentionsPractice) inferred.type = mentionsGame ? 'game' : 'practice';
+  } else if (/^(?:game|games|match|matches)$/.test(requestedType)) {
+    inferred.type = 'game';
+  } else if (/^(?:practice|practices|training|workout|workouts)$/.test(requestedType)) {
+    inferred.type = 'practice';
+  }
+
+  if (!compactText(args.teamId || args.teamName) && normalizedRequest) {
+    const team = findUniqueScheduleMention(normalizedRequest, collectScheduleTeamMentions(schedule), 'team');
+    if (team) inferred.teamId = team.id;
+  }
+  if (!compactText(args.childId || args.playerId || args.childName || args.playerName) && normalizedRequest) {
+    const player = findUniqueScheduleMention(normalizedRequest, collectSchedulePlayerMentions(schedule), 'player');
+    if (player) inferred.playerId = player.id;
+  }
+  return inferred;
+}
+
+function normalizeScheduleMentionText(value: unknown) {
+  return compactText(value)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function collectScheduleTeamMentions(schedule: any) {
+  const mentions = new Map<string, { id: string; name: string }>();
+  const add = (value: any) => {
+    const id = compactText(value?.teamId || value?.id);
+    const name = compactText(value?.teamName || value?.name);
+    if (id && name && !mentions.has(id)) mentions.set(id, { id, name });
+  };
+  (schedule?.children || []).forEach(add);
+  (schedule?.staffTeams || []).forEach(add);
+  (schedule?.events || []).forEach(add);
+  return Array.from(mentions.values());
+}
+
+function collectSchedulePlayerMentions(schedule: any) {
+  const mentions = new Map<string, { id: string; name: string }>();
+  const add = (value: any) => {
+    const id = compactText(value?.childId || value?.playerId);
+    const name = compactText(value?.childName || value?.name);
+    if (id && name && !mentions.has(id)) mentions.set(id, { id, name });
+  };
+  (schedule?.children || []).forEach(add);
+  (schedule?.events || []).forEach(add);
+  return Array.from(mentions.values());
+}
+
+function findUniqueScheduleMention<T extends { id: string; name: string }>(
+  normalizedRequest: string,
+  candidates: T[],
+  label: 'team' | 'player'
+): T | null {
+  const matches = candidates
+    .map((candidate) => ({
+      ...candidate,
+      normalizedName: normalizeScheduleMentionText(candidate.name)
+    }))
+    .filter((candidate) => {
+      if (!candidate.normalizedName) return false;
+      const paddedRequest = ` ${normalizedRequest} `;
+      if (label !== 'player' || candidate.normalizedName.includes(' ')) {
+        return paddedRequest.includes(` ${candidate.normalizedName} `);
+      }
+      return paddedRequest.includes(` ${candidate.normalizedName} s `)
+        || paddedRequest.includes(` for ${candidate.normalizedName} `)
+        || paddedRequest.includes(` player ${candidate.normalizedName} `);
+    })
+    .sort((left, right) => right.normalizedName.length - left.normalizedName.length);
+  if (!matches.length) return null;
+  const longestLength = matches[0].normalizedName.length;
+  const longestMatches = matches.filter((candidate) => candidate.normalizedName.length === longestLength);
+  if (new Set(longestMatches.map((candidate) => candidate.id)).size > 1) {
+    throw new Error(`More than one accessible ${label} matches that schedule question. Choose one ${label}.`);
+  }
+  return longestMatches[0];
+}
+
+function collectAccessibleSchedulePlayerMentions(access: AccessibleAiTeamsResult, teamId = '') {
+  return access.schedulePlayers.filter((player) => !teamId || player.teamId === teamId);
+}
+
+function resolveExplicitSchedulePlayer(
+  args: Record<string, unknown>,
+  access: AccessibleAiTeamsResult,
+  teamId = ''
+) {
+  const requestedPlayerId = compactText(args.playerId || args.childId);
+  const requestedPlayerName = normalizeScheduleMentionText(args.playerName || args.childName);
+  if (!requestedPlayerId && !requestedPlayerName) return null;
+  const candidates = collectAccessibleSchedulePlayerMentions(access, teamId)
+    .filter((candidate) => !requestedPlayerId || candidate.playerId === requestedPlayerId)
+    .filter((candidate) => !requestedPlayerName || normalizeScheduleMentionText(candidate.name) === requestedPlayerName);
+  if (candidates.length > 1) {
+    throw new Error('More than one accessible player matches that schedule request. Choose the team and player.');
+  }
+  return candidates[0] || null;
+}
+
+async function resolvePrivateAiScheduleTargetScope(
+  user: AuthUser,
+  args: Record<string, unknown>,
+  context: PrivateAiToolContext = {}
+) {
+  const normalizedRequest = normalizeScheduleMentionText(context.requestText);
+  const access = await loadAccessibleAiTeams(user);
+  const mentionedTeam = normalizedRequest
+    ? findUniqueScheduleMention(normalizedRequest, access.scheduleTeams, 'team')
+    : null;
+  const mentionedPlayer = normalizedRequest
+    ? findUniqueScheduleMention(
+        normalizedRequest,
+        collectAccessibleSchedulePlayerMentions(access),
+        'player'
+      )
+    : null;
+  const unavailablePlayer = normalizedRequest && !mentionedPlayer
+    ? findUniqueScheduleMention(normalizedRequest, access.unavailableSchedulePlayers, 'player')
+    : null;
+  if (unavailablePlayer) {
+    throw new Error('That player is not available in this account schedule. Choose an active linked player.');
+  }
+  if (mentionedTeam && mentionedPlayer && mentionedTeam.id !== mentionedPlayer.teamId) {
+    throw new Error('The named team and player do not match. Choose the correct team or player.');
+  }
+  if (mentionedTeam || mentionedPlayer) {
+    return {
+      teamId: mentionedTeam?.id || mentionedPlayer?.teamId || '',
+      playerId: mentionedPlayer?.playerId || ''
+    };
+  }
+
+  const explicitTeamId = compactText(args.teamId);
+  const explicitTeamName = compactText(args.teamName);
+  let resolvedExplicitTeamId = explicitTeamId;
+  if (!resolvedExplicitTeamId && explicitTeamName) {
+    resolvedExplicitTeamId = await resolveAccessibleTeamId(user, { teamName: explicitTeamName }) || '';
+    if (!resolvedExplicitTeamId) throw new Error(`No accessible team matches "${explicitTeamName}".`);
+  }
+  const hasExplicitPlayerSelector = Boolean(compactText(args.playerId || args.childId || args.playerName || args.childName));
+  const explicitPlayer = resolveExplicitSchedulePlayer(args, access, resolvedExplicitTeamId);
+  if (hasExplicitPlayerSelector && !explicitPlayer) {
+    throw new Error('No accessible player matches that schedule request.');
+  }
+  if (resolvedExplicitTeamId || explicitPlayer) {
+    return {
+      teamId: resolvedExplicitTeamId || explicitPlayer?.teamId || '',
+      playerId: explicitPlayer?.playerId || ''
+    };
+  }
+
+  const launcherTeamId = compactText(context.teamId);
+  if (launcherTeamId) return { teamId: launcherTeamId, playerId: '' };
+  const launcherTeamName = compactText(context.teamName);
+  if (launcherTeamName) {
+    const launcherResolvedTeamId = await resolveAccessibleTeamId(user, { teamName: launcherTeamName });
+    if (!launcherResolvedTeamId) throw new Error(`No accessible team matches "${launcherTeamName}".`);
+    return { teamId: launcherResolvedTeamId, playerId: '' };
+  }
+  return { teamId: '', playerId: '' };
+}
+
 function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   const now = new Date();
   const requestedLimit = Number(args.limit || 12);
@@ -5564,13 +5786,18 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   const eventType = compactText(args.type).toLowerCase();
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
-  const playerName = compactText(args.playerName).toLowerCase();
+  const playerId = compactText(args.playerId || args.childId);
+  const playerName = compactText(args.playerName || args.childName).toLowerCase();
 
   let events = Array.isArray(schedule.events) ? schedule.events.slice() : [];
   if (range === 'upcoming') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() >= startOfDay(now).getTime());
+    events = events
+      .filter((event: ParentScheduleEvent) => event.date.getTime() >= startOfDay(now).getTime())
+      .sort((left: ParentScheduleEvent, right: ParentScheduleEvent) => left.date.getTime() - right.date.getTime());
   } else if (range === 'recent') {
-    events = events.filter((event: ParentScheduleEvent) => event.date.getTime() < startOfDay(now).getTime()).reverse();
+    events = events
+      .filter((event: ParentScheduleEvent) => event.date.getTime() < startOfDay(now).getTime())
+      .sort((left: ParentScheduleEvent, right: ParentScheduleEvent) => right.date.getTime() - left.date.getTime());
   }
   if (eventType === 'game' || eventType === 'practice') {
     events = events.filter((event: ParentScheduleEvent) => event.type === eventType);
@@ -5581,11 +5808,32 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   if (teamName) {
     events = events.filter((event: ParentScheduleEvent) => event.teamName.toLowerCase().includes(teamName));
   }
+  if (playerId) {
+    events = events.filter((event: ParentScheduleEvent) => event.childId === playerId);
+  }
   if (playerName) {
     events = events.filter((event: ParentScheduleEvent) => event.childName.toLowerCase().includes(playerName));
   }
 
+  const totalMatchingEvents = events.length;
+  const returnedEventCount = Math.min(totalMatchingEvents, itemLimit);
+  const hasMoreEvents = totalMatchingEvents > returnedEventCount;
+  const sourceComplete = schedule?.isPartial !== true;
+
   return {
+    query: {
+      range,
+      ...(eventType ? { type: eventType } : {}),
+      ...(teamId ? { teamId } : {}),
+      ...(teamName ? { teamName } : {}),
+      ...(playerId ? { playerId } : {}),
+      ...(playerName ? { playerName } : {})
+    },
+    totalMatchingEvents,
+    returnedEventCount,
+    hasMoreEvents,
+    resultComplete: sourceComplete && !hasMoreEvents,
+    absenceConfirmed: sourceComplete && totalMatchingEvents === 0,
     children: (schedule.children || []).slice(0, 20).map((child: any) => pickFields(child, ['playerId', 'childId', 'name', 'childName', 'teamId', 'teamName'])),
     events: events.slice(0, itemLimit).map(summarizeScheduleEvent)
   };
@@ -5615,9 +5863,13 @@ function summarizeLastGame(schedule: any, args: Record<string, unknown>) {
     lastGame: pastGames[0] ? summarizeScheduleEvent(pastGames[0]) : null,
     recentGames: pastGames.slice(0, 5).map(summarizeScheduleEvent),
     upcomingGames: upcomingGames.slice(0, 3).map(summarizeScheduleEvent),
+    resultComplete: schedule?.isPartial !== true,
+    absenceConfirmed: schedule?.isPartial !== true && pastGames.length === 0,
     message: pastGames.length
       ? ''
-      : 'No past games were found for the requested player or team.'
+      : schedule?.isPartial === true
+        ? 'The complete schedule could not be verified.'
+        : 'No past games were found for the requested player or team.'
   };
 }
 
@@ -5873,8 +6125,18 @@ type AccessibleAiTeam = {
   detail: any;
 };
 
+type AccessibleAiSchedulePlayer = {
+  id: string;
+  name: string;
+  teamId: string;
+  playerId: string;
+};
+
 type AccessibleAiTeamsResult = {
   teams: AccessibleAiTeam[];
+  scheduleTeams: Array<{ id: string; name: string }>;
+  schedulePlayers: AccessibleAiSchedulePlayer[];
+  unavailableSchedulePlayers: AccessibleAiSchedulePlayer[];
   isPartial: boolean;
   partialError?: unknown;
   managerTeamsPartial: boolean;
@@ -5904,6 +6166,44 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
   const scheduleScope = scheduleScopeResult.status === 'fulfilled'
     ? scheduleScopeResult.value
     : { children: [], staffTeams: [], isPartial: true, staffTeamsPartial: true };
+  const scheduleTeams = new Map<string, { id: string; name: string }>();
+  const schedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const unavailableSchedulePlayers = new Map<string, AccessibleAiSchedulePlayer>();
+  const addScheduleTeam = (value: unknown) => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const id = compactText(candidate.teamId || candidate.id);
+    const name = compactText(candidate.teamName || candidate.name) || id;
+    if (id && name && !scheduleTeams.has(id)) scheduleTeams.set(id, { id, name });
+  };
+  const addSchedulePlayer = (value: unknown, teamIdOverride = '', teamNameOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const teamName = compactText(teamNameOverride || candidate.teamName);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id)) {
+      schedulePlayers.set(id, { id, name, teamId, playerId });
+      unavailableSchedulePlayers.delete(id);
+      addScheduleTeam({ teamId, teamName });
+    }
+  };
+  const addUnavailableSchedulePlayer = (value: unknown, teamIdOverride = '') => {
+    const candidate = (value || {}) as Record<string, unknown>;
+    const teamId = compactText(teamIdOverride || candidate.teamId);
+    const playerId = compactText(candidate.playerId || candidate.childId || candidate.id);
+    const name = compactText(candidate.playerName || candidate.childName || candidate.name);
+    const id = `${teamId}:${playerId}`;
+    if (teamId && playerId && name && !schedulePlayers.has(id) && !unavailableSchedulePlayers.has(id)) {
+      unavailableSchedulePlayers.set(id, { id, name, teamId, playerId });
+    }
+  };
+  (home.teams || []).forEach(addScheduleTeam);
+  (scheduleScope.staffTeams || []).forEach(addScheduleTeam);
+  (scheduleScope.children || []).forEach((child) => {
+    addScheduleTeam(child);
+    addSchedulePlayer(child);
+  });
   if (scheduleScope.isPartial === true) isPartial = true;
   let managerTeamsPartial = scheduleScopeResult.status === 'rejected'
     || (scheduleScope.staffTeamsPartial ?? scheduleScope.isPartial) === true;
@@ -5972,8 +6272,29 @@ async function loadAccessibleAiTeams(user: AuthUser): Promise<AccessibleAiTeamsR
       }
     }
   });
+  details.forEach((team) => {
+    addScheduleTeam({ teamId: team.teamId, teamName: team.teamName });
+    (team.detail?.linkedPlayers || []).forEach((player: unknown) => {
+      addSchedulePlayer(player, team.teamId, team.teamName);
+    });
+    if (team.canManageTeam) {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addSchedulePlayer(player, team.teamId, team.teamName);
+      });
+    } else {
+      (team.detail?.players || []).forEach((player: unknown) => {
+        addUnavailableSchedulePlayer(player, team.teamId);
+      });
+    }
+    (team.detail?.inactivePlayers || []).forEach((player: unknown) => {
+      addUnavailableSchedulePlayer(player, team.teamId);
+    });
+  });
   return {
     teams: details,
+    scheduleTeams: Array.from(scheduleTeams.values()),
+    schedulePlayers: Array.from(schedulePlayers.values()),
+    unavailableSchedulePlayers: Array.from(unavailableSchedulePlayers.values()),
     isPartial,
     managerTeamsPartial,
     ...(partialError ? { partialError } : {}),
@@ -6846,7 +7167,31 @@ function getPrivateAiPreparedWriteKey(prepared: PrivateAiPreparedWrite) {
 
 function looksLikeLastGameQuestion(question: string) {
   const text = compactText(question).toLowerCase();
-  return /\b(last|previous|most recent|latest|prior)\b/.test(text) && /\bgame|match\b/.test(text);
+  return /\b(last|previous|most recent|latest|prior)\b/.test(text) && /\b(?:game|match)\b/.test(text);
+}
+
+function looksLikeNextGameQuestion(question: string) {
+  const text = compactText(question).toLowerCase();
+  return /\b(next|upcoming)\b/.test(text) && /\b(?:game|match)\b/.test(text);
+}
+
+function buildGroundedNextGameAnswer(result: PrivateAiToolResult | undefined) {
+  if (!result?.ok || !isPlainObject(result.data)) return '';
+  const events = Array.isArray(result.data.events) ? result.data.events : [];
+  const nextGame = events.find((event) => isPlainObject(event) && compactText(event.type).toLowerCase() === 'game');
+  if (nextGame) {
+    const teamName = compactText(nextGame.teamName) || 'Your team';
+    const title = compactText(nextGame.title) || 'a game';
+    const dateLabel = compactText(nextGame.dateLabel) || compactText(nextGame.date);
+    const timeLabel = compactText(nextGame.timeLabel);
+    const location = compactText(nextGame.location);
+    const playerName = compactText(nextGame.childName);
+    return `${teamName}'s next game is ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}: ${title}${location ? ` at ${location}` : ''}${playerName ? ` for ${playerName}` : ''}.`;
+  }
+  if (result.data.absenceConfirmed === true) {
+    return 'I found no upcoming game in the complete schedule for the requested team or player.';
+  }
+  return 'I could not verify the complete schedule, so I cannot confirm the next game yet.';
 }
 
 function clampAnswer(answer: string) {
