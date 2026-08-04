@@ -1,0 +1,145 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P13",
+  "title": "Parent profile image upload and removal",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/profile/settings"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/profile/settings"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Your Account",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Profile image",
+        "exact": true
+      }
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Profile image",
+        "exact": true
+      },
+      "mutationId": "profile-image",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "profile-image"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Profile saved.",
+        "exact": true
+      },
+      "value": "Profile saved."
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      },
+      "mutationId": "profile-image",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "profile-image"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Profile saved.",
+        "exact": true
+      },
+      "value": "Profile saved."
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      }
+    }
+  ]
+}
