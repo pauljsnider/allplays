@@ -142,6 +142,10 @@ describe('parent coverage contract boundary', () => {
         });
         expect(context.allowedActions).toContain('click');
         expect(context.actionFields.click).toContain('mutationId');
+        expect(context.actionConstraints.click).toMatchObject({
+            phases: ['execution', 'cleanup'],
+            target: { kinds: ['role'], roles: ['button', 'link'], exact: true }
+        });
         expect(new RegExp(
             context.mutationTargetPatterns.primary.pattern,
             context.mutationTargetPatterns.primary.flags
@@ -152,6 +156,22 @@ describe('parent coverage contract boundary', () => {
         expect(context.reversibleClickInverses).toContainEqual(['create offer', 'cancel']);
         expect(() => parentCoverageAuthoringContext('P99')).toThrow(/unknown parent coverage workflow/);
         expect(JSON.parse(JSON.stringify(context))).toEqual(context);
+
+        const profile = parentCoverageAuthoringContext('P12');
+        expect(profile.actionConstraints.rememberControl).toMatchObject({
+            phases: ['execution'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
+        expect(profile.actionConstraints.restoreControl).toMatchObject({
+            phases: ['cleanup'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
+
+        const image = parentCoverageAuthoringContext('P13');
+        expect(image.actionConstraints.uploadSyntheticImage).toMatchObject({
+            phases: ['execution'],
+            target: { kinds: ['label', 'testId'], exact: true }
+        });
     });
 
     it('locks a unique ordered catalog of every initial parent workflow', () => {

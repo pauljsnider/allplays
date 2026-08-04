@@ -121,6 +121,19 @@ const reversibleMutationActions = new Set([
     'redeemRunScopedHouseholdInvite', 'uploadSyntheticImage', 'uploadSyntheticDocument'
 ]);
 const controlMutationActions = new Set(['fill', 'check', 'uncheck', 'select']);
+const cleanupForbiddenActions = new Set([
+    'fillActorEmail', 'fillActorPassword', 'uploadSyntheticImage',
+    'uploadSyntheticDocument', 'clickAndExpectStripeCheckout'
+]);
+const exactSemanticTargetActions = new Set([
+    'click', 'clickAndExpectGoogleAuth', 'clickAndExpectRoute',
+    'clickAndExpectDownload', 'clickAndExpectStripeCheckout'
+]);
+const exactControlTargetActions = new Set([
+    'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck',
+    'select', 'rememberControl', 'restoreControl', 'uploadSyntheticImage',
+    'uploadSyntheticDocument', 'expectUploadDenied'
+]);
 const workflowCoverageRequirements = new Map(Object.entries({
     P01: [
         { action: 'goto', actor: 'anonymous', route: /^\/accept-invite/ },
@@ -526,6 +539,49 @@ function serializeAuthoringValue(value) {
     return value;
 }
 
+function parentCoverageActionPhases(action) {
+    if (
+        cleanupForbiddenActions.has(action) ||
+        ['rememberControl', 'redeemRunScopedHouseholdInvite', 'expectUploadDenied'].includes(action)
+    ) return ['execution'];
+    if (['restoreControl', 'restoreFriendship', 'restoreHouseholdAccess'].includes(action)) {
+        return ['cleanup'];
+    }
+    return ['execution', 'cleanup'];
+}
+
+function parentCoverageActionConstraint(workflowId, capability, action) {
+    const fields = stepKeysByAction.get(action);
+    const constraint = {
+        phases: parentCoverageActionPhases(action),
+        fields
+    };
+    if (fields.includes('target')) {
+        if (exactSemanticTargetActions.has(action)) {
+            constraint.target = { kinds: ['role'], roles: ['button', 'link'], exact: true };
+        } else if (
+            exactControlTargetActions.has(action) &&
+            (capability.mode !== 'readOnly' || workflowId === 'P16' || action === 'expectUploadDenied')
+        ) {
+            constraint.target = { kinds: ['label', 'testId'], exact: true };
+        } else {
+            constraint.target = { kinds: [...locatorKinds], roles: [...allowedRoles] };
+        }
+    }
+    if (action === 'restoreFriendship') constraint.actor = 'primary';
+    if (action === 'restoreHouseholdAccess') constraint.actor = 'primary';
+    if (action === 'redeemRunScopedHouseholdInvite') {
+        constraint.actor = 'lifecycle';
+        constraint.option = 'primary';
+    }
+    if (action === 'openRunScopedShareLink') {
+        constraint.actor = 'anonymous';
+        constraint.option = 'primary';
+    }
+    if (action === 'expectUploadDenied') constraint.actor = 'primary';
+    return constraint;
+}
+
 /**
  * Return a JSON-safe, workflow-specific view of the same trusted boundaries
  * enforced by validateContract. Contract authors consume this instead of
@@ -549,6 +605,12 @@ export function parentCoverageAuthoringContext(workflowId) {
         allowedRoles: [...allowedRoles],
         actionFields: Object.fromEntries(
             allowedActions.map((action) => [action, stepKeysByAction.get(action)])
+        ),
+        actionConstraints: Object.fromEntries(
+            allowedActions.map((action) => [
+                action,
+                parentCoverageActionConstraint(workflowId, capability, action)
+            ])
         ),
         mutationTargetPatterns: mutationTargets,
         interactionTargetPatterns: interactionTargets,
@@ -756,7 +818,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     }
     if (
         phase === 'cleanup' &&
-        ['fillActorEmail', 'fillActorPassword', 'uploadSyntheticImage', 'uploadSyntheticDocument', 'clickAndExpectStripeCheckout'].includes(step.action)
+        cleanupForbiddenActions.has(step.action)
     ) {
         throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
@@ -811,14 +873,14 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         ) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${actor} mutation capability`);
         }
-        if (['click'].includes(step.action) && (
+        if (step.action === 'click' && (
             step.target?.kind !== 'role' ||
             !['button', 'link'].includes(step.target?.role) ||
             step.target?.exact !== true
         )) {
             throw new Error(`${phase} click targets must be exact semantic buttons or links`);
         }
-        if (['fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck', 'select', 'uploadSyntheticImage', 'uploadSyntheticDocument'].includes(step.action) && (
+        if (exactControlTargetActions.has(step.action) && !['rememberControl', 'restoreControl', 'expectUploadDenied'].includes(step.action) && (
             !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
         )) {
             throw new Error(`${phase} control mutations must use exact label or testId targets`);
@@ -868,7 +930,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
             throw new Error(`${phase} transient interaction is outside the trusted ${workflowId}/${actor} capability`);
         }
     }
-    if (['clickAndExpectGoogleAuth', 'clickAndExpectRoute', 'clickAndExpectDownload', 'clickAndExpectStripeCheckout'].includes(step.action)) {
+    if (exactSemanticTargetActions.has(step.action) && step.action !== 'click') {
         const targetCapability = readOnlyInteractionTargetCapabilities.get(workflowId)?.[step.action];
         if (!targetCapability?.test(String(step.target?.name || ''))) {
             throw new Error(`${phase} target is outside the trusted ${workflowId}/${step.action} capability`);
