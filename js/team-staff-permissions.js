@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=443332';
-import { normalizeTeamPermissions } from './team-access.js?v=44337';
+import { escapeHtml } from './utils.js?v=443333';
+import { normalizeTeamPermissions } from './team-access.js?v=44338';
 
 function normalizeEmail(value) {
     return String(value || '').trim().toLowerCase();

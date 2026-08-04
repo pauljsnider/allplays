@@ -247,9 +247,13 @@ function makeFunctionsStub() {
         },
         timeZone() {
             return this;
+        },
+        user() {
+            return this;
         }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
 

@@ -2,9 +2,15 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate, buildTeamFeeRecipientRecords } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate, buildTeamFeeRecipientRecords, isTeamFeeAdmin } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
+    it('does not grant fee administration from a stale profile email', () => {
+        const team = { ownerId: 'owner-1', adminEmails: ['coach@example.com'] };
+        expect(isTeamFeeAdmin(team, { uid: 'former-coach', profileEmail: 'coach@example.com' })).toBe(false);
+        expect(isTeamFeeAdmin(team, { uid: 'coach-1', email: 'coach@example.com' })).toBe(true);
+    });
+
     it('reinitializes when same-page manage links update the hash', () => {
         const registrations = [];
         const fakeWindow = {
@@ -21,8 +27,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=4433154')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=443327"></script>');
+        expect(adminSource).toContain("import('./db.js?v=4433155')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=443328"></script>');
     });
 
     it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {

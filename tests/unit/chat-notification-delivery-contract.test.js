@@ -9,8 +9,36 @@ const messagesSource = [
 ].join('\n');
 
 describe('team chat notification delivery contract', () => {
+    it('retries transient Auth resolution and makes notification event triggers durable', () => {
+        expect(functionsSource).toContain('const retryableNotificationFunctions = functions.runWith({ failurePolicy: true });');
+        expect(functionsSource).toContain('for (let attempt = 0; attempt < 3; attempt += 1)');
+        expect(functionsSource).toContain('taggedError.notificationAuthResolutionFailed = true;');
+        expect((functionsSource.match(/if \(isNotificationAuthResolutionFailure\([^)]*\)\) throw/g) || []).length).toBeGreaterThanOrEqual(4);
+        expect(functionsSource).toContain('reminderDeliveryClaimId: claimId');
+        const feeResolverStart = functionsSource.indexOf('async function resolveEligibleFeeReminderRecipient({');
+        const feeReminderStart = functionsSource.indexOf('async function sendFeeUnpaidDueReminders()');
+        const feeReminderEnd = functionsSource.indexOf('exports.sendFeeUnpaidDueReminders =', feeReminderStart);
+        const feeResolverSource = functionsSource.slice(feeResolverStart, feeReminderStart);
+        const feeReminderSource = functionsSource.slice(feeReminderStart, feeReminderEnd);
+        expect(functionsSource).toContain('const FEE_REMINDER_CLAIM_LEASE_MS = 10 * 60 * 1000;');
+        expect(feeReminderSource.indexOf('await claimFeeDueReminder(doc.ref, {'))
+            .toBeLessThan(feeReminderSource.indexOf('requireCanonicalTeamAccess: true'));
+        expect(feeReminderSource.indexOf('requireCanonicalTeamAccess: true'))
+            .toBeLessThan(feeReminderSource.indexOf('beforeEffects: async ({ authorizedTargets }) => {'));
+        expect(feeReminderSource).toContain('await markFeeDueReminderClaimSent(');
+        expect(feeReminderSource).toContain('await releaseFeeDueReminderClaim(doc.ref, claimId, err)');
+        expect(feeReminderSource).not.toContain('releaseReminder: true');
+        expect(functionsSource).toContain('exports.notifyTeamChatMessageCreated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyGameUpdated = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub');
+    });
+
     it('builds one recipient context for mentions and live chat with per-conversation mute state', () => {
         expect(functionsSource).toContain('async function buildTeamChatNotificationContext(teamId, options = {})');
+        expect(functionsSource).toContain('const enabledMemberUserIds = await getEnabledNotificationAuthUserIds(');
         expect(functionsSource).toContain('const { includeMentions = true, conversationId = null } = options || {};');
         expect(functionsSource).toContain("const { targetType = 'full_team', recipientIds = [] } = options || {};");
         expect(functionsSource).toContain('const normalizedConversationId = normalizeTeamChatConversationId(conversationId);');
@@ -23,6 +51,9 @@ describe('team chat notification delivery contract', () => {
     });
 
     it('sends mention pushes only to mention-enabled users and falls other mentions back to live chat', () => {
+        expect(functionsSource).toContain('const enabledDeliveryUids = await getEnabledNotificationAuthUserIds([');
+        expect(functionsSource).toContain('notificationPlan.liveChatInboxUids = notificationPlan.liveChatInboxUids');
+        expect(functionsSource).toContain('notificationPlan.liveChatTargets = notificationPlan.liveChatTargets');
         expect(functionsSource).toContain('function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext })');
         expect(functionsSource).toContain('const members = Array.isArray(context.members) ? context.members : [];');
         expect(functionsSource).toContain('const mentionedUids = text');

@@ -19,7 +19,8 @@ describe('admin invite server-authoritative redemption', () => {
         expect(handlerSource).toContain('codeData.used');
         expect(handlerSource).toContain('isParentInviteExpired(codeData.expiresAt)');
         expect(handlerSource).toContain('invitedEmail !== signedInEmail');
-        expect(handlerSource).toContain('context.auth.token?.email || userData.email');
+        expect(handlerSource).toContain('normalizeParentInviteEmail(context.auth.token?.email)');
+        expect(handlerSource).not.toContain('context.auth.token?.email || userData.email');
         expect(handlerSource).not.toContain('data?.userEmail || data?.authEmail');
         expect(handlerSource).toContain('userId !== context.auth.uid');
         expect(handlerSource).toContain('adminEmails: appendUniqueValue');
@@ -60,6 +61,27 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'admin-1',
             authUser: { uid: 'admin-1', email: 'ADMIN@example.com' }
         }, true],
+        ['legacy owner with conflicting normalized aliases fails closed', {
+            team: {
+                ownerEmailLower: 'stale@example.com',
+                ownerEmail: 'legacy-owner@example.com',
+                adminEmails: []
+            },
+            user: {},
+            uid: 'legacy-owner-1',
+            authUser: { uid: 'legacy-owner-1', email: 'LEGACY-OWNER@example.com' }
+        }, false],
+        ['former owner email when canonical owner differs', {
+            team: {
+                ownerId: 'current-owner-1',
+                ownerEmailLower: 'former-owner@example.com',
+                ownerEmail: 'former-owner@example.com',
+                adminEmails: []
+            },
+            user: {},
+            uid: 'former-owner-1',
+            authUser: { uid: 'former-owner-1', email: 'FORMER-OWNER@example.com' }
+        }, false],
         ['current global administrator', {
             team: { ownerId: 'owner-1', adminEmails: [] },
             user: { isAdmin: true },
@@ -104,6 +126,21 @@ describe('admin invite server-authoritative redemption', () => {
             uid: 'admin-1',
             authUser: { uid: 'admin-1' }
         })).toBe(false);
+    });
+
+    it('fails closed for conflicting legacy owner aliases', () => {
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerEmail: 'first@example.com', ownerEmailLower: 'second@example.com' },
+            user: {},
+            uid: 'legacy-owner',
+            authUser: { uid: 'legacy-owner', email: 'first@example.com' }
+        })).toBe(false);
+        expect(hasAdminInviteIssuerAccess({
+            team: { ownerEmail: ' Legacy@Example.com ', ownerEmailLower: 'legacy@example.com' },
+            user: {},
+            uid: 'legacy-owner',
+            authUser: { uid: 'legacy-owner', email: 'legacy@example.com' }
+        })).toBe(true);
     });
 
     it('routes legacy and React invite acceptance through the callable-backed adapter', () => {

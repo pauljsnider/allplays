@@ -236,7 +236,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44337';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44338';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -771,7 +771,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443332'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443333'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1864,50 +1864,27 @@ export async function getUserTeams(userId, options = {}) {
 
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
-    const profile = await profileSnap;
-    const ownerEmailCandidates = [
-        email,
-        profile?.exists?.() ? profile.data()?.email : null,
-        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
-    ].map((value) => String(value || '').trim()).filter(Boolean);
-    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
-    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
-        console.warn(`Optional team access query failed (${label}).`, error);
-        return { docs: [] };
-    });
-    const ownerEmailQueries = ownerEmailCandidates.length
-        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
-            .map((ownerEmail) => optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
-                `ownerEmail:${ownerEmail}`
-            ))
-        : [];
-    const ownerEmailLowerQuery = normalizedEmail
-        ? optionalTeamQuery(
-            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
-            `ownerEmailLower:${normalizedEmail}`
-        )
-        : Promise.resolve({ docs: [] });
-    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
-        getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        normalizedEmail
-            ? optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))),
-                `adminEmails:${normalizedEmail}`
-            )
-            : Promise.resolve({ docs: [] }),
-        ownerEmailLowerQuery,
-        ...ownerEmailQueries
-    ]);
-
-    const map = new Map();
-    ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
-
-    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    return filterTeamsByActive(teams, includeInactive);
+    if (!String(userId || '').trim()) return [];
+    // Firestore cannot authorize a legacy owner-email list query while also
+    // proving ownerId is absent on every possible result. Discover managed
+    // teams through the server, which evaluates each canonical document.
+    const callable = httpsCallable(functions, 'listManagedTeams');
+    const response = await callable({});
+    const items = response?.data?.items;
+    if (!Array.isArray(items)) {
+        throw new Error('Managed teams response is invalid.');
+    }
+    const teams = items
+        .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    const activeTeams = filterTeamsByActive(teams, includeInactive);
+    if (response?.data?.isPartial === true) {
+        const error = new Error('Managed team discovery returned partial results.');
+        error.code = 'managed-team-discovery-partial';
+        error.partialTeams = activeTeams;
+        throw error;
+    }
+    return activeTeams;
 }
 
 /**
@@ -7208,7 +7185,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7243,7 +7223,10 @@ export function canModerateChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7259,7 +7242,7 @@ export function canModerateChat(user, team) {
 }
 
 function getNormalizedCertificateEmail(user) {
-    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+    return String(user?.email || '').trim().toLowerCase();
 }
 
 function hasCertificateCoachAccess(user, team) {

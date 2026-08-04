@@ -1,6 +1,6 @@
-import { escapeHtml } from './utils.js?v=443332';
-import { discoverPublicTeams } from './db.js?v=4433154';
-import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=44334';
+import { escapeHtml } from './utils.js?v=443333';
+import { discoverPublicTeams } from './db.js?v=4433155';
+import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=44335';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {
     executeBoundedPlayerSearch,
@@ -127,7 +127,7 @@ function buildAccessibleTeamsCacheKey(user) {
 
     return JSON.stringify({
         uid: String(user.uid || '').trim(),
-        email: String(user.email || user.profileEmail || '').trim().toLowerCase(),
+        email: String(user.email || '').trim().toLowerCase(),
         isAdmin: user.isAdmin === true,
         parentTeamIds
     });
@@ -191,7 +191,7 @@ async function loadAccessibleTeams(user) {
     if (!user) return [];
 
     const uid = String(user.uid || '').trim();
-    const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+    const email = String(user.email || '').trim().toLowerCase();
     const teamsRef = collection(db, 'teams');
     const teamQueries = [];
 

@@ -45,7 +45,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
             expect(workflow).not.toMatch(/credentials_json\s*:/i);
             expect(workflow).not.toMatch(/^\s*GOOGLE_APPLICATION_CREDENTIALS\s*:\s*\S+/m);
         }
-        expect(production.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(2);
+        expect(production.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(4);
         expect(preview.match(/google-github-actions\/auth@[0-9a-f]{40}/g)).toHaveLength(1);
         expect(candidate).not.toContain('google-github-actions/auth');
         expect(candidate).not.toContain('id-token: write');
@@ -94,6 +94,13 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const handoff = production.indexOf('name: Upload trusted production deploy handoff');
         const extractorHashCheck = production.indexOf(`expected_extractor_sha256='${productionExtractorSha256}'`);
         const functionsExtract = production.indexOf('python3 "$bundle/context/extract-production-functions-handoff.py"');
+        const ownerLifecycleAuth = production.indexOf('name: Authenticate legacy owner lifecycle deploy through exact-workflow OIDC');
+        const ownerLifecycleDeploy = production.indexOf('name: Deploy legacy owner Auth lifecycle compatibility');
+        const ownerLifecycleCleanup = production.indexOf('name: Remove legacy owner lifecycle deploy credential');
+        const ownerMigrationAuth = production.indexOf('name: Authenticate legacy owner migration through exact-workflow OIDC');
+        const ownerMigrationStep = production.indexOf('name: Canonicalize legacy team owners before authorization lockdown');
+        const ownerMigration = production.indexOf('backfill-legacy-team-owner-ids.mjs" --apply');
+        const ownerMigrationCleanup = production.indexOf('name: Remove legacy owner migration credential');
         const storageAuth = production.indexOf('name: Authenticate Storage deploy through exact-workflow OIDC');
         const storageDeploy = production.indexOf('name: Deploy Firebase Storage rules when available');
         const storageCleanup = production.indexOf('name: Remove Storage deploy credential');
@@ -107,6 +114,19 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(functionsExtract).toBeGreaterThan(extractorHashCheck);
         expect(production.slice(extractorHashCheck, functionsExtract)).toContain('sha256sum --check --strict');
         expect(production.slice(handoff, extractorHashCheck)).toContain('test ! -L');
+        expect(ownerLifecycleAuth).toBeGreaterThan(functionsExtract);
+        expect(ownerLifecycleDeploy).toBeGreaterThan(ownerLifecycleAuth);
+        expect(ownerLifecycleCleanup).toBeGreaterThan(ownerLifecycleDeploy);
+        expect(ownerMigrationAuth).toBeGreaterThan(ownerLifecycleCleanup);
+        expect(production.slice(ownerLifecycleAuth, ownerLifecycleDeploy)).not.toContain('run:');
+        expect(production.slice(ownerLifecycleDeploy, ownerLifecycleCleanup)).toContain('timeout-minutes: 4');
+        expect(production.slice(ownerLifecycleDeploy, ownerLifecycleCleanup)).toContain('functions:syncLegacyTeamOwnershipOnAuthCreate');
+        expect(ownerMigrationAuth).toBeGreaterThan(functionsExtract);
+        expect(ownerMigrationStep).toBeGreaterThan(ownerMigrationAuth);
+        expect(ownerMigration).toBeGreaterThan(ownerMigrationStep);
+        expect(ownerMigrationCleanup).toBeGreaterThan(ownerMigration);
+        expect(storageAuth).toBeGreaterThan(ownerMigrationCleanup);
+        expect(production.slice(ownerMigrationAuth, ownerMigrationStep)).not.toContain('run:');
         expect(storageAuth).toBeGreaterThan(functionsExtract);
         expect(storageAuth).toBeGreaterThan(handoff);
         expect(storageDeploy).toBeGreaterThan(storageAuth);

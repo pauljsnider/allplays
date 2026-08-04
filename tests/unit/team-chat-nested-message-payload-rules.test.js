@@ -157,9 +157,8 @@ describe('nested team chat message payload contracts', () => {
         expect(chatPageSource).toContain("httpsCallable(functions, 'sendAuthorizedDirectMessage')");
         expect(chatPageSource).toContain("if (conversation?.type === 'direct')");
         expect(chatPageSource).toContain('return postChatMessage(teamId, message);');
-        expect(functionsSource).toContain('const recipientParticipantIds = conversation.participantIds.filter(');
-        expect(functionsSource).toContain('(participantId) => normalizeDirectChatUserId(participantId) !== caller.uid');
-        expect(functionsSource).toContain('recipientIds: recipientParticipantIds');
+        expect(functionsSource).toContain('recipientIds: conversation.participantIds.filter(');
+        expect(functionsSource).toContain('(participantId) => normalizeDirectChatUserId(participantId) !== callerUid');
         expect(functionsSource).toContain("rawType.startsWith('video/') || rawMimeType.startsWith('video/')");
         expect(functionsSource).toContain("rawType.startsWith('image/') || rawMimeType.startsWith('image/')");
     });

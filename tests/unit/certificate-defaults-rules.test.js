@@ -19,8 +19,18 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 const compatibilityRules = compactFirestoreRules(buildCertificateDefaultsCompatibilityRules(rules));
 const deployWorkflow = readFileSync(new URL('../../.github/workflows/deploy-prod.yml', import.meta.url), 'utf8');
 const repositoryInstructions = readFileSync(new URL('../../AGENTS.md', import.meta.url), 'utf8');
+const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 describe('certificate defaults Firestore rules', () => {
+    it('uses the shared canonical-owner authorization boundary in the server writer', () => {
+        const helperStart = functionsSource.indexOf('async function requireCertificateTeamAdmin');
+        const helperEnd = functionsSource.indexOf('\nfunction getCertificateSignatureCleanupId', helperStart);
+        const helperSource = functionsSource.slice(helperStart, helperEnd);
+
+        expect(helperSource).toContain('hasTeamAdminAccess({');
+        expect(helperSource).not.toContain('ownerEmails.includes(callerEmail)');
+    });
+
     it('keeps shared defaults readable to team admins but server-writable only', () => {
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow read:[\s\S]*certificateDefaults/);
         expect(rules).toMatch(/match \/settings\/\{settingId\}[\s\S]*allow create, update, delete: if false;/);
@@ -244,6 +254,14 @@ describe('certificate defaults Firestore rules', () => {
                     ownerId: 'owner-a',
                     adminEmails: ['admin-a@example.com']
                 });
+                await setDoc(doc(firestore, 'teams/conflicting-legacy-team'), {
+                    ownerEmail: 'current@example.com',
+                    ownerEmailLower: 'former@example.com',
+                    adminEmails: []
+                });
+                await setDoc(doc(firestore, 'teams/conflicting-legacy-team/settings/certificateDefaults'), {
+                    signers: []
+                });
                 await setDoc(doc(firestore, 'teams/team-a/settings/certificateDefaults'), {
                     retiredSignatureImageObjectKeys: ['bucket\ncertificate-signatures/teams/team-a/retired.png\n1700000000000000'],
                     retiredSignatureImagePaths: ['certificate-signatures/teams/team-a/retired.png'],
@@ -297,6 +315,15 @@ describe('certificate defaults Firestore rules', () => {
             await assertFails(updateDoc(doc(ownerDb, defaultsPath), { signers: [] }));
             await assertFails(setDoc(doc(adminDb, defaultsPath), { signers: [] }));
             await assertFails(deleteDoc(doc(ownerDb, defaultsPath)));
+        });
+
+        it('denies both conflicting legacy owner aliases', async () => {
+            const defaultsPath = 'teams/conflicting-legacy-team/settings/certificateDefaults';
+            const currentAliasDb = testEnv.authenticatedContext('current-alias', { email: 'current@example.com' }).firestore();
+            const formerAliasDb = testEnv.authenticatedContext('former-alias', { email: 'former@example.com' }).firestore();
+
+            await assertFails(getDoc(doc(currentAliasDb, defaultsPath)));
+            await assertFails(getDoc(doc(formerAliasDb, defaultsPath)));
         });
 
         it('keeps cleanup tombstones private and server-writable only', async () => {

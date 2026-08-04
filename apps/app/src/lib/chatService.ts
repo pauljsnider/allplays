@@ -924,7 +924,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   let teams: Record<string, any>[] = [];
   try {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
-      getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
+      getUserTeamsWithAccess(user.uid, user.email || ''),
       getParentTeams(user.uid)
     ]), 'Chat teams load');
     if (memberTeamsResult.status === 'rejected' && parentTeamsResult.status === 'rejected') {

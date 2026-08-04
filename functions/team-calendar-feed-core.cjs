@@ -21,6 +21,33 @@ function normalizeCalendarRequest(query = {}) {
   return { teamId, token, tokenHash: hashCalendarToken(token) };
 }
 
+function calendarTokenHasTeamAccess({ team, profile = {}, authUser = null, tokenData }) {
+  if (!team || !tokenData || !authUser || authUser.disabled === true) return false;
+  const uid = String(authUser.uid || '').trim();
+  const tokenUid = String(tokenData.uid || tokenData.userId || tokenData.createdBy || '').trim();
+  if (!uid || tokenUid !== uid) return false;
+
+  const email = String(authUser.email || '').trim().toLowerCase();
+  const ownerId = String(team.ownerId || '').trim();
+  const legacyOwnerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter(Boolean))];
+  const hasLegacyOwnerAccess = Boolean(
+    !ownerId &&
+    email &&
+    legacyOwnerEmails.length === 1 &&
+    legacyOwnerEmails[0] === email
+  );
+  const adminEmails = Array.isArray(team.adminEmails)
+    ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase())
+    : [];
+  const parentTeamIds = Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [];
+  return ownerId === uid ||
+    hasLegacyOwnerAccess ||
+    (email && adminEmails.includes(email)) ||
+    parentTeamIds.includes(tokenData.teamId);
+}
+
 function toDate(value) {
   if (!value) return null;
   if (typeof value.toDate === 'function') return value.toDate();
@@ -458,6 +485,7 @@ function buildTeamCalendarIcs({ teamId, team = {}, events = [], now = new Date()
 
 module.exports = {
   buildTeamCalendarIcs,
+  calendarTokenHasTeamAccess,
   expandRecurringCalendarEvent,
   escapeIcsText,
   formatIcsDate,

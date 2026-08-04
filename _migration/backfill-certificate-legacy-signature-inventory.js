@@ -14,6 +14,7 @@ import {
 const require = createRequire(import.meta.url);
 const {
     discoverLegacyImageSignatureReferences,
+    getEnabledCertificateAuthUserIds,
     getCertificateLegacyManagerEmails,
     getCertificateLegacySignatureInventoryId,
     isMatchingCertificateLegacySignatureBinding
@@ -32,13 +33,15 @@ function getAdminAppOptions() {
 }
 
 async function getAuthorizedUploaderIds(auth, team = {}) {
-    const uploaderIds = new Set([String(team.ownerId || '').trim()].filter(Boolean));
-    const managerEmails = getCertificateLegacyManagerEmails(team);
-    for (let offset = 0; offset < managerEmails.length; offset += 100) {
-        const result = await auth.getUsers(
-            managerEmails.slice(offset, offset + 100).map((email) => ({ email }))
-        );
-        result.users.forEach((userRecord) => uploaderIds.add(userRecord.uid));
+    const uploaderIds = new Set();
+    const ownerId = String(team.ownerId || '').trim();
+    const managerIdentifiers = [
+        ...(ownerId ? [{ uid: ownerId }] : []),
+        ...getCertificateLegacyManagerEmails(team).map((email) => ({ email }))
+    ];
+    for (let offset = 0; offset < managerIdentifiers.length; offset += 100) {
+        const result = await auth.getUsers(managerIdentifiers.slice(offset, offset + 100));
+        getEnabledCertificateAuthUserIds(result.users).forEach((uid) => uploaderIds.add(uid));
     }
     return [...uploaderIds];
 }
@@ -149,7 +152,7 @@ export async function backfillCertificateLegacySignatureInventory({
             allowedUploaderIds: await getAuthorizedUploaderIds(auth, teamSnap.data() || {}),
             lookupExistingUserIds: async (candidates) => {
                 const result = await auth.getUsers(candidates.map((uid) => ({ uid })));
-                return result.users.map((userRecord) => userRecord.uid);
+                return getEnabledCertificateAuthUserIds(result.users);
             },
             getObjectMetadata: async (storagePath) => {
                 const [metadata] = await legacyBucket.file(storagePath).getMetadata();

@@ -53,6 +53,8 @@ import {
     deleteField as legacyFirebaseDeleteField,
     getDoc as legacyFirebaseGetDoc,
     getDocs as legacyFirebaseGetDocs,
+    functions as legacyFirebaseFunctions,
+    httpsCallable as legacyFirebaseHttpsCallable,
     increment as legacyFirebaseIncrement,
     query as legacyFirebaseQuery,
     runTransaction as legacyFirebaseRunTransaction,
@@ -175,60 +177,14 @@ export type StaffTeamsResult = {
     isPartial: boolean;
 };
 
-export async function getStaffTeams({ userId, email, coachTeamIds = [] }: StaffTeamsQuery) {
-    const teamsRef = legacyFirebaseCollection(legacyFirebaseDb, 'teams');
-    const staffEmail = String(email || '').trim();
-    const normalizedEmail = staffEmail.toLowerCase();
-    const ownerEmailCandidates = [...new Set([staffEmail, normalizedEmail].filter(Boolean))];
-    const uniqueCoachTeamIds = [...new Set(coachTeamIds.map((teamId) => String(teamId || '').trim()).filter(Boolean))];
-    const emptySnapshot = { docs: [] };
-    const coreStaffQueries = [
-        ...(userId
-            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerId', '==', userId)))]
-            : []),
-        ...(normalizedEmail
-            ? [legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('adminEmails', 'array-contains', normalizedEmail)))]
-            : [])
-    ];
-    const [coreStaffSnapshotResults, legacyOwnerSnapshotResults, coachSnapshotResults] = await Promise.all([
-        Promise.allSettled(coreStaffQueries),
-        Promise.allSettled([
-            normalizedEmail
-                ? legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)))
-                : Promise.resolve(emptySnapshot),
-            ...ownerEmailCandidates.map((ownerEmail) => (
-            legacyFirebaseGetDocs(legacyFirebaseQuery(teamsRef, legacyFirebaseWhere('ownerEmail', '==', ownerEmail)))
-            ))
-        ]),
-        Promise.allSettled(uniqueCoachTeamIds.map((teamId) => (
-            legacyFirebaseGetDoc(legacyFirebaseDoc(legacyFirebaseDb, 'teams', teamId))
-        )))
-    ]);
-
-    const successfulCoreStaffSnapshots = coreStaffSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    if (!successfulCoreStaffSnapshots.length) {
-        const firstCoreFailure = coreStaffSnapshotResults.find((result) => result.status === 'rejected');
-        if (firstCoreFailure?.status === 'rejected') throw firstCoreFailure.reason;
-    }
-    const legacyOwnerSnapshots = legacyOwnerSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    const coachSnapshots = coachSnapshotResults.flatMap((result) => (
-        result.status === 'fulfilled' && result.value ? [result.value] : []
-    ));
-    const teamsById = new Map<string, Record<string, unknown>>();
-    [...successfulCoreStaffSnapshots.flatMap((snapshot) => snapshot.docs), ...legacyOwnerSnapshots.flatMap((snapshot) => snapshot.docs), ...coachSnapshots]
-        .filter((snapshot): snapshot is NonNullable<typeof snapshot> => Boolean(snapshot && ('exists' in snapshot ? snapshot.exists() : true)))
-        .forEach((snapshot) => {
-            const id = String(snapshot.id || '').trim();
-            if (id) teamsById.set(id, { id, ...snapshot.data() });
-        });
+export async function getStaffTeams(_query: StaffTeamsQuery): Promise<StaffTeamsResult> {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams');
+    const response = await callable({});
+    const items = (response as any)?.data?.items;
+    if (!Array.isArray(items)) throw new Error('Managed teams response is invalid.');
     return {
-        teams: [...teamsById.values()],
-        isPartial: [...coreStaffSnapshotResults, ...legacyOwnerSnapshotResults, ...coachSnapshotResults]
-            .some((result) => result.status === 'rejected')
+        teams: items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))),
+        isPartial: (response as any)?.data?.isPartial === true
     };
 }
 

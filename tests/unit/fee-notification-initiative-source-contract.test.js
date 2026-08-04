@@ -5,9 +5,9 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 
 describe('fees notification initiative source contract', () => {
     it('keeps all fee notification entry points registered in Cloud Functions', () => {
-        expect(functionsSource).toContain('exports.notifyFeeAssigned = functions.firestore');
-        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = functions.pubsub');
-        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
+        expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.notifyFeeMarkedPaid = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')");
     });
 
@@ -28,9 +28,10 @@ describe('fees notification initiative source contract', () => {
 
     it('marks due reminders sent only after opted-in payer targets exist', () => {
         const reminderTargetIndex = functionsSource.indexOf('const payerTargets = allTargets.filter((target) => candidateUserIdSet.has(target.uid));');
-        const markSentIndex = functionsSource.indexOf('await doc.ref.update({');
+        const markSentIndex = functionsSource.indexOf('const claimId = await claimFeeDueReminder(doc.ref, {');
 
         expect(reminderTargetIndex).toBeGreaterThan(-1);
         expect(markSentIndex).toBeGreaterThan(reminderTargetIndex);
+        expect(functionsSource).toContain('reminderDeliveryClaimId: claimId');
     });
 });

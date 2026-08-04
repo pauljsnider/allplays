@@ -95,7 +95,7 @@ import {
   matchesTournamentScheduleGroup,
   type TournamentScheduleGroupQuery
 } from './tournamentScheduleStandings';
-import { loadProfileDocument, saveProfileDocument } from './profileService';
+import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
@@ -1684,7 +1684,9 @@ function isPublicRsvpReminderManager(team: any, user: AuthUser | null) {
   if (!team || !user?.uid) return false;
   if (team.ownerId === user.uid || (user as any).isAdmin === true) return true;
   const email = normalizeEmail(user.email);
-  if (email && (normalizeEmail(team.ownerEmailLower) === email || normalizeEmail(team.ownerEmail) === email)) return true;
+  const hasCanonicalOwner = Boolean(compactString(team.ownerId));
+  const ownerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail].map(normalizeEmail).filter(Boolean))];
+  if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0]) return true;
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
   return Boolean(email && adminEmails.includes(email));
 }
@@ -1702,31 +1704,11 @@ type StaffTeamsLoadResult = {
 };
 
 async function loadStaffTeamsFromRest(user: AuthUser): Promise<StaffTeamsLoadResult> {
-  const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-  const normalizedEmail = normalizeEmail(user.email);
-  const ownerEmailCandidates = Array.from(new Set([compactString(user.email), normalizedEmail].filter(Boolean)));
-  const ownerEmailLookups = ownerEmailCandidates.map((ownerEmail) =>
-    nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail)
-  );
-  const queryResults = await Promise.allSettled([
-    nativeRunQuery('teams', 'ownerId', 'EQUAL', user.uid),
-    ...(normalizedEmail ? [
-      nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail),
-      nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail)
-    ] : []),
-    ...ownerEmailLookups
-  ]);
-  const coachTeamResults = await Promise.allSettled(
-    coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
-  );
-  const isPartial = [...queryResults, ...coachTeamResults].some((result) => result.status === 'rejected');
-  const teamsById = new Map<string, any>();
-  const queryTeams = queryResults.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
-  const coachTeams = coachTeamResults.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
-  [...queryTeams, ...coachTeams].forEach((team) => {
-    if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
-  });
-  return { teams: [...teamsById.values()], isPartial };
+  const result = await loadManagedTeamsFromNativeCallable();
+  return {
+    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team) && isTeamStaff(team, user)),
+    isPartial: result.isPartial
+  };
 }
 
 async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
@@ -1741,7 +1723,7 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
       });
       const teamsById = new Map<string, any>();
       staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
-        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
       });
       return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
     },
@@ -3059,7 +3041,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   ));
   const shouldVerifyEmptyStaffResult = staffTeamResult.teams.length === 0
     && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
-  if (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult) {
+  if (isNativeRuntime() && (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)) {
     try {
       const restResult = await loadStaffTeamsFromRest(staffUser);
       const teamsById = new Map<string, any>();

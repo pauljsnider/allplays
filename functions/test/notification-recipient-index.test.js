@@ -30,11 +30,15 @@ function makeFunctionsStub() {
         region() {
             return this;
         },
+        user() {
+            return this;
+        },
         object() {
             return this;
         }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
     triggerChain.storage = triggerChain;
@@ -534,7 +538,36 @@ function loadNotificationRecipientIndexEnv({
             },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
-                return uid ? { uid } : { uid: '' };
+                const configured = uid ? authUsersByUid[uid] : null;
+                return uid
+                    ? { uid, ...(configured && !(configured instanceof Error) ? clone(configured) : {}) }
+                    : { uid: '' };
+            },
+            getUsers: async (identifiers) => {
+                const users = [];
+                for (const identifier of identifiers || []) {
+                    const uid = identifier?.uid
+                        || authUsersByEmail[String(identifier?.email || '').trim().toLowerCase()];
+                    if (!uid) continue;
+                    const configured = authUsersByUid[uid];
+                    if (configured instanceof Error) throw configured;
+                    if (configured) {
+                        users.push({ uid, ...clone(configured) });
+                        continue;
+                    }
+                    const user = userDocs[uid];
+                    if (user) {
+                        users.push({
+                            uid,
+                            email: user.email || user.profileEmail || null,
+                            emailVerified: true,
+                            disabled: false
+                        });
+                        continue;
+                    }
+                    users.push({ uid, disabled: false });
+                }
+                return { users, notFound: [] };
             },
             verifyIdToken: async () => null
         }),
@@ -1273,6 +1306,124 @@ test('device writes refresh token lists for every team the user belongs to', asy
     } finally {
         env.cleanup();
     }
+});
+
+test('transient Auth lookup failures preserve notification target indexes for retry', async () => {
+    const targetPath = 'teams/team-1/notificationTargets/admin-1__device-a';
+    const authError = Object.assign(new Error('temporary Auth outage'), {
+        code: 'auth/internal-error'
+    });
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }
+        },
+        userDocs: {
+            'admin-1': { displayName: 'Email-only admin' }
+        },
+        preferenceDocs: {
+            'users/admin-1/notificationPreferences/team-1': { schedule: true }
+        },
+        deviceDocs: {
+            'admin-1': [{ id: 'device-a', token: 'token-a', platform: 'ios' }]
+        },
+        authUsersByUid: {
+            'admin-1': authError
+        },
+        initialRecipientDocs: {
+            [targetPath]: {
+                uid: 'admin-1',
+                teamId: 'team-1',
+                deviceId: 'device-a',
+                token: 'token-a'
+            }
+        }
+    });
+
+    try {
+        await assert.rejects(
+            env.moduleExports.syncTeamNotificationTargetsOnPreferenceWrite(
+                makeChange(
+                    { id: 'team-1', path: 'users/admin-1/notificationPreferences/team-1' },
+                    { schedule: true },
+                    { schedule: true }
+                ),
+                { params: { uid: 'admin-1', teamId: 'team-1' } }
+            ),
+            /temporary Auth outage/
+        );
+        await assert.rejects(
+            env.moduleExports.syncTeamNotificationTargetsOnDeviceWrite(
+                makeChange(
+                    { id: 'device-a', path: 'users/admin-1/notificationDevices/device-a' },
+                    { token: 'token-a', platform: 'ios' },
+                    { token: 'token-a', platform: 'ios' }
+                ),
+                { params: { uid: 'admin-1', deviceId: 'device-a' } }
+            ),
+            /temporary Auth outage/
+        );
+
+        assert.equal(env.getDoc(targetPath)?.token, 'token-a');
+        assert.ok(!env.deletedPaths.includes(targetPath));
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('definitively missing or disabled Auth identities remove notification target indexes', async () => {
+    const runScenario = async ({ uid, authIdentity, expectedErrorCode }) => {
+        const targetPath = `teams/team-1/notificationTargets/${uid}__device-a`;
+        const env = loadNotificationRecipientIndexEnv({
+            teamDocs: {
+                'team-1': { ownerId: 'owner-1', adminEmails: ['admin@example.com'] }
+            },
+            userDocs: {
+                [uid]: { displayName: 'Former admin', email: 'admin@example.com', profileEmail: 'admin@example.com' }
+            },
+            deviceDocs: {
+                [uid]: [{ id: 'device-a', token: 'token-a', platform: 'ios' }]
+            },
+            authUsersByUid: {
+                [uid]: authIdentity
+            },
+            initialRecipientDocs: {
+                [targetPath]: {
+                    uid,
+                    teamId: 'team-1',
+                    deviceId: 'device-a',
+                    token: 'token-a'
+                }
+            }
+        });
+
+        try {
+            await env.moduleExports.syncTeamNotificationTargetsOnPreferenceWrite(
+                makeChange(
+                    { id: 'team-1', path: `users/${uid}/notificationPreferences/team-1` },
+                    { schedule: true },
+                    { schedule: true }
+                ),
+                { params: { uid, teamId: 'team-1' } }
+            );
+            assert.equal(env.getDoc(targetPath), undefined, expectedErrorCode);
+            assert.ok(env.deletedPaths.includes(targetPath), expectedErrorCode);
+        } finally {
+            env.cleanup();
+        }
+    };
+
+    await runScenario({
+        uid: 'missing-admin',
+        authIdentity: Object.assign(new Error('Auth user not found'), {
+            code: 'auth/user-not-found'
+        }),
+        expectedErrorCode: 'auth/user-not-found'
+    });
+    await runScenario({
+        uid: 'disabled-admin',
+        authIdentity: { email: 'admin@example.com', emailVerified: true, disabled: true },
+        expectedErrorCode: 'disabled Auth record'
+    });
 });
 
 test('device target sync chunks writes below the Firestore batch limit', async () => {

@@ -12,11 +12,11 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=22';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433154';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433155';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=12';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
-import { createInviteProcessor } from './accept-invite-flow.js?v=443313';
+import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
@@ -430,9 +430,6 @@ export function checkAuth(callback, options = {}) {
                 if (profile) {
                     if (profile.email) {
                         user.profileEmail = profile.email;
-                        if (!user.email) {
-                            user.email = profile.email;
-                        }
                     }
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;

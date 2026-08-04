@@ -37,7 +37,9 @@ function normalizeTeamPassCheckoutInput(data = {}) {
 
 function isEligibleTeamPassPurchaser({ team = {}, user = {}, uid = '', email = '' } = {}) {
   const normalizedUid = asTrimmedString(uid);
-  const normalizedEmail = normalizeEmail(email || user.email);
+  // Email-based authority must come from the caller's current Auth token.
+  // A mutable users/{uid} profile can outlive an Auth email change.
+  const normalizedEmail = normalizeEmail(email);
   if (!normalizedUid) return false;
 
   if (team.ownerId === normalizedUid) return true;

@@ -243,11 +243,130 @@ describe('certificate legacy signature inventory backfill', () => {
         expect(currentBindingSet).not.toHaveBeenCalled();
         expect(teamRef.get).toHaveBeenCalledOnce();
         expect(auth.getUsers).toHaveBeenCalledTimes(2);
-        expect(auth.getUsers.mock.calls.map(([identifiers]) => identifiers.length)).toEqual([100, 1]);
+        expect(auth.getUsers.mock.calls.map(([identifiers]) => identifiers.length)).toEqual([100, 2]);
         expect(markerWrites).toHaveLength(1);
         expect(markerWrites[0]).toMatchObject({
             status: 'completed',
             invalidatedBindings: 1
         });
+    });
+
+    it('invalidates a legacy binding when the matching team manager is disabled', async () => {
+        const bindingSet = vi.fn(async () => {});
+        const markerSet = vi.fn(async () => {});
+        const db = {
+            collection: vi.fn(() => ({
+                get: vi.fn(async () => ({
+                    docs: [{
+                        ref: { set: bindingSet },
+                        data: () => ({ teamId: 'team-1', legacyOwnerId: 'disabled-manager' })
+                    }]
+                }))
+            })),
+            collectionGroup: vi.fn(() => ({
+                get: vi.fn(async () => ({ docs: [] }))
+            })),
+            doc: vi.fn((path) => {
+                if (path === 'systemMigrations/certificateLegacySignatureInventoryV2') {
+                    return {
+                        get: vi.fn(async () => ({ exists: false, data: () => null })),
+                        set: markerSet
+                    };
+                }
+                if (path === 'teams/team-1') {
+                    return {
+                        get: vi.fn(async () => ({
+                            exists: true,
+                            data: () => ({ adminEmails: ['disabled@example.test'] })
+                        }))
+                    };
+                }
+                throw new Error(`Unexpected document path: ${path}`);
+            })
+        };
+        const auth = {
+            getUsers: vi.fn(async () => ({
+                users: [{
+                    uid: 'disabled-manager',
+                    email: 'disabled@example.test',
+                    disabled: true
+                }]
+            }))
+        };
+
+        const result = await backfillCertificateLegacySignatureInventory({
+            db,
+            auth,
+            legacyBucket: {},
+            apply: true
+        });
+
+        expect(result.invalidatedBindings).toBe(1);
+        expect(bindingSet).toHaveBeenCalledWith(expect.objectContaining({
+            conflicted: true,
+            invalidationReason: 'owner-authorization-changed'
+        }), { merge: true });
+        expect(markerSet).toHaveBeenCalledWith(expect.objectContaining({
+            invalidatedBindings: 1
+        }));
+    });
+
+    it('invalidates a legacy binding when the canonical team owner is disabled', async () => {
+        const bindingSet = vi.fn(async () => {});
+        const markerSet = vi.fn(async () => {});
+        const db = {
+            collection: vi.fn(() => ({
+                get: vi.fn(async () => ({
+                    docs: [{
+                        ref: { set: bindingSet },
+                        data: () => ({ teamId: 'team-1', legacyOwnerId: 'disabled-owner' })
+                    }]
+                }))
+            })),
+            collectionGroup: vi.fn(() => ({
+                get: vi.fn(async () => ({ docs: [] }))
+            })),
+            doc: vi.fn((path) => {
+                if (path === 'systemMigrations/certificateLegacySignatureInventoryV2') {
+                    return {
+                        get: vi.fn(async () => ({ exists: false, data: () => null })),
+                        set: markerSet
+                    };
+                }
+                if (path === 'teams/team-1') {
+                    return {
+                        get: vi.fn(async () => ({
+                            exists: true,
+                            data: () => ({ ownerId: 'disabled-owner' })
+                        }))
+                    };
+                }
+                throw new Error(`Unexpected document path: ${path}`);
+            })
+        };
+        const auth = {
+            getUsers: vi.fn(async (identifiers) => {
+                expect(identifiers).toEqual([{ uid: 'disabled-owner' }]);
+                return {
+                    users: [{ uid: 'disabled-owner', disabled: true }]
+                };
+            })
+        };
+
+        const result = await backfillCertificateLegacySignatureInventory({
+            db,
+            auth,
+            legacyBucket: {},
+            apply: true
+        });
+
+        expect(result.invalidatedBindings).toBe(1);
+        expect(bindingSet).toHaveBeenCalledWith(expect.objectContaining({
+            conflicted: true,
+            invalidationReason: 'owner-authorization-changed'
+        }), { merge: true });
+        expect(markerSet).toHaveBeenCalledWith(expect.objectContaining({
+            invalidatedBindings: 1
+        }));
     });
 });
