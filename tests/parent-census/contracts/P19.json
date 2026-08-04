@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P19",
+  "title": "Practice packet completion restores original state",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=game"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=game"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Practice hub",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Practice packet",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Packet ready",
+        "exact": true
+      }
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Complete",
+        "exact": true
+      },
+      "option": "original-packet-completion"
+    },
+    {
+      "action": "check",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Complete",
+        "exact": true
+      },
+      "mutationId": "practice-packet-completion"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "practice-packet-completion",
+      "commitMutation": true
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Packet completed",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Complete",
+        "exact": true
+      },
+      "option": "original-packet-completion",
+      "mutationId": "practice-packet-completion"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "practice-packet-completion"
+    }
+  ]
+}
