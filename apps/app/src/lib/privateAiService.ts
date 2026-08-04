@@ -1751,7 +1751,7 @@ export async function generatePrivateAiAnswer(
       args: { range: 'upcoming', type: 'game', limit: 3 }
     }, toolContext));
     const groundedAnswer = buildGroundedNextGameAnswer(toolResults[toolResults.length - 1]);
-    if (groundedAnswer) {
+    if (groundedAnswer && !imperativeWriteRequest) {
       return { answer: groundedAnswer, toolResults };
     }
   }
@@ -2009,14 +2009,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     aliases: ['get_schedule'],
     resolve: async (user, args, context) => {
       const range = compactText(args.range).toLowerCase();
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const scope = await resolvePrivateAiScheduleScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: range === 'all',
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(scope.targetTeamId ? { targetTeamId: scope.targetTeamId } : {})
       });
       return summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(scope.targetTeamId ? { teamId: scope.targetTeamId } : {}),
+        ...(scope.targetPlayerId ? { playerId: scope.targetPlayerId } : {})
       }, context?.requestText));
     }
   },
@@ -2026,14 +2027,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     description: 'Most recent past game for the parent account, including RSVP status. Args: teamId, teamName, playerId, childId, playerName, childName.',
     aliases: ['last_game', 'get_previous_game'],
     resolve: async (user, args, context) => {
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const scope = await resolvePrivateAiScheduleScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: true,
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(scope.targetTeamId ? { targetTeamId: scope.targetTeamId } : {})
       });
       return summarizeLastGame(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(scope.targetTeamId ? { teamId: scope.targetTeamId } : {}),
+        ...(scope.targetPlayerId ? { playerId: scope.targetPlayerId } : {})
       }, context?.requestText));
     }
   },
@@ -2061,14 +2063,15 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'RSVP status and summaries for schedule events. Args: range, type, teamId, teamName, playerId, playerName, limit.',
     resolve: async (user, args, context) => {
-      const targetTeamId = await resolvePrivateAiScheduleTargetTeamId(user, args, context);
+      const scope = await resolvePrivateAiScheduleScope(user, args, context);
       const schedule = await loadParentSchedule(user, {
         includePastGames: compactText(args.range).toLowerCase() === 'all',
-        ...(targetTeamId ? { targetTeamId } : {})
+        ...(scope.targetTeamId ? { targetTeamId: scope.targetTeamId } : {})
       });
       const summary = summarizeSchedule(schedule, inferPrivateAiScheduleArgs(schedule, {
         ...args,
-        ...(targetTeamId ? { teamId: targetTeamId } : {})
+        ...(scope.targetTeamId ? { teamId: scope.targetTeamId } : {}),
+        ...(scope.targetPlayerId ? { playerId: scope.targetPlayerId } : {})
       }, context?.requestText));
       return {
         ...pickFields(summary, ['query', 'totalMatchingEvents', 'returnedEventCount', 'hasMoreEvents', 'resultComplete', 'absenceConfirmed']),
@@ -5682,29 +5685,50 @@ function findUniqueScheduleMention(
   return longestMatches[0];
 }
 
-async function resolvePrivateAiScheduleTargetTeamId(
+async function resolvePrivateAiScheduleScope(
   user: AuthUser,
   args: Record<string, unknown>,
   context: PrivateAiToolContext = {}
 ) {
-  const explicitTeamId = compactText(args.teamId || context.teamId);
-  if (explicitTeamId) return explicitTeamId;
-
-  const explicitTeamName = compactText(args.teamName || context.teamName);
-  if (explicitTeamName) {
-    const resolvedTeamId = await resolveAccessibleTeamId(user, { teamName: explicitTeamName });
-    if (!resolvedTeamId) throw new Error(`No accessible team matches "${explicitTeamName}".`);
-    return resolvedTeamId;
+  const explicitTeamSelector = compactText(args.teamId || args.teamName);
+  let targetTeamId = explicitTeamSelector
+    ? await resolveAccessibleTeamId(user, args)
+    : null;
+  if (explicitTeamSelector && !targetTeamId) {
+    throw new Error(`No accessible team matches "${compactText(args.teamName || args.teamId)}".`);
   }
 
-  const normalizedRequest = normalizeScheduleMentionText(context.requestText);
-  if (!normalizedRequest) return '';
-  const access = await loadAccessibleAiTeams(user);
-  const mentionedTeam = findUniqueScheduleMention(normalizedRequest, access.teams.map((team) => ({
-    id: team.teamId,
-    name: team.teamName
-  })), 'team');
-  return mentionedTeam?.id || '';
+  const requestText = compactText(context.requestText);
+  if (!explicitTeamSelector && requestText) {
+    targetTeamId = await resolveAccessibleTeamId(user, { query: requestText });
+  }
+  const explicitPlayerSelector = compactText(args.playerId || args.childId || args.playerName || args.childName);
+  let player = explicitPlayerSelector
+    ? await resolveAccessiblePlayer(user, { ...args, ...(targetTeamId ? { teamId: targetTeamId } : {}) })
+    : null;
+  if (explicitPlayerSelector && !player) {
+    throw new Error(`No accessible player matches "${compactText(args.playerName || args.childName || args.playerId || args.childId)}".`);
+  }
+  if (!explicitPlayerSelector && requestText) {
+    player = await resolveAccessiblePlayer(user, {
+      query: requestText,
+      ...(targetTeamId ? { teamId: targetTeamId } : {})
+    });
+  }
+  if (player) targetTeamId = player.teamId;
+
+  if (!targetTeamId && compactText(context.teamId || context.teamName)) {
+    targetTeamId = await resolveAccessibleTeamId(user, {
+      teamId: context.teamId,
+      teamName: context.teamName
+    });
+    if (!targetTeamId) throw new Error('The launched team is no longer accessible.');
+  }
+
+  return {
+    targetTeamId: targetTeamId || '',
+    targetPlayerId: player?.playerId || ''
+  };
 }
 
 function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
@@ -6261,9 +6285,17 @@ function scoreTeamNameMention(requestText: string, teamName: string): number {
   const normalizedName = compactText(teamName).toLowerCase();
   if (!normalizedName) return 0;
   if (requestText.includes(normalizedName)) return 1000 + normalizedName.length;
+  const nameTokens = normalizedName.split(/[^a-z0-9]+/).filter(Boolean);
+  const partialPhraseScore = nameTokens.reduce((bestScore, _token, startIndex) => {
+    return nameTokens.slice(startIndex).reduce((score, _endToken, offset) => {
+      if (offset < 1) return score;
+      const phrase = nameTokens.slice(startIndex, startIndex + offset + 1).join(' ');
+      return requestText.includes(phrase) ? Math.max(score, 500 + phrase.length) : score;
+    }, bestScore);
+  }, 0);
+  if (partialPhraseScore) return partialPhraseScore;
   const ignoredTokens = new Set(['team', 'club', 'soccer', 'football', 'baseball', 'basketball', 'current']);
-  return normalizedName
-    .split(/[^a-z0-9]+/)
+  return nameTokens
     .filter((token) => token.length >= 3 && !ignoredTokens.has(token))
     .reduce((score, token) => requestText.includes(token) ? score + token.length : score, 0);
 }
@@ -6371,6 +6403,7 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
     || (compactText(args.teamName) ? await resolveAccessibleTeamId(user, args) : '');
   const requestedPlayerId = compactText(args.playerId || args.childId);
   const requestedPlayerName = compactText(args.playerName || args.childName).toLowerCase();
+  const requestText = normalizeScheduleMentionText(args.text || args.prompt || args.query);
   const home = await loadParentHome(user);
   const access = await loadAccessibleAiTeams(user);
   if (access.isPartial && !requestedTeamId) {
@@ -6415,10 +6448,34 @@ async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unkn
       ? exactMatches
       : teamPlayers.filter((player: any) => compactText(player.name).toLowerCase().includes(requestedPlayerName));
   }
+  if (!requestedPlayerId && !requestedPlayerName && requestText) {
+    const scoredPlayers = teamPlayers
+      .map((player: any) => ({
+        player,
+        score: scorePlayerNameMention(requestText, compactText(player.name))
+      }))
+      .filter((candidate) => candidate.score > 0)
+      .sort((left, right) => right.score - left.score);
+    if (scoredPlayers.length && (scoredPlayers.length === 1 || scoredPlayers[0].score > scoredPlayers[1].score)) {
+      matches = [scoredPlayers[0].player];
+    } else if (scoredPlayers.length > 1) {
+      throw new Error('More than one accessible player matches that schedule question. Choose the exact player and team.');
+    }
+  }
   if (matches.length > 1) {
     throw new Error(`More than one accessible player matches "${compactText(args.playerName || args.playerId)}". Choose the exact player and team.`);
   }
   return matches[0] || null;
+}
+
+function scorePlayerNameMention(requestText: string, playerName: string): number {
+  const normalizedName = normalizeScheduleMentionText(playerName);
+  if (!normalizedName) return 0;
+  if ((` ${requestText} `).includes(` ${normalizedName} `)) return 1000 + normalizedName.length;
+  return normalizedName
+    .split(' ')
+    .filter((token) => token.length >= 3)
+    .reduce((score, token) => (` ${requestText} `).includes(` ${token} `) ? score + token.length : score, 0);
 }
 
 function resolveTeamDetailPlayer(detail: any, args: Record<string, unknown>) {
