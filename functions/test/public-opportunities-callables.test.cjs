@@ -116,7 +116,12 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                 queryLog.push({ path, filters: clone(filters), limitCount });
                 const forcedFailure = queryFailures.find((failure) => (
                     failure?.path === path
-                    && filters.some(({ field, operator }) => field === failure.field && operator === failure.operator)
+                    && filters.some(({ field, operator, value }) => (
+                        field === failure.field
+                        && operator === failure.operator
+                        && (!Object.hasOwn(failure, 'value')
+                            || JSON.stringify(comparable(value)) === JSON.stringify(comparable(failure.value)))
+                    ))
                 ));
                 if (forcedFailure) throw new Error(forcedFailure.message || 'Forced query failure');
                 const depth = path.split('/').length + 1;
@@ -893,12 +898,25 @@ test('managed-team discovery rejects an old-email orphan after the caller change
     assert.equal(teamEvidenceQuery.limitCount, 201);
 });
 
-test('managed-team discovery rejects candidate-team invite lifecycle evidence regardless of consumer state', async () => {
+test('managed-team discovery rejects caller-bound or ambiguous invites without hiding grants behind another principal', async () => {
     const { callables } = loadCallables({
         'users/coach-1': {
             email: 'new-coach@example.com',
             roles: ['coach'],
-            coachOf: ['team-used-by-other', 'team-used-without-principal']
+            coachOf: [
+                'team-used-by-caller',
+                'team-used-by-other',
+                'team-used-without-principal',
+                'team-malformed-principal',
+                'team-outbound'
+            ]
+        },
+        'teams/team-used-by-caller': {
+            name: 'Used By Caller',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
         },
         'teams/team-used-by-other': {
             name: 'Used By Other',
@@ -914,6 +932,28 @@ test('managed-team discovery rejects candidate-team invite lifecycle evidence re
             isPublic: false,
             active: true
         },
+        'teams/team-outbound': {
+            name: 'Outbound Invite',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'teams/team-malformed-principal': {
+            name: 'Malformed Principal',
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        },
+        'accessCodes/admin-invite-used-by-caller': {
+            type: 'admin_invite',
+            teamId: 'team-used-by-caller',
+            email: 'old-coach@example.com',
+            generatedBy: 'coach-1',
+            used: true,
+            usedBy: 'coach-1'
+        },
         'accessCodes/admin-invite-used-by-other': {
             type: 'admin_invite',
             teamId: 'team-used-by-other',
@@ -926,6 +966,20 @@ test('managed-team discovery rejects candidate-team invite lifecycle evidence re
             teamId: 'team-used-without-principal',
             email: 'older-coach@example.com',
             used: true
+        },
+        'accessCodes/admin-invite-outbound': {
+            type: 'admin_invite',
+            teamId: 'team-outbound',
+            email: 'incoming-coach@example.com',
+            generatedBy: 'coach-1',
+            used: false
+        },
+        'accessCodes/admin-invite-malformed-principal': {
+            type: 'admin_invite',
+            teamId: 'team-malformed-principal',
+            email: 'unknown-coach@example.com',
+            used: true,
+            usedBy: 'not/a/uid'
         }
     });
 
@@ -934,7 +988,7 @@ test('managed-team discovery rejects candidate-team invite lifecycle evidence re
         authContext('coach-1', { email: 'new-coach@example.com' })
     );
 
-    assert.deepEqual(managed.items, []);
+    assert.deepEqual(managed.items.map((team) => team.id), ['team-used-by-other']);
     assert.equal(managed.isPartial, false);
 });
 
@@ -1062,7 +1116,8 @@ test('managed-team discovery caps legacy coach candidates and candidate-team evi
         authContext('legacy-coach', { email: 'legacy@example.com' })
     );
 
-    assert.deepEqual(managed.items, []);
+    assert.equal(managed.items.length, 180);
+    assert.equal(managed.items.some((team) => team.id === 'team-180'), false);
     assert.equal(managed.isPartial, true);
     const teamEvidenceQueries = firestore._queryLog.filter(({ path, filters }) => (
         path === 'accessCodes' && filters.some(({ field }) => field === 'teamId')
@@ -1075,6 +1130,45 @@ test('managed-team discovery caps legacy coach candidates and candidate-team evi
             && teamFilter.value.length <= 30
             && limitCount === 201;
     }));
+});
+
+test('managed-team discovery quarantines only the failed invite-evidence chunk', async () => {
+    const coachTeamIds = Array.from({ length: 31 }, (_, index) => `team-${index}`);
+    const teamDocuments = Object.fromEntries(coachTeamIds.map((teamId) => [
+        `teams/${teamId}`,
+        {
+            name: `Legacy Team ${teamId}`,
+            ownerId: 'owner-1',
+            adminEmails: [],
+            isPublic: false,
+            active: true
+        }
+    ]));
+    const { callables } = loadCallables({
+        ...teamDocuments,
+        'users/legacy-coach': {
+            email: 'legacy@example.com',
+            roles: ['coach'],
+            coachOf: coachTeamIds
+        }
+    }, {
+        queryFailures: [{
+            path: 'accessCodes',
+            field: 'teamId',
+            operator: 'in',
+            value: ['team-30'],
+            message: 'last invite-evidence chunk unavailable'
+        }]
+    });
+
+    const managed = await callables.listManagedTeams(
+        {},
+        authContext('legacy-coach', { email: 'legacy@example.com' })
+    );
+
+    assert.equal(managed.items.length, 30);
+    assert.equal(managed.items.some((team) => team.id === 'team-30'), false);
+    assert.equal(managed.isPartial, true);
 });
 
 test('managed-team discovery checks candidate lifecycle evidence when Auth email is absent', async () => {

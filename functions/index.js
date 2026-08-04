@@ -17886,50 +17886,65 @@ async function listStaffTeamDocuments(caller) {
     .filter((teamSnap) => !teams.has(teamSnap.id));
   let settledCoachGrantEvidence = [];
   let coachGrantEvidenceIsIncomplete = coachTeamIdsAreIncomplete;
-  const teamsWithAdminInviteEvidence = new Set();
+  const teamsWithCallerBoundInviteEvidence = new Set();
+  const teamsWithUnresolvedInviteEvidence = new Set();
   if (legacyCoachCandidates.length > 0) {
     const candidateTeamIds = legacyCoachCandidates.map((teamSnap) => teamSnap.id);
     const candidateTeamInviteQueries = [];
     for (let index = 0; index < candidateTeamIds.length; index += legacyCoachInviteTeamChunkSize) {
-      candidateTeamInviteQueries.push(
-        firestore.collection('accessCodes')
+      const teamIds = candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize);
+      candidateTeamInviteQueries.push({
+        teamIds,
+        query: firestore.collection('accessCodes')
           .where('type', '==', 'admin_invite')
-          .where('teamId', 'in', candidateTeamIds.slice(index, index + legacyCoachInviteTeamChunkSize))
+          .where('teamId', 'in', teamIds)
           .limit(legacyCoachInviteEvidenceLimit + 1)
-      );
+      });
     }
     // Candidate-team lifecycle evidence is stable across Auth email changes
     // and bounds reads to the resources that could invalidate this response.
     // Caller-wide email/usedBy history is neither necessary nor relevant: a
     // long-tenured coach can have hundreds of unrelated historical invites.
     settledCoachGrantEvidence = await Promise.allSettled(
-      candidateTeamInviteQueries.map((inviteQuery) => inviteQuery.get())
+      candidateTeamInviteQueries.map(({ query }) => query.get())
     );
-    const evidenceSnapshots = settledCoachGrantEvidence
-      .filter((result) => result.status === 'fulfilled')
-      .map((result) => result.value);
-    coachGrantEvidenceIsIncomplete = coachGrantEvidenceIsIncomplete
-      || settledCoachGrantEvidence.some((result) => result.status === 'rejected')
-      || evidenceSnapshots.some((snapshot) => snapshot.size > legacyCoachInviteEvidenceLimit);
-    if (!coachGrantEvidenceIsIncomplete) {
-      evidenceSnapshots.forEach((snapshot) => snapshot.docs.forEach((inviteDoc) => {
+    settledCoachGrantEvidence.forEach((result, index) => {
+      const chunkTeamIds = candidateTeamInviteQueries[index].teamIds;
+      if (result.status === 'rejected' || result.value.size > legacyCoachInviteEvidenceLimit) {
+        coachGrantEvidenceIsIncomplete = true;
+        chunkTeamIds.forEach((teamId) => teamsWithUnresolvedInviteEvidence.add(teamId));
+        return;
+      }
+      result.value.docs.forEach((inviteDoc) => {
         const invite = inviteDoc.data() || {};
         const teamId = String(invite.teamId || '').trim();
-        // A legacy coachOf-only grant cannot be distinguished from a failed
-        // pre-transaction redemption when an unused invite for the candidate
-        // team outlives an Auth email change or is later consumed by another
-        // principal. Treat every lifecycle record for a noncanonical candidate
-        // team as deny-only evidence. Current redemptions write the canonical
-        // team grant, user grant, and usedBy atomically on the server.
-        if (teamId) teamsWithAdminInviteEvidence.add(teamId);
-      }));
-    }
-  }
-  if (!coachGrantEvidenceIsIncomplete) {
-    legacyCoachCandidates.forEach((teamSnap) => {
-      if (!teamsWithAdminInviteEvidence.has(teamSnap.id)) teams.set(teamSnap.id, teamSnap);
+        const usedBy = String(invite.usedBy || '').trim();
+        if (!teamId) return;
+        // A caller-bound usedBy proves a revoked/stale accepted grant even when
+        // that same caller originally generated the invite.
+        if (usedBy === caller.uid) {
+          teamsWithCallerBoundInviteEvidence.add(teamId);
+          return;
+        }
+        // A valid stable usedBy belonging to another principal cannot be the
+        // source of this caller's coachOf grant. generatedBy is intentionally
+        // not evidence about the recipient: historical clients allowed a team
+        // admin to issue an invite to themselves.
+        if (/^[A-Za-z0-9_-]{1,128}$/.test(usedBy)) return;
+        // An unbound or malformed row is deliberately fail-closed: historical
+        // pre-transaction clients could write coachOf before marking the invite,
+        // and after an Auth email change that orphan is indistinguishable from
+        // another pending invite.
+        teamsWithCallerBoundInviteEvidence.add(teamId);
+      });
     });
   }
+  legacyCoachCandidates.forEach((teamSnap) => {
+    if (!teamsWithCallerBoundInviteEvidence.has(teamSnap.id)
+      && !teamsWithUnresolvedInviteEvidence.has(teamSnap.id)) {
+      teams.set(teamSnap.id, teamSnap);
+    }
+  });
   teams.discoveryQueryCount += settledCoachTeamSnaps.length;
   teams.successfulDiscoveryQueryCount += settledCoachTeamSnaps
     .filter((result) => result.status === 'fulfilled').length;
