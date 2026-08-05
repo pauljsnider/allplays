@@ -109,6 +109,39 @@ function validP21Contract() {
     });
 }
 
+function validP28Contract() {
+    return validContract({
+        workflowId: 'P28', title: catalog.workflows[27].title, actors: ['primary', 'anonymous'],
+        mutatesProduction: true, cleanupRequired: true,
+        steps: [
+            {
+                action: 'fill', actor: 'primary',
+                target: { kind: 'placeholder', name: 'Label, like Grandma or babysitter', exact: true },
+                value: '{RUN_MARKER}', mutationId: 'family-share'
+            },
+            {
+                action: 'click', actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Create share', exact: true },
+                mutationId: 'family-share', commitMutation: true
+            },
+            { action: 'openRunScopedShareLink', actor: 'anonymous', option: 'primary' },
+            {
+                action: 'expectVisible', actor: 'anonymous',
+                target: { kind: 'text', name: 'Family', exact: true }
+            },
+            {
+                action: 'expectHidden', actor: 'anonymous',
+                target: { kind: 'text', name: 'Private', exact: true }
+            }
+        ],
+        cleanupSteps: [{
+            action: 'click', actor: 'primary',
+            target: { kind: 'role', role: 'button', name: 'Revoke share', exact: true },
+            mutationId: 'family-share', scope: '{RUN_MARKER}'
+        }]
+    });
+}
+
 function validP13Contract() {
     const save = { kind: 'role', role: 'button', name: 'Save', exact: true };
     const remove = { kind: 'role', role: 'button', name: 'Remove image', exact: true };
@@ -188,6 +221,24 @@ describe('parent coverage contract boundary', () => {
             exact: true,
             name: 'Ask ALL PLAYS...'
         });
+
+        const familyShare = parentCoverageAuthoringContext('P28');
+        expect(familyShare.actionConstraints.fill.target).toMatchObject({
+            kinds: ['placeholder'],
+            exact: true,
+            name: 'Label, like Grandma or babysitter'
+        });
+    });
+
+    it('rejects the unsupported P28 Share label locator', () => {
+        const contract = validP28Contract();
+        expect(validateContract(contract, catalog, 'P28').workflowId).toBe('P28');
+        expect(() => validateContract({
+            ...contract,
+            steps: contract.steps.map((step) => step.action === 'fill'
+                ? { ...step, target: { kind: 'label', name: 'Share', exact: true } }
+                : step)
+        }, catalog, 'P28')).toThrow(/trusted P28\/fill exact locator/);
     });
 
     it('requires P35 to fill the exact production composer placeholder', () => {
