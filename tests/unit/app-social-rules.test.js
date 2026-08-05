@@ -310,37 +310,20 @@ describe('React app social Firestore rules', () => {
         });
     });
 
-    it('permits accepted friendship creation only during atomic friend invite redemption', () => {
+    it('denies direct friend invite friendship creation and update paths', () => {
         const source = rulesSource();
 
-        expect(source).toContain('function isFriendInviteAcceptedFriendshipCreateValid(friendshipId, data)');
-        expect(source).toContain('function isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
-        expect(source).toContain('let codePath = /databases/$(database)/documents/accessCodes/$(codeId);');
-        expect(source).toContain('let codeBefore = get(codePath).data;');
-        expect(source).toContain('exists(codePath)');
-        expect(source).toContain('existsAfter(codePath)');
-        expect(source).toContain('function buildFriendshipId(firstUserId, secondUserId)');
-        expect(source).toContain('data.get(\'memberIds\', []).size() == 2');
-        expect(source).toContain("friendshipId == buildFriendshipId(data.get('requesterId', ''), request.auth.uid)");
-        expect(source).toContain("codeBefore.get('used', false) == false");
-        expect(source).toContain("codeBefore.get('usedBy', null) == null");
-        expect(source).toContain("codeBefore.get('usedAt', null) == null");
-        expect(source).toContain("codeAfter.get('type', null) == 'friend_invite'");
-        expect(source).toContain("codeAfter.get('generatedBy', '') == data.get('requesterId', '')");
-        expect(source).toContain("codeAfter.get('usedBy', '') == request.auth.uid");
+        expect(source).not.toContain('function isFriendInviteAcceptedFriendshipCreateValid');
+        expect(source).not.toContain('function isFriendInviteAcceptedFriendshipUpdateValid');
         expect(source).toContain(
-            'allow create: if (isVerifiedForSensitiveWrite() &&\n' +
-            '                        isFriendshipCreatePayloadValid(friendshipId, request.resource.data)) ||\n' +
-            '                       isFriendInviteAcceptedFriendshipCreateValid(friendshipId, request.resource.data);'
+            'allow create: if isVerifiedForSensitiveWrite() &&\n' +
+            '                       isFriendshipCreatePayloadValid(friendshipId, request.resource.data);'
         );
         expect(source).toContain(
             'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
             '                     (isFriendshipMemberUpdatePayloadValid() ||'
         );
-        expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);");
-        expect(source).toContain("request.resource.data.get('source', '') == 'friend_invite'");
-        expect(source).toContain("request.resource.data.get('inviteCodeId', '') == codeId");
-        expect(source).toContain("friendshipId == buildFriendshipId(codeAfter.get('generatedBy', ''), request.auth.uid)");
+        expect(source).not.toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
     });
 
     it('prevents member updates from reactivating blocked friendships', () => {
@@ -359,26 +342,22 @@ describe('React app social Firestore rules', () => {
             'allow update: if (isVerifiedForSensitiveWrite() &&\n' +
             '                     (isFriendshipMemberUpdatePayloadValid() ||'
         );
-        expect(source).toContain('))) ||\n                    isFriendInviteAcceptedFriendshipUpdateValid(friendshipId);');
+        expect(source).not.toContain('isFriendInviteAcceptedFriendshipUpdateValid(friendshipId)');
     });
 
-    it('excludes friend invites from the owner update fallback after redemption', () => {
+    it('excludes friend invites from every direct access-code redemption path', () => {
         const source = rulesSource();
 
-        expect(source).toContain("isFriendInviteRedemptionUpdate() ||");
+        expect(source).not.toContain('function isFriendInviteRedemptionUpdate()');
+        expect(source).not.toContain('isFriendInviteRedemptionUpdate() ||');
         expect(source).toContain("resource.data.get('type', null) != 'friend_invite' &&");
     });
 
-    it('allows only direct GET reads for phone-only friend invite code redemption', () => {
+    it('removes the broad phone-only friend invite document read exception', () => {
         const source = rulesSource();
 
-        expect(source).toContain('function canGetPhoneOnlyFriendInviteAccessCode(data)');
-        expect(source).toContain("data.get('type', null) == 'friend_invite'");
-        expect(source).toContain("data.get('email', null) == null");
-        expect(source).toContain("data.get('phone', null) is string");
-        expect(source).toContain("data.get('used', false) == false");
-        expect(source).toContain("data.get('expiresAt', null) > request.time");
-        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data) || canGetPhoneOnlyFriendInviteAccessCode(resource.data);');
+        expect(source).not.toContain('function canGetPhoneOnlyFriendInviteAccessCode');
+        expect(source).toContain('allow get: if resource == null || canReadAccessCode(resource.data);');
         expect(source).toContain('allow list: if canReadAccessCode(resource.data);');
     });
 
@@ -862,7 +841,7 @@ describe('React app social Firestore rules', () => {
             });
         }
 
-        it('allows an exact path participant to read a missing doc and atomically create a friendship', async () => {
+        it('denies direct friend invite redemption even when the caller is the intended email recipient', async () => {
             const inviterId = 'inviter-first';
             const inviteeId = 'invitee-first';
             const codeId = 'FRIENDFIRST';
@@ -877,15 +856,12 @@ describe('React app social Firestore rules', () => {
             await assertFails(getDoc(doc(authenticatedDb('unrelated-user'), 'friendships', friendshipId)));
             await assertFails(getDocs(collection(inviteeDb, 'friendships')));
 
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
 
             const createdSnapshot = await assertSucceeds(getDoc(friendshipRef));
-            expect(createdSnapshot.data()).toMatchObject({
-                memberIds: [inviteeId, inviterId],
-                status: 'accepted',
-                source: 'friend_invite',
-                inviteCodeId: codeId
-            });
+            expect(createdSnapshot.exists()).toBe(false);
+            const inviteSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
+            expect(inviteSnapshot.data()).toMatchObject({ used: false, usedBy: null, usedAt: null });
         });
 
         it('denies friendship creation from an already redeemed friend invite code', async () => {
@@ -915,7 +891,7 @@ describe('React app social Firestore rules', () => {
             expect(missingSnapshot.exists()).toBe(false);
         });
 
-        it('allows direct code reads for phone-only friend invites without opening collection list reads', async () => {
+        it('denies an unrelated signed-in user raw phone-only invite reads and direct redemption', async () => {
             const inviterId = 'inviter-phone';
             const inviteeId = 'invitee-phone';
             const codeId = 'FRIENDPHONE';
@@ -929,18 +905,24 @@ describe('React app social Firestore rules', () => {
                 phone: '+15555550123'
             });
 
-            const codeSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
-            expect(codeSnapshot.data()).toMatchObject({
-                type: 'friend_invite',
-                email: null,
-                phone: '+15555550123',
-                used: false
-            });
+            await assertFails(getDoc(doc(inviteeDb, 'accessCodes', codeId)));
             await assertFails(getDocs(collection(inviteeDb, 'accessCodes')));
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const codeSnapshot = await getDoc(doc(context.firestore(), 'accessCodes', codeId));
+                expect(codeSnapshot.data()).toMatchObject({
+                    type: 'friend_invite',
+                    email: null,
+                    phone: '+15555550123',
+                    used: false,
+                    usedBy: null,
+                    usedAt: null
+                });
+            });
         });
 
-        it('allows a member to read and atomically accept an existing pending friendship', async () => {
+        it('denies direct invite-backed mutation of an existing pending friendship', async () => {
             const inviterId = 'inviter-pending';
             const inviteeId = 'invitee-pending';
             const codeId = 'FRIENDPENDING';
@@ -963,18 +945,16 @@ describe('React app social Firestore rules', () => {
             await seedInvite({ codeId, inviterId, inviteeId, friendship: pendingFriendship });
 
             await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
-            await assertSucceeds(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
+            await assertFails(redeemInviteTransaction(inviteeDb, { codeId, inviterId, inviteeId }));
 
             const updatedSnapshot = await assertSucceeds(getDoc(doc(inviteeDb, 'friendships', friendshipId)));
             expect(updatedSnapshot.data()).toMatchObject({
-                status: 'accepted',
-                source: 'friend_invite',
-                inviteCodeId: codeId,
+                status: 'pending',
                 createdAt
             });
         });
 
-        it('preserves unverified friend-invite bootstrap under enforce while gating arbitrary friendship writes', async () => {
+        it('keeps direct friend-invite redemption denied under verified-email enforcement', async () => {
             const createInviterId = 'enforce-create-inviter';
             const createInviteeId = 'enforce-create-invitee';
             const createCodeId = 'ENFORCECREATE';
@@ -992,7 +972,7 @@ describe('React app social Firestore rules', () => {
                 });
             });
 
-            await assertSucceeds(redeemInviteTransaction(createInviteeDb, {
+            await assertFails(redeemInviteTransaction(createInviteeDb, {
                 codeId: createCodeId,
                 inviterId: createInviterId,
                 inviteeId: createInviteeId
@@ -1019,7 +999,7 @@ describe('React app social Firestore rules', () => {
                     updatedAt: createdAt
                 }
             });
-            await assertSucceeds(redeemInviteTransaction(
+            await assertFails(redeemInviteTransaction(
                 authenticatedDb(updateInviteeId, { verified: false }),
                 {
                     codeId: updateCodeId,

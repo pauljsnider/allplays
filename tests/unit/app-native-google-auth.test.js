@@ -27,7 +27,8 @@ const firebaseMocks = vi.hoisted(() => ({
         app: {
             name: '[DEFAULT]',
             options: {
-                apiKey: 'test-api-key'
+                apiKey: 'test-api-key',
+                projectId: 'allplays-test'
             }
         }
     },
@@ -58,6 +59,7 @@ const dbMocks = vi.hoisted(() => ({
     markAccessCodeAsUsed: vi.fn(),
     redeemAdminInviteAtomically: vi.fn(),
     redeemCoParentInvite: vi.fn(),
+    redeemFriendInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemParentInvite: vi.fn(),
     rollbackParentInviteRedemption: vi.fn(),
@@ -213,6 +215,19 @@ function mockFirebaseAuthRest({ isNewUser = false } = {}) {
             };
         }
 
+        if (endpoint.endsWith('.cloudfunctions.net/redeemFriendInvite')) {
+            return {
+                ok: true,
+                json: async () => ({
+                    result: {
+                        success: true,
+                        friendshipId: 'invite-sender__native-google-user',
+                        inviterName: 'Invite Sender'
+                    }
+                })
+            };
+        }
+
         throw new Error(`Unexpected Firebase Auth REST request: ${endpoint}`);
     });
 
@@ -364,6 +379,36 @@ describe('React app native Google auth', () => {
             'COPO1234',
             'parent@example.com'
         );
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
+
+    it('redeems friend invites through the bearer-authenticated callable for native sessions', async () => {
+        mockNativeGoogle({ isNewUser: true });
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            codeId: 'friend-code',
+            type: 'friend_invite',
+            data: { code: 'FRIEND12' }
+        });
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await signInWithGoogleAccount('friend12');
+
+        const fetchMock = vi.mocked(fetch);
+        const callableRequest = fetchMock.mock.calls.find(([url]) =>
+            String(url).endsWith('.cloudfunctions.net/redeemFriendInvite')
+        );
+        expect(callableRequest).toBeTruthy();
+        expect(callableRequest?.[1]).toMatchObject({
+            method: 'POST',
+            headers: expect.objectContaining({
+                Authorization: 'Bearer firebase-id-token',
+                'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({ data: { code: 'FRIEND12' } })
+        });
+        expect(dbMocks.redeemFriendInvite).not.toHaveBeenCalled();
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 });

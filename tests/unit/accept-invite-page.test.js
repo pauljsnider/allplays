@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433157';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433159';";
 const ACCEPT_INVITE_ADMIN_IMPORT = "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';";
 
 class MockClassList {
@@ -106,7 +106,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433161';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433162';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
@@ -122,7 +122,7 @@ const setTimeout = deps.setTimeout;
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
-            "import { renderHeader, renderFooter } from './js/utils.js?v=443335';",
+            "import { renderHeader, renderFooter } from './js/utils.js?v=443336';",
             'const { renderHeader, renderFooter } = deps.utils;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
@@ -393,6 +393,33 @@ describe('accept-invite page parent flow', () => {
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledOnce();
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledWith('parent-2', 'AB12CD34', 'family@example.com');
         expect(authenticated.window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+});
+
+describe('accept-invite page friend flow', () => {
+    it('reaches callable redemption for a phone-shared invite accepted by an email account', async () => {
+        const { elements, window, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=friend12&type=friend',
+            authUser: { uid: 'email-user-1', email: 'friend@example.com' },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'FRIEND12',
+                    type: 'friend_invite',
+                    data: { code: 'FRIEND12', type: 'friend_invite' }
+                }),
+                redeemFriendInvite: vi.fn().mockResolvedValue({
+                    success: true,
+                    friendshipId: 'email-user-1__inviter-1',
+                    inviterName: 'Taylor Coach'
+                })
+            }
+        });
+
+        expect(db.validateAccessCode).toHaveBeenCalledWith('friend12');
+        expect(db.redeemFriendInvite).toHaveBeenCalledWith('email-user-1', 'friend12', 'friend@example.com');
+        expect(elements.get('success-message').textContent).toContain('Taylor Coach');
+        expect(window.location.href).toBe('http://example.com/app/#/home?section=friends');
     });
 });
 
