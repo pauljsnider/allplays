@@ -1,0 +1,144 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P33",
+  "title": "Member-visible team media and permission-controlled upload",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/teams/{TEAM_ID}/media"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/teams/{TEAM_ID}/media"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Team media",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Photo",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Create album",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete selected",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Bulk delete",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectUploadDenied",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Manager upload",
+        "exact": true
+      }
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Photo",
+        "exact": true
+      },
+      "mutationId": "media-upload",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "status",
+        "name": "1 photo uploaded.",
+        "exact": true
+      },
+      "value": "1 photo uploaded."
+    },
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}.png",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove media",
+        "exact": true
+      },
+      "mutationId": "media-upload",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}.png",
+        "exact": true
+      }
+    }
+  ]
+}
