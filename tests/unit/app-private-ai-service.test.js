@@ -1353,6 +1353,29 @@ describe('private AI service', () => {
         expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
     });
 
+    it('rejects an unmatched full player name instead of selecting a shared first name', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [{ id: 'player-snider', name: 'Madison Snider' }],
+            players: [{ id: 'player-snider', name: 'Madison Snider' }],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: 'When is the next game for Madison Jones?'
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('full name')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+    });
+
     it.each([
         ['list_schedule', { range: 'upcoming' }, "When is Madison's next game for Target Team?"],
         ['get_last_game', {}, "What was Madison's last game for Target Team?"],

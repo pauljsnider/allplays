@@ -4527,12 +4527,18 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     }
 
     let fallback = false;
+    let sourcePartial = false;
     let teamEventRows: number | undefined;
     let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
     if (!events.length) {
       fallback = true;
       // Full history here so a deep-linked past event outside the default window is still found.
-      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });
+      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {
+        includePastGames: true,
+        onSourcePartial: () => {
+          sourcePartial = true;
+        }
+      });
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
@@ -4552,7 +4558,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       eventRows: events.length,
       fallback
     });
-    return { children, events };
+    return { children, events, isPartial: sourcePartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
     throw error;

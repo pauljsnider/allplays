@@ -4149,6 +4149,28 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('marks an event-detail calendar fallback partial when the requested event cannot load', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      calendarUrls: ['https://ical-cdn.teamsnap.com/team_schedule/test.ics']
+    } as any);
+    vi.mocked(getGame).mockResolvedValue(null as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(fetchAndParseCalendar).mockRejectedValueOnce(new Error('calendar unavailable'));
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'teamsnap-event-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result).toMatchObject({ isPartial: true, events: [] });
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+  });
+
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
     vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
       if (teamId === 'team-2') throw new Error('permission-denied');

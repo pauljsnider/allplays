@@ -5692,15 +5692,31 @@ function findUniqueScheduleMention<T extends { id: string; name: string }>(
   }
 
   if (label !== 'player') return null;
+  const requestTokens = normalizedRequest.split(' ').filter(Boolean);
+  const scheduleContinuationTokens = new Set([
+    'game', 'games', 'last', 'month', 'next', 'practice', 'practices', 'recent',
+    'rsvp', 'rsvps', 'schedule', 'this', 'today', 'tomorrow', 'upcoming', 'week'
+  ]);
+  let hasUnmatchedFullNameSyntax = false;
   const firstNameMatches = normalizedCandidates.filter((candidate) => {
     const [firstName] = candidate.normalizedName.split(' ');
     if (!firstName) return false;
-    return paddedRequest.includes(` ${firstName} s `)
-      || paddedRequest.includes(` for ${firstName} `)
-      || paddedRequest.includes(` player ${firstName} `);
+    return requestTokens.some((token, index) => {
+      if (token !== firstName) return false;
+      const previousToken = requestTokens[index - 1] || '';
+      const nextToken = requestTokens[index + 1] || '';
+      if (nextToken === 's') return true;
+      if (previousToken !== 'for' && previousToken !== 'player') return false;
+      if (!nextToken || scheduleContinuationTokens.has(nextToken)) return true;
+      hasUnmatchedFullNameSyntax = true;
+      return false;
+    });
   });
   if (new Set(firstNameMatches.map((candidate) => candidate.id)).size > 1) {
     throw new Error('More than one accessible player has that first name. Choose the full player name.');
+  }
+  if (!firstNameMatches.length && hasUnmatchedFullNameSyntax) {
+    throw new Error('No accessible player matches that full name. Choose an active linked player.');
   }
   return firstNameMatches[0] || null;
 }
