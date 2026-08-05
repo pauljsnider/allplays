@@ -396,14 +396,14 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P37')).toThrow(/route is outside the trusted P37 capability/);
     });
 
-    it('restricts the checkout popup primitive to the two checkout workflows', () => {
+    it('rejects checkout actions for disabled P30 while preserving explicit unverified evidence', () => {
         const target = { kind: 'role', role: 'button', name: 'Pay fee', exact: true };
         expect(() => validateContract({
             ...validContract(),
             steps: [{ action: 'clickAndExpectStripeCheckout', target }]
-        }, catalog, 'P01')).toThrow(/restricted to P30 and P31/);
+        }, catalog, 'P01')).toThrow(/restricted to enabled checkout workflows/);
 
-        const checkout = validContract({
+        const invalidCheckout = validContract({
             workflowId: 'P30',
             title: catalog.workflows[29].title,
             actors: ['primary'],
@@ -412,7 +412,24 @@ describe('parent coverage contract boundary', () => {
                 { action: 'clickAndExpectStripeCheckout', actor: 'primary', target }
             ]
         });
-        expect(validateContract(checkout, catalog, 'P30').steps).toHaveLength(3);
+        expect(() => validateContract(invalidCheckout, catalog, 'P30'))
+            .toThrow(/restricted to enabled checkout workflows/);
+
+        const disabledCheckout = {
+            ...invalidCheckout,
+            steps: [
+                { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Fees', exact: true }, value: 'Fee' },
+                { action: 'expectHidden', actor: 'primary', target }
+            ]
+        };
+        expect(validateContract(disabledCheckout, catalog, 'P30').steps).toHaveLength(2);
+        expect(parentCoverageEvidenceScope('P30')).toBe('fees-visible-checkout-disabled-unverified');
+        expect(parentCoverageAuthoringContext('P30')).toMatchObject({
+            allowedActions: expect.not.arrayContaining(['clickAndExpectStripeCheckout']),
+            orderedEvidence: expect.arrayContaining([
+                expect.objectContaining({ action: 'expectHidden', actor: 'primary' })
+            ])
+        });
     });
 
     it('replaces read-only generic clicks with target-bound download assertions', () => {
