@@ -1,0 +1,133 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P35",
+  "title": "Private AI text uses parent tools and excludes manager tools",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Ask ALL PLAYS",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "textbox",
+        "name": "Ask ALL PLAYS...",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Prompt",
+        "exact": true
+      },
+      "value": "{RUN_MARKER} Summarize my parent tasks and schedule using my account data. Repeat {RUN_MARKER} in your answer.",
+      "mutationId": "ai-text-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "ai-text-message",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Looked up get_home",
+        "exact": true
+      },
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectNoText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Manager tools",
+        "exact": true
+      },
+      "value": "Manager tools",
+      "scope": "{RUN_MARKER}"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "ai-text-message",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "scope": "{RUN_MARKER}"
+    }
+  ]
+}
