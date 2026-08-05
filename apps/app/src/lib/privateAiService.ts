@@ -5669,29 +5669,40 @@ function findUniqueScheduleMention<T extends { id: string; name: string }>(
   candidates: T[],
   label: 'team' | 'player'
 ): T | null {
-  const matches = candidates
+  const normalizedCandidates = candidates
     .map((candidate) => ({
       ...candidate,
       normalizedName: normalizeScheduleMentionText(candidate.name)
-    }))
+    }));
+  const paddedRequest = ` ${normalizedRequest} `;
+  const matches = normalizedCandidates
     .filter((candidate) => {
       if (!candidate.normalizedName) return false;
-      const paddedRequest = ` ${normalizedRequest} `;
-      if (label !== 'player' || candidate.normalizedName.includes(' ')) {
-        return paddedRequest.includes(` ${candidate.normalizedName} `);
-      }
-      return paddedRequest.includes(` ${candidate.normalizedName} s `)
-        || paddedRequest.includes(` for ${candidate.normalizedName} `)
-        || paddedRequest.includes(` player ${candidate.normalizedName} `);
+      if (label === 'player' && !candidate.normalizedName.includes(' ')) return false;
+      return paddedRequest.includes(` ${candidate.normalizedName} `);
     })
     .sort((left, right) => right.normalizedName.length - left.normalizedName.length);
-  if (!matches.length) return null;
-  const longestLength = matches[0].normalizedName.length;
-  const longestMatches = matches.filter((candidate) => candidate.normalizedName.length === longestLength);
-  if (new Set(longestMatches.map((candidate) => candidate.id)).size > 1) {
-    throw new Error(`More than one accessible ${label} matches that schedule question. Choose one ${label}.`);
+  if (matches.length) {
+    const longestLength = matches[0].normalizedName.length;
+    const longestMatches = matches.filter((candidate) => candidate.normalizedName.length === longestLength);
+    if (new Set(longestMatches.map((candidate) => candidate.id)).size > 1) {
+      throw new Error(`More than one accessible ${label} matches that schedule question. Choose one ${label}.`);
+    }
+    return longestMatches[0];
   }
-  return longestMatches[0];
+
+  if (label !== 'player') return null;
+  const firstNameMatches = normalizedCandidates.filter((candidate) => {
+    const [firstName] = candidate.normalizedName.split(' ');
+    if (!firstName) return false;
+    return paddedRequest.includes(` ${firstName} s `)
+      || paddedRequest.includes(` for ${firstName} `)
+      || paddedRequest.includes(` player ${firstName} `);
+  });
+  if (new Set(firstNameMatches.map((candidate) => candidate.id)).size > 1) {
+    throw new Error('More than one accessible player has that first name. Choose the full player name.');
+  }
+  return firstNameMatches[0] || null;
 }
 
 function collectAccessibleSchedulePlayerMentions(access: AccessibleAiTeamsResult, teamId = '') {

@@ -1279,7 +1279,7 @@ describe('private AI service', () => {
             teamName: 'Jr KC Current',
             date: new Date('2099-05-01T18:00:00Z'),
             childId: 'player-current',
-            childName: 'Madison'
+            childName: 'Madison Snider'
         });
         const madisonPastGame = futureEvent({
             id: 'madison-past',
@@ -1287,27 +1287,27 @@ describe('private AI service', () => {
             teamName: 'Jr KC Current',
             date: new Date('2026-01-01T18:00:00Z'),
             childId: 'player-current',
-            childName: 'Madison'
+            childName: 'Madison Snider'
         });
         homeMocks.loadParentHome.mockResolvedValue({
             metrics: {},
             actionItems: [],
-            players: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
-            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [{ name: 'Madison' }] }],
+            players: [{ playerId: 'player-current', name: 'Madison Snider', teamId: 'team-current', teamName: 'Jr KC Current' }],
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current', players: [{ name: 'Madison Snider' }] }],
             upcomingEvents: [],
             fees: []
         });
         teamMocks.loadParentTeamDetail.mockResolvedValue({
             team: { id: 'team-current', name: 'Jr KC Current' },
-            linkedPlayers: [{ id: 'player-current', name: 'Madison' }],
-            players: [{ id: 'player-current', name: 'Madison' }],
+            linkedPlayers: [{ id: 'player-current', name: 'Madison Snider' }],
+            players: [{ id: 'player-current', name: 'Madison Snider' }],
             inactivePlayers: [],
             canManageTeam: false
         });
         scheduleMocks.loadParentSchedule.mockImplementation(async (_user, options = {}) => {
             if (options.targetTeamId !== 'team-current') throw new Error('The named player team must be loaded directly.');
             return {
-                children: [{ playerId: 'player-current', name: 'Madison', teamId: 'team-current', teamName: 'Jr KC Current' }],
+                children: [{ playerId: 'player-current', name: 'Madison Snider', teamId: 'team-current', teamName: 'Jr KC Current' }],
                 events: [madisonPastGame, ...teammateEvents, madisonFutureGame],
                 isPartial: false
             };
@@ -1318,10 +1318,39 @@ describe('private AI service', () => {
         const scopedEvent = expectedPath.reduce((value, key) => value?.[key], result.data);
 
         expect(result.ok).toBe(true);
-        expect(scopedEvent).toMatchObject({ childId: 'player-current', childName: 'Madison' });
+        expect(scopedEvent).toMatchObject({ childId: 'player-current', childName: 'Madison Snider' });
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, expect.objectContaining({
             targetTeamId: 'team-current'
         }));
+    });
+
+    it('rejects an ambiguous first-name player scope before loading a schedule', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
+        });
+        teamMocks.loadParentTeamDetail.mockResolvedValue({
+            team: { id: 'team-current', name: 'Jr KC Current' },
+            linkedPlayers: [
+                { id: 'player-snider', name: 'Madison Snider' },
+                { id: 'player-jones', name: 'Madison Jones' }
+            ],
+            players: [
+                { id: 'player-snider', name: 'Madison Snider' },
+                { id: 'player-jones', name: 'Madison Jones' }
+            ],
+            inactivePlayers: [],
+            canManageTeam: false
+        });
+
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
+            requestText: "When is Madison's next game?"
+        })).resolves.toMatchObject({
+            ok: false,
+            error: expect.stringContaining('full player name')
+        });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
     });
 
     it.each([

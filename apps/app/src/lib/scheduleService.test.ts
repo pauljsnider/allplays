@@ -4110,6 +4110,45 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('marks a direct TeamSnap calendar failure partial while retaining stored practices', async () => {
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      id: teamId,
+      name: teamId === 'team-1' ? 'Team One' : 'Team Two',
+      calendarUrls: teamId === 'team-1'
+        ? ['https://ical-cdn.teamsnap.com/team_schedule/test.ics']
+        : []
+    }) as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockImplementation(async (teamId: string) => teamId === 'team-1'
+      ? [{
+          id: 'practice-session-1',
+          eventId: 'practice-1',
+          date: new Date('2026-08-05T18:00:00.000Z'),
+          title: 'Stored practice',
+          location: 'Field 1'
+        }]
+      : [] as any);
+    vi.mocked(fetchAndParseCalendar).mockRejectedValueOnce(new Error('calendar unavailable'));
+
+    const result = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
+    expect(getTeam).not.toHaveBeenCalledWith('team-2');
+    expect(result).toMatchObject({
+      isPartial: true,
+      events: [expect.objectContaining({
+        teamId: 'team-1',
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Stored practice'
+      })]
+    });
+  });
+
   it('keeps an explicitly targeted team complete when an unrelated parent link is inaccessible', async () => {
     vi.mocked(getTeam).mockImplementation(async (teamId: string) => {
       if (teamId === 'team-2') throw new Error('permission-denied');

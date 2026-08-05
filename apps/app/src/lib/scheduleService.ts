@@ -3690,7 +3690,12 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean; range?: ScheduleDateRange } = {}) {
+async function buildTeamSchedule(
+  teamId: string,
+  teamChildren: ParentScheduleChild[],
+  user: AuthUser,
+  options: { includePastGames?: boolean; range?: ScheduleDateRange; onSourcePartial?: () => void } = {}
+) {
   const events: ParentScheduleEvent[] = [];
   // Default schedule views only need upcoming + recent games; window the games
   // query so teams with several seasons of history don't read hundreds of docs
@@ -3889,6 +3894,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         return await fetchAndParseCalendar(calendarUrl);
       } catch (error) {
         logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
+        options.onSourcePartial?.();
         return [];
       }
       }))
@@ -4597,7 +4603,12 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
     // The player view only renders upcoming events plus a small recent-history
     // window. Keep this read bounded so long-lived teams do not scan every game
     // document before the player profile can open.
-    const events = await buildTeamSchedule(child.teamId, [child], user);
+    let sourcePartial = false;
+    const events = await buildTeamSchedule(child.teamId, [child], user, {
+      onSourcePartial: () => {
+        sourcePartial = true;
+      }
+    });
     const authoritativeEvents = hydrateDetails && events.length
       ? await hydrateEventDetails(events, user)
       : [];
@@ -4610,7 +4621,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       childLinks: children.length,
       eventRows: events.length
     });
-    return { children, events };
+    return { children, events, isPartial: sourcePartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, error: error?.message || 'Unable to load player schedule.' });
     throw error;
@@ -4716,6 +4727,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       teamId: string;
       events: ParentScheduleEvent[];
       error: ReturnType<typeof toAppServiceError> | null;
+      isPartial: boolean;
     }> = [];
     const emitPartial = () => {
       if (!options.onPartial) return;
@@ -4745,15 +4757,22 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         teamId: string;
         events: ParentScheduleEvent[];
         error: ReturnType<typeof toAppServiceError> | null;
+        isPartial: boolean;
       };
       try {
+        let sourcePartial = false;
+        const teamEvents = await buildTeamSchedule(teamId, teamChildren, user, {
+          includePastGames,
+          range: scheduleRangeByTeam?.[teamId],
+          onSourcePartial: () => {
+            sourcePartial = true;
+          }
+        });
         result = {
           teamId,
-          events: await buildTeamSchedule(teamId, teamChildren, user, {
-            includePastGames,
-            range: scheduleRangeByTeam?.[teamId]
-          }),
-          error: null
+          events: teamEvents,
+          error: null,
+          isPartial: sourcePartial
         };
       } catch (error) {
         const appError = toAppServiceError(error, 'Unable to load schedule.');
@@ -4761,7 +4780,8 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         result = {
           teamId,
           events: [] as ParentScheduleEvent[],
-          error: appError
+          error: appError,
+          isPartial: true
         };
       }
       completedTeamResults.push(result);
@@ -4786,7 +4806,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       ? await hydrateEventDetails(events, user)
       : [];
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
-    const isPartial = isParentScopePartial || failedTeamLoads.length > 0;
+    const isPartial = isParentScopePartial || teamResults.some((result) => result.isPartial);
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
