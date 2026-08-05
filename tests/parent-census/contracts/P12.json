@@ -42,7 +42,7 @@
         "name": "Name",
         "exact": true
       },
-      "option": "profile-name"
+      "option": "original-profile-name"
     },
     {
       "action": "rememberControl",
@@ -52,7 +52,7 @@
         "name": "Phone",
         "exact": true
       },
-      "option": "profile-phone"
+      "option": "original-profile-phone"
     },
     {
       "action": "fill",
@@ -63,7 +63,7 @@
         "exact": true
       },
       "value": "{RUN_MARKER}",
-      "mutationId": "profile-fields"
+      "mutationId": "profile-contact"
     },
     {
       "action": "fill",
@@ -73,8 +73,8 @@
         "name": "Phone",
         "exact": true
       },
-      "value": "5550101234",
-      "mutationId": "profile-fields"
+      "value": "555-010-1212",
+      "mutationId": "profile-contact"
     },
     {
       "action": "click",
@@ -85,7 +85,7 @@
         "name": "Save",
         "exact": true
       },
-      "mutationId": "profile-fields",
+      "mutationId": "profile-contact",
       "commitMutation": true
     },
     {
@@ -108,8 +108,8 @@
         "name": "Name",
         "exact": true
       },
-      "option": "profile-name",
-      "mutationId": "profile-fields"
+      "option": "original-profile-name",
+      "mutationId": "profile-contact"
     },
     {
       "action": "restoreControl",
@@ -119,8 +119,8 @@
         "name": "Phone",
         "exact": true
       },
-      "option": "profile-phone",
-      "mutationId": "profile-fields"
+      "option": "original-profile-phone",
+      "mutationId": "profile-contact"
     },
     {
       "action": "click",
@@ -131,7 +131,7 @@
         "name": "Save",
         "exact": true
       },
-      "mutationId": "profile-fields"
+      "mutationId": "profile-contact"
     }
   ]
 }
