@@ -396,6 +396,33 @@ describe('accept-invite page parent flow', () => {
     });
 });
 
+describe('accept-invite page friend flow', () => {
+    it('reaches callable redemption for a phone-shared invite accepted by an email account', async () => {
+        const { elements, window, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=friend12&type=friend',
+            authUser: { uid: 'email-user-1', email: 'friend@example.com' },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'FRIEND12',
+                    type: 'friend_invite',
+                    data: { code: 'FRIEND12', type: 'friend_invite' }
+                }),
+                redeemFriendInvite: vi.fn().mockResolvedValue({
+                    success: true,
+                    friendshipId: 'email-user-1__inviter-1',
+                    inviterName: 'Taylor Coach'
+                })
+            }
+        });
+
+        expect(db.validateAccessCode).toHaveBeenCalledWith('friend12');
+        expect(db.redeemFriendInvite).toHaveBeenCalledWith('email-user-1', 'friend12', 'friend@example.com');
+        expect(elements.get('success-message').textContent).toContain('Taylor Coach');
+        expect(window.location.href).toBe('http://example.com/app/#/home?section=friends');
+    });
+});
+
 describe('accept-invite page standard site-code flow', () => {
     it('applies a standard code for an already authenticated user', async () => {
         const { elements, window, db } = await bootAcceptInvite({

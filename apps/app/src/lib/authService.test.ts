@@ -579,7 +579,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 
-  it('redeems friend invites with the Google account email for new users', async () => {
+  it('validates and redeems a phone-shared friend invite for a new Google email account', async () => {
     mockNewGoogleUser('friend@example.com');
     legacyAuthMocks.validateAccessCode.mockResolvedValue({
       valid: true,
@@ -591,6 +591,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
 
     await signInWithGoogleAccount('friend12');
 
+    expect(legacyAuthMocks.validateAccessCode).toHaveBeenCalledWith('FRIEND12', undefined);
     expect(legacyAuthMocks.redeemFriendInvite).toHaveBeenCalledWith('google-user', 'FRIEND12', 'friend@example.com');
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
