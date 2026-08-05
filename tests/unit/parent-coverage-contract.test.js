@@ -347,6 +347,55 @@ describe('parent coverage contract boundary', () => {
         expect(parentCoverageEvidenceScope('P27')).toBe('end-to-end');
     });
 
+    it('locks account deletion to the security tab and its two-step confirmation', () => {
+        const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+        const deletion = {
+            schemaVersion: CONTRACT_SCHEMA_VERSION,
+            workflowId: 'P37', title: catalog.workflows[36].title, actors: ['lifecycle'],
+            viewport: 'mobile',
+            mutatesProduction: true, cleanupRequired: false, lifecycleTransition: true,
+            steps: [
+                { action: 'login', actor: 'lifecycle' },
+                { action: 'goto', actor: 'lifecycle', route: '/profile/settings?section=security' },
+                { action: 'click', actor: 'lifecycle', target: button('Delete my account') },
+                {
+                    action: 'fillActorPassword', actor: 'lifecycle',
+                    target: { kind: 'label', name: 'Account password (email sign-in only)', exact: true }
+                },
+                {
+                    action: 'fill', actor: 'lifecycle',
+                    target: { kind: 'label', name: 'Type DELETE to confirm', exact: true },
+                    value: 'DELETE'
+                },
+                { action: 'click', actor: 'lifecycle', target: button('Delete account') },
+                {
+                    action: 'expectVisible', actor: 'lifecycle',
+                    target: { kind: 'role', role: 'heading', name: 'Sign in', exact: true }
+                },
+                { action: 'expectRoute', actor: 'lifecycle', route: '/auth' }
+            ],
+            cleanupSteps: []
+        };
+
+        expect(validateContract(deletion, catalog, 'P37').workflowId).toBe('P37');
+        expect(() => validateContract({
+            ...deletion,
+            steps: deletion.steps.filter((step) => step.target?.name !== 'Delete my account')
+        }, catalog, 'P37')).toThrow(/ordered trusted P37 lifecycle click workflow behavior/);
+        expect(() => validateContract({
+            ...deletion,
+            steps: deletion.steps.map((step) => step.action === 'goto'
+                ? { ...step, route: '/profile/settings' }
+                : step)
+        }, catalog, 'P37')).toThrow(/ordered trusted P37 lifecycle goto workflow behavior/);
+        expect(() => validateContract({
+            ...deletion,
+            steps: deletion.steps.flatMap((step) => step.target?.name === 'Delete account'
+                ? [step, { action: 'goto', actor: 'lifecycle', route: '/auth' }]
+                : [step])
+        }, catalog, 'P37')).toThrow(/route is outside the trusted P37 capability/);
+    });
+
     it('rejects checkout actions for disabled P30 while preserving explicit unverified evidence', () => {
         const target = { kind: 'role', role: 'button', name: 'Pay fee', exact: true };
         expect(() => validateContract({
