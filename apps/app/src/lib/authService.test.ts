@@ -5,7 +5,8 @@ const authState = vi.hoisted(() => ({
   currentUser: null,
   app: {
     options: {
-      apiKey: 'test-api-key'
+      apiKey: 'test-api-key',
+      projectId: 'allplays-test'
     },
     name: '[DEFAULT]'
   }
