@@ -147,6 +147,10 @@ import type { AuthUser } from './types';
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
+// Managed-team discovery can fan out across owner, admin, and legacy coach
+// grants. Give that one bounded callable enough time to finish on a cold web
+// start without raising the timeout for every schedule read.
+const staffTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
@@ -1606,9 +1610,14 @@ function resolveScoreFromIntegrityState(game: Record<string, any> | null | undef
   };
 }
 
-async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+async function readWithNativeFallback<T>(
+  label: string,
+  primary: () => Promise<T>,
+  fallback: () => Promise<T>,
+  timeoutMs = primaryDataTimeoutMs
+): Promise<T> {
   try {
-    return await withTimeout(Promise.resolve(primary()), label);
+    return await withTimeout(Promise.resolve(primary()), label, timeoutMs);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning(`Falling back to REST for ${label}.`, 'native-read-fallback', error, { fallback: 'rest', label });
@@ -1727,7 +1736,8 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
       });
       return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
     },
-    () => loadStaffTeamsFromRest(user)
+    () => loadStaffTeamsFromRest(user),
+    staffTeamDiscoveryTimeoutMs
   );
 }
 

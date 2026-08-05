@@ -151,10 +151,15 @@ export async function loadParentTeamsSummaryBootstrap(
             throw toAppServiceError(error, 'Unable to load teams.');
           })
         ]);
-        const hasScheduleTeams = scheduleScope.children.length > 0
-          || Boolean(scheduleScope.staffTeams?.length);
-        if (chatInboxResult.error && scheduleScope.staffTeamsPartial && !hasScheduleTeams) {
-          throw chatInboxResult.error;
+        const hasParentLinkedTeams = scheduleScope.children.length > 0;
+        if (scheduleScope.isPartial === true && !hasParentLinkedTeams) {
+          if (chatInboxResult.error) {
+            throw chatInboxResult.error;
+          }
+          throw toAppServiceError(
+            new Error('Team access discovery is incomplete. Try loading teams again.'),
+            'Unable to load teams.'
+          );
         }
         if (chatInboxResult.error) {
           logger.warn('Team chat summary failed; using schedule access for the team chooser.', {
@@ -185,7 +190,12 @@ export async function loadParentTeamsSummaryBootstrap(
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
+    {
+      ttlMs: teamsSummaryTtlMs,
+      force: options.force,
+      persist: false,
+      shouldCache: (result) => result.scheduleScope.isPartial !== true
+    }
   );
 }
 
