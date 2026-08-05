@@ -1,0 +1,131 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P27",
+  "title": "Household invite acceptance and revocation",
+  "actors": [
+    "primary",
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/household"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/household"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Create invite",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "combobox",
+        "name": "Linked player",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Email",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_EMAIL}",
+      "mutationId": "household-invite"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Relation",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "household-invite"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Create invite",
+        "exact": true
+      },
+      "mutationId": "household-invite",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Invite created.",
+        "exact": true
+      },
+      "value": "Invite created."
+    },
+    {
+      "action": "login",
+      "actor": "lifecycle"
+    },
+    {
+      "action": "redeemRunScopedHouseholdInvite",
+      "actor": "lifecycle",
+      "option": "primary",
+      "mutationId": "household-invite",
+      "scope": "{LIFECYCLE_EMAIL}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/home"
+    },
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{LIFECYCLE_EMAIL}",
+        "exact": true
+      },
+      "value": "{LIFECYCLE_EMAIL}"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "restoreHouseholdAccess",
+      "actor": "primary",
+      "mutationId": "household-invite"
+    }
+  ]
+}
