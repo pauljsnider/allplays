@@ -460,6 +460,34 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'write_unrecognized_active_firestore_rules_evidence()',
+        'Production Firestore unrecognized-source evidence helper'
+    );
+    assertIncludes(
+        deployProd,
+        'remote_source_sha256=${active_ruleset_observed_source_sha256}',
+        'Production Firestore redacted active-source digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'current_compatibility_sha256=${current_compatibility_sha256}',
+        'Production Firestore current compatibility candidate digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'baseline_compatibility_sha256=${baseline_compatibility_sha256}',
+        'Production Firestore baseline compatibility candidate digest evidence'
+    );
+    assertMatches(
+        deployProd,
+        /if \[\[ -z "\$active_rules_variant" \]\]; then\s+write_unrecognized_active_firestore_rules_evidence\s+write_firestore_configuration_blocked_summary "active Firestore rules did not match a trusted final or compatibility baseline"\s+exit 2/,
+        'Production Firestore unrecognized-source evidence before fail-closed exit'
+    );
+    if (deployProd.includes('echo "$observed_rules_b64"') || deployProd.includes('echo "$remote_rules_b64"')) {
+        throw new Error('Production Firestore diagnostics must never print rule source content.');
+    }
+    assertIncludes(
+        deployProd,
         'ensure_exact_firestore_ruleset()',
         'Production Firestore create-or-reuse coordinator'
     );

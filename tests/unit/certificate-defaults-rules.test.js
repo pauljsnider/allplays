@@ -127,6 +127,12 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toContain(
             'active Firestore rules did not match a trusted final or compatibility baseline'
         );
+        expect(deployWorkflow).toMatch(
+            /write_unrecognized_active_firestore_rules_evidence[\s\S]*remote_source_sha256=\$\{active_ruleset_observed_source_sha256\}/
+        );
+        expect(deployWorkflow).toContain(
+            'Only immutable identifiers and SHA-256 digests are reported; rule source and credentials remain redacted.'
+        );
         expect(deployWorkflow).toContain('[[ "$active_rules_variant" == *-final ]]');
         expect(deployWorkflow).toContain('firestore-baseline-compat.rules');
         expect(deployWorkflow).toContain('advancing its SHA and forcing live mode classification');
