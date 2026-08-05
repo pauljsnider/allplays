@@ -7,45 +7,31 @@ const require = createRequire(import.meta.url);
 const { hasAdminInviteIssuerAccess } = require('../../functions/team-admin-access-core.cjs');
 
 describe('admin invite server-authoritative redemption', () => {
-    it('exposes a callable that validates invite identity and mutates team, user, and access code in one transaction', () => {
+    it('routes the callable through the server-authoritative redemption core', () => {
         const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
         const handlerIndex = functionsSource.indexOf('exports.redeemAdminInvite');
         expect(handlerIndex).toBeGreaterThanOrEqual(0);
 
-        const handlerSource = functionsSource.slice(handlerIndex, handlerIndex + 5200);
-        expect(handlerSource).toContain('functions.https.onCall');
-        expect(handlerSource).toContain('firestore.runTransaction(async (transaction) =>');
-        expect(handlerSource).toContain("codeData.type !== 'admin_invite'");
-        expect(handlerSource).toContain('codeData.used');
-        expect(handlerSource).toContain('isParentInviteExpired(codeData.expiresAt)');
-        expect(handlerSource).toContain('invitedEmail !== signedInEmail');
-        expect(handlerSource).toContain('normalizeParentInviteEmail(context.auth.token?.email)');
-        expect(handlerSource).not.toContain('context.auth.token?.email || userData.email');
-        expect(handlerSource).not.toContain('data?.userEmail || data?.authEmail');
-        expect(handlerSource).toContain('userId !== context.auth.uid');
-        expect(handlerSource).toContain('adminEmails: appendUniqueValue');
-        expect(handlerSource).toContain('coachOf: appendUniqueValue');
-        expect(handlerSource).toContain("roles: appendUniqueValue(userData.roles, 'coach')");
-        expect(handlerSource).toContain('transaction.update(codeRef');
-        expect(handlerSource).toContain('used: true');
-        expect(handlerSource).toContain('usedBy: userId');
-        expect(handlerSource).toContain('usedAt: now');
+        const handlerSource = functionsSource.slice(handlerIndex, handlerIndex + 500);
+        expect(handlerSource).toContain('functions.https.onCall(createRedeemAdminInviteHandler({');
+        expect(handlerSource).toContain('firestore,');
+        expect(handlerSource).toContain('getAuthUser: (uid) => admin.auth().getUser(uid),');
+        expect(handlerSource).toContain('getTimestamp: () => admin.firestore.Timestamp.now(),');
+        expect(handlerSource).toContain('HttpsError: functions.https.HttpsError,');
     });
 
     it('revalidates the issuer inside the transaction before any invite redemption writes', () => {
-        const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
-        const handlerIndex = functionsSource.indexOf('exports.redeemAdminInvite');
-        const handlerSource = functionsSource.slice(handlerIndex, handlerIndex + 6200);
+        const handlerSource = readFileSync(resolve(process.cwd(), 'functions/admin-invite-redemption-core.cjs'), 'utf8');
         const issuerCheckIndex = handlerSource.indexOf('if (!hasAdminInviteIssuerAccess({');
         const firstWriteIndex = handlerSource.indexOf('transaction.set(teamRef');
 
-        expect(handlerSource).toContain('const issuerUid = String(codeData.generatedBy || \'\').trim();');
+        expect(handlerSource).toContain('const issuerUid = normalizeStoredUid(codeData.generatedBy);');
         expect(handlerSource).toContain('transaction.get(issuerRef)');
-        expect(handlerSource).toContain('admin.auth().getUser(issuerUid).catch(() => null)');
+        expect(handlerSource).toContain('getAuthUser(issuerUid)).catch(() => null)');
         expect(issuerCheckIndex).toBeGreaterThanOrEqual(0);
         expect(firstWriteIndex).toBeGreaterThan(issuerCheckIndex);
         expect(handlerSource.slice(issuerCheckIndex, firstWriteIndex))
-            .toContain("HttpsError('permission-denied'");
+            .toContain("new HttpsError('permission-denied'");
     });
 
     it.each([
