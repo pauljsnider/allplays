@@ -771,7 +771,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443333'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443334'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -10273,18 +10273,59 @@ function normalizeRideEventIds(primaryGameId, fallbackGameIds = []) {
     )];
 }
 
-async function loadRideOffersForGameId(teamId, gameId) {
+function normalizeRideRequestReadOptions(options = {}) {
+    return {
+        requesterUserId: String(options?.requesterUserId || auth.currentUser?.uid || '').trim(),
+        childIds: [...new Set((Array.isArray(options?.childIds) ? options.childIds : [])
+            .map((childId) => String(childId || '').trim())
+            .filter(Boolean))],
+        canManageTeamRequests: options?.canManageTeamRequests === true
+    };
+}
+
+function isRideRequestPermissionDenied(error) {
+    const code = String(error?.code || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return code.includes('permission-denied') || message.includes('permission denied') || message.includes('missing or insufficient permissions');
+}
+
+async function loadRideRequestsForOffer(teamId, gameId, offerId, offerData, options = {}) {
+    const readOptions = normalizeRideRequestReadOptions(options);
+    const requestsPath = `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`;
+    let requestDocs = [];
+
+    if (readOptions.canManageTeamRequests || offerData?.driverUserId === readOptions.requesterUserId) {
+        const requestsSnap = await getDocs(collection(db, requestsPath));
+        requestDocs = requestsSnap.docs;
+    } else if (readOptions.requesterUserId && readOptions.childIds.length > 0) {
+        const requestSnaps = await Promise.all(readOptions.childIds.map(async (childId) => {
+            const requestId = `${readOptions.requesterUserId}__${childId}`;
+            try {
+                return await getDoc(doc(db, requestsPath, requestId));
+            } catch (error) {
+                // A stale or no-longer-linked child scope can be denied.
+                // Treat that exact probe as unavailable; never broaden to a list.
+                if (isRideRequestPermissionDenied(error)) return null;
+                throw error;
+            }
+        }));
+        requestDocs = requestSnaps.filter((requestSnap) => requestSnap?.exists?.());
+    }
+
+    return requestDocs
+        .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+        .sort((a, b) => {
+            const at = a?.requestedAt?.toMillis?.() || 0;
+            const bt = b?.requestedAt?.toMillis?.() || 0;
+            return at - bt;
+        });
+}
+
+async function loadRideOffersForGameId(teamId, gameId, options = {}) {
     const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
     const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
         const offerData = offerDoc.data() || {};
-        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
-        const requests = requestsSnap.docs
-            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-            .sort((a, b) => {
-                const at = a?.requestedAt?.toMillis?.() || 0;
-                const bt = b?.requestedAt?.toMillis?.() || 0;
-                return at - bt;
-            });
+        const requests = await loadRideRequestsForOffer(teamId, gameId, offerDoc.id, offerData, options);
         return {
             id: offerDoc.id,
             ...offerData,
@@ -10353,7 +10394,7 @@ export async function listRideOffersForEvent(teamId, gameId, options = {}) {
 
     for (let index = 0; index < candidateGameIds.length; index += 1) {
         const candidateGameId = candidateGameIds[index];
-        const offers = await loadRideOffersForGameId(teamId, candidateGameId);
+        const offers = await loadRideOffersForGameId(teamId, candidateGameId, options);
         if (offers.length > 0 || index === candidateGameIds.length - 1) {
             return offers;
         }
