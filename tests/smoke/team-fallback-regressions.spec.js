@@ -298,11 +298,11 @@ export async function postChatMessage() {}
 export async function editChatMessage() {}
 export async function deleteChatMessage() {}
 export async function getTeamEmailDrafts() {
-    return [];
+    return { items: [], nextCursor: null };
 }
 export async function saveTeamEmailDraft() {}
 export async function getTeamEmailTemplates() {
-    return [];
+    return { items: [], nextCursor: null };
 }
 export async function saveTeamEmailTemplate() {}
 export async function deleteTeamEmailTemplate() {}

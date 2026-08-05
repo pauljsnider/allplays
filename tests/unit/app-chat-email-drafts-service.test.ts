@@ -46,7 +46,7 @@ vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => ({
     sendAuthorizedDirectMessage: vi.fn()
 }));
 
-import { loadTeamEmailDrafts, saveTeamEmailDraft } from '../../apps/app/src/lib/chatService.ts';
+import { loadTeamEmailDrafts, mergeTeamEmailSavedItems, saveTeamEmailDraft } from '../../apps/app/src/lib/chatService.ts';
 
 describe('team email draft helpers', () => {
     beforeEach(() => {
@@ -54,7 +54,8 @@ describe('team email draft helpers', () => {
     });
 
     it('loads normalized draft records ordered by newest updatedAt first', async () => {
-        dbMocks.getTeamEmailDrafts.mockResolvedValue([
+        dbMocks.getTeamEmailDrafts.mockResolvedValue({
+          items: [
             {
                 id: 'draft-older',
                 subject: ' Older subject ',
@@ -69,9 +70,12 @@ describe('team email draft helpers', () => {
                 recipients: [{ key: 'email:newer@example.com', email: 'newer@example.com', name: 'Newer Parent' }],
                 updatedAt: { seconds: 20 }
             }
-        ]);
+          ],
+          nextCursor: { updatedAt: { seconds: 10 }, id: 'draft-older' }
+        });
 
-        await expect(loadTeamEmailDrafts('team-1')).resolves.toEqual([
+        await expect(loadTeamEmailDrafts('team-1')).resolves.toEqual({
+          items: [
             {
                 id: 'draft-newer',
                 subject: 'Newer subject',
@@ -96,8 +100,28 @@ describe('team email draft helpers', () => {
                 createdAt: undefined,
                 updatedAt: { seconds: 10 }
             }
-        ]);
-        expect(dbMocks.getTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+          ],
+          nextCursor: { updatedAt: { seconds: 10 }, id: 'draft-older' }
+        });
+        expect(dbMocks.getTeamEmailDrafts).toHaveBeenCalledWith('team-1', { pageSize: 25, cursor: null });
+    });
+
+    it('forwards cursors and removes duplicate records while appending', async () => {
+        const cursor = { updatedAt: { seconds: 10 }, id: 'draft-2' };
+        dbMocks.getTeamEmailDrafts.mockResolvedValue({
+            items: [{ id: 'draft-3', subject: 'Third', body: 'Body', recipients: [], updatedAt: { seconds: 5 } }],
+            nextCursor: null
+        });
+
+        const page = await loadTeamEmailDrafts('team-1', { cursor });
+        const merged = mergeTeamEmailSavedItems(
+            [{ id: 'draft-2' }, { id: 'draft-3', stale: true }],
+            page.items
+        );
+
+        expect(dbMocks.getTeamEmailDrafts).toHaveBeenCalledWith('team-1', { pageSize: 25, cursor });
+        expect(merged.map((draft) => draft.id)).toEqual(['draft-2', 'draft-3']);
+        expect(merged[1]).not.toHaveProperty('stale');
     });
 
     it('saves trimmed draft fields with recipient ids and recipient payload', async () => {

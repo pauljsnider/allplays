@@ -147,6 +147,18 @@ export type TeamEmailDraft = {
   updatedAt?: unknown;
 };
 
+export const TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
+
+export type TeamEmailSavedCursor = {
+  updatedAt: unknown;
+  id: string;
+};
+
+export type TeamEmailSavedPage<T> = {
+  items: T[];
+  nextCursor: TeamEmailSavedCursor | null;
+};
+
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
 };
@@ -1661,19 +1673,39 @@ export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit
   return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
 }
 
-export async function loadTeamEmailDrafts(teamId: string): Promise<TeamEmailDraft[]> {
-  const drafts = await withTimeout(Promise.resolve(getStoredTeamEmailDrafts(teamId)), 'Team email drafts') as Record<string, any>[];
-  return drafts
+export function mergeTeamEmailSavedItems<T extends { id: string }>(current: T[], next: T[]): T[] {
+  const merged = new Map(current.map((item) => [item.id, item]));
+  next.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
+export async function loadTeamEmailDrafts(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailDraft>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailDrafts(teamId, { pageSize, cursor })),
+    'Team email drafts'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((draft) => normalizeTeamEmailDraft(draft))
     .filter((draft): draft is TeamEmailDraft => Boolean(draft))
     .sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
-export async function loadTeamEmailTemplates(teamId: string): Promise<TeamEmailTemplate[]> {
-  const templates = await withTimeout(Promise.resolve(getStoredTeamEmailTemplates(teamId)), 'Team email templates') as Record<string, any>[];
-  return templates
+export async function loadTeamEmailTemplates(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailTemplate>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailTemplates(teamId, { pageSize, cursor })),
+    'Team email templates'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((template) => normalizeTeamEmailTemplate(template))
     .filter((template): template is TeamEmailTemplate => Boolean(template));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
 export async function saveTeamEmailDraft({
