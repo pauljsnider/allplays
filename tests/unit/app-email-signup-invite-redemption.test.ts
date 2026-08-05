@@ -36,7 +36,7 @@ describe('React app email signup invite redemption dependencies', () => {
     const redeemSource = authServiceSource.slice(redeemStart, redeemEnd);
 
     expect(redeemSource).toContain('redeemParentInvite: dbModule.redeemParentInvite');
-    expect(redeemSource).toContain('validateAccessCode: dbModule.validateAccessCode');
+    expect(redeemSource).toContain('return dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined)');
     expect(redeemSource).toContain('redeemFriendInviteForCurrentSession(dbModule, inviteUserId, inviteCode, email)');
     expect(redeemSource).not.toContain('redeemFriendInvite: dbModule.redeemFriendInvite');
     expect(redeemSource).toContain('redeemHouseholdInvite: dbModule.redeemHouseholdInvite');

@@ -5200,14 +5200,19 @@ export async function validateAccessCode(code, options = {}) {
     if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
-    const nativeAuthToken = typeof options?.nativeAuthToken === 'string'
+    let authenticatedSessionToken = typeof options?.nativeAuthToken === 'string'
         ? options.nativeAuthToken.trim()
         : '';
+    if (!authenticatedSessionToken && typeof auth.currentUser?.getIdToken === 'function') {
+        authenticatedSessionToken = String(
+            await auth.currentUser.getIdToken().catch(() => '')
+        ).trim();
+    }
 
     const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
     const response = await callable({
         code: normalizedCode,
-        ...(nativeAuthToken ? { nativeAuthToken } : {})
+        ...(authenticatedSessionToken ? { nativeAuthToken: authenticatedSessionToken } : {})
     });
     const payload = response?.data || response;
     return payload && typeof payload === 'object'
