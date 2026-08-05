@@ -241,8 +241,12 @@ describe('direct thread mount telemetry', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/TeamEmailSheet.tsx'), 'utf8');
 
     expect(source).toContain("import { emailComposerActions, emailReducer, initialEmailComposerState } from '../state/emailReducer';");
-    expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));");
-    expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));");
+    expect(source).toContain("const page = await loadTeamEmailTemplates(teamId, { cursor: append ? templateNextCursor : null });");
+    expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(");
+    expect(source).toContain("append ? mergeTeamEmailSavedItems(emailState.templates, page.items) : page.items");
+    expect(source).toContain("const page = await loadTeamEmailDrafts(teamId, { cursor: append ? draftNextCursor : null });");
+    expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(");
+    expect(source).toContain("append ? mergeTeamEmailSavedItems(emailState.drafts, page.items) : page.items");
     expect(source).toContain("emailDispatch(emailComposerActions.clearSelectedDraft());");
     expect(source).toContain("emailDispatch(emailComposerActions.selectDraft(draft.id));");
     expect(source).toContain("emailDispatch(emailComposerActions.applyTemplate(template.id));");
