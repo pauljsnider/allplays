@@ -242,6 +242,29 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
     });
 
+    it('keeps parent-linked teams usable when only staff discovery and chat are partial', async () => {
+        chatServiceMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValueOnce({
+            profile: {},
+            children: [{
+                teamId: 'team-parent',
+                teamName: 'Jr KC Current',
+                playerId: 'player-1',
+                playerName: 'Madison Snider'
+            }],
+            staffTeams: [],
+            staffTeamsPartial: true,
+            isPartial: true
+        });
+
+        const summary = await loadParentTeamsSummaryBootstrap(user, { force: true });
+
+        expect(summary.home.teams).toEqual([
+            expect.objectContaining({ teamId: 'team-parent', teamName: 'Jr KC Current' })
+        ]);
+        expect(summary.scheduleScope.isPartial).toBe(true);
+    });
+
     it('caches a complete empty chooser for a genuinely teamless account', async () => {
         scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
             profile: {},

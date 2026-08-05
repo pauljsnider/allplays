@@ -57,14 +57,6 @@ function throwIfAllSecondarySlicesFailed(errors: AppServiceError[]) {
   }
 }
 
-async function loadCompleteTeamsScheduleScope(user: AuthUser) {
-  const scheduleScope = await loadParentScheduleScope(user);
-  if (scheduleScope.isPartial === true) {
-    throw new Error('Team access discovery is incomplete. Try loading teams again.');
-  }
-  return scheduleScope;
-}
-
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
@@ -155,14 +147,19 @@ export async function loadParentTeamsSummaryBootstrap(
               chatInbox: { teams: [] },
               error: toAppServiceError(error, 'Unable to load team chat.')
             })),
-          loadCompleteTeamsScheduleScope(user).catch((error) => {
+          loadParentScheduleScope(user).catch((error) => {
             throw toAppServiceError(error, 'Unable to load teams.');
           })
         ]);
-        const hasScheduleTeams = scheduleScope.children.length > 0
-          || Boolean(scheduleScope.staffTeams?.length);
-        if (chatInboxResult.error && scheduleScope.staffTeamsPartial && !hasScheduleTeams) {
-          throw chatInboxResult.error;
+        const hasParentLinkedTeams = scheduleScope.children.length > 0;
+        if (scheduleScope.isPartial === true && !hasParentLinkedTeams) {
+          if (chatInboxResult.error) {
+            throw chatInboxResult.error;
+          }
+          throw toAppServiceError(
+            new Error('Team access discovery is incomplete. Try loading teams again.'),
+            'Unable to load teams.'
+          );
         }
         if (chatInboxResult.error) {
           logger.warn('Team chat summary failed; using schedule access for the team chooser.', {
