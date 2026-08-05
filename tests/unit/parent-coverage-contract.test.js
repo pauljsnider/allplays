@@ -172,6 +172,15 @@ describe('parent coverage contract boundary', () => {
             phases: ['execution'],
             target: { kinds: ['label', 'testId'], exact: true }
         });
+
+        const privateAi = parentCoverageAuthoringContext('P36');
+        expect(privateAi.actionConstraints.uploadSyntheticImage.target).toMatchObject({
+            kinds: ['label'],
+            exact: true,
+            name: 'Attach image, CSV, or PDF'
+        });
+        expect(privateAi.actionConstraints.uploadSyntheticDocument.target.name)
+            .toBe('Attach image, CSV, or PDF');
     });
 
     it('locks a unique ordered catalog of every initial parent workflow', () => {
@@ -650,9 +659,9 @@ describe('parent coverage contract boundary', () => {
             workflowId: 'P36', title: catalog.workflows[35].title, actors: ['primary'],
             mutatesProduction: true, cleanupRequired: true,
             steps: [
-                { action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Image', exact: true }, mutationId: 'ai-image', commitMutation: true },
+                { action: 'uploadSyntheticImage', target: { kind: 'label', name: 'Attach image, CSV, or PDF', exact: true }, mutationId: 'ai-image', commitMutation: true },
                 { action: 'expectText', target: { kind: 'text', name: 'Image attachment', exact: true }, value: 'image' },
-                { action: 'uploadSyntheticDocument', target: { kind: 'label', name: 'Document', exact: true }, mutationId: 'ai-document', commitMutation: true },
+                { action: 'uploadSyntheticDocument', target: { kind: 'label', name: 'Attach image, CSV, or PDF', exact: true }, mutationId: 'ai-document', commitMutation: true },
                 { action: 'expectText', target: { kind: 'text', name: 'Document PDF', exact: true }, value: 'document' },
                 { action: 'fill', target: { kind: 'label', name: 'Prompt', exact: true }, value: '{RUN_MARKER}', mutationId: 'ai-message' },
                 { action: 'click', target: { kind: 'role', role: 'button', name: 'Send', exact: true }, mutationId: 'ai-message', commitMutation: true },
@@ -665,6 +674,23 @@ describe('parent coverage contract boundary', () => {
             ]
         });
         expect(validateContract(contract, catalog, 'P36').workflowId).toBe('P36');
+        for (const [action, staleName] of [
+            ['uploadSyntheticImage', 'Image'],
+            ['uploadSyntheticDocument', 'Document']
+        ]) {
+            expect(() => validateContract({
+                ...contract,
+                steps: contract.steps.map((step) => step.action === action
+                    ? { ...step, target: { ...step.target, name: staleName } }
+                    : step)
+            }, catalog, 'P36')).toThrow(new RegExp(`trusted P36/${action} accessible label`));
+        }
+        expect(() => validateContract({
+            ...contract,
+            steps: contract.steps.map((step) => step.action === 'uploadSyntheticImage'
+                ? { ...step, target: { ...step.target, kind: 'testId' } }
+                : step)
+        }, catalog, 'P36')).toThrow(/trusted P36\/uploadSyntheticImage accessible label/);
         expect(() => validateContract({
             ...contract,
             cleanupSteps: contract.cleanupSteps.slice(1)
