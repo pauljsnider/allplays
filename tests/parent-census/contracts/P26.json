@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P26",
+  "title": "Friend lifecycle and direct chat",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=friends"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Friends",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Add friend",
+        "exact": true
+      },
+      "mutationId": "friendship",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Friend request sent.",
+        "exact": true
+      },
+      "value": "Friend request sent."
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/home?section=friends"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Friends",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Accept",
+        "exact": true
+      },
+      "mutationId": "friendship",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Friend request accepted.",
+        "exact": true
+      },
+      "value": "Friend request accepted."
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}?conversation={CONVERSATION_ID}"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Message",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "friend-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "friend-message",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}?conversation={CONVERSATION_ID}"
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}?conversation={CONVERSATION_ID}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "friend-message",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=friends"
+    },
+    {
+      "action": "restoreFriendship",
+      "actor": "primary",
+      "mutationId": "friendship"
+    }
+  ]
+}
