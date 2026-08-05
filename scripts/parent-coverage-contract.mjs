@@ -343,7 +343,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'restoreHouseholdAccess', phase: 'cleanup', actor: 'primary' }
     ],
     P28: [
-        { action: 'fill', actor: 'primary', target: /share|family|email/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /^Label, like Grandma or babysitter$/, value: /\{RUN_MARKER\}/ },
         { action: 'click', actor: 'primary', target: /create share/i },
         { action: 'openRunScopedShareLink', actor: 'anonymous', option: 'primary' },
         { actions: ['expectVisible', 'expectText'], actor: 'anonymous', target: /family|shared|privacy/i },
@@ -476,7 +476,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         primary: /^(?:household|invite|email|relation|create invite|send invite|revoke (?:invite|access) for \{LIFECYCLE_EMAIL\})$/i,
         lifecycle: /^(?:invite code|accept invite|continue)$/i
     },
-    P28: { primary: /^(?:share|family|privacy|email|create share|revoke share)$/i },
+    P28: { primary: /^(?:label, like grandma or babysitter|create share|revoke share)$/i },
     P33: { primary: /^(?:media|photo|image|upload|title|caption|share|remove media|delete media)$/i },
     P34: {
         primary: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i,
@@ -528,6 +528,9 @@ const stepKeysByAction = new Map([
 ]);
 
 const exactWorkflowActionTargets = new Map([
+    ['P28', new Map([
+        ['fill', { kind: 'placeholder', name: 'Label, like Grandma or babysitter' }]
+    ])],
     ['P35', new Map([
         ['fill', { kind: 'placeholder', name: 'Ask ALL PLAYS...' }]
     ])],
