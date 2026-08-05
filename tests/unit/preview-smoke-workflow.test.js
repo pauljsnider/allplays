@@ -56,7 +56,17 @@ describe('preview-smoke CI workflow', () => {
 
         expect(shouldRun([])).toBe(false);
         expect(shouldRun(['docs/testing.md', 'functions/index.js'])).toBe(false);
+        expect(shouldRun([
+            'scripts/parent-coverage-contract.mjs',
+            'tests/unit/parent-coverage-contract.test.js'
+        ])).toBe(false);
+        expect(shouldRun([
+            'scripts/validate-parent-coverage-contract.mjs',
+            'tests/parent-census/workflows.json'
+        ])).toBe(false);
         expect(shouldRun(['js/auth.js'])).toBe(true);
+        expect(shouldRun(['scripts/stage-pages-bundle.mjs'])).toBe(true);
+        expect(shouldRun(['tests/smoke/helpers/parent-coverage-runner.js'])).toBe(true);
         expect(shouldRun(['.github/workflows/preview-smoke.yml'])).toBe(true);
         expect(workflow).not.toContain('[ -z "$CHANGED" ] ||');
     });
