@@ -5706,6 +5706,19 @@ function findUniqueScheduleMention<T extends { id: string; name: string }>(
       const previousToken = requestTokens[index - 1] || '';
       const nextToken = requestTokens[index + 1] || '';
       if (nextToken === 's') return true;
+      const tokenAfterNext = requestTokens[index + 2] || '';
+      if (
+        nextToken
+        && !scheduleContinuationTokens.has(nextToken)
+        && (
+          previousToken === 'for'
+          || previousToken === 'player'
+          || tokenAfterNext === 's'
+          || scheduleContinuationTokens.has(tokenAfterNext)
+        )
+      ) {
+        hasUnmatchedFullNameSyntax = true;
+      }
       if (previousToken !== 'for' && previousToken !== 'player') return false;
       if (!nextToken || scheduleContinuationTokens.has(nextToken)) return true;
       hasUnmatchedFullNameSyntax = true;

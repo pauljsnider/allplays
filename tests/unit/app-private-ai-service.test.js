@@ -1353,7 +1353,11 @@ describe('private AI service', () => {
         expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
     });
 
-    it('rejects an unmatched full player name instead of selecting a shared first name', async () => {
+    it.each([
+        'When is the next game for Madison Jones?',
+        "When is Madison Jones's next game?",
+        'When is Madison Jones next game?'
+    ])('rejects an unmatched full player name instead of selecting a shared first name: %s', async (requestText) => {
         homeMocks.loadParentHome.mockResolvedValue({
             teams: [{ teamId: 'team-current', teamName: 'Jr KC Current' }]
         });
@@ -1368,7 +1372,7 @@ describe('private AI service', () => {
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
         await expect(runPrivateAiTool(authUser, { name: 'list_schedule', args: {} }, {
-            requestText: 'When is the next game for Madison Jones?'
+            requestText
         })).resolves.toMatchObject({
             ok: false,
             error: expect.stringContaining('full name')
