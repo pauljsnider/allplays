@@ -181,6 +181,53 @@ describe('parent coverage contract boundary', () => {
         });
         expect(privateAi.actionConstraints.uploadSyntheticDocument.target.name)
             .toBe('Attach image, CSV, or PDF');
+
+        const privateAiText = parentCoverageAuthoringContext('P35');
+        expect(privateAiText.actionConstraints.fill.target).toMatchObject({
+            kinds: ['placeholder'],
+            exact: true,
+            name: 'Ask ALL PLAYS...'
+        });
+    });
+
+    it('requires P35 to fill the exact production composer placeholder', () => {
+        const contract = validContract({
+            workflowId: 'P35', title: catalog.workflows[34].title, actors: ['primary'],
+            mutatesProduction: true, cleanupRequired: true,
+            steps: [
+                {
+                    action: 'fill', actor: 'primary',
+                    target: { kind: 'placeholder', name: 'Ask ALL PLAYS...', exact: true },
+                    value: '{RUN_MARKER}', mutationId: 'ai-message'
+                },
+                {
+                    action: 'click', actor: 'primary',
+                    target: { kind: 'role', role: 'button', name: 'Send', exact: true },
+                    mutationId: 'ai-message', commitMutation: true
+                },
+                {
+                    action: 'expectText', actor: 'primary',
+                    target: { kind: 'text', name: 'Parent schedule', exact: true }, value: 'Parent'
+                },
+                {
+                    action: 'expectNoText', actor: 'primary',
+                    target: { kind: 'text', name: 'Manager tools', exact: true }, value: 'Manager'
+                }
+            ],
+            cleanupSteps: [{
+                action: 'click', actor: 'primary',
+                target: { kind: 'role', role: 'button', name: 'Delete message', exact: true },
+                mutationId: 'ai-message', scope: '{RUN_MARKER}'
+            }]
+        });
+
+        expect(validateContract(contract, catalog, 'P35').workflowId).toBe('P35');
+        expect(() => validateContract({
+            ...contract,
+            steps: contract.steps.map((step) => step.action === 'fill'
+                ? { ...step, target: { kind: 'label', name: 'Prompt', exact: true } }
+                : step)
+        }, catalog, 'P35')).toThrow(/trusted P35\/fill exact locator/);
     });
 
     it('locks a unique ordered catalog of every initial parent workflow', () => {
@@ -749,14 +796,14 @@ describe('parent coverage contract boundary', () => {
                 steps: contract.steps.map((step) => step.action === action
                     ? { ...step, target: { ...step.target, name: staleName } }
                     : step)
-            }, catalog, 'P36')).toThrow(new RegExp(`trusted P36/${action} accessible label`));
+            }, catalog, 'P36')).toThrow(new RegExp(`trusted P36/${action} exact locator`));
         }
         expect(() => validateContract({
             ...contract,
             steps: contract.steps.map((step) => step.action === 'uploadSyntheticImage'
                 ? { ...step, target: { ...step.target, kind: 'testId' } }
                 : step)
-        }, catalog, 'P36')).toThrow(/trusted P36\/uploadSyntheticImage accessible label/);
+        }, catalog, 'P36')).toThrow(/trusted P36\/uploadSyntheticImage exact locator/);
         expect(() => validateContract({
             ...contract,
             cleanupSteps: contract.cleanupSteps.slice(1)

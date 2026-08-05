@@ -81,6 +81,8 @@ function baseLocator(root, descriptor, variables) {
         return root.getByRole(descriptor.role, { name, ...(options || {}) });
     case 'label':
         return root.getByLabel(name, options);
+    case 'placeholder':
+        return root.getByPlaceholder(name, options);
     case 'text':
         return root.getByText(name, options);
     case 'testId':
