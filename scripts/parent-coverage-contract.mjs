@@ -479,7 +479,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P28: { primary: /^(?:label, like grandma or babysitter|create share|revoke share)$/i },
     P33: { primary: /^(?:media|photo|image|upload|title|caption|share|remove media|delete media)$/i },
     P34: {
-        primary: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i,
+        primary: /^(?:social|post|write one short note|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i,
         peer: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i
     },
     P35: { primary: /^(?:ai|chat|prompt|ask all plays\.\.\.|send|delete message|clear chat|new conversation)$/i },
@@ -540,6 +540,19 @@ const exactWorkflowActionTargets = new Map([
     ])]
 ]);
 
+const exactWorkflowActorActionTargets = new Map([
+    ['P34', new Map([
+        ['primary', new Map([
+            ['fill', { kind: 'label', name: 'Write one short note' }]
+        ])]
+    ])]
+]);
+
+function exactWorkflowActionTarget(workflowId, action, actor = '') {
+    return exactWorkflowActorActionTargets.get(workflowId)?.get(actor)?.get(action) ||
+        exactWorkflowActionTargets.get(workflowId)?.get(action);
+}
+
 function serializeAuthoringValue(value) {
     if (value instanceof RegExp) {
         return { pattern: value.source, flags: value.flags };
@@ -585,6 +598,16 @@ function parentCoverageActionConstraint(workflowId, capability, action) {
         if (exactTarget) {
             constraint.target.kinds = [exactTarget.kind];
             constraint.target.name = exactTarget.name;
+        }
+        const actorTargets = exactWorkflowActorActionTargets.get(workflowId);
+        const exactTargetsByActor = actorTargets && Object.fromEntries(
+            [...actorTargets]
+                .map(([actor, actionTargets]) => [actor, actionTargets.get(action)])
+                .filter(([, target]) => target)
+                .map(([actor, target]) => [actor, { ...target, exact: true }])
+        );
+        if (exactTargetsByActor && Object.keys(exactTargetsByActor).length > 0) {
+            constraint.target.byActor = exactTargetsByActor;
         }
     }
     if (action === 'restoreFriendship') constraint.actor = 'primary';
@@ -890,7 +913,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     if (capability.mode !== 'readOnly' && stateChangingActions.has(step.action)) {
         const actor = step.actor || defaultActor;
         const targetName = String(step.target?.name || '');
-        const exactTarget = exactWorkflowActionTargets.get(workflowId)?.get(step.action);
+        const exactTarget = exactWorkflowActionTarget(workflowId, step.action, actor);
         if (exactTarget && (step.target?.kind !== exactTarget.kind || targetName !== exactTarget.name)) {
             throw new Error(`${phase} target must use the trusted ${workflowId}/${step.action} exact locator`);
         }
