@@ -405,12 +405,12 @@ describe('React app Home service', () => {
 
         await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
             name: 'AppServiceError',
-            type: 'unknown',
-            message: 'Team access discovery is incomplete. Try loading teams again.'
+            type: 'network',
+            message: 'Failed to fetch'
         });
     });
 
-    it('rejects parent-linked teams when staff discovery is partial so the incomplete scope is not cached', async () => {
+    it('keeps parent-linked teams visible when chat fails and only staff discovery is partial', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         scheduleMocks.loadParentScheduleScope.mockResolvedValueOnce({
             profile: { id: 'profile-user-1' },
@@ -428,11 +428,15 @@ describe('React app Home service', () => {
         });
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
 
-        await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
-            name: 'AppServiceError',
-            type: 'unknown',
-            message: 'Team access discovery is incomplete. Try loading teams again.'
-        });
+        const home = await loadParentTeamsSummary(user, { force: true });
+
+        expect(home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                teamName: 'Bears',
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]);
     });
 
     it('uses the shared parent scope resolver for the fast Teams summary', async () => {
