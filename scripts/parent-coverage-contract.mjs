@@ -110,7 +110,7 @@ const workflowCapabilities = new Map(Object.entries({
     P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
     P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage', 'uploadSyntheticDocument'] },
-    P37: { mode: 'lifecycle', routes: ['/profile/settings'], actions: ['fill', 'fillActorPassword', 'click'] }
+    P37: { mode: 'lifecycle', routes: ['/profile/settings', '/auth'], actions: ['fill', 'fillActorPassword', 'click'] }
 }));
 const stateChangingActions = new Set([
     'click', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck',
@@ -403,10 +403,11 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P37: [
         { action: 'login', actor: 'lifecycle' },
-        { action: 'goto', actor: 'lifecycle', route: /profile\/settings/ },
-        { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
-        { action: 'fill', actor: 'lifecycle', target: /type delete to confirm/i, value: /^DELETE$/ },
-        { action: 'click', actor: 'lifecycle', target: /delete account|confirm deletion/i },
+        { action: 'goto', actor: 'lifecycle', route: /profile\/settings\?section=security/ },
+        { action: 'click', actor: 'lifecycle', target: /^delete my account$/i },
+        { action: 'fillActorPassword', actor: 'lifecycle', target: /^account password \(email sign-in only\)$/i },
+        { action: 'fill', actor: 'lifecycle', target: /^type delete to confirm$/i, value: /^DELETE$/ },
+        { action: 'click', actor: 'lifecycle', target: /^delete account$/i },
         { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /deleted|sign in|goodbye/i },
         { action: 'expectRoute', actor: 'lifecycle', route: /auth/ }
     ]
@@ -482,7 +483,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     },
     P35: { primary: /^(?:ai|chat|prompt|send|delete message|clear chat|new conversation)$/i },
     P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|attach image, CSV, or PDF|send|delete message|remove attachment|clear chat|new conversation)$/i },
-    P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
+    P37: { lifecycle: /^(?:delete my account|type delete to confirm|account password \(email sign-in only\)|delete account)$/i }
 }));
 const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
     P07: { clickAndExpectGoogleAuth: /^(?:continue with google|sign in with google|google)$/i },
@@ -903,16 +904,23 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         }
         const normalizedTarget = targetName.toLowerCase();
         const isCredentialInput = ['fill', 'fillActorEmail', 'fillActorPassword'].includes(step.action);
+        const targetMentionsPassword = /password/.test(normalizedTarget);
+        const targetMentionsEmail = /email/.test(normalizedTarget);
+        const isPasswordTarget = targetMentionsPassword && (
+            !targetMentionsEmail || step.action !== 'fillActorEmail'
+        );
+        const isEmailTarget = targetMentionsEmail && (
+            !targetMentionsPassword || step.action !== 'fillActorPassword'
+        );
         const lifecycleEmailInput = step.action === 'fill' && step.value === '{LIFECYCLE_EMAIL}' ||
             step.action === 'fillActorEmail' && actor === 'lifecycle';
-        if (capability.mode === 'lifecycle' && isCredentialInput && /email/.test(normalizedTarget) && !lifecycleEmailInput) {
+        if (capability.mode === 'lifecycle' && isCredentialInput && isEmailTarget && !lifecycleEmailInput) {
             throw new Error(`${phase} lifecycle email inputs must bind to the protected lifecycle actor`);
         }
         if (
             capability.mode === 'lifecycle' &&
             isCredentialInput &&
-            !/email/.test(normalizedTarget) &&
-            /password/.test(normalizedTarget) &&
+            isPasswordTarget &&
             step.action !== 'fillActorPassword'
         ) {
             throw new Error(`${phase} lifecycle password inputs must bind to the protected lifecycle actor`);
