@@ -116,6 +116,11 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).not.toContain("getByText(scopeText, { exact: true }).first()");
     });
 
+    it('resolves exact placeholder locators for production controls', () => {
+        expect(runnerSource).toContain("case 'placeholder':");
+        expect(runnerSource).toContain('return root.getByPlaceholder(name, options);');
+    });
+
     it('settles Google handoff listeners for both popup and same-tab flows', async () => {
         const page = new EventEmitter();
         page.mainFrame = () => ({ url: () => 'https://accounts.google.com/o/oauth2/auth' });

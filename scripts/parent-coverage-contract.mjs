@@ -49,7 +49,7 @@ const actions = new Set([
     'expectRoute',
     'logout'
 ]);
-const locatorKinds = new Set(['role', 'label', 'text', 'testId']);
+const locatorKinds = new Set(['role', 'label', 'placeholder', 'text', 'testId']);
 const allowedRoles = new Set([
     'button', 'checkbox', 'combobox', 'dialog', 'form', 'heading', 'link',
     'list', 'listitem', 'menuitem', 'option', 'radio', 'status', 'tab',
@@ -386,7 +386,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete post/i }
     ],
     P35: [
-        { action: 'fill', actor: 'primary', target: /prompt|chat/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /ask all plays\.\.\./i, value: /\{RUN_MARKER\}/ },
         { action: 'click', actor: 'primary', target: /send/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /parent|schedule|task|\{RUN_MARKER\}/i },
         { actions: ['expectHidden', 'expectNoText'], actor: 'primary', target: /manager|admin|coach tool/i },
@@ -482,7 +482,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         primary: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i,
         peer: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i
     },
-    P35: { primary: /^(?:ai|chat|prompt|send|delete message|clear chat|new conversation)$/i },
+    P35: { primary: /^(?:ai|chat|prompt|ask all plays\.\.\.|send|delete message|clear chat|new conversation)$/i },
     P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|attach image, CSV, or PDF|send|delete message|remove attachment|clear chat|new conversation)$/i },
     P37: { lifecycle: /^(?:delete my account|type delete to confirm|account password \(email sign-in only\)|delete account)$/i }
 }));
@@ -528,6 +528,9 @@ const stepKeysByAction = new Map([
 ]);
 
 const exactWorkflowActionTargets = new Map([
+    ['P35', new Map([
+        ['fill', { kind: 'placeholder', name: 'Ask ALL PLAYS...' }]
+    ])],
     ['P36', new Map([
         ['uploadSyntheticImage', { kind: 'label', name: 'Attach image, CSV, or PDF' }],
         ['uploadSyntheticDocument', { kind: 'label', name: 'Attach image, CSV, or PDF' }]
@@ -886,7 +889,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         const targetName = String(step.target?.name || '');
         const exactTarget = exactWorkflowActionTargets.get(workflowId)?.get(step.action);
         if (exactTarget && (step.target?.kind !== exactTarget.kind || targetName !== exactTarget.name)) {
-            throw new Error(`${phase} target must use the trusted ${workflowId}/${step.action} accessible label`);
+            throw new Error(`${phase} target must use the trusted ${workflowId}/${step.action} exact locator`);
         }
         const actorTargetCapability = mutationTargetCapabilities.get(workflowId)?.[actor];
         if (
@@ -903,10 +906,11 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         )) {
             throw new Error(`${phase} click targets must be exact semantic buttons or links`);
         }
+        const exactControlKinds = exactTarget ? [exactTarget.kind] : ['label', 'testId'];
         if (exactControlTargetActions.has(step.action) && !['rememberControl', 'restoreControl', 'expectUploadDenied'].includes(step.action) && (
-            !['label', 'testId'].includes(step.target?.kind) || step.target?.exact !== true
+            !exactControlKinds.includes(step.target?.kind) || step.target?.exact !== true
         )) {
-            throw new Error(`${phase} control mutations must use exact label or testId targets`);
+            throw new Error(`${phase} control mutations must use the exact trusted locator target`);
         }
         const normalizedTarget = targetName.toLowerCase();
         const isCredentialInput = ['fill', 'fillActorEmail', 'fillActorPassword'].includes(step.action);
