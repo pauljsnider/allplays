@@ -1,0 +1,175 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P36",
+  "title": "Private AI synthetic image and document attachment",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Ask ALL PLAYS",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Attach image, CSV, or PDF",
+        "exact": true
+      }
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Image",
+        "exact": true
+      },
+      "mutationId": "ai-image-attachment",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Image · AI decides roster, schedule, or analysis",
+        "exact": true
+      },
+      "value": "Image"
+    },
+    {
+      "action": "uploadSyntheticDocument",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Document",
+        "exact": true
+      },
+      "mutationId": "ai-document-attachment",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "PDF · AI decides roster, schedule, or analysis",
+        "exact": true
+      },
+      "value": "PDF"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Prompt",
+        "exact": true
+      },
+      "value": "Analyze this private PDF and respond only with {RUN_MARKER}.",
+      "mutationId": "ai-attachment-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "ai-attachment-message",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Attachment analyzed",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/ai"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "ai-attachment-message",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove attachment",
+        "exact": true
+      },
+      "mutationId": "ai-document-attachment",
+      "scope": "{RUN_MARKER}.pdf"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove attachment",
+        "exact": true
+      },
+      "mutationId": "ai-image-attachment",
+      "scope": "{RUN_MARKER}.png"
+    }
+  ]
+}
