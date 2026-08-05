@@ -264,6 +264,7 @@ const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
 const MAX_PUBLIC_TEAM_ROSTER_COUNT = 200;
 export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
+export const DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
     { key: 'heart', emoji: '❤️' },
@@ -771,7 +772,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443333'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443334'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -7560,22 +7561,39 @@ function normalizeTeamEmailDraftPayload(draft = {}) {
     };
 }
 
-export async function getTeamEmailTemplates(teamId) {
-    if (!teamId) return [];
-    const templatesRef = getTeamEmailTemplatesRef(teamId);
-    try {
-        const snapshot = await getDocs(query(templatesRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(templatesRef);
-        return snapshot.docs
-            .map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
+function normalizeTeamEmailSavedPageSize(pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE) {
+    const numericPageSize = Number(pageSize);
+    if (!Number.isFinite(numericPageSize) || numericPageSize <= 0) {
+        return DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE;
     }
+    return Math.min(Math.max(Math.floor(numericPageSize), 1), 100);
+}
+
+async function getTeamEmailSavedPage(itemsRef, { pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null } = {}) {
+    const normalizedPageSize = normalizeTeamEmailSavedPageSize(pageSize);
+    const constraints = [
+        orderBy('updatedAt', 'desc'),
+        orderBy(documentId(), 'desc')
+    ];
+    if (cursor?.updatedAt && cursor?.id) {
+        constraints.push(startAfterQuery(cursor.updatedAt, cursor.id));
+    }
+    constraints.push(limitQuery(normalizedPageSize));
+
+    const snapshot = await getDocs(query(itemsRef, ...constraints));
+    const items = snapshot.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    const lastDoc = snapshot.docs.at(-1);
+    return {
+        items,
+        nextCursor: snapshot.docs.length === normalizedPageSize && lastDoc
+            ? { updatedAt: lastDoc.data()?.updatedAt || null, id: lastDoc.id }
+            : null
+    };
+}
+
+export async function getTeamEmailTemplates(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailTemplatesRef(teamId), options);
 }
 
 export async function saveTeamEmailTemplate(teamId, template, { templateId = null } = {}) {
@@ -7604,22 +7622,9 @@ export async function deleteTeamEmailTemplate(teamId, templateId) {
     await deleteDoc(doc(db, 'teams', teamId, 'emailTemplates', templateId));
 }
 
-export async function getTeamEmailDrafts(teamId) {
-    if (!teamId) return [];
-    const draftsRef = getTeamEmailDraftsRef(teamId);
-    try {
-        const snapshot = await getDocs(query(draftsRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(draftsRef);
-        return snapshot.docs
-            .map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
-    }
+export async function getTeamEmailDrafts(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailDraftsRef(teamId), options);
 }
 
 export async function saveTeamEmailDraft(teamId, draft, { draftId = null } = {}) {
