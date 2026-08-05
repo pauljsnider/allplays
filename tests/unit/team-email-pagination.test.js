@@ -81,7 +81,7 @@ describe('team email saved-content pagination', () => {
         firebaseMocks.getDocs
             .mockResolvedValueOnce({ docs: [createDoc('item-b', newerAt), createDoc('item-a', olderAt)] })
             .mockResolvedValueOnce({ docs: [createDoc('item-older', { seconds: 5 })] });
-        const dbModule = await import('../../js/db.js?v=4433156-team-email-pages');
+        const dbModule = await import('../../js/db.js?v=4433157-team-email-pages');
 
         const firstPage = await dbModule[exportName]('team-1', { pageSize: 2 });
         const secondPage = await dbModule[exportName]('team-1', { pageSize: 2, cursor: firstPage.nextCursor });
@@ -100,7 +100,7 @@ describe('team email saved-content pagination', () => {
 
     it('propagates query failures without retrying an unbounded collection read', async () => {
         firebaseMocks.getDocs.mockRejectedValue(new Error('query failed'));
-        const { getTeamEmailDrafts } = await import('../../js/db.js?v=4433156-team-email-pages');
+        const { getTeamEmailDrafts } = await import('../../js/db.js?v=4433157-team-email-pages');
 
         await expect(getTeamEmailDrafts('team-1')).rejects.toThrow('query failed');
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
