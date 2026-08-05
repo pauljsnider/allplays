@@ -576,7 +576,10 @@ describe('React app schedule service contract integration', () => {
         expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
         expect(targetedSource).toContain('createScheduleEvent({');
         expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
-        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });');
+        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {');
+        expect(detailSource).toContain('includePastGames: true,');
+        expect(detailSource).toContain('onSourcePartial: () => {');
+        expect(detailSource).toContain('return { children, events, isPartial: sourcePartial };');
         expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
         expect(scheduleServiceSource).toContain('const breakdown = buildGameDayRsvpBreakdown({');
         expect(scheduleServiceSource).toContain('(breakdown.grouped.going || [])');
