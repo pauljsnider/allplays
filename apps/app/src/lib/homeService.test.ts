@@ -136,6 +136,129 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(summary.home.metrics.teams).toBe(2);
     });
 
+    it('surfaces a partial-empty staff scope and recovers on the next retry', async () => {
+        const freshStaffUser = {
+            uid: 'staff-1',
+            email: 'staff@example.com'
+        } as any;
+        scheduleServiceMocks.loadParentScheduleScope
+            .mockResolvedValueOnce({
+                profile: {},
+                children: [],
+                staffTeams: [],
+                staffTeamsPartial: true,
+                isPartial: true
+            })
+            .mockResolvedValueOnce({
+                profile: { coachOf: ['team-owned'] },
+                children: [],
+                staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+                staffTeamsPartial: false,
+                isPartial: false
+            });
+
+        await expect(loadParentTeamsSummaryBootstrap(freshStaffUser, { force: true })).rejects.toThrow(
+            'Team access discovery is incomplete'
+        );
+        const summary = await loadParentTeamsSummaryBootstrap(freshStaffUser);
+
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
+        expect(summary.scheduleScope).toMatchObject({
+            staffTeamsPartial: false,
+            isPartial: false
+        });
+        expect(summary.home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-owned',
+                teamName: 'Vipers',
+                role: 'Coach'
+            })
+        ]);
+    });
+
+    it('does not cache a repeated partial-empty staff scope as an authoritative empty chooser', async () => {
+        const freshStaffUser = {
+            uid: 'staff-1',
+            email: 'staff@example.com'
+        } as any;
+        const partialEmptyScope = {
+            profile: {},
+            children: [],
+            staffTeams: [],
+            staffTeamsPartial: true,
+            isPartial: true
+        };
+        scheduleServiceMocks.loadParentScheduleScope
+            .mockResolvedValueOnce(partialEmptyScope)
+            .mockResolvedValueOnce(partialEmptyScope)
+            .mockResolvedValueOnce({
+                profile: {},
+                children: [],
+                staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+                staffTeamsPartial: false,
+                isPartial: false
+            });
+
+        await expect(loadParentTeamsSummaryBootstrap(freshStaffUser, { force: true })).rejects.toThrow(
+            'Team access discovery is incomplete'
+        );
+        await expect(loadParentTeamsSummaryBootstrap(freshStaffUser)).rejects.toThrow(
+            'Team access discovery is incomplete'
+        );
+        const recovered = await loadParentTeamsSummaryBootstrap(freshStaffUser);
+
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(3);
+        expect(recovered.home.teams).toEqual([
+            expect.objectContaining({ teamId: 'team-owned', teamName: 'Vipers' })
+        ]);
+    });
+
+    it('rejects a partial nonempty chooser so a later complete load cannot be masked', async () => {
+        scheduleServiceMocks.loadParentScheduleScope
+            .mockResolvedValueOnce({
+                profile: {},
+                children: [],
+                staffTeams: [{ teamId: 'team-1', teamName: 'Vipers' }],
+                staffTeamsPartial: true,
+                isPartial: true
+            })
+            .mockResolvedValueOnce({
+                profile: {},
+                children: [],
+                staffTeams: [
+                    { teamId: 'team-1', teamName: 'Vipers' },
+                    { teamId: 'team-2', teamName: 'Current' }
+                ],
+                staffTeamsPartial: false,
+                isPartial: false
+            });
+
+        await expect(loadParentTeamsSummaryBootstrap(user)).rejects.toThrow(
+            'Team access discovery is incomplete'
+        );
+        const complete = await loadParentTeamsSummaryBootstrap(user);
+
+        expect(complete.home.teams).toHaveLength(2);
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
+    });
+
+    it('caches a complete empty chooser for a genuinely teamless account', async () => {
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [],
+            staffTeams: [],
+            staffTeamsPartial: false,
+            isPartial: false
+        });
+
+        const first = await loadParentTeamsSummaryBootstrap(user);
+        const second = await loadParentTeamsSummaryBootstrap(user);
+
+        expect(first.home.teams).toEqual([]);
+        expect(second.home.teams).toEqual([]);
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(1);
+    });
+
     it('refreshes a cached schedule summary when the fast scope contains staff teams', async () => {
         const scheduleScope = {
             profile: { coachOf: ['team-owned'] },

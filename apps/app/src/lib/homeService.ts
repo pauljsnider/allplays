@@ -57,6 +57,14 @@ function throwIfAllSecondarySlicesFailed(errors: AppServiceError[]) {
   }
 }
 
+async function loadCompleteTeamsScheduleScope(user: AuthUser) {
+  const scheduleScope = await loadParentScheduleScope(user);
+  if (scheduleScope.isPartial === true) {
+    throw new Error('Team access discovery is incomplete. Try loading teams again.');
+  }
+  return scheduleScope;
+}
+
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
@@ -147,7 +155,7 @@ export async function loadParentTeamsSummaryBootstrap(
               chatInbox: { teams: [] },
               error: toAppServiceError(error, 'Unable to load team chat.')
             })),
-          loadParentScheduleScope(user).catch((error) => {
+          loadCompleteTeamsScheduleScope(user).catch((error) => {
             throw toAppServiceError(error, 'Unable to load teams.');
           })
         ]);
@@ -185,7 +193,12 @@ export async function loadParentTeamsSummaryBootstrap(
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
+    {
+      ttlMs: teamsSummaryTtlMs,
+      force: options.force,
+      persist: false,
+      shouldCache: (result) => result.scheduleScope.isPartial !== true
+    }
   );
 }
 
