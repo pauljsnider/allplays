@@ -4118,7 +4118,9 @@ service cloud.firestore {
             function canReadMissingOwnRideRequest() {
               return isSignedIn() &&
                      resource == null &&
-                     requestId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$') &&
+                     requestId.size() > request.auth.uid.size() + 2 &&
+                     requestId[0:request.auth.uid.size() + 2] == request.auth.uid + '__' &&
+                     requestId[request.auth.uid.size() + 2:requestId.size()].matches('[A-Za-z0-9_-]+') &&
                      isParentForTeam(teamId);
             }
 

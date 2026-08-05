@@ -37,7 +37,9 @@ describe('rideshare request privacy Firestore rules', () => {
     expect(requestsBlock).toContain('resource.data.parentUserId == request.auth.uid');
     expect(requestsBlock).toContain('requestId == request.auth.uid + "__" + resource.data.childId');
     expect(requestsBlock).toContain('isParentForPlayer(teamId, resource.data.childId)');
-    expect(requestsBlock).toContain("requestId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$')");
+    expect(requestsBlock).toContain("requestId[0:request.auth.uid.size() + 2] == request.auth.uid + '__'");
+    expect(requestsBlock).toContain("requestId[request.auth.uid.size() + 2:requestId.size()].matches('[A-Za-z0-9_-]+')");
+    expect(requestsBlock).not.toContain("matches('^' + request.auth.uid");
     expect(requestsBlock).toContain('allow get: if isRideRequestManager() || canReadOwnRideRequest() || canReadMissingOwnRideRequest();');
     expect(requestsBlock).toContain('allow list: if isRideRequestManager();');
     expect(requestsBlock).not.toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)');
@@ -75,6 +77,10 @@ describe('rideshare request privacy Firestore rules', () => {
           setDoc(doc(firestore, 'users/parent-2'), {
             email: 'parent2@example.com', isAdmin: false,
             parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-b']
+          }),
+          setDoc(doc(firestore, 'users/ann.1'), {
+            email: 'ann1@example.com', isAdmin: false,
+            parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-c']
           }),
           setDoc(doc(firestore, 'users/driver-1'), {
             email: 'driver@example.com', isAdmin: false, parentTeamIds: ['team-1']
@@ -133,6 +139,14 @@ describe('rideshare request privacy Firestore rules', () => {
       const missingRequest = await assertSucceeds(getDoc(requestRef(parent, 'parent-1__player-c')));
       expect(missingRequest.exists()).toBe(false);
       await assertFails(getDoc(requestRef(parent, 'parent-2__missing-player')));
+    });
+
+    it('matches requester UIDs with regex metacharacters literally for missing probes', async () => {
+      const parent = authedFirestore('ann.1', 'ann1@example.com');
+
+      const ownMissingRequest = await assertSucceeds(getDoc(requestRef(parent, 'ann.1__player-c')));
+      expect(ownMissingRequest.exists()).toBe(false);
+      await assertFails(getDoc(requestRef(parent, 'annx1__player-c')));
     });
 
     it('preserves linked-parent create, pending update, and cancel access', async () => {
