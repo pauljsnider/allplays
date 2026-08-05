@@ -5765,19 +5765,18 @@ async function resolvePrivateAiScheduleTargetScope(
   const mentionedTeam = normalizedRequest
     ? findUniqueScheduleMention(normalizedRequest, access.scheduleTeams, 'team')
     : null;
-  const mentionedPlayer = normalizedRequest
-    ? findUniqueScheduleMention(
-        normalizedRequest,
-        collectAccessibleSchedulePlayerMentions(access),
-        'player'
-      )
+  const mentionedPlayerCandidate = normalizedRequest
+    ? findUniqueScheduleMention(normalizedRequest, [
+        ...collectAccessibleSchedulePlayerMentions(access).map((player) => ({ ...player, isAvailable: true })),
+        ...access.unavailableSchedulePlayers.map((player) => ({ ...player, isAvailable: false }))
+      ], 'player')
     : null;
-  const unavailablePlayer = normalizedRequest && !mentionedPlayer
-    ? findUniqueScheduleMention(normalizedRequest, access.unavailableSchedulePlayers, 'player')
-    : null;
-  if (unavailablePlayer) {
+  if (mentionedPlayerCandidate?.isAvailable === false) {
     throw new Error('That player is not available in this account schedule. Choose an active linked player.');
   }
+  const mentionedPlayer = mentionedPlayerCandidate?.isAvailable === true
+    ? mentionedPlayerCandidate
+    : null;
   if (mentionedTeam && mentionedPlayer && mentionedTeam.id !== mentionedPlayer.teamId) {
     throw new Error('The named team and player do not match. Choose the correct team or player.');
   }
