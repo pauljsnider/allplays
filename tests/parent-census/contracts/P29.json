@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P29",
+  "title": "Calendar feed and ICS download",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/calendar"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/calendar"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Calendar tools",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Download ICS",
+        "exact": true
+      }
+    },
+    {
+      "action": "clickAndExpectDownload",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Download ICS",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Calendar file ready to share.",
+        "exact": true
+      },
+      "value": "Calendar file ready to share."
+    }
+  ],
+  "cleanupSteps": []
+}
