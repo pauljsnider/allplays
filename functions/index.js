@@ -248,7 +248,7 @@ const {
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
 const {
-  buildGenericPreAuthAccessCodeValidationResult,
+  createAccessCodeValidationHandler,
   isAccessCodeInactive,
   validateAccessCodeCandidates
 } = require('./access-code-validation.cjs');
@@ -5366,24 +5366,15 @@ exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
 });
 
 exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
-  const code = String(data?.code || '').trim().toUpperCase();
-  if (!code) {
-    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
-  }
-  const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
-  const nativeAuthUser = nativeAuthToken
-    ? await admin.auth().verifyIdToken(nativeAuthToken).catch(() => null)
-    : null;
-  const acceptingUserId = String(context?.auth?.uid || nativeAuthUser?.uid || nativeAuthUser?.sub || '').trim();
-  if (!acceptingUserId) {
-    return buildGenericPreAuthAccessCodeValidationResult();
-  }
-
-  const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
-  return validateAccessCodeCandidates(snapshot.docs.map((docSnap) => ({
-    id: docSnap.id,
-    data: docSnap.data() || {}
-  })), Date.now(), acceptingUserId);
+  const handler = createAccessCodeValidationHandler({
+    firestore,
+    auth: admin.auth(),
+    HttpsError: functions.https.HttpsError,
+    rateLimitWindowMs: process.env.ACCESS_CODE_VALIDATION_RATE_LIMIT_WINDOW_MS,
+    uidMaxRequests: process.env.ACCESS_CODE_VALIDATION_UID_MAX_REQUESTS,
+    networkMaxRequests: process.env.ACCESS_CODE_VALIDATION_NETWORK_MAX_REQUESTS
+  });
+  return handler(data, context);
 });
 
 function accountMergePreviewAuditRef() {

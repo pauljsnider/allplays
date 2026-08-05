@@ -889,6 +889,14 @@ export function validateFirebaseRulesCi() {
     if (!authEmailDeliveryTtl) {
         throw new Error('Authentication email deliveries must keep an expiresAt TTL policy.');
     }
+    const accessCodeValidationRateLimitTtl = (firestoreIndexes.fieldOverrides || []).some((override) =>
+        override.collectionGroup === 'accessCodeValidationRateLimits' &&
+        override.fieldPath === 'expiresAt' &&
+        override.ttl === true
+    );
+    if (!accessCodeValidationRateLimitTtl) {
+        throw new Error('Access-code validation rate limits must keep an expiresAt TTL policy.');
+    }
 
     if (firebaseJson.storage?.rules !== 'storage.rules') {
         throw new Error('firebase.json must deploy storage.rules.');
