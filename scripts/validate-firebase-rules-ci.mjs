@@ -460,6 +460,46 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertIncludes(
         deployProd,
+        'recovery_sha="b637109b4f51d9b8627bb081eaea1489dfc8b8c3"',
+        'Production Firestore active-recovery source commit'
+    );
+    assertIncludes(
+        deployProd,
+        'recovery_source_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"',
+        'Production Firestore active-recovery formatted-source proof'
+    );
+    assertIncludes(
+        deployProd,
+        'git archive "$recovery_sha"',
+        'Production Firestore active-recovery exact commit reconstruction'
+    );
+    assertIncludes(
+        deployProd,
+        'git merge-base --is-ancestor "$recovery_sha" "$GITHUB_SHA"',
+        'Production Firestore active-recovery ancestry proof'
+    );
+    assertIncludes(
+        deployProd,
+        'firestore-active-recovery.rules',
+        'Production Firestore active-recovery trusted handoff'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_active_recovery_ruleset="projects/game-flow-c6311/rulesets/537ed719-d2fa-4cae-9a20-97273db4e11a"',
+        'Production Firestore active-recovery immutable ruleset proof'
+    );
+    assertIncludes(
+        deployProd,
+        'certificate_active_recovery_canonical_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"',
+        'Production Firestore active-recovery canonical-source proof'
+    );
+    assertMatches(
+        deployProd,
+        /expected_rules_source" == "\$active_recovery_firestore_rules"[\s\S]{0,1200}ruleset_name" == "\$certificate_active_recovery_ruleset"[\s\S]{0,1200}local_rules_sha256" == "\$certificate_active_recovery_source_sha256"[\s\S]{0,1200}remote_rules_sha256" == "\$certificate_active_recovery_canonical_sha256"/,
+        'Production Firestore active-recovery three-part proof'
+    );
+    assertIncludes(
+        deployProd,
         'write_unrecognized_active_firestore_rules_evidence()',
         'Production Firestore unrecognized-source evidence helper'
     );
@@ -477,6 +517,11 @@ export function validateProductionDeployCommand(deployProd) {
         deployProd,
         'baseline_compatibility_sha256=${baseline_compatibility_sha256}',
         'Production Firestore baseline compatibility candidate digest evidence'
+    );
+    assertIncludes(
+        deployProd,
+        'active_recovery_sha256=${active_recovery_sha256}',
+        'Production Firestore active-recovery candidate digest evidence'
     );
     assertMatches(
         deployProd,
@@ -833,6 +878,7 @@ export function validateProductionDeployCommand(deployProd) {
     assertIncludes(changedBranch, 'active_rules_variant="baseline-${baseline_firestore_mode}"', 'Production Firestore trusted baseline classification');
     assertIncludes(changedBranch, '[[ "$baseline_firestore_mode" == "ambiguous" ]]', 'Production Firestore ambiguous baseline exact-source resolution');
     assertIncludes(changedBranch, 'active_rules_variant="baseline-compatibility"', 'Production Firestore compatibility baseline classification');
+    assertIncludes(changedBranch, 'active_rules_variant="historical-compatibility"', 'Production Firestore pinned historical compatibility classification');
     assertIncludes(changedBranch, 'active_rules_status == 2', 'Production Firestore unreadable active-source block');
     assertIncludes(changedBranch, '[[ "$active_rules_variant" == *-final ]]', 'Production Firestore final boundary preservation');
     assertIncludes(changedBranch, '[[ "$native_callable_ready" == "true" ]]', 'Production certificate defaults native readiness finalization gate');
