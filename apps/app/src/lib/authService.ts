@@ -1415,7 +1415,15 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     loadLegacyInviteFlow()
   ]);
   const processInvite = createInviteProcessor({
-    validateAccessCode: dbModule.validateAccessCode,
+    validateAccessCode: async (inviteCode: string) => {
+      const nativeAuthToken = isNativeRuntime()
+        ? await getNativeAuthIdToken().catch((error: unknown) => {
+            logger.warn('Unable to attach native auth token for access code validation.', { error });
+            return null;
+          })
+        : null;
+      return dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined);
+    },
     redeemParentInvite: dbModule.redeemParentInvite,
     redeemFriendInvite: (inviteUserId: string, inviteCode: string, email?: string | null) =>
       redeemFriendInviteForCurrentSession(dbModule, inviteUserId, inviteCode, email),
