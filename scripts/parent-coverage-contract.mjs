@@ -403,10 +403,11 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P37: [
         { action: 'login', actor: 'lifecycle' },
-        { action: 'goto', actor: 'lifecycle', route: /profile\/settings/ },
-        { action: 'fillActorPassword', actor: 'lifecycle', target: /password/i },
-        { action: 'fill', actor: 'lifecycle', target: /type delete to confirm/i, value: /^DELETE$/ },
-        { action: 'click', actor: 'lifecycle', target: /delete account|confirm deletion/i },
+        { action: 'goto', actor: 'lifecycle', route: /profile\/settings\?section=security/ },
+        { action: 'click', actor: 'lifecycle', target: /^delete my account$/i },
+        { action: 'fillActorPassword', actor: 'lifecycle', target: /^account password \(email sign-in only\)$/i },
+        { action: 'fill', actor: 'lifecycle', target: /^type delete to confirm$/i, value: /^DELETE$/ },
+        { action: 'click', actor: 'lifecycle', target: /^delete account$/i },
         { actions: ['expectVisible', 'expectText'], actor: 'lifecycle', target: /deleted|sign in|goodbye/i },
         { action: 'expectRoute', actor: 'lifecycle', route: /auth/ }
     ]
@@ -482,7 +483,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     },
     P35: { primary: /^(?:ai|chat|prompt|send|delete message|clear chat|new conversation)$/i },
     P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|attach image, CSV, or PDF|send|delete message|remove attachment|clear chat|new conversation)$/i },
-    P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
+    P37: { lifecycle: /^(?:delete my account|type delete to confirm|account password \(email sign-in only\)|delete account)$/i }
 }));
 const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
     P07: { clickAndExpectGoogleAuth: /^(?:continue with google|sign in with google|google)$/i },
@@ -821,6 +822,12 @@ export function workflowRouteAllowed(workflowId, route, resolved = false) {
     return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
 }
 
+function workflowStepRouteAllowed(workflowId, action, route) {
+    if (workflowRouteAllowed(workflowId, route)) return true;
+    return workflowId === 'P37' && action === 'expectRoute' &&
+        routeMatchesCapability(route, '/auth');
+}
+
 export function assertParentCoverageStepCapability(workflowId, step, phase = 'execution', defaultActor = '') {
     const capability = workflowCapabilities.get(workflowId);
     if (!capability) throw new Error(`${phase} has no trusted workflow capability for ${workflowId}`);
@@ -834,7 +841,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     ) {
         throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
-    if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
+    if (['goto', 'expectRoute'].includes(step.action) && !workflowStepRouteAllowed(workflowId, step.action, step.route)) {
         throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
     }
     if (step.action === 'clickAndExpectRoute' && !workflowRouteAllowed(workflowId, step.route)) {
@@ -903,16 +910,23 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         }
         const normalizedTarget = targetName.toLowerCase();
         const isCredentialInput = ['fill', 'fillActorEmail', 'fillActorPassword'].includes(step.action);
+        const targetMentionsPassword = /password/.test(normalizedTarget);
+        const targetMentionsEmail = /email/.test(normalizedTarget);
+        const isPasswordTarget = targetMentionsPassword && (
+            !targetMentionsEmail || step.action !== 'fillActorEmail'
+        );
+        const isEmailTarget = targetMentionsEmail && (
+            !targetMentionsPassword || step.action !== 'fillActorPassword'
+        );
         const lifecycleEmailInput = step.action === 'fill' && step.value === '{LIFECYCLE_EMAIL}' ||
             step.action === 'fillActorEmail' && actor === 'lifecycle';
-        if (capability.mode === 'lifecycle' && isCredentialInput && /email/.test(normalizedTarget) && !lifecycleEmailInput) {
+        if (capability.mode === 'lifecycle' && isCredentialInput && isEmailTarget && !lifecycleEmailInput) {
             throw new Error(`${phase} lifecycle email inputs must bind to the protected lifecycle actor`);
         }
         if (
             capability.mode === 'lifecycle' &&
             isCredentialInput &&
-            !/email/.test(normalizedTarget) &&
-            /password/.test(normalizedTarget) &&
+            isPasswordTarget &&
             step.action !== 'fillActorPassword'
         ) {
             throw new Error(`${phase} lifecycle password inputs must bind to the protected lifecycle actor`);
@@ -996,7 +1010,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         if (!step.route.startsWith('/') || step.route.startsWith('//')) {
             throw new Error(`${label} route must be an app-relative route`);
         }
-        if (!workflowRouteAllowed(workflowId, step.route)) {
+        if (!workflowStepRouteAllowed(workflowId, step.action, step.route)) {
             throw new Error(`${label} route is outside the trusted ${workflowId} capability`);
         }
     }
