@@ -946,6 +946,44 @@ describe('React app parent tools integration', () => {
         expect(serviceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
     });
 
+    it('rejects over-limit app Team Media batches before starting uploads', async () => {
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Bears media');
+
+        const photoInput = container.querySelector('input[accept="image/*"]');
+        const tooManyPhotos = Array.from({ length: 21 }, (_, index) => ({
+            name: `photo-${index + 1}.jpg`,
+            type: 'image/jpeg',
+            size: 1
+        }));
+        Object.defineProperty(photoInput, 'files', { value: tooManyPhotos, configurable: true });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        await waitForText(container, 'Upload up to 20 files and 100 MiB per batch. Split this selection into smaller batches and try again.');
+        expect(serviceMocks.uploadParentTeamMediaPhoto).not.toHaveBeenCalled();
+        expect(serviceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
+
+        const fileInput = container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
+        const overByteLimit = [
+            ...Array.from({ length: 10 }, (_, index) => ({
+                name: `packet-${index + 1}.pdf`,
+                type: 'application/pdf',
+                size: 10 * 1024 * 1024
+            })),
+            { name: 'extra.pdf', type: 'application/pdf', size: 1 }
+        ];
+        Object.defineProperty(fileInput, 'files', { value: overByteLimit, configurable: true });
+        await act(async () => {
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
+        expect(container.textContent).toContain('Upload up to 20 files and 100 MiB per batch. Split this selection into smaller batches and try again.');
+        expect(serviceMocks.uploadParentTeamMediaFile).not.toHaveBeenCalled();
+        expect(serviceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
+    });
+
     it('reports partial app team media photo failures without blocking queued valid images', async () => {
         const deferredUploads = Array.from({ length: 4 }, () => {
             let resolve;
