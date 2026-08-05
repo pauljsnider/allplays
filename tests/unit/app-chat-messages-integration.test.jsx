@@ -524,7 +524,7 @@ beforeEach(() => {
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
     chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
-    chatMocks.loadTeamEmailDrafts.mockResolvedValue([]);
+    chatMocks.loadTeamEmailDrafts.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.loadSentTeamEmails.mockResolvedValue([
         {
             id: 'email-1',
@@ -535,7 +535,7 @@ beforeEach(() => {
             status: 'queued'
         }
     ]);
-    chatMocks.loadTeamEmailTemplates.mockResolvedValue([]);
+    chatMocks.loadTeamEmailTemplates.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.saveTeamEmailDraft.mockResolvedValue(undefined);
     chatMocks.saveTeamEmailTemplate.mockResolvedValue(undefined);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
@@ -3244,7 +3244,7 @@ describe('React app messages integration', () => {
         // Open email sheet for team-1 — first load.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1', { cursor: null });
         await click(container, 'Close Team Email');
 
         // Switch to team-2 via the inbox pane.
@@ -3257,6 +3257,6 @@ describe('React app messages integration', () => {
         // Open email sheet for team-2 — cache was invalidated on team switch, so a fresh load fires.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(2);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2', { cursor: null });
     });
 });

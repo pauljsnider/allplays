@@ -20,6 +20,11 @@ const chatServiceMocks = vi.hoisted(() => ({
   loadTeamEmailDrafts: vi.fn(),
   loadSentTeamEmails: vi.fn(),
   loadTeamEmailTemplates: vi.fn(),
+  mergeTeamEmailSavedItems: vi.fn((current, next) => {
+    const merged = new Map(current.map((item) => [item.id, item]));
+    next.forEach((item) => merged.set(item.id, item));
+    return Array.from(merged.values());
+  }),
   markTeamChatRead: vi.fn(),
   saveTeamEmailDraft: vi.fn(),
   saveTeamEmailTemplate: vi.fn(),
@@ -114,20 +119,22 @@ describe('Messages team email templates', () => {
       return { unsubscribe: vi.fn() };
     });
     chatServiceMocks.loadOlderTeamChatMessages.mockResolvedValue([]);
-    chatServiceMocks.loadTeamEmailDrafts.mockResolvedValue([
-      {
+    chatServiceMocks.loadTeamEmailDrafts.mockResolvedValue({
+      items: [{
         id: 'draft-1',
         subject: 'Bus update',
         body: 'Wear warmups on the bus.',
         recipientIds: ['email:blake.parent@example.com'],
         recipients: [{ key: 'email:blake.parent@example.com', email: 'blake.parent@example.com', name: 'Blake Parent', detail: 'Guardian for Blake Jones' }],
         updatedAt: { seconds: 5 }
-      }
-    ]);
+      }],
+      nextCursor: null
+    });
     chatServiceMocks.loadSentTeamEmails.mockResolvedValue([]);
-    chatServiceMocks.loadTeamEmailTemplates.mockResolvedValue([
-      { id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }
-    ]);
+    chatServiceMocks.loadTeamEmailTemplates.mockResolvedValue({
+      items: [{ id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }],
+      nextCursor: null
+    });
     chatServiceMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 1 });
     chatServiceMocks.saveTeamEmailDraft.mockResolvedValue({
       id: 'draft-2',
@@ -161,7 +168,7 @@ describe('Messages team email templates', () => {
 
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
     await waitFor(() => {
-      expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledWith('team-1');
+      expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledWith('team-1', { cursor: null });
     });
 
     fireEvent.change(screen.getByLabelText('Saved template'), { target: { value: 'template-1' } });
@@ -200,7 +207,7 @@ describe('Messages team email templates', () => {
     const savedDraftsHeading = within(dialog).getByText('Saved drafts');
     const reusableTemplatesHeading = within(dialog).getByText('Reusable templates');
 
-    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1', { cursor: null });
     expect(subjectField.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(messageField.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(sendButton.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -217,7 +224,7 @@ describe('Messages team email templates', () => {
     await openTeamEmailSheet();
 
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
-    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1', { cursor: null });
 
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Changed subject' } });
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Changed body' } });
@@ -266,17 +273,18 @@ describe('Messages team email templates', () => {
 
   it('saves a draft and updates the rendered draft list without touching sent history', async () => {
     chatServiceMocks.loadTeamEmailDrafts
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
+      .mockResolvedValueOnce({ items: [], nextCursor: null })
+      .mockResolvedValueOnce({
+        items: [{
           id: 'draft-2',
           subject: 'Game tomorrow',
           body: 'Bring uniforms.',
           recipientIds: ['email:avery.parent@example.com'],
           recipients: [{ key: 'email:avery.parent@example.com', email: 'avery.parent@example.com', name: 'Avery Parent', detail: 'Guardian for Avery Smith' }],
           updatedAt: { seconds: 10 }
-        }
-      ]);
+        }],
+        nextCursor: null
+      });
 
     renderMessages();
 
@@ -315,13 +323,17 @@ describe('Messages team email templates', () => {
 
   it('saves a new template from the current subject and body', async () => {
     chatServiceMocks.loadTeamEmailTemplates
-      .mockResolvedValueOnce([
-        { id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }
-      ])
-      .mockResolvedValueOnce([
-        { id: 'template-2', name: 'Game day', subject: 'Game tomorrow', body: 'Bring uniforms.' },
-        { id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }
-      ]);
+      .mockResolvedValueOnce({
+        items: [{ id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }],
+        nextCursor: null
+      })
+      .mockResolvedValueOnce({
+        items: [
+          { id: 'template-2', name: 'Game day', subject: 'Game tomorrow', body: 'Bring uniforms.' },
+          { id: 'template-1', name: 'Practice reminder', subject: 'Practice tonight', body: 'Please arrive 15 minutes early.' }
+        ],
+        nextCursor: null
+      });
 
     renderMessages();
 
