@@ -6,7 +6,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, Timestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, Timestamp } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const accessCodeMatch = rules.match(/match \/accessCodes\/\{codeId\} \{[\s\S]*?\n\s*\}/);
@@ -211,10 +211,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             const firestore = context.firestore();
             await setDoc(doc(firestore, 'teams/team-a'), {
                 ownerId: 'owner-a',
-                adminEmails: []
+                adminEmails: ['team-admin@example.com']
             });
             await setDoc(doc(firestore, 'users/linked-parent'), {
                 parentPlayerKeys: ['team-a::player-a']
+            });
+            await setDoc(doc(firestore, 'users/platform-admin'), {
+                isAdmin: true
+            });
+            await setDoc(doc(firestore, 'accessCodeValidationRateLimits/server-owned'), {
+                count: 1,
+                resetAt: Date.now() + 60_000
             });
         });
     });
@@ -240,6 +247,41 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             usedAt: null
         };
     }
+
+    it('denies rate-limit document reads and writes to signed-in, team-admin, and platform-admin clients', async () => {
+        const clients = [
+            testEnv.authenticatedContext('signed-in', {
+                email: 'signed-in@example.com',
+                email_verified: true
+            }).firestore(),
+            testEnv.authenticatedContext('team-admin', {
+                email: 'team-admin@example.com',
+                email_verified: true
+            }).firestore(),
+            testEnv.authenticatedContext('platform-admin', {
+                email: 'platform-admin@example.com',
+                email_verified: true
+            }).firestore()
+        ];
+
+        for (const clientDb of clients) {
+            await assertFails(getDoc(doc(
+                clientDb,
+                'accessCodeValidationRateLimits/server-owned'
+            )));
+            await assertFails(getDocs(collection(
+                clientDb,
+                'accessCodeValidationRateLimits'
+            )));
+            await assertFails(setDoc(doc(
+                clientDb,
+                'accessCodeValidationRateLimits/client-write'
+            ), {
+                count: 0,
+                resetAt: Date.now()
+            }));
+        }
+    });
 
     it('denies direct co-parent invite creation by a linked parent', async () => {
         const linkedParentDb = testEnv.authenticatedContext('linked-parent', {

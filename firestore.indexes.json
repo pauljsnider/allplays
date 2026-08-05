@@ -893,6 +893,12 @@
       "indexes": []
     },
     {
+      "collectionGroup": "accessCodeValidationRateLimits",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
       "collectionGroup": "telemetryRateLimits",
       "fieldPath": "expiresAt",
       "ttl": true,
