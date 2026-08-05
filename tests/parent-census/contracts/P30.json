@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P30",
+  "title": "Fees and safe checkout handoff",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/fees"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/fees"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Team fees",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Pay fee",
+        "exact": true
+      }
+    },
+    {
+      "action": "clickAndExpectStripeCheckout",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Pay fee",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
