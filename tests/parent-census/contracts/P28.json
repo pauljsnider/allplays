@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P28",
+  "title": "Family share creation privacy and revocation",
+  "actors": [
+    "primary",
+    "anonymous"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/share"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/share"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Family share",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "No linked players",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Create share link",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Share",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "family-share"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Create share",
+        "exact": true
+      },
+      "mutationId": "family-share",
+      "commitMutation": true
+    },
+    {
+      "action": "openRunScopedShareLink",
+      "actor": "anonymous",
+      "option": "primary"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "anonymous",
+      "target": {
+        "kind": "text",
+        "name": "Shared family page",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "anonymous",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Edit",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Revoke share",
+        "exact": true
+      },
+      "mutationId": "family-share",
+      "scope": "{RUN_MARKER}"
+    }
+  ]
+}
