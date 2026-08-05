@@ -938,7 +938,7 @@
                         : `<div class="mt-2 space-y-2">${offers.map((offer) => {
                             const offerGameId = offer.sourceGameId || event.id;
                             const seatInfo = getOfferSeatInfo(offer);
-                            const canManageOffer = offer.driverUserId === currentUserId;
+                            const canManageOffer = offer.driverUserId === currentUserId || event.isTeamAdmin === true || currentUser?.isAdmin === true;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
                             const selectedChildId = getSelectedRideChildId(
                                 event.teamId,
@@ -1015,8 +1015,12 @@
         async function refreshRideshareForEvent(teamId, gameId, legacyGameId = '') {
             const key = getEventRideKey(teamId, gameId);
             try {
+                const matchingEvents = allScheduleEvents.filter((event) => event.teamId === teamId && event.id === gameId);
                 const offers = await listRideOffersForEvent(teamId, gameId, {
-                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : [],
+                    requesterUserId: currentUserId,
+                    childIds: resolveChildChoices(teamId).map((child) => child.childId),
+                    canManageTeamRequests: currentUser?.isAdmin === true || matchingEvents.some((event) => event.isTeamAdmin === true)
                 });
                 rideshareOffersByEvent.set(key, offers);
             } catch (err) {

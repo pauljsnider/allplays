@@ -311,8 +311,27 @@ function getScheduleEventHydrationCacheKey(teamId: string, eventId: string) {
   return `event-details:${teamId}:${eventId}`;
 }
 
-function getScheduleEventRideOffersCacheKey(teamId: string, eventId: string) {
-  return `${getScheduleEventHydrationCacheKey(teamId, eventId)}:ride-offers`;
+type RideRequestReadScope = {
+  requesterUserId: string;
+  childIds: string[];
+  canManageTeamRequests: boolean;
+};
+
+const rideOfferCacheKeysByEvent = new Map<string, Set<string>>();
+
+function normalizeRideRequestReadScope(scope: Partial<RideRequestReadScope> = {}): RideRequestReadScope {
+  return {
+    requesterUserId: compactString(scope.requesterUserId),
+    childIds: uniqueNonEmptyStrings(scope.childIds || []).sort(),
+    canManageTeamRequests: scope.canManageTeamRequests === true
+  };
+}
+
+function getScheduleEventRideOffersCacheKey(teamId: string, eventId: string, scope?: Partial<RideRequestReadScope>) {
+  const baseKey = `${getScheduleEventHydrationCacheKey(teamId, eventId)}:ride-offers`;
+  if (!scope) return baseKey;
+  const normalized = normalizeRideRequestReadScope(scope);
+  return `${baseKey}:${normalized.canManageTeamRequests ? 'manager' : 'parent'}:${normalized.requesterUserId}:${normalized.childIds.join(',')}`;
 }
 
 function getScheduleEventAssignmentClaimsCacheKey(teamId: string, eventId: string) {
@@ -320,7 +339,10 @@ function getScheduleEventAssignmentClaimsCacheKey(teamId: string, eventId: strin
 }
 
 function invalidateScheduleEventRideOffersCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
-  invalidateCachedAppData(getScheduleEventRideOffersCacheKey(event.teamId, event.id));
+  const baseKey = getScheduleEventRideOffersCacheKey(event.teamId, event.id);
+  invalidateCachedAppData(baseKey);
+  (rideOfferCacheKeysByEvent.get(baseKey) || new Set()).forEach((cacheKey) => invalidateCachedAppData(cacheKey));
+  rideOfferCacheKeysByEvent.delete(baseKey);
 }
 
 function invalidateScheduleEventAssignmentClaimsCache(event: Pick<ParentScheduleEvent, 'teamId' | 'id'>) {
@@ -1063,12 +1085,16 @@ async function nativeGetDocument(path: string) {
   try {
     return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
-    const message = String(error?.message || '').toLowerCase();
-    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+    if (isNativeDocumentNotFound(error)) {
       return null;
     }
     throw error;
   }
+}
+
+function isNativeDocumentNotFound(error: unknown) {
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (error as any)?.status === 404 || message.includes('not_found') || message.includes('not found');
 }
 
 async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string } = {}) {
@@ -3371,10 +3397,45 @@ async function mergeOwnRsvpNotes(teamId: string, gameId: string, rsvps: any[], u
   };
 }
 
-async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: string[] = []) {
+function isRideRequestReadDenied(error: unknown) {
+  const status = Number((error as any)?.status);
+  const code = compactString((error as any)?.code).toLowerCase();
+  const message = compactString((error as any)?.message).toLowerCase();
+  return status === 403 || code.includes('permission-denied') || message.includes('permission denied') || message.includes('missing or insufficient permissions');
+}
+
+async function loadNativeRideRequestsForOffer(teamId: string, gameId: string, offer: FirestoreDocument, scope: RideRequestReadScope) {
+  const requestsPath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rideOffers/${encodeURIComponent(offer.id)}/requests`;
+  if (scope.canManageTeamRequests || compactString(offer.driverUserId) === scope.requesterUserId) {
+    return nativeListCollection(requestsPath);
+  }
+  if (!scope.requesterUserId || scope.childIds.length === 0) return [];
+
+  const requests = await Promise.all(scope.childIds.map(async (childId) => {
+    const requestId = `${scope.requesterUserId}__${childId}`;
+    try {
+      return await nativeGetDocument(`${requestsPath}/${encodeURIComponent(requestId)}`);
+    } catch (error) {
+      if (isNativeDocumentNotFound(error)) return null;
+      // A stale or no-longer-linked child scope can be denied. Treat that exact
+      // probe as unavailable; never fall back to a collection list.
+      if (isRideRequestReadDenied(error)) return null;
+      throw error;
+    }
+  }));
+  return requests.filter(Boolean) as FirestoreDocument[];
+}
+
+async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: string[] = [], readScope: Partial<RideRequestReadScope> = {}) {
+  const scope = normalizeRideRequestReadScope(readScope);
   return readWithNativeFallback(
     `ride offers ${teamId}/${gameId}`,
-    () => Promise.resolve(listRideOffersForEvent(teamId, gameId, { fallbackGameIds })),
+    () => Promise.resolve(listRideOffersForEvent(teamId, gameId, {
+      fallbackGameIds,
+      requesterUserId: scope.requesterUserId,
+      childIds: scope.childIds,
+      canManageTeamRequests: scope.canManageTeamRequests
+    })),
     async () => {
       const candidateIds = [gameId, ...fallbackGameIds].filter(Boolean);
       for (const candidateId of candidateIds) {
@@ -3382,7 +3443,7 @@ async function loadRideOffers(teamId: string, gameId: string, fallbackGameIds: s
         const withRequests = await Promise.all(offers.map(async (offer) => ({
           ...offer,
           sourceGameId: candidateId,
-          requests: await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(candidateId)}/rideOffers/${encodeURIComponent(offer.id)}/requests`).catch(() => [])
+          requests: await loadNativeRideRequestsForOffer(teamId, candidateId, offer, scope)
         })));
         if (withRequests.length > 0 || candidateId === candidateIds[candidateIds.length - 1]) {
           return withRequests;
@@ -4252,8 +4313,16 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     if (!firstEvent) return;
 
     const isTeamStaff = matchingEvents.some((event) => event.isTeamStaff === true || event.isTeamAdmin === true);
+    const canManageTeamRequests = matchingEvents.some((event) => event.isTeamAdmin === true);
     const hydration = isTeamStaff
-      ? await loadCachedEventHydrationDetails(teamId, gameId, includeOptionalDetails)
+      ? await loadCachedEventHydrationDetails(
+        teamId,
+        gameId,
+        user.uid,
+        matchingEvents.map((event) => event.childId),
+        canManageTeamRequests,
+        includeOptionalDetails
+      )
       : await loadCachedOwnEventHydrationDetails(matchingEvents, user.uid, includeOptionalDetails);
     const { rsvps: loadedRsvps, rsvpsLoaded } = hydration;
     const ownRsvpNotes = rsvpsLoaded
@@ -4311,10 +4380,15 @@ function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs =
     && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
 }
 
-function loadCachedRideOffers(teamId: string, gameId: string) {
+function loadCachedRideOffers(teamId: string, gameId: string, readScope: Partial<RideRequestReadScope>) {
+  const scope = normalizeRideRequestReadScope(readScope);
+  const baseKey = getScheduleEventRideOffersCacheKey(teamId, gameId);
+  const cacheKey = getScheduleEventRideOffersCacheKey(teamId, gameId, scope);
+  if (!rideOfferCacheKeysByEvent.has(baseKey)) rideOfferCacheKeysByEvent.set(baseKey, new Set());
+  rideOfferCacheKeysByEvent.get(baseKey)?.add(cacheKey);
   return loadCachedAppData(
-    getScheduleEventRideOffersCacheKey(teamId, gameId),
-    () => loadRideOffers(teamId, gameId),
+    cacheKey,
+    () => loadRideOffers(teamId, gameId, [], scope),
     { ttlMs: scheduleHydrationCacheTtlMs, persist: false }
   );
 }
@@ -4327,7 +4401,14 @@ function loadCachedAssignmentClaims(teamId: string, gameId: string) {
   );
 }
 
-async function loadCachedEventHydrationDetails(teamId: string, gameId: string, includeOptionalDetails = true) {
+async function loadCachedEventHydrationDetails(
+  teamId: string,
+  gameId: string,
+  userId: string,
+  childIds: string[],
+  canManageTeamRequests: boolean,
+  includeOptionalDetails = true
+) {
   const rsvpsPromise = loadCachedAppData(
     getScheduleEventHydrationCacheKey(teamId, gameId),
     () => loadRsvps(teamId, gameId),
@@ -4335,7 +4416,11 @@ async function loadCachedEventHydrationDetails(teamId: string, gameId: string, i
   );
   const results = await Promise.allSettled([
     rsvpsPromise,
-    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId, {
+      requesterUserId: userId,
+      childIds,
+      canManageTeamRequests
+    }), loadCachedAssignmentClaims(teamId, gameId)] : [])
   ]);
   const [rsvpsResult, offersResult, claimsResult] = results;
   if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
@@ -4363,7 +4448,11 @@ async function loadCachedOwnEventHydrationDetails(events: ParentScheduleEvent[],
   );
   const results = await Promise.allSettled([
     rsvpsPromise,
-    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId), loadCachedAssignmentClaims(teamId, gameId)] : [])
+    ...(includeOptionalDetails ? [loadCachedRideOffers(teamId, gameId, {
+      requesterUserId: userId,
+      childIds: normalizedPlayerIds,
+      canManageTeamRequests: false
+    }), loadCachedAssignmentClaims(teamId, gameId)] : [])
   ]);
   const [rsvpsResult, offersResult, claimsResult] = results;
   if (rsvpsResult.status === 'rejected' && (!includeOptionalDetails || results.every((result) => result.status === 'rejected'))) {
@@ -4390,8 +4479,14 @@ export async function hydrateParentScheduleEventOptionalDetails(schedule: Parent
 
   await Promise.all(uniqueEvents.map(async (firstEvent) => {
     const matchingEvents = hydratedSchedule.events.filter((event) => event.teamId === firstEvent.teamId && event.id === firstEvent.id);
+    const userId = compactString(firebaseAuth.currentUser?.uid);
+    const canManageTeamRequests = matchingEvents.some((event) => event.isTeamAdmin === true);
     const [offersResult, claimsResult] = await Promise.allSettled([
-      loadCachedRideOffers(firstEvent.teamId, firstEvent.id),
+      loadCachedRideOffers(firstEvent.teamId, firstEvent.id, {
+        requesterUserId: userId,
+        childIds: matchingEvents.map((event) => event.childId),
+        canManageTeamRequests
+      }),
       loadCachedAssignmentClaims(firstEvent.teamId, firstEvent.id)
     ]);
     matchingEvents.forEach((event) => {
@@ -7735,9 +7830,17 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
   });
 }
 
-export async function loadParentScheduleRideOffers(event: ParentScheduleEvent) {
+export async function loadParentScheduleRideOffers(
+  event: ParentScheduleEvent,
+  user: AuthUser | null = firebaseAuth.currentUser as AuthUser | null,
+  childEvents: ParentScheduleEvent[] = [event]
+) {
   if (!event.isDbGame || event.isCancelled) return [];
-  return normalizeRideOffers(await loadCachedRideOffers(event.teamId, event.id));
+  return normalizeRideOffers(await loadCachedRideOffers(event.teamId, event.id, {
+    requesterUserId: compactString(user?.uid),
+    childIds: childEvents.filter((entry) => entry.teamId === event.teamId).map((entry) => entry.childId),
+    canManageTeamRequests: event.isTeamAdmin === true
+  }));
 }
 
 export async function createParentScheduleRideOffer(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {

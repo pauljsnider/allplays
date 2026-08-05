@@ -91,7 +91,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(ridesHookSource).toContain('const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();');
         expect(ridesHookSource).toContain('const [offers, setOffers] = useState<ScheduleRideOffer[]>([]);');
         expect(ridesHookSource).toContain('const summary = loading && !offers.length ? event.rideshareSummary : summarizeParentScheduleRideOffers(offers);');
-        expect(ridesHookSource).toContain('() => loadParentScheduleRideOffers(currentEvent)');
+        expect(ridesHookSource).toContain('() => loadParentScheduleRideOffers(currentEvent, authUserRef.current, childEventsRef.current)');
         expect(ridesHookSource).toContain('const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {');
         expect(ridesHookSource).toContain('await createParentScheduleRideOffer(event, auth.user!, input);');
         expect(ridesHookTestSource).toContain("describe('useScheduleRideOffers'");
