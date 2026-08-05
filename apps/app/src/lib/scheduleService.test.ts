@@ -561,6 +561,33 @@ describe('parent schedule child scope', () => {
     expect(getStaffTeams).toHaveBeenCalledTimes(1);
   });
 
+  it('lets a cold managed-team callable finish beyond the shared schedule timeout', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+          isPartial: false
+        } as any), 6000);
+      }))
+      .mockResolvedValue({ teams: [], isPartial: true } as any);
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(6000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
   it('marks parent scope partial when the authoritative staff-team read fails', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
