@@ -4104,7 +4104,28 @@ service cloud.firestore {
           allow delete: if isVerifiedForSensitiveWrite() && (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid);
 
           match /requests/{requestId} {
-            allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+            function isRideRequestManager() {
+              return isTeamOwnerOrAdmin(teamId) ||
+                     (isSignedIn() &&
+                      get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid);
+            }
+            function canReadOwnRideRequest() {
+              return isSignedIn() &&
+                     resource.data.parentUserId == request.auth.uid &&
+                     requestId == request.auth.uid + "__" + resource.data.childId &&
+                     isParentForPlayer(teamId, resource.data.childId);
+            }
+            function canReadMissingOwnRideRequest() {
+              return isSignedIn() &&
+                     resource == null &&
+                     requestId.size() > request.auth.uid.size() + 2 &&
+                     requestId[0:request.auth.uid.size() + 2] == request.auth.uid + '__' &&
+                     requestId[request.auth.uid.size() + 2:requestId.size()].matches('[A-Za-z0-9_-]+') &&
+                     isParentForTeam(teamId);
+            }
+
+            allow get: if isRideRequestManager() || canReadOwnRideRequest() || canReadMissingOwnRideRequest();
+            allow list: if isRideRequestManager();
 
             allow create: if isVerifiedForSensitiveWrite() &&
                              requestId == request.auth.uid + "__" + request.resource.data.childId &&
