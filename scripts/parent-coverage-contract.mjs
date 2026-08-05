@@ -5,14 +5,15 @@ export const CATALOG_SCHEMA_VERSION = 'parent-coverage-catalog-v1';
 export const CONTRACT_SCHEMA_VERSION = 'parent-coverage-contract-v1';
 export const REPORT_SCHEMA_VERSION = 'parent-coverage-report-v1';
 
-const requestOnlyEvidenceScopes = new Map([
+const limitedEvidenceScopes = new Map([
     ['P02', 'account-created-email-delivery-unverified'],
     ['P03', 'verification-request-email-delivery-unverified'],
-    ['P05', 'reset-request-email-delivery-unverified']
+    ['P05', 'reset-request-email-delivery-unverified'],
+    ['P30', 'fees-visible-checkout-disabled-unverified']
 ]);
 
 export function parentCoverageEvidenceScope(workflowId) {
-    return requestOnlyEvidenceScopes.get(workflowId) || 'end-to-end';
+    return limitedEvidenceScopes.get(workflowId) || 'end-to-end';
 }
 
 const actorNames = new Set(['anonymous', 'primary', 'peer', 'lifecycle']);
@@ -103,7 +104,7 @@ const workflowCapabilities = new Map(Object.entries({
     P27: { mode: 'reversible', routes: ['/parent-tools/household', '/accept-invite', '/home'], actions: ['fill', 'click', 'redeemRunScopedHouseholdInvite', 'restoreHouseholdAccess'] },
     P28: { mode: 'reversible', routes: ['/parent-tools/share', '/family/*'], actions: ['fill', 'click', 'openRunScopedShareLink'] },
     P29: { mode: 'readOnly', routes: ['/parent-tools/calendar'], actions: ['clickAndExpectDownload'] },
-    P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: ['clickAndExpectStripeCheckout'] },
+    P30: { mode: 'readOnly', routes: ['/parent-tools/fees'], actions: [] },
     P31: { mode: 'readOnly', routes: ['/parent-tools/registrations', '/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}'], actions: ['clickAndExpectStripeCheckout'] },
     P32: { mode: 'readOnly', routes: ['/parent-tools/certificates', '/teams/{TEAM_ID}/certificates'], actions: ['clickAndExpectDownload'] },
     P33: { mode: 'reversible', routes: ['/teams/{TEAM_ID}/media'], actions: ['fill', 'click', 'uploadSyntheticImage', 'expectUploadDenied'] },
@@ -355,7 +356,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P30: [
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /fee|balance|payment/i },
-        { action: 'clickAndExpectStripeCheckout', actor: 'primary', target: /pay|checkout/i }
+        { action: 'expectHidden', actor: 'primary', target: /pay|checkout/i }
     ],
     P31: [
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /registration|form|browse/i },
@@ -489,7 +490,6 @@ const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
     P10: { clickAndExpectRoute: /^(?:schedule|tasks?|rideshare|notifications?|profile|view all)$/i },
     P25: { clickAndExpectRoute: /^(?:notification|open notification)$/i },
     P29: { clickAndExpectDownload: /^(?:download calendar|download ics|calendar feed|export calendar)$/i },
-    P30: { clickAndExpectStripeCheckout: /^(?:pay|pay fee|checkout|continue to checkout)$/i },
     P31: { clickAndExpectStripeCheckout: /^(?:register|start registration|checkout|continue to checkout|pay registration fee)$/i },
     P32: { clickAndExpectDownload: /^(?:download|download certificate|download award)$/i }
 }));
@@ -986,8 +986,8 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
     if (step.action === 'clickAndExpectDownload' && !['P29', 'P32'].includes(workflowId)) {
         throw new Error(`${label} download assertions are restricted to P29 and P32`);
     }
-    if (step.action === 'clickAndExpectStripeCheckout' && !['P30', 'P31'].includes(workflowId)) {
-        throw new Error(`${label} Stripe checkout assertions are restricted to P30 and P31`);
+    if (step.action === 'clickAndExpectStripeCheckout' && workflowId !== 'P31') {
+        throw new Error(`${label} Stripe checkout assertions are restricted to enabled checkout workflows`);
     }
 
     if (step.action === 'goto' || step.action === 'expectRoute' || step.action === 'clickAndExpectRoute') {
