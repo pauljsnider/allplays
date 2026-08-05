@@ -89,6 +89,31 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
         mockFriendInviteReplay: friendInviteReplay
     });
 
+    // The app startup timer lazily initializes Firebase Performance. Keep this
+    // module mocked across reloads so auth-flow tests cannot contact Firebase
+    // Installations with the intentionally non-production preview config.
+    await page.route(/\/src\/lib\/performanceInstrumentation\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function now() {
+                    return window.performance.now();
+                }
+
+                export function startPerformanceSpan() {
+                    return {
+                        startedAt: now(),
+                        traceName: 'mock-performance-span',
+                        end() {}
+                    };
+                }
+
+                export function recordCompletedPerformanceSpan() {}
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
