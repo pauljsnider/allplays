@@ -82,6 +82,13 @@ function makeHarness({ uidMaxRequests = 10, networkMaxRequests = 10, windowMs = 
       code: 'PARENT12',
       type: 'parent_invite',
       used: false
+    },
+    'accessCodes/FRIEND12': {
+      code: 'FRIEND12',
+      type: 'friend_invite',
+      phone: '+13125551212',
+      generatedBy: 'inviter-1',
+      used: false
     }
   });
   let nowMs = 1_000;
@@ -171,6 +178,27 @@ test('reserves both boundaries for a native token caller before querying', async
       .filter((path) => path.startsWith('accessCodeValidationRateLimits/')).length,
     2
   );
+});
+
+test('validates a phone-only friend invite for an authenticated email account without exposing its target', async () => {
+  const harness = makeHarness();
+  const result = await harness.handler(
+    { code: 'friend12' },
+    context('google-email-user', '198.51.100.25')
+  );
+
+  assert.deepEqual(result, {
+    valid: true,
+    codeId: 'FRIEND12',
+    type: 'friend_invite',
+    data: {
+      code: 'FRIEND12',
+      type: 'friend_invite'
+    }
+  });
+  assert.deepEqual(harness.firestore.accessCodeQueries, ['FRIEND12']);
+  assert.equal(JSON.stringify(result).includes('+13125551212'), false);
+  assert.equal(JSON.stringify(result).includes('inviter-1'), false);
 });
 
 test('denies an unauthenticated caller before rate-limit or access-code reads', async () => {

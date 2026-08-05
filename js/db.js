@@ -118,11 +118,7 @@ import {
 } from './team-visibility.js?v=2';
 import {
     FRIEND_INVITE_TYPE,
-    buildAcceptedFriendshipData,
-    buildFriendInviteAccessCodeData,
-    buildFriendInviteInviterProfile,
-    buildFriendshipId,
-    getDisplayName
+    buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
 import { commitCertificateDefaults } from './certificates/persistence.js?v=1';
 
@@ -772,7 +768,7 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443335'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443336'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5204,14 +5200,19 @@ export async function validateAccessCode(code, options = {}) {
     if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
-    const nativeAuthToken = typeof options?.nativeAuthToken === 'string'
+    let authenticatedSessionToken = typeof options?.nativeAuthToken === 'string'
         ? options.nativeAuthToken.trim()
         : '';
+    if (!authenticatedSessionToken && typeof auth.currentUser?.getIdToken === 'function') {
+        authenticatedSessionToken = String(
+            await auth.currentUser.getIdToken().catch(() => '')
+        ).trim();
+    }
 
     const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
     const response = await callable({
         code: normalizedCode,
-        ...(nativeAuthToken ? { nativeAuthToken } : {})
+        ...(authenticatedSessionToken ? { nativeAuthToken: authenticatedSessionToken } : {})
     });
     const payload = response?.data || response;
     return payload && typeof payload === 'object'
@@ -5797,78 +5798,18 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         throw new Error('User and invite code are required');
     }
 
-    const codeRef = doc(db, "accessCodes", normalizedCode);
-    return runTransaction(db, async (transaction) => {
-        const codeSnapshot = await transaction.get(codeRef);
-        if (!codeSnapshot.exists()) {
-            throw new Error('Invalid or used friend invite');
-        }
+    const currentUserId = String(auth.currentUser?.uid || '').trim();
+    if (!currentUserId || currentUserId !== userId) {
+        throw new Error('Unable to redeem friend invite.');
+    }
 
-        const codeData = codeSnapshot.data() || {};
-        if (codeData.type !== FRIEND_INVITE_TYPE) {
-            throw new Error('Not a friend invite code');
-        }
-        if (codeData.used) {
-            throw new Error('Code already used');
-        }
-        if (isAccessCodeExpired(codeData.expiresAt)) {
-            throw new Error('Code has expired');
-        }
-
-        const inviterId = String(codeData.generatedBy || '').trim();
-        if (!inviterId) {
-            throw new Error('Friend invite is missing an inviter');
-        }
-        if (inviterId === userId) {
-            throw new Error('You cannot redeem your own friend invite');
-        }
-
-        const friendshipId = buildFriendshipId(inviterId, userId);
-        const friendshipRef = doc(db, "friendships", friendshipId);
-        const inviteeRef = doc(db, "users", userId);
-        const friendshipSnapshot = await transaction.get(friendshipRef);
-        const inviteeSnapshot = await transaction.get(inviteeRef);
-        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
-        if (existingFriendship.status === 'blocked' ||
-            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)) {
-            throw new Error('This friend invite cannot be redeemed for a blocked friendship');
-        }
-
-        const now = Timestamp.now();
-        const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
-        const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
-        const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
-
-        const acceptedFriendshipData = buildAcceptedFriendshipData({
-            inviterId,
-            inviteeId: userId,
-            inviterProfile,
-            inviteeProfile: {
-                ...inviteeProfile,
-                email: inviteeProfile.email || inviteeEmail || null
-            },
-            existingFriendship,
-            now,
-            inviteCodeId: normalizedCode
-        });
-        if (friendshipSnapshot.exists()) {
-            transaction.update(friendshipRef, acceptedFriendshipData);
-        } else {
-            transaction.set(friendshipRef, acceptedFriendshipData);
-        }
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: now
-        });
-
-        return {
-            success: true,
-            friendshipId,
-            inviterId,
-            inviterName: getDisplayName(inviterProfile)
-        };
-    });
+    const callable = httpsCallable(functions, 'redeemFriendInvite');
+    const result = await callable({ code: normalizedCode });
+    const payload = result?.data || result || {};
+    if (payload.success !== true) {
+        throw new Error('Unable to redeem friend invite.');
+    }
+    return payload;
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {

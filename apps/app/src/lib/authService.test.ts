@@ -5,7 +5,8 @@ const authState = vi.hoisted(() => ({
   currentUser: null,
   app: {
     options: {
-      apiKey: 'test-api-key'
+      apiKey: 'test-api-key',
+      projectId: 'allplays-test'
     },
     name: '[DEFAULT]'
   }
@@ -135,6 +136,7 @@ import {
   isValidAuthEmail,
   observeFirebaseUser,
   reloadCurrentUser,
+  redeemInviteForUser,
   revokeCurrentAppleAuthorizationForDeletion,
   resendVerificationEmail,
   sendResetEmail,
@@ -744,6 +746,34 @@ describe('native REST sign-in', () => {
     );
 
     expect(getNativeAuthUserId()).toBe('persisted-user');
+  });
+
+  it('authenticates phone-only friend invite validation for an already signed-in native user', async () => {
+    window.localStorage.setItem(
+      'allplays-native-auth-session',
+      JSON.stringify({
+        uid: 'phone-user',
+        email: '',
+        provider: 'native-plugin'
+      })
+    );
+    nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'phone-user-id-token' });
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'friend_invite',
+      codeId: 'phone-friend-code-id',
+      data: { code: 'FRIEND12' }
+    });
+    legacyInviteFlowMocks.createInviteProcessor.mockImplementation(({ validateAccessCode }) => async () => {
+      await validateAccessCode('FRIEND12');
+      return { success: true };
+    });
+
+    await redeemInviteForUser('phone-user', 'friend12', null);
+
+    expect(legacyAuthMocks.validateAccessCode).toHaveBeenCalledWith('FRIEND12', {
+      nativeAuthToken: 'phone-user-id-token'
+    });
   });
 
   it('uses native Apple Firebase auth, persists metadata only, and redeems the join code', async () => {

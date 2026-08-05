@@ -24,13 +24,24 @@ async function waitForAuthRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockAppModules(page, { user = null, emailLink = false } = {}) {
-    await page.addInitScript(({ mockUser, mockEmailLink }) => {
+async function mockAppModules(page, { user = null, emailLink = false, friendInviteReplay = false } = {}) {
+    let friendInviteRedemptionAttempts = 0;
+    if (friendInviteReplay) {
+        await page.exposeFunction('mockFriendInviteRedemption', () => {
+            friendInviteRedemptionAttempts += 1;
+            return friendInviteRedemptionAttempts > 1
+                ? { error: 'Unable to redeem friend invite.' }
+                : { error: '' };
+        });
+    }
+
+    await page.addInitScript(({ mockUser, mockEmailLink, mockFriendInviteReplay }) => {
         window.__mockAuthState = {
             user: mockUser,
             profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
         };
         window.__mockEmailLink = mockEmailLink;
+        window.__mockFriendInviteReplay = mockFriendInviteReplay;
         window.__appAuthCalls = {
             signInWithEmail: [],
             signUpWithEmail: [],
@@ -72,13 +83,19 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             canOpenSettings: false
         }];
         window.__mockNotificationPreferenceResponses ??= [];
-    }, { mockUser: user, mockEmailLink: emailLink });
+    }, {
+        mockUser: user,
+        mockEmailLink: emailLink,
+        mockFriendInviteReplay: friendInviteReplay
+    });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const refresh = async () => { window.__appAuthCalls.refresh += 1; };
+
                 export function useAuth() {
                     const state = window.__mockAuthState || { user: null, profile: null };
                     const user = state.user || null;
@@ -93,7 +110,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                         isCoach: roles.includes('coach'),
                         isAdmin: roles.includes('admin') || user?.isAdmin === true,
                         isPlatformAdmin: roles.includes('platformAdmin'),
-                        refresh: async () => { window.__appAuthCalls.refresh += 1; },
+                        refresh,
                         signOut: async () => {
                             window.__appAuthCalls.signOut += 1;
                             window.__mockAuthState = { user: null, profile: null };
@@ -200,11 +217,17 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function redeemInviteForUser(userId, code, authEmail) {
                     window.__appAuthCalls.redeemInviteForUser.push({ userId, code, authEmail });
+                    if (window.__mockFriendInviteReplay) {
+                        const replayResult = await window.mockFriendInviteRedemption();
+                        if (replayResult?.error) {
+                            throw new Error(replayResult.error);
+                        }
+                    }
                     return { message: 'Invite accepted.', redirectUrl: 'parent-dashboard.html' };
                 }
 
                 export function mapLegacyRedirectToAppRoute() {
-                    return '/home';
+                    return window.__mockFriendInviteReplay ? '' : '/home';
                 }
 
                 export async function applyEmailActionCode(oobCode) {
@@ -682,6 +705,35 @@ test('signed-in invite and account action routes process existing site flows', a
         resend: window.__appAuthCalls.resendVerificationEmail,
         refresh: window.__appAuthCalls.reloadCurrentUser
     }))).toEqual({ resend: 1, refresh: 1 });
+});
+
+test('friend invite acceptance uses the signed-in route and rejects replay generically', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const user = {
+        uid: 'user-1',
+        email: 'friend@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user, friendInviteReplay: true });
+
+    const inviteUrl = appUrl(baseURL, '/accept-invite?code=FRIEND12&type=friend');
+    await page.goto(inviteUrl, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect.poll(async () => page.evaluate(() => window.__appAuthCalls.redeemInviteForUser.length)).toBe(1);
+    await expect(page.getByText('Invite accepted.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByText('Unable to redeem friend invite.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
 });
 
 test('profile exposes account, notification, invite, verification, password, upload, and logout capabilities', async ({ page, baseURL }) => {
