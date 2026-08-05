@@ -228,6 +228,14 @@ concurrency:
             certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
             certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
             certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
+            recovery_sha="b637109b4f51d9b8627bb081eaea1489dfc8b8c3"
+            recovery_source_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"
+            git merge-base --is-ancestor "$recovery_sha" "$GITHUB_SHA"
+            git archive "$recovery_sha"
+            test -f "$bundle/firestore-active-recovery.rules"
+            certificate_active_recovery_ruleset="projects/game-flow-c6311/rulesets/537ed719-d2fa-4cae-9a20-97273db4e11a"
+            certificate_active_recovery_source_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"
+            certificate_active_recovery_canonical_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"
             active_ruleset_observed_source_sha256="unknown"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets"
               && "$deploy_targets" != "$retry_enabled_inventory_producer_target"
@@ -254,6 +262,11 @@ concurrency:
           }
           firestore_ruleset_source_matches() {
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
+            if [[ "$expected_rules_source" == "$active_recovery_firestore_rules" ]]; then
+              [[ "$ruleset_name" == "$certificate_active_recovery_ruleset" ]]
+              [[ "$local_rules_sha256" == "$certificate_active_recovery_source_sha256" ]]
+              [[ "$remote_rules_sha256" == "$certificate_active_recovery_canonical_sha256" ]]
+            fi
             [[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]
             [[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]
           }
@@ -261,6 +274,7 @@ concurrency:
             echo "remote_source_sha256=\${active_ruleset_observed_source_sha256}"
             echo "current_compatibility_sha256=\${current_compatibility_sha256}"
             echo "baseline_compatibility_sha256=\${baseline_compatibility_sha256}"
+            echo "active_recovery_sha256=\${active_recovery_sha256}"
           }
           find_recent_matching_firestore_ruleset() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
@@ -320,6 +334,7 @@ concurrency:
               active_rules_variant="baseline-\${baseline_firestore_mode}"
               if [[ "$baseline_firestore_mode" == "ambiguous" ]]; then active_rules_variant="baseline-final"; fi
               active_rules_variant="baseline-compatibility"
+              active_rules_variant="historical-compatibility"
               if (( active_rules_status == 2 )); then exit 2; fi
               if [[ -z "$active_rules_variant" ]]; then
                 write_unrecognized_active_firestore_rules_evidence

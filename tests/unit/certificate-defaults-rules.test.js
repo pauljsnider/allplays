@@ -133,6 +133,15 @@ describe('certificate defaults Firestore rules', () => {
         expect(deployWorkflow).toContain(
             'Only immutable identifiers and SHA-256 digests are reported; rule source and credentials remain redacted.'
         );
+        expect(deployWorkflow).toContain(
+            'certificate_active_recovery_ruleset="projects/game-flow-c6311/rulesets/537ed719-d2fa-4cae-9a20-97273db4e11a"'
+        );
+        expect(deployWorkflow).toMatch(
+            /git archive "\$recovery_sha"[\s\S]*firestore-active-recovery\.rules[\s\S]*recovery_source_sha256/
+        );
+        expect(deployWorkflow).toMatch(
+            /verify_active_firestore_rules "\$active_recovery_firestore_rules"[\s\S]*active_rules_variant="historical-compatibility"/
+        );
         expect(deployWorkflow).toContain('[[ "$active_rules_variant" == *-final ]]');
         expect(deployWorkflow).toContain('firestore-baseline-compat.rules');
         expect(deployWorkflow).toContain('advancing its SHA and forcing live mode classification');
@@ -168,7 +177,7 @@ describe('certificate defaults Firestore rules', () => {
     it('reconstructs a baseline with only that exact baseline SHA toolchain', () => {
         const baselineStage = deployWorkflow.slice(
             deployWorkflow.indexOf('- name: Stage exact Firestore baseline variants'),
-            deployWorkflow.indexOf('- name: Archive installed Functions runtime into trusted handoff')
+            deployWorkflow.indexOf('- name: Stage exact active Firestore recovery proof')
         );
 
         expect(baselineStage).toContain('git archive "$FIRESTORE_BASELINE_SHA"');
@@ -182,6 +191,21 @@ describe('certificate defaults Firestore rules', () => {
         expect(repositoryInstructions).toMatch(
             /historical baseline variant only from an isolated checkout of that exact baseline SHA[\s\S]*complete generation pipeline[\s\S]*current-workspace code or dependencies[\s\S]*must never establish historical deployment provenance/i
         );
+    });
+
+    it('reconstructs the active recovery source from its pinned deployment commit', () => {
+        const recoveryStage = deployWorkflow.slice(
+            deployWorkflow.indexOf('- name: Stage exact active Firestore recovery proof'),
+            deployWorkflow.indexOf('- name: Archive installed Functions runtime into trusted handoff')
+        );
+
+        expect(recoveryStage).toContain('recovery_sha="b637109b4f51d9b8627bb081eaea1489dfc8b8c3"');
+        expect(recoveryStage).toContain('git merge-base --is-ancestor "$recovery_sha" "$GITHUB_SHA"');
+        expect(recoveryStage).toContain('git archive "$recovery_sha"');
+        expect(recoveryStage).toContain('cd "$recovery_checkout"');
+        expect(recoveryStage).toContain('recovery_node_major=');
+        expect(recoveryStage).toContain('recovery_source_sha256="033fc321f5a10457a9093262ff1b8c907aa1a583624a7edf8455804f4f3ba1ef"');
+        expect(recoveryStage).toContain('The pinned Firestore recovery source did not reproduce exactly.');
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('transitional emulator coverage', () => {
