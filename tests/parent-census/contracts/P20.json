@@ -138,10 +138,9 @@
       "actor": "peer",
       "target": {
         "kind": "text",
-        "name": "Claimed by primary",
+        "name": "Snacks",
         "exact": true
-      },
-      "scope": "Snacks"
+      }
     },
     {
       "action": "expectHidden",
@@ -171,6 +170,16 @@
         "kind": "role",
         "role": "button",
         "name": "Release",
+        "exact": true
+      },
+      "scope": "Snacks"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Claimed",
         "exact": true
       },
       "scope": "Snacks"
