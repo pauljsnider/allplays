@@ -28,6 +28,12 @@ import {
     resolveTeamMediaAlbumNotificationAudience,
     sortByMediaOrder
 } from '../../js/team-media-utils.js';
+import {
+    TEAM_MEDIA_BATCH_LIMIT_MESSAGE,
+    TEAM_MEDIA_MAX_BATCH_FILE_COUNT,
+    TEAM_MEDIA_MAX_BATCH_SIZE_BYTES,
+    validateTeamMediaUploadBatch
+} from '../../js/team-media-upload-limits.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -283,6 +289,43 @@ describe('team media bulk actions', () => {
         expect(isSupportedTeamMediaDocument({ type: 'video/mp4', size: 1 })).toBe(false);
         expect(isSupportedTeamMediaDocument({ type: 'image/png', size: 1 })).toBe(false);
         expect(isTeamMediaDocument({ type: 'file' })).toBe(true);
+    });
+
+    it('accepts Team Media batches immediately below and at the file-count limit', () => {
+        const belowLimit = Array.from({ length: TEAM_MEDIA_MAX_BATCH_FILE_COUNT - 1 }, () => ({ size: 1 }));
+        const atLimit = [...belowLimit, { size: 1 }];
+
+        expect(validateTeamMediaUploadBatch(belowLimit)).toEqual({ valid: true, message: '' });
+        expect(validateTeamMediaUploadBatch(atLimit)).toEqual({ valid: true, message: '' });
+        expect(validateTeamMediaUploadBatch([...atLimit, { size: 1 }])).toEqual({
+            valid: false,
+            message: TEAM_MEDIA_BATCH_LIMIT_MESSAGE
+        });
+    });
+
+    it('accepts Team Media batches immediately below and at the aggregate-byte limit', () => {
+        const atLimit = Array.from({ length: 10 }, () => ({ size: TEAM_MEDIA_MAX_FILE_SIZE_BYTES }));
+        const belowLimit = atLimit.map((file, index) => index === 0 ? { size: file.size - 1 } : file);
+
+        expect(validateTeamMediaUploadBatch(belowLimit)).toEqual({ valid: true, message: '' });
+        expect(validateTeamMediaUploadBatch(atLimit)).toEqual({ valid: true, message: '' });
+        expect(validateTeamMediaUploadBatch([...atLimit, { size: 1 }])).toEqual({
+            valid: false,
+            message: TEAM_MEDIA_BATCH_LIMIT_MESSAGE
+        });
+        expect(atLimit.reduce((total, file) => total + file.size, 0)).toBe(TEAM_MEDIA_MAX_BATCH_SIZE_BYTES);
+    });
+
+    it('fails closed when a Team Media batch contains an invalid or non-finite size', () => {
+        for (const size of [undefined, '1', -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(validateTeamMediaUploadBatch([{ size }])).toEqual({
+                valid: false,
+                message: TEAM_MEDIA_BATCH_LIMIT_MESSAGE
+            });
+        }
+        expect(TEAM_MEDIA_BATCH_LIMIT_MESSAGE).toContain('20 files');
+        expect(TEAM_MEDIA_BATCH_LIMIT_MESSAGE).toContain('100 MiB');
+        expect(TEAM_MEDIA_BATCH_LIMIT_MESSAGE).toContain('Split this selection into smaller batches');
     });
 
     it('sorts by saved order with stable name fallback', () => {

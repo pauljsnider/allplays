@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { isSupportedTeamMediaDocument } from '../lib/adapters/legacyTeamMedia';
+import { isSupportedTeamMediaDocument, validateTeamMediaUploadBatch } from '../lib/adapters/legacyTeamMedia';
 import {
   AlertCircle,
   CheckCircle2,
@@ -389,6 +389,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
   const uploadPhotos = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+      setMessage('');
+      setError(batchValidation.message);
+      if (photoInputRef.current) photoInputRef.current.value = '';
+      return;
+    }
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'photo', index));
     flushSync(() => {
       setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
@@ -455,6 +462,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
   const uploadFiles = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+      setMessage('');
+      setError(batchValidation.message);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'file', index));
     flushSync(() => {
       setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
