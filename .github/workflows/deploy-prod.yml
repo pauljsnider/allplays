@@ -941,6 +941,10 @@ jobs:
           certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
           certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
           certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
+          active_ruleset_observed_id="unknown"
+          active_ruleset_observed_create_time="unknown"
+          active_ruleset_observed_source_sha256="unknown"
+          active_ruleset_observed_fingerprint_present="false"
 
           if ! jq -e '
             .firestore.rules == "firestore.rules"
@@ -1051,6 +1055,36 @@ jobs:
               return 2
             fi
 
+            local observed_rules_b64 observed_create_time observed_fingerprint
+            observed_rules_b64="$(
+              jq -er '
+                (.source.files // [])
+                | if length == 1 and .[0].name == "firestore.rules"
+                  then (.[0].content | @base64)
+                  else error("expected exactly one firestore.rules source file")
+                  end
+              ' "$ruleset_json" 2>/dev/null || true
+            )"
+            [[ -n "$observed_rules_b64" ]] || {
+              rm -f "$release_json" "$ruleset_json"
+              return 2
+            }
+            observed_create_time="$(jq -r '.createTime // ""' "$ruleset_json")"
+            if [[ ! "$observed_create_time" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z$ ]]; then
+              observed_create_time="unknown"
+            fi
+            observed_fingerprint="$(jq -r '.source.files[0].fingerprint // ""' "$ruleset_json")"
+            active_ruleset_observed_id="${ruleset_name##*/}"
+            active_ruleset_observed_create_time="$observed_create_time"
+            active_ruleset_observed_source_sha256="$(
+              printf '%s' "$observed_rules_b64" | base64 --decode | sha256sum | awk '{print $1}'
+            )"
+            if [[ -n "$observed_fingerprint" ]]; then
+              active_ruleset_observed_fingerprint_present="true"
+            else
+              active_ruleset_observed_fingerprint_present="false"
+            fi
+
             local source_match_status
             if firestore_ruleset_source_matches "$ruleset_json" "$ruleset_name" "$expected_rules_source"; then
               rm -f "$release_json" "$ruleset_json"
@@ -1060,6 +1094,34 @@ jobs:
             fi
             rm -f "$release_json" "$ruleset_json"
             return "$source_match_status"
+          }
+
+          write_unrecognized_active_firestore_rules_evidence() {
+            local current_final_sha256 current_compatibility_sha256
+            local baseline_final_sha256 baseline_compatibility_sha256
+            current_final_sha256="$(firestore_source_sha256 "$final_firestore_rules")"
+            current_compatibility_sha256="$(firestore_source_sha256 "$compatibility_firestore_rules")"
+            baseline_final_sha256="$(firestore_source_sha256 "$baseline_firestore_rules")"
+            baseline_compatibility_sha256="$(firestore_source_sha256 "$baseline_compatibility_firestore_rules")"
+
+            echo "::error title=Unrecognized active Firestore rules::ruleset_id=${active_ruleset_observed_id}, create_time=${active_ruleset_observed_create_time}, remote_source_sha256=${active_ruleset_observed_source_sha256}, fingerprint_present=${active_ruleset_observed_fingerprint_present}"
+            echo "::notice title=Trusted Firestore candidate digests::current_final_sha256=${current_final_sha256}, current_compatibility_sha256=${current_compatibility_sha256}, baseline_final_sha256=${baseline_final_sha256}, baseline_compatibility_sha256=${baseline_compatibility_sha256}"
+            {
+              echo "### Unrecognized active Firestore rules"
+              echo
+              echo "Only immutable identifiers and SHA-256 digests are reported; rule source and credentials remain redacted."
+              echo
+              echo "| Signal | Value |"
+              echo "| --- | --- |"
+              echo "| Active ruleset ID | \`${active_ruleset_observed_id}\` |"
+              echo "| Active ruleset creation time | \`${active_ruleset_observed_create_time}\` |"
+              echo "| Active canonical source SHA-256 | \`${active_ruleset_observed_source_sha256}\` |"
+              echo "| Source fingerprint present | \`${active_ruleset_observed_fingerprint_present}\` |"
+              echo "| Current final formatted SHA-256 | \`${current_final_sha256}\` |"
+              echo "| Current compatibility formatted SHA-256 | \`${current_compatibility_sha256}\` |"
+              echo "| Baseline final formatted SHA-256 | \`${baseline_final_sha256}\` |"
+              echo "| Baseline compatibility formatted SHA-256 | \`${baseline_compatibility_sha256}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           find_recent_matching_firestore_ruleset() {
@@ -1583,6 +1645,7 @@ jobs:
               fi
             fi
             if [[ -z "$active_rules_variant" ]]; then
+              write_unrecognized_active_firestore_rules_evidence
               write_firestore_configuration_blocked_summary "active Firestore rules did not match a trusted final or compatibility baseline"
               exit 2
             fi

@@ -228,6 +228,7 @@ concurrency:
             certificate_compatibility_recovery_ruleset="projects/game-flow-c6311/rulesets/6da601e4-12e3-420a-8db3-907153c712c7"
             certificate_compatibility_recovery_source_sha256="825ec3d3a56a067dc5c80c0e6e6f3fc1ceba2b09b249e0605889dc3d964dc6f2"
             certificate_compatibility_recovery_canonical_sha256="0334471987fba5fbb95f7acf49382e3e412849f02cb2ed333f87249f1674b4de"
+            active_ruleset_observed_source_sha256="unknown"
             if [[ "$deploy_targets" != "$retry_enabled_function_targets"
               && "$deploy_targets" != "$retry_enabled_inventory_producer_target"
               && "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then
@@ -255,6 +256,11 @@ concurrency:
             jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
             [[ "$local_rules_sha256" == "$certificate_compatibility_recovery_source_sha256" ]]
             [[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]
+          }
+          write_unrecognized_active_firestore_rules_evidence() {
+            echo "remote_source_sha256=\${active_ruleset_observed_source_sha256}"
+            echo "current_compatibility_sha256=\${current_compatibility_sha256}"
+            echo "baseline_compatibility_sha256=\${baseline_compatibility_sha256}"
           }
           find_recent_matching_firestore_ruleset() {
             curl "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets?pageSize=20"
@@ -315,6 +321,11 @@ concurrency:
               if [[ "$baseline_firestore_mode" == "ambiguous" ]]; then active_rules_variant="baseline-final"; fi
               active_rules_variant="baseline-compatibility"
               if (( active_rules_status == 2 )); then exit 2; fi
+              if [[ -z "$active_rules_variant" ]]; then
+                write_unrecognized_active_firestore_rules_evidence
+                write_firestore_configuration_blocked_summary "active Firestore rules did not match a trusted final or compatibility baseline"
+                exit 2
+              fi
               if [[ "$active_rules_variant" == *-final ]]; then
                 ensure_exact_firestore_ruleset "$final_firestore_rules"
               fi
@@ -482,6 +493,10 @@ concurrency:
             '[[ "$remote_rules_sha256" == "$certificate_compatibility_recovery_canonical_sha256" ]]',
             '[[ -n "$remote_rules_sha256" ]]'
         ))).toThrow('Production Firestore compatibility recovery canonical-source proof');
+        expect(() => validateProductionDeployCommand(validDeployCommand.replace(
+            'remote_source_sha256=${active_ruleset_observed_source_sha256}',
+            'active_rules_source=redacted'
+        ))).toThrow('Production Firestore redacted active-source digest evidence');
         expect(() => validateProductionDeployCommand(validDeployCommand.replace(
             'verify_active_firestore_release_name "$ruleset_name"',
             'verify_active_firestore_rules "$expected_rules_source"'
