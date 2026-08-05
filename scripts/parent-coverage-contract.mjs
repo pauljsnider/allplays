@@ -110,7 +110,7 @@ const workflowCapabilities = new Map(Object.entries({
     P34: { mode: 'reversible', routes: ['/home', '/people/*'], actions: ['fill', 'click', 'uploadSyntheticImage'] },
     P35: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click'] },
     P36: { mode: 'reversible', routes: ['/ai'], actions: ['fill', 'click', 'uploadSyntheticImage', 'uploadSyntheticDocument'] },
-    P37: { mode: 'lifecycle', routes: ['/profile/settings', '/auth'], actions: ['fill', 'fillActorPassword', 'click'] }
+    P37: { mode: 'lifecycle', routes: ['/profile/settings'], actions: ['fill', 'fillActorPassword', 'click'] }
 }));
 const stateChangingActions = new Set([
     'click', 'fill', 'fillActorEmail', 'fillActorPassword', 'check', 'uncheck',
@@ -822,6 +822,12 @@ export function workflowRouteAllowed(workflowId, route, resolved = false) {
     return Boolean(capability?.routes.some((allowedRoute) => routeMatchesCapability(route, allowedRoute, resolved)));
 }
 
+function workflowStepRouteAllowed(workflowId, action, route) {
+    if (workflowRouteAllowed(workflowId, route)) return true;
+    return workflowId === 'P37' && action === 'expectRoute' &&
+        routeMatchesCapability(route, '/auth');
+}
+
 export function assertParentCoverageStepCapability(workflowId, step, phase = 'execution', defaultActor = '') {
     const capability = workflowCapabilities.get(workflowId);
     if (!capability) throw new Error(`${phase} has no trusted workflow capability for ${workflowId}`);
@@ -835,7 +841,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     ) {
         throw new Error(`${phase} action ${step.action} is not allowed for workflow ${workflowId}`);
     }
-    if (['goto', 'expectRoute'].includes(step.action) && !workflowRouteAllowed(workflowId, step.route)) {
+    if (['goto', 'expectRoute'].includes(step.action) && !workflowStepRouteAllowed(workflowId, step.action, step.route)) {
         throw new Error(`${phase} route is outside the trusted ${workflowId} capability`);
     }
     if (step.action === 'clickAndExpectRoute' && !workflowRouteAllowed(workflowId, step.route)) {
@@ -1004,7 +1010,7 @@ function validateStep(step, index, declaredActors, workflowId, phase = 'executio
         if (!step.route.startsWith('/') || step.route.startsWith('//')) {
             throw new Error(`${label} route must be an app-relative route`);
         }
-        if (!workflowRouteAllowed(workflowId, step.route)) {
+        if (!workflowStepRouteAllowed(workflowId, step.action, step.route)) {
             throw new Error(`${label} route is outside the trusted ${workflowId} capability`);
         }
     }

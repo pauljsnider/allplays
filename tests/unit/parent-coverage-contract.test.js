@@ -388,6 +388,12 @@ describe('parent coverage contract boundary', () => {
                 ? { ...step, route: '/profile/settings' }
                 : step)
         }, catalog, 'P37')).toThrow(/ordered trusted P37 lifecycle goto workflow behavior/);
+        expect(() => validateContract({
+            ...deletion,
+            steps: deletion.steps.flatMap((step) => step.target?.name === 'Delete account'
+                ? [step, { action: 'goto', actor: 'lifecycle', route: '/auth' }]
+                : [step])
+        }, catalog, 'P37')).toThrow(/route is outside the trusted P37 capability/);
     });
 
     it('restricts the checkout popup primitive to the two checkout workflows', () => {
