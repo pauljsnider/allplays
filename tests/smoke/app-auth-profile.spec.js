@@ -94,6 +94,8 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const refresh = async () => { window.__appAuthCalls.refresh += 1; };
+
                 export function useAuth() {
                     const state = window.__mockAuthState || { user: null, profile: null };
                     const user = state.user || null;
@@ -108,7 +110,7 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
                         isCoach: roles.includes('coach'),
                         isAdmin: roles.includes('admin') || user?.isAdmin === true,
                         isPlatformAdmin: roles.includes('platformAdmin'),
-                        refresh: async () => { window.__appAuthCalls.refresh += 1; },
+                        refresh,
                         signOut: async () => {
                             window.__appAuthCalls.signOut += 1;
                             window.__mockAuthState = { user: null, profile: null };
