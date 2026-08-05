@@ -1085,12 +1085,16 @@ async function nativeGetDocument(path: string) {
   try {
     return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
-    const message = String(error?.message || '').toLowerCase();
-    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+    if (isNativeDocumentNotFound(error)) {
       return null;
     }
     throw error;
   }
+}
+
+function isNativeDocumentNotFound(error: unknown) {
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (error as any)?.status === 404 || message.includes('not_found') || message.includes('not found');
 }
 
 async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string } = {}) {
@@ -3412,6 +3416,7 @@ async function loadNativeRideRequestsForOffer(teamId: string, gameId: string, of
     try {
       return await nativeGetDocument(`${requestsPath}/${encodeURIComponent(requestId)}`);
     } catch (error) {
+      if (isNativeDocumentNotFound(error)) return null;
       // A stale or no-longer-linked child scope can be denied. Treat that exact
       // probe as unavailable; never fall back to a collection list.
       if (isRideRequestReadDenied(error)) return null;

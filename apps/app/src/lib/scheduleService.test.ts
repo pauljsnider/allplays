@@ -305,6 +305,100 @@ describe('native scoring roster fallback', () => {
   });
 });
 
+describe('native rideshare request fallback', () => {
+  const user = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] } as any;
+  const event = {
+    id: 'game-1',
+    teamId: 'team-1',
+    childId: 'player-1',
+    isDbGame: true,
+    isCancelled: false
+  } as any;
+  const childEvents = [event, { ...event, childId: 'player-2' }] as any[];
+  let previousWindow: typeof globalThis.window | undefined;
+  let previousFetch: typeof globalThis.fetch | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    previousWindow = (globalThis as any).window;
+    previousFetch = globalThis.fetch;
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(listRideOffersForEvent).mockRejectedValue(new Error('SDK rideshare read unavailable'));
+  });
+
+  afterEach(() => {
+    (globalThis as any).window = previousWindow;
+    globalThis.fetch = previousFetch;
+  });
+
+  function rideOfferResponse() {
+    return {
+      ok: true,
+      json: async () => ({
+        documents: [{
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rideOffers/offer-1',
+          fields: {
+            driverUserId: { stringValue: 'driver-1' },
+            seatCapacity: { integerValue: '3' },
+            seatCountConfirmed: { integerValue: '1' },
+            status: { stringValue: 'open' }
+          }
+        }]
+      })
+    } as any;
+  }
+
+  function missingDocumentResponse() {
+    return {
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: 'Document not found.' } })
+    } as any;
+  }
+
+  it('returns an offer with zero requests when every scoped child request is missing', async () => {
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce(rideOfferResponse())
+      .mockResolvedValue(missingDocumentResponse());
+
+    await expect(loadParentScheduleRideOffers(event, user, childEvents)).resolves.toEqual([
+      expect.objectContaining({ id: 'offer-1', requests: [] })
+    ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps an existing child request when another scoped child request is missing', async () => {
+    (globalThis as any).fetch = vi.fn().mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.endsWith('/rideOffers')) return rideOfferResponse();
+      if (url.endsWith('/requests/parent-1__player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rideOffers/offer-1/requests/parent-1__player-1',
+            fields: {
+              parentUserId: { stringValue: 'parent-1' },
+              childId: { stringValue: 'player-1' },
+              childName: { stringValue: 'Avery' },
+              status: { stringValue: 'pending' }
+            }
+          })
+        } as any;
+      }
+      return missingDocumentResponse();
+    });
+
+    await expect(loadParentScheduleRideOffers(event, user, childEvents)).resolves.toEqual([
+      expect.objectContaining({
+        id: 'offer-1',
+        requests: [expect.objectContaining({ id: 'parent-1__player-1', childId: 'player-1' })]
+      })
+    ]);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+});
+
 describe('parent schedule child scope', () => {
   const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], parentOf: [] } as any;
 
