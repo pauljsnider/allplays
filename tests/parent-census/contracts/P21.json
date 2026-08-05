@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P21",
+  "title": "Rideshare offer create close and reopen",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Rideshare",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Offer Ride",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Note",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "ride-offer-create"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Offer Ride",
+        "exact": true
+      },
+      "mutationId": "ride-offer-create",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Close Offer",
+        "exact": true
+      },
+      "mutationId": "ride-offer-close",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Ride offer closed.",
+        "exact": true
+      },
+      "value": "closed"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Reopen Offer",
+        "exact": true
+      },
+      "mutationId": "ride-offer-reopen",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Ride offer reopened.",
+        "exact": true
+      },
+      "value": "reopened"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Close Offer",
+        "exact": true
+      },
+      "mutationId": "ride-offer-reopen",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Reopen Offer",
+        "exact": true
+      },
+      "mutationId": "ride-offer-close",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Cancel",
+        "exact": true
+      },
+      "mutationId": "ride-offer-create",
+      "scope": "{RUN_MARKER}"
+    }
+  ]
+}
