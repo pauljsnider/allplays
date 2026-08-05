@@ -239,8 +239,13 @@ describe('React app schedule rideshare service integration', () => {
         dbMocks.closeRideOffer.mockResolvedValue(undefined);
         dbMocks.cancelRideRequest.mockResolvedValue(undefined);
 
-        const loaded = await loadParentScheduleRideOffers(event());
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        const loaded = await loadParentScheduleRideOffers(event(), user(), [event()]);
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', {
+            fallbackGameIds: [],
+            requesterUserId: 'user-1',
+            childIds: ['player-1'],
+            canManageTeamRequests: false
+        });
         expect(loaded[0]).toMatchObject({
             id: 'offer-1',
             sourceGameId: 'legacy-game-1',
@@ -300,23 +305,19 @@ describe('React app schedule rideshare service integration', () => {
                     ]
                 });
             }
-            if (href.endsWith('/teams/team-1/games/game-1/rideOffers/offer-native/requests')) {
-                return restOk({
-                    documents: [
-                        firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native/requests/request-1', {
-                            parentUserId: 'user-1',
-                            childId: 'player-1',
-                            childName: 'Pat',
-                            status: 'pending'
-                        })
-                    ]
-                });
+            if (href.endsWith('/teams/team-1/games/game-1/rideOffers/offer-native/requests/user-1__player-1')) {
+                return restOk(firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native/requests/user-1__player-1', {
+                    parentUserId: 'user-1',
+                    childId: 'player-1',
+                    childName: 'Pat',
+                    status: 'pending'
+                }));
             }
             return restError();
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        const loaded = await loadParentScheduleRideOffers(event());
+        const loaded = await loadParentScheduleRideOffers(event(), user(), [event()]);
 
         expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
         expect(loaded).toEqual([
@@ -326,10 +327,109 @@ describe('React app schedule rideshare service integration', () => {
                 driverName: 'Dana Driver',
                 direction: 'from',
                 requests: [
-                    expect.objectContaining({ id: 'request-1', childId: 'player-1', status: 'pending' })
+                    expect.objectContaining({ id: 'user-1__player-1', childId: 'player-1', status: 'pending' })
                 ]
             })
         ]);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rideOffers/offer-native/requests'))).toBe(false);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rideOffers/offer-native/requests/user-1__player-1'))).toBe(true);
+    });
+
+    it('retains native collection loading for team managers', async () => {
+        installWindow('capacitor:');
+        dbMocks.listRideOffersForEvent.mockRejectedValue(new Error('web unavailable'));
+        const fetchMock = vi.fn(async (url) => {
+            const href = String(url);
+            if (href.endsWith('/teams/team-1/games/game-1/rideOffers')) {
+                return restOk({
+                    documents: [firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native', {
+                        driverUserId: 'driver-1',
+                        seatCapacity: 3,
+                        seatCountConfirmed: 1,
+                        direction: 'to',
+                        status: 'open'
+                    })]
+                });
+            }
+            if (href.endsWith('/teams/team-1/games/game-1/rideOffers/offer-native/requests')) {
+                return restOk({
+                    documents: [
+                        firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native/requests/user-1__player-1', {
+                            parentUserId: 'user-1', childId: 'player-1', status: 'pending'
+                        }),
+                        firestoreDoc('teams/team-1/games/game-1/rideOffers/offer-native/requests/user-2__player-2', {
+                            parentUserId: 'user-2', childId: 'player-2', status: 'waitlisted'
+                        })
+                    ]
+                });
+            }
+            return restError();
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        const loaded = await loadParentScheduleRideOffers(
+            event({ isTeamAdmin: true, isTeamStaff: true }),
+            user({ uid: 'owner-1', roles: ['admin'] }),
+            [event({ isTeamAdmin: true, isTeamStaff: true })]
+        );
+
+        expect(loaded[0].requests).toHaveLength(2);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/rideOffers/offer-native/requests'))).toBe(true);
+    });
+
+    it('keeps two parent households and the driver isolated for the same offer cache key', async () => {
+        const privacyEvent = event({ id: 'game-privacy', childId: 'player-1' });
+        const secondParentEvent = event({ id: 'game-privacy', childId: 'player-2' });
+        const bothRequests = [
+            { id: 'user-1__player-1', parentUserId: 'user-1', childId: 'player-1', childName: 'Pat', status: 'pending' },
+            { id: 'user-2__player-2', parentUserId: 'user-2', childId: 'player-2', childName: 'Sam', status: 'waitlisted' }
+        ];
+        dbMocks.listRideOffersForEvent.mockImplementation(async (_teamId, _gameId, options) => [
+            offer({
+                sourceGameId: 'game-privacy',
+                requests: options.requesterUserId === 'driver-1'
+                    ? bothRequests
+                    : bothRequests.filter((request) => request.parentUserId === options.requesterUserId)
+            })
+        ]);
+
+        const firstParentOffers = await loadParentScheduleRideOffers(privacyEvent, user(), [privacyEvent]);
+        const secondParentOffers = await loadParentScheduleRideOffers(
+            secondParentEvent,
+            user({ uid: 'user-2', parentOf: [{ teamId: 'team-1', playerId: 'player-2' }] }),
+            [secondParentEvent]
+        );
+        const driverOffers = await loadParentScheduleRideOffers(
+            privacyEvent,
+            user({ uid: 'driver-1', parentOf: [] }),
+            [privacyEvent]
+        );
+
+        expect(firstParentOffers[0].requests).toEqual([
+            expect.objectContaining({ parentUserId: 'user-1', childId: 'player-1' })
+        ]);
+        expect(secondParentOffers[0].requests).toEqual([
+            expect.objectContaining({ parentUserId: 'user-2', childId: 'player-2' })
+        ]);
+        expect(driverOffers[0].requests).toEqual([
+            expect.objectContaining({ parentUserId: 'user-1' }),
+            expect.objectContaining({ parentUserId: 'user-2' })
+        ]);
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenNthCalledWith(1, 'team-1', 'game-privacy', expect.objectContaining({
+            requesterUserId: 'user-1',
+            childIds: ['player-1'],
+            canManageTeamRequests: false
+        }));
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenNthCalledWith(2, 'team-1', 'game-privacy', expect.objectContaining({
+            requesterUserId: 'user-2',
+            childIds: ['player-2'],
+            canManageTeamRequests: false
+        }));
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenNthCalledWith(3, 'team-1', 'game-privacy', expect.objectContaining({
+            requesterUserId: 'driver-1',
+            childIds: ['player-1'],
+            canManageTeamRequests: false
+        }));
     });
 
     it('creates and requests rides through native Firestore REST fallback when web writes fail', async () => {

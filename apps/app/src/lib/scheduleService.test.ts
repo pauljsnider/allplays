@@ -2915,6 +2915,10 @@ describe('parent family RSVP submission', () => {
   it('invalidates schedule and Home caches after a single-child RSVP succeeds', async () => {
     const summary = { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 };
     vi.mocked(submitRsvpForPlayer).mockResolvedValue(summary as any);
+    vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
+
+    await loadParentScheduleRideOffers(baseEvent, user as any, [baseEvent]);
+    vi.mocked(invalidateCachedAppData).mockClear();
 
     await expect(submitParentScheduleRsvp(baseEvent, user as any, 'going', 'On time')).resolves.toEqual(summary);
 
@@ -2924,12 +2928,12 @@ describe('parent family RSVP submission', () => {
       response: 'going',
       note: 'On time'
     });
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(1, 'app-schedule-summary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(2, 'home-secondary:parent-1');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(3, 'event-details:team-1:game-1');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(4, 'event-details:team-1:game-1:ride-offers');
-    expect(invalidateCachedAppData).toHaveBeenNthCalledWith(5, 'event-details:team-1:game-1:assignment-claims');
-    expect(invalidateCachedAppData).toHaveBeenCalledTimes(5);
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('home-secondary:parent-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:ride-offers');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:ride-offers:parent:parent-1:player-1');
+    expect(invalidateCachedAppData).toHaveBeenCalledWith('event-details:team-1:game-1:assignment-claims');
   });
 
   it('keeps cached schedule data when a single-child RSVP write fails', async () => {

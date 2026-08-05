@@ -312,7 +312,12 @@ export async function requestRideSpot(teamId: string, gameId: string, offerId: s
     return await Promise.resolve(legacyRequestRideSpot(teamId, gameId, offerId, payload));
 }
 
-export async function listRideOffersForEvent(teamId: string, gameId: string, options?: { fallbackGameIds?: string[] }) {
+export async function listRideOffersForEvent(teamId: string, gameId: string, options?: {
+    fallbackGameIds?: string[];
+    requesterUserId?: string;
+    childIds?: string[];
+    canManageTeamRequests?: boolean;
+}) {
     return await Promise.resolve(options === undefined ? legacyListRideOffersForEvent(teamId, gameId) : legacyListRideOffersForEvent(teamId, gameId, options));
 }
 

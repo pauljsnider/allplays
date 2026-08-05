@@ -607,7 +607,12 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'practice-1');
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'final-1');
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(3);
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', {
+            fallbackGameIds: [],
+            requesterUserId: 'user-1',
+            childIds: ['player-1', 'player-2'],
+            canManageTeamRequests: false
+        });
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
 
         expect(result.children).toEqual([
@@ -835,7 +840,12 @@ describe('React app schedule service contract integration', () => {
         const hydratedResult = await hydrateParentScheduleEventOptionalDetails(result);
 
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
-        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', {
+            fallbackGameIds: [],
+            requesterUserId: '',
+            childIds: ['player-1', 'player-2'],
+            canManageTeamRequests: false
+        });
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
         expect(hydratedResult.events.find((event) => event.childId === 'player-1')).toMatchObject({
