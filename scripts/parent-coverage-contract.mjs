@@ -394,7 +394,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     P36: [
         { action: 'uploadSyntheticImage', actor: 'primary', target: /attachment|image|upload/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|image|attachment/i },
-        { action: 'uploadSyntheticDocument', actor: 'primary', target: /attachment|document|upload/i },
+        { action: 'uploadSyntheticDocument', actor: 'primary', target: /attach|attachment|document|pdf|upload/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /allplays-parent-census|document|pdf/i },
         { action: 'fill', actor: 'primary', target: /prompt|chat/i, value: /\{RUN_MARKER\}/ },
         { action: 'click', actor: 'primary', target: /send/i },
@@ -481,7 +481,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:social|post|image|photo|upload|reaction|like|unlike|comment|moderate|hide post|unhide post|delete post|delete comment|remove image|send|publish)$/i
     },
     P35: { primary: /^(?:ai|chat|prompt|send|delete message|clear chat|new conversation)$/i },
-    P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|send|delete message|remove attachment|clear chat|new conversation)$/i },
+    P36: { primary: /^(?:ai|chat|prompt|attachment|image|document|upload|attach image, CSV, or PDF|send|delete message|remove attachment|clear chat|new conversation)$/i },
     P37: { lifecycle: /^(?:password|type delete to confirm|account password \(email sign-in only\)|cancel account deletion|delete account|confirm deletion|confirm|cancel)$/i }
 }));
 const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
@@ -526,6 +526,13 @@ const stepKeysByAction = new Map([
     ['logout', ['action', 'actor']]
 ]);
 
+const exactWorkflowActionTargets = new Map([
+    ['P36', new Map([
+        ['uploadSyntheticImage', { kind: 'label', name: 'Attach image, CSV, or PDF' }],
+        ['uploadSyntheticDocument', { kind: 'label', name: 'Attach image, CSV, or PDF' }]
+    ])]
+]);
+
 function serializeAuthoringValue(value) {
     if (value instanceof RegExp) {
         return { pattern: value.source, flags: value.flags };
@@ -566,6 +573,11 @@ function parentCoverageActionConstraint(workflowId, capability, action) {
             constraint.target = { kinds: ['label', 'testId'], exact: true };
         } else {
             constraint.target = { kinds: [...locatorKinds], roles: [...allowedRoles] };
+        }
+        const exactTarget = exactWorkflowActionTargets.get(workflowId)?.get(action);
+        if (exactTarget) {
+            constraint.target.kinds = [exactTarget.kind];
+            constraint.target.name = exactTarget.name;
         }
     }
     if (action === 'restoreFriendship') constraint.actor = 'primary';
@@ -865,6 +877,10 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
     if (capability.mode !== 'readOnly' && stateChangingActions.has(step.action)) {
         const actor = step.actor || defaultActor;
         const targetName = String(step.target?.name || '');
+        const exactTarget = exactWorkflowActionTargets.get(workflowId)?.get(step.action);
+        if (exactTarget && (step.target?.kind !== exactTarget.kind || targetName !== exactTarget.name)) {
+            throw new Error(`${phase} target must use the trusted ${workflowId}/${step.action} accessible label`);
+        }
         const actorTargetCapability = mutationTargetCapabilities.get(workflowId)?.[actor];
         if (
             !actorTargetCapability ||
