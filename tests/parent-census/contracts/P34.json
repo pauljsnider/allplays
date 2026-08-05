@@ -1,0 +1,302 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P34",
+  "title": "Social post image reactions moderation and cleanup",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=feed&social=create&type=team_media"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/home?section=feed&social=create&type=team_media"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "dialog",
+        "name": "Create social post",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Post",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "social-post"
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Upload",
+        "exact": true
+      },
+      "mutationId": "social-image",
+      "commitMutation": true
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Publish",
+        "exact": true
+      },
+      "mutationId": "social-post",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Posted to your ALL PLAYS feed.",
+        "exact": true
+      },
+      "value": "Posted to your ALL PLAYS feed."
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/home?section=feed"
+    },
+    {
+      "action": "reload",
+      "actor": "peer"
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Like",
+        "exact": true
+      },
+      "mutationId": "social-reaction",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Unlike",
+        "exact": true
+      },
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "fill",
+      "actor": "peer",
+      "target": {
+        "kind": "label",
+        "name": "Comment",
+        "exact": true
+      },
+      "value": "{RUN_MARKER} comment",
+      "mutationId": "social-comment"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "social-comment",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Comment added.",
+        "exact": true
+      },
+      "value": "Comment added."
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=feed"
+    },
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Hide post",
+        "exact": true
+      },
+      "mutationId": "social-moderation",
+      "scope": "{RUN_MARKER}",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Post hidden from your feed.",
+        "exact": true
+      },
+      "value": "Post hidden from your feed."
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=feed"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Unhide post",
+        "exact": true
+      },
+      "mutationId": "social-moderation",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/home?section=feed"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete comment",
+        "exact": true
+      },
+      "mutationId": "social-comment",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Unlike",
+        "exact": true
+      },
+      "mutationId": "social-reaction",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/home?section=feed"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete post",
+        "exact": true
+      },
+      "mutationId": "social-post",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove image",
+        "exact": true
+      },
+      "mutationId": "social-image",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      }
+    }
+  ]
+}
