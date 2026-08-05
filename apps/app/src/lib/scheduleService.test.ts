@@ -316,7 +316,7 @@ describe('native rideshare request fallback', () => {
   } as any;
   const childEvents = [event, { ...event, childId: 'player-2' }] as any[];
   let previousWindow: typeof globalThis.window | undefined;
-  let previousFetch: typeof globalThis.fetch | undefined;
+  let previousFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     vi.clearAllMocks();
