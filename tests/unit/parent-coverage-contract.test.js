@@ -70,15 +70,15 @@ function validP12Contract() {
 }
 
 function validP20Contract() {
-    const claim = { kind: 'role', role: 'button', name: 'Claim', exact: true };
+    const signUp = { kind: 'role', role: 'button', name: 'Sign up', exact: true };
     const release = { kind: 'role', role: 'button', name: 'Release', exact: true };
     return validContract({
         workflowId: 'P20', title: catalog.workflows[19].title, actors: ['primary', 'peer'],
         mutatesProduction: true, cleanupRequired: true,
         steps: [
-            { action: 'click', actor: 'primary', target: claim, mutationId: 'task-claim', scope: 'Snacks', commitMutation: true },
-            { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Claimed by you', exact: true }, value: 'Claimed' },
-            { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Claimed', exact: true }, value: 'Claimed' }
+            { action: 'click', actor: 'primary', target: signUp, mutationId: 'task-claim', scope: 'Snacks', commitMutation: true },
+            { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'You', exact: true }, value: 'You' },
+            { action: 'expectHidden', actor: 'peer', target: signUp }
         ],
         cleanupSteps: [
             { action: 'click', actor: 'primary', target: release, mutationId: 'task-claim', scope: 'Snacks' }
@@ -221,6 +221,18 @@ describe('parent coverage contract boundary', () => {
         expect(peerRideTargets.test('Request ride')).toBe(false);
         expect(rideRequest.reversibleClickInverses).toContainEqual(['request spot', 'cancel']);
 
+        const taskClaim = parentCoverageAuthoringContext('P20');
+        const primaryTaskTargets = new RegExp(
+            taskClaim.mutationTargetPatterns.primary.pattern,
+            taskClaim.mutationTargetPatterns.primary.flags
+        );
+        expect(primaryTaskTargets.test('Sign up')).toBe(true);
+        expect(primaryTaskTargets.test('Claim')).toBe(false);
+        expect(taskClaim.orderedEvidence.map(({ action, actions }) => action || actions.join('|'))).toEqual([
+            'click', 'expectText', 'expectHidden', 'click'
+        ]);
+        expect(taskClaim.reversibleClickInverses).toContainEqual(['sign up', 'release']);
+
         const image = parentCoverageAuthoringContext('P13');
         expect(image.actionConstraints.uploadSyntheticImage).toMatchObject({
             phases: ['execution'],
@@ -272,6 +284,36 @@ describe('parent coverage contract boundary', () => {
                 ? { ...step, target: staleTarget }
                 : step)
         }, catalog, 'P12')).toThrow(/outside the trusted P12\/primary mutation capability/);
+    });
+
+    it('rejects the stale P20 Claim and Claimed contract at the trusted boundary', () => {
+        const contract = validP20Contract();
+        expect(validateContract(contract, catalog, 'P20').workflowId).toBe('P20');
+
+        expect(() => validateContract({
+            ...contract,
+            steps: contract.steps.map((step, index) => index === 0 ? {
+                ...step,
+                target: { kind: 'role', role: 'button', name: 'Claim', exact: true }
+            } : step)
+        }, catalog, 'P20')).toThrow(/outside the trusted P20\/primary mutation capability/);
+
+        expect(() => validateContract({
+            ...contract,
+            steps: [
+                contract.steps[0],
+                {
+                    action: 'expectText', actor: 'primary',
+                    target: { kind: 'text', name: 'Claimed by you', exact: true },
+                    value: 'Claimed'
+                },
+                {
+                    action: 'expectText', actor: 'peer',
+                    target: { kind: 'text', name: 'Claimed', exact: true },
+                    value: 'Claimed'
+                }
+            ]
+        }, catalog, 'P20')).toThrow(/ordered trusted P20 primary expectText workflow behavior/);
     });
 
     it('requires P34 primary caption fills to use the composer label', () => {
@@ -773,7 +815,7 @@ describe('parent coverage contract boundary', () => {
             steps: [{
                 action: 'click',
                 actor: 'primary',
-                target: { kind: 'role', role: 'button', name: 'Claim', exact: true },
+                target: { kind: 'role', role: 'button', name: 'Sign up', exact: true },
                 mutationId: 'task-claim'
             }],
             cleanupSteps: [{
@@ -800,7 +842,7 @@ describe('parent coverage contract boundary', () => {
         expect(validateContract(claimAndRelease, catalog, 'P20').workflowId).toBe('P20');
         expect(() => validateContract({
             ...claimAndRelease,
-            cleanupSteps: [{ action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Claim', exact: true }, mutationId: 'task-claim', scope: 'Snacks' }]
+            cleanupSteps: [{ action: 'click', actor: 'primary', target: { kind: 'role', role: 'button', name: 'Sign up', exact: true }, mutationId: 'task-claim', scope: 'Snacks' }]
         }, catalog, 'P20')).toThrow(/target-specific inverse/);
 
         const changedControl = validP12Contract();
@@ -998,7 +1040,7 @@ describe('parent coverage contract boundary', () => {
         expect(() => validateContract({
             ...task,
             steps: task.steps.map((step) => step.actor === 'peer' ? { ...step, actor: 'primary' } : step)
-        }, catalog, 'P20')).toThrow(/ordered trusted P20 peer expectVisible\|expectText workflow behavior/);
+        }, catalog, 'P20')).toThrow(/ordered trusted P20 peer expectHidden workflow behavior/);
     });
 
     it('requires each catalogued workflow to exercise its trusted behavior', () => {
