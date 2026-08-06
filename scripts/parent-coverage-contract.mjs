@@ -287,10 +287,10 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /close offer|cancel/i }
     ],
     P22: [
-        { action: 'click', actor: 'peer', target: /request ride/i },
+        { action: 'click', actor: 'peer', target: /^request spot$/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /ride request|pending|peer/i },
-        { action: 'click', actor: 'primary', target: /approve|accept/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /approved|accepted|denied|declined/i },
+        { action: 'click', actor: 'primary', target: /^confirm$/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /confirmed/i, value: /confirmed/i },
         { action: 'click', phase: 'cleanup', actor: 'peer', target: /cancel/i }
     ],
     P23: [
@@ -421,7 +421,7 @@ const reversibleClickInversePairs = new Map(Object.entries({
         ['offer ride', 'cancel'], ['create offer', 'cancel'],
         ['close offer', 'reopen offer'], ['reopen offer', 'close offer']
     ],
-    P22: [['request ride', 'cancel'], ['approve', 'cancel'], ['accept', 'cancel']],
+    P22: [['request spot', 'cancel'], ['confirm', 'cancel']],
     P23: [['send', 'delete message'], ['mute', 'unmute']],
     P24: [['send', 'delete message'], ['upload', 'remove attachment']],
     P25: [['send', 'delete message']],
@@ -453,8 +453,8 @@ const mutationTargetCapabilities = new Map(Object.entries({
     },
     P21: { primary: /^(?:ride|rideshare|seat|address|note|offer ride|create offer|close offer|reopen offer|save|cancel)$/i },
     P22: {
-        primary: /^(?:ride|request ride|approve|deny|accept|decline|cancel)$/i,
-        peer: /^(?:ride|request ride|approve|deny|accept|decline|cancel)$/i
+        primary: /^(?:confirm|waitlist|decline|cancel)$/i,
+        peer: /^(?:request spot|cancel)$/i
     },
     P23: {
         primary: /^(?:message|chat|mute|unmute|send|delete message|mark read)$/i,
@@ -831,7 +831,7 @@ function isBoundedRelationshipLifecycle(workflowId, executionGroup, cleanupGroup
             inverses.join('\0') === 'primary:restore friendship';
     }
     if (workflowId === 'P22') {
-        return /^peer:request ride\0primary:(?:approve|accept)$/.test(forwards.join('\0')) &&
+        return forwards.join('\0') === 'peer:request spot\0primary:confirm' &&
             inverses.join('\0') === 'peer:cancel';
     }
     if (workflowId === 'P27') {
