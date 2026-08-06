@@ -104,6 +104,27 @@
   padding-bottom: 200px;
 }
 
+.mobile-profile-notification-save-tray {
+  position: fixed;
+  z-index: 39;
+  right: 0;
+  bottom: calc(var(--app-bottom-nav-height) + 8px);
+  left: 0;
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-left: max(12px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.mobile-profile-notification-save-tray__surface {
+  max-width: 40rem;
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.mobile-profile-notification-save-offset {
+  padding-bottom: 128px;
+}
+
 .app-page-ai {
   height: 100dvh;
   min-height: 0;

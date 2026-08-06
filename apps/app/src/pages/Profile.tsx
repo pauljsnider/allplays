@@ -1571,7 +1571,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       ) : null}
 
       {activeProfileSection === 'alerts' ? (
-      <section className="app-card p-4">
+      <section className={`app-card p-4 ${selectedTeamPreferencesDirty && !isDesktopWeb ? 'mobile-profile-notification-save-offset' : ''}`}>
         <div className="flex items-center gap-2 text-sm font-black text-primary-800">
           <Bell className="h-4 w-4" aria-hidden="true" />
           Notification preferences
@@ -1752,20 +1752,42 @@ export function Profile({ auth }: { auth: AuthState }) {
                   ))}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
-                  {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-                  Save preferences
-                </button>
-                {selectedTeamPreferencesDirty ? (
-                  <span className="text-sm font-bold text-amber-700" role="status" aria-live="polite">Unsaved changes</span>
-                ) : null}
-              </div>
+              {isDesktopWeb || !selectedTeamPreferencesDirty ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
+                    {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                    Save preferences
+                  </button>
+                  {selectedTeamPreferencesDirty ? (
+                    <span className="text-sm font-bold text-amber-700" role="status" aria-live="polite">Unsaved changes</span>
+                  ) : null}
+                </div>
+              ) : null}
             </details>
           </>
         ) : null}
 
         <StatusMessage status={notificationStatus} className="mt-3 block" />
+        {!isDesktopWeb && selectedTeamPreferencesDirty && selectedNotificationTeam ? (
+          <div
+            className="mobile-profile-notification-save-tray"
+            role="region"
+            aria-label={`${selectedNotificationTeam.name || selectedNotificationTeam.id} notification preferences with unsaved changes`}
+          >
+            <div className="mobile-profile-notification-save-tray__surface rounded-2xl border border-amber-200 bg-white p-3 shadow-app-lg">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-gray-950">{selectedNotificationTeam.name || selectedNotificationTeam.id}</div>
+                  <div className="text-xs font-bold text-amber-700" role="status" aria-live="polite">Unsaved changes</div>
+                </div>
+                <button type="button" className="primary-button shrink-0" onClick={saveNotifications} disabled={busy === 'notifications'}>
+                  {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                  Save preferences
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
       ) : null}
 
