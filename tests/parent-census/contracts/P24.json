@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P24",
+  "title": "Team chat synthetic image attachment",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Add attachment",
+        "exact": true
+      }
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "uploadSyntheticImage",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Photo",
+        "exact": true
+      },
+      "mutationId": "team-chat-image-upload",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "1 attachment ready",
+        "exact": true
+      },
+      "value": "1 attachment ready"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Message",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "team-chat-image-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "team-chat-image-message",
+      "commitMutation": true
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "link",
+        "name": "allplays-parent-census",
+        "exact": false
+      },
+      "scope": "{RUN_MARKER}"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "team-chat-image-message",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Remove attachment",
+        "exact": true
+      },
+      "mutationId": "team-chat-image-upload",
+      "scope": "{RUN_MARKER}"
+    }
+  ]
+}
