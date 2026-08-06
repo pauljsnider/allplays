@@ -12270,6 +12270,7 @@ exports._internal = {
   sendDirectTargetsNotification,
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
+  hydratePublicRsvpPrivateProfileParents,
   sendPracticePacketDueTomorrowReminders,
   sendFeeUnpaidDueReminders,
   getFeeReminderDueDateMillis,
@@ -16291,6 +16292,9 @@ exports.notifyPracticePacketCompleted = retryableNotificationFunctions.firestore
 
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
+// Keep private-profile BatchGet requests bounded so large rosters do not create
+// one concurrent Firestore read pipeline per eligible player.
+const PUBLIC_RSVP_PRIVATE_PROFILE_BATCH_SIZE = 100;
 const PUBLIC_RSVP_MAX_BODY_BYTES = 4096;
 
 exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore
@@ -16428,6 +16432,42 @@ function getPublicRsvpParentContacts(player) {
     });
   }
   return contacts;
+}
+
+async function hydratePublicRsvpPrivateProfileParents({
+  teamId,
+  playerDocs,
+  respondedPlayerIds,
+  batchSize = PUBLIC_RSVP_PRIVATE_PROFILE_BATCH_SIZE
+}) {
+  const players = playerDocs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  const playersNeedingPrivateContacts = players.filter((player) => (
+    player.active !== false
+    && !respondedPlayerIds.has(player.id)
+    && getPublicRsvpParentContacts(player).length === 0
+  ));
+
+  const privateParentsByPlayerId = new Map();
+  for (let offset = 0; offset < playersNeedingPrivateContacts.length; offset += batchSize) {
+    const playerChunk = playersNeedingPrivateContacts.slice(offset, offset + batchSize);
+    const privateProfileRefs = playerChunk.map((player) => (
+      firestore.doc(`teams/${teamId}/players/${player.id}/private/profile`)
+    ));
+    const privateProfileSnaps = await firestore.getAll(...privateProfileRefs);
+    privateProfileSnaps.forEach((privateProfileSnap, index) => {
+      if (!privateProfileSnap.exists) return;
+      const privateProfile = privateProfileSnap.data() || {};
+      const privateParents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
+      if (privateParents.length > 0) {
+        privateParentsByPlayerId.set(playerChunk[index].id, privateParents);
+      }
+    });
+  }
+
+  return players.map((player) => {
+    const privateProfileParents = privateParentsByPlayerId.get(player.id);
+    return privateProfileParents ? { ...player, privateProfileParents } : player;
+  });
 }
 
 function getPublicRsvpPlayerIds(rsvp) {
@@ -16816,20 +16856,11 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
     batchWriteCount = 0;
   };
 
-  const players = await Promise.all(playersSnap.docs.map(async (docSnap) => {
-    const player = { id: docSnap.id, ...(docSnap.data() || {}) };
-    if (player.active === false || respondedPlayerIds.has(player.id)) return player;
-    const hasPublicContacts = (Array.isArray(player.parents) && player.parents.length > 0)
-      || normalizePublicRsvpEmail(player.parentEmail || player.guardianEmail)
-      || normalizePublicRsvpText(player.parentUserId || player.guardianUserId);
-    if (hasPublicContacts) return player;
-    const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${player.id}/private/profile`).get();
-    const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
-    const privateParents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
-    return privateParents.length > 0
-      ? { ...player, privateProfileParents: privateParents }
-      : player;
-  }));
+  const players = await hydratePublicRsvpPrivateProfileParents({
+    teamId,
+    playerDocs: playersSnap.docs,
+    respondedPlayerIds
+  });
 
   players.forEach((player) => {
     if (player.active === false || respondedPlayerIds.has(player.id)) return;

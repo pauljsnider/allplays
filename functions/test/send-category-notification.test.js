@@ -5,6 +5,54 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
 
+test('public RSVP private contacts hydrate in bounded BatchGet chunks for a large roster', async () => {
+        const eligibleCount = 205;
+        const playerDocs = Object.fromEntries([
+            ...Array.from({ length: eligibleCount }, (_, index) => [
+                `eligible-${index}`,
+                { active: true, name: `Eligible ${index}` }
+            ]),
+            ['inactive', { active: false }],
+            ['responded', { active: true }],
+            ['public-contact', { active: true, parents: [{ email: 'public@example.com' }] }]
+        ]);
+        const privateProfileDocs = Object.fromEntries([
+            ...Array.from({ length: eligibleCount }, (_, index) => [
+                `eligible-${index}`,
+                { parents: [{ email: `parent-${index}@example.com` }] }
+            ]),
+            ['inactive', { parents: [{ email: 'inactive@example.com' }] }],
+            ['responded', { parents: [{ email: 'responded@example.com' }] }],
+            ['public-contact', { parents: [{ email: 'private-fallback@example.com' }] }]
+        ]);
+        delete privateProfileDocs['eligible-203'];
+        privateProfileDocs['eligible-204'] = { parents: 'malformed' };
+
+        const { internals, env, cleanup } = loadNotificationInternals({
+            playerDocs,
+            privateProfileDocs
+        });
+
+        try {
+            const players = await internals.hydratePublicRsvpPrivateProfileParents({
+                teamId: 'team-1',
+                playerDocs: Object.entries(playerDocs).map(([id, data]) => ({ id, data: () => data })),
+                respondedPlayerIds: new Set(['responded'])
+            });
+
+            assert.deepEqual(env.getAllCalls.map((call) => call.length), [100, 100, 5]);
+            assert.ok(env.getAllCalls.every((call) => call.length <= 100));
+            assert.equal(players.find((player) => player.id === 'eligible-0').privateProfileParents[0].email, 'parent-0@example.com');
+            assert.equal(players.find((player) => player.id === 'eligible-203').privateProfileParents, undefined);
+            assert.equal(players.find((player) => player.id === 'eligible-204').privateProfileParents, undefined);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/inactive/')), false);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/responded/')), false);
+            assert.equal(env.getAllCalls.flat().some((path) => path.includes('/public-contact/')), false);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory uses indexed targets without legacy per-user device scans when index coverage is complete', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
