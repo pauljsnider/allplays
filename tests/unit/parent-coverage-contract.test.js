@@ -228,6 +228,34 @@ describe('parent coverage contract boundary', () => {
             exact: true,
             name: 'Label, like Grandma or babysitter'
         });
+
+        const socialPost = parentCoverageAuthoringContext('P34');
+        expect(socialPost.actionConstraints.fill.target.byActor.primary).toEqual({
+            kind: 'label',
+            name: 'Write one short note',
+            exact: true
+        });
+    });
+
+    it('requires P34 primary caption fills to use the composer label', () => {
+        const captionFill = {
+            action: 'fill', actor: 'primary',
+            target: { kind: 'label', name: 'Write one short note', exact: true },
+            value: '{RUN_MARKER}'
+        };
+
+        expect(() => assertParentCoverageStepCapability('P34', captionFill, 'execution', 'primary'))
+            .not.toThrow();
+        expect(() => assertParentCoverageStepCapability('P34', {
+            ...captionFill,
+            target: { kind: 'label', name: 'Post', exact: true }
+        }, 'execution', 'primary')).toThrow(/trusted P34\/fill exact locator/);
+
+        expect(() => assertParentCoverageStepCapability('P34', {
+            ...captionFill,
+            actor: 'peer',
+            target: { kind: 'label', name: 'Comment', exact: true }
+        }, 'execution', 'peer')).not.toThrow();
     });
 
     it('rejects the unsupported P28 Share label locator', () => {
