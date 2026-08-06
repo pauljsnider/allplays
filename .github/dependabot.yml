@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
+    open-pull-requests-limit: 2
     schedule:
       interval: "weekly"
     groups:
@@ -12,10 +13,44 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/apps/app"
+    open-pull-requests-limit: 2
     schedule:
       interval: "weekly"
     groups:
       app-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/functions"
+    open-pull-requests-limit: 2
+    schedule:
+      interval: "weekly"
+    groups:
+      functions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/services/chatgpt-mcp"
+    open-pull-requests-limit: 2
+    schedule:
+      interval: "weekly"
+    groups:
+      chatgpt-mcp-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    open-pull-requests-limit: 2
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor-patch:
         update-types:
           - "minor"
           - "patch"
