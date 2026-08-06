@@ -312,8 +312,18 @@ async function mockAppModules(page, { user = null, emailLink = false, friendInvi
                 export function normalizeNotificationPreferences(preferences) {
                     return {
                         liveChat: preferences?.liveChat !== false,
+                        mentions: preferences?.mentions !== false,
                         liveScore: preferences?.liveScore === true,
-                        schedule: preferences?.schedule !== false
+                        gameDay: preferences?.gameDay === true,
+                        schedule: preferences?.schedule !== false,
+                        rsvp: preferences?.rsvp !== false,
+                        fees: preferences?.fees !== false,
+                        practice: preferences?.practice === true,
+                        access: preferences?.access !== false,
+                        rideshare: preferences?.rideshare !== false,
+                        media: preferences?.media === true,
+                        awards: preferences?.awards === true,
+                        officiating: preferences?.officiating === true
                     };
                 }
 
@@ -994,4 +1004,36 @@ test('profile alerts recover from blocked native notification permissions', asyn
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByText('Push is allowed on this device')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh push registration' })).toBeVisible();
+});
+
+test('profile keeps dirty notification saves above mobile navigation while scrolling', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
+
+    await page.getByLabel('Schedule Changes').uncheck();
+    const tray = page.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    const bottomNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+    await expect(tray).toBeVisible();
+
+    await page.getByLabel('Media').scrollIntoViewIfNeeded();
+    await page.getByLabel('Media').check();
+    await expect(tray).toBeVisible();
+
+    const trayBox = await tray.boundingBox();
+    const navigationBox = await bottomNavigation.boundingBox();
+    expect(trayBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navigationBox.y);
+
+    await tray.getByRole('button', { name: 'Save preferences' }).click();
+    await expect(tray).toHaveCount(0);
 });
