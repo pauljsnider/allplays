@@ -206,10 +206,20 @@ export async function clickAndExpectGoogleAuth(page, target, timeout = 20_000) {
             if (error) reject(error);
             else resolve(popup);
         };
-        const onPopup = (popup) => finish(null, popup);
+        const isGoogleAuthDestination = (url) => {
+            const destination = new URL(url);
+            return destination.protocol === 'https:'
+                && destination.hostname === 'accounts.google.com'
+                && !destination.port;
+        };
+        const onPopup = (popup) => {
+            popup.waitForURL(isGoogleAuthDestination, { timeout })
+                .then(() => finish(null, popup))
+                .catch((error) => finish(error));
+        };
         const onFrameNavigated = (frame) => {
             if (frame !== page.mainFrame()) return;
-            if (new URL(frame.url()).hostname === 'accounts.google.com') finish(null);
+            if (isGoogleAuthDestination(frame.url())) finish(null);
         };
         const timer = setTimeout(() => finish(new Error('Google sign-in handoff timed out')), timeout);
         page.on('popup', onPopup);
