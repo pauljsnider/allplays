@@ -231,6 +231,39 @@ describe('AppSearchDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('dismisses the native keyboard without opening the highlighted search result', async () => {
+    const onClose = vi.fn();
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    getKnownAppSearchTeamsMock.mockReturnValue([
+      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'rockets' } });
+    const rocketsResult = await screen.findByRole('button', { name: /Rockets/i });
+
+    input.focus();
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('rockets');
+    expect(input).not.toHaveFocus();
+    expect(rocketsResult).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(rocketsResult);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
+  });
+
   it('retries failed team and player searches without changing the query or closing the dialog', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
