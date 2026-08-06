@@ -313,6 +313,9 @@
                 "apps/app/src/pages/ScheduleEventDetail.tsx",
                 "apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx"
             ],
+            "appSupportFiles": [
+                "apps/app/src/pages/schedule/ScheduleGameHubSection.tsx"
+            ],
             "cloudFunctions": [
                 "createScopedRsvpToken",
                 "dispatchDuePreEventReminders",
