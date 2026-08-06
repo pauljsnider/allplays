@@ -515,6 +515,27 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     setScheduleGameDayServiceImporterForTest();
   });
 
+  it('reloads once when the deferred Game hub chunk is stale after a deployment', async () => {
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...window.location, reload }
+    });
+    window.sessionStorage.clear();
+    setScheduleGameHubSectionImporterForTest(vi.fn().mockRejectedValue(
+      new TypeError('Failed to fetch dynamically imported module: /ScheduleGameHubSection-old.js')
+    ));
+
+    loadScheduleGameHubSection();
+
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem('allplays:lazy-chunk-reload-attempted')).toBe('1');
+
+    if (locationDescriptor) Object.defineProperty(window, 'location', locationDescriptor);
+    window.sessionStorage.clear();
+  });
+
   it('loads the Game hub only when selected and retries a rejected chunk import', async () => {
     let resolveImporter!: (module: typeof scheduleGameHubSectionModule) => void;
     vi.spyOn(console, 'error').mockImplementation(() => {});

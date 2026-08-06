@@ -14,6 +14,7 @@ import { consumeScheduleEventDetailHandoff, peekScheduleEventDetailHandoff } fro
 import { exportCalendarIcsFile } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
+import { clearLazyChunkReloadAttempt, handleLazyPageLoadError } from '../lib/lazyPage';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
@@ -157,7 +158,16 @@ let scheduleGameHubSectionImporter = () => import('./schedule/ScheduleGameHubSec
 
 export function loadScheduleGameHubSection() {
   if (!scheduleGameHubSectionPromise) {
-    scheduleGameHubSectionPromise = scheduleGameHubSectionImporter();
+    scheduleGameHubSectionPromise = Promise.resolve()
+      .then(scheduleGameHubSectionImporter)
+      .then((module) => {
+        clearLazyChunkReloadAttempt();
+        return module;
+      })
+      .catch((error) => {
+        scheduleGameHubSectionPromise = null;
+        return handleLazyPageLoadError(error) as unknown as Promise<ScheduleGameHubSectionModule>;
+      });
   }
   return scheduleGameHubSectionPromise;
 }
