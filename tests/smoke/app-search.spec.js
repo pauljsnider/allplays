@@ -93,6 +93,7 @@ async function mockSearchModules(page) {
         window.__teamSearchQueries = [];
         window.__loadAppSearchTeamsCalls = 0;
         window.__playerSearchQueries = [];
+        window.__helpSearchQueries = [];
     });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -218,6 +219,7 @@ async function mockSearchModules(page) {
 
                 export async function loadAppSearchHelpResults({ queryText, helpRoleFilter = 'all' }) {
                     const q = String(queryText || '').trim().toLowerCase();
+                    window.__helpSearchQueries.push(q);
                     if (q.length < 2 || (!q.includes('live') && !q.includes('tracker'))) return [];
                     const helpItems = [
                         {
@@ -493,6 +495,22 @@ test.describe('app global search', () => {
         await openSearch(page);
         await page.getByRole('button', { name: 'Close search' }).click();
         await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
+    });
+
+    test('mobile search debounces help work and keeps the result navigable', async ({ page, baseURL }) => {
+        await mockSearchModules(page);
+        await gotoAppRoute(page, baseURL, '/home');
+
+        await openSearch(page);
+        const input = page.getByLabel('Search teams, players, actions, help');
+        await input.click();
+        await page.keyboard.type('live', { delay: 40 });
+
+        await expect.poll(() => page.evaluate(() => window.__helpSearchQueries)).toEqual(['live']);
+        const helpResult = page.getByRole('button', { name: /Watch Live Games and Replays/ });
+        await expect(helpResult).toBeVisible();
+        await helpResult.click();
+        await expect(page).toHaveURL(/#\/help\/watch-live-games$/);
     });
 
     test('mobile search contains result overscroll and restores page scrolling', async ({ page, baseURL }) => {
