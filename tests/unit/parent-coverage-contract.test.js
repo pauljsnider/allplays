@@ -595,7 +595,8 @@ describe('parent coverage contract boundary', () => {
         });
     });
 
-    it('replaces read-only generic clicks with target-bound download assertions', () => {
+    it('binds P29 downloads to the exact production locator', () => {
+        const downloadTarget = { kind: 'role', role: 'button', name: 'Download .ics', exact: true };
         const calendar = validContract({
             workflowId: 'P29',
             title: catalog.workflows[28].title,
@@ -603,13 +604,37 @@ describe('parent coverage contract boundary', () => {
             steps: [{
                 action: 'clickAndExpectDownload',
                 actor: 'primary',
-                target: { kind: 'role', role: 'button', name: 'Download calendar', exact: true }
+                target: downloadTarget
             }, {
                 action: 'expectText', actor: 'primary',
                 target: { kind: 'text', name: 'Calendar feed', exact: true }, value: 'Calendar'
             }]
         });
         expect(validateContract(calendar, catalog, 'P29').steps).toHaveLength(3);
+        const authoringContext = parentCoverageAuthoringContext('P29');
+        const downloadPattern = new RegExp(
+            authoringContext.interactionTargetPatterns.clickAndExpectDownload.pattern,
+            authoringContext.interactionTargetPatterns.clickAndExpectDownload.flags
+        );
+        expect(downloadPattern.test('Download .ics')).toBe(true);
+        expect(downloadPattern.test('Download ICS')).toBe(false);
+        expect(downloadPattern.test('Download calendar')).toBe(false);
+        expect(authoringContext.orderedEvidence[0]).toMatchObject({
+            action: 'clickAndExpectDownload',
+            actor: 'primary',
+            target: { pattern: '^Download \\.ics$', flags: '' }
+        });
+
+        for (const staleName of ['Download ICS', 'Download calendar']) {
+            expect(() => validateContract({
+                ...calendar,
+                steps: [{
+                    action: 'clickAndExpectDownload',
+                    actor: 'primary',
+                    target: { ...downloadTarget, name: staleName }
+                }]
+            }, catalog, 'P29')).toThrow(/target is outside the trusted P29\/clickAndExpectDownload capability/);
+        }
         expect(() => validateContract({
             ...calendar,
             steps: [{
