@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P31",
+  "title": "Registration browsing and safe checkout handoff",
+  "actors": [
+    "primary"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": false,
+  "cleanupRequired": false,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/registrations"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/registrations"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Registrations",
+        "exact": true
+      }
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/parent-tools/registrations/{TEAM_ID}/{REGISTRATION_FORM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Registration payment notice",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Pay registration with Stripe",
+        "exact": true
+      }
+    },
+    {
+      "action": "clickAndExpectStripeCheckout",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Pay registration fee",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": []
+}
