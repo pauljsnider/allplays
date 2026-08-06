@@ -138,6 +138,7 @@ function buildNotificationTestEnv({
     const updatedDocs = [];
     const messagingCalls = [];
     const feeRecipientDocGetPaths = [];
+    const getAllCalls = [];
     const docStore = new Map();
     const rejectedInboxUids = new Set(rejectedNotificationInboxUids);
     let activeNotificationInboxPipelines = 0;
@@ -840,6 +841,7 @@ function buildNotificationTestEnv({
                 })));
         },
         async getAll(...refs) {
+            getAllCalls.push(refs.map((ref) => ref.path));
             return Promise.all(refs.map((ref) => ref.get()));
         },
         async runTransaction(handler) {
@@ -999,6 +1001,7 @@ function buildNotificationTestEnv({
         updatedDocs,
         messagingCalls,
         feeRecipientDocGetPaths,
+        getAllCalls,
         get activeNotificationInboxPipelines() {
             return activeNotificationInboxPipelines;
         },
