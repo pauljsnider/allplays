@@ -243,6 +243,7 @@ function playerSnapshot(id: string, data: Record<string, unknown> | null) {
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
   const scheduleEventDetailSource = readAppSource('pages/ScheduleEventDetail.tsx');
+  const scheduleGameHubSectionSource = readAppSource('pages/schedule/ScheduleGameHubSection.tsx');
 
   expect(scheduleServiceSource).not.toContain("../../../../js/");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
@@ -258,7 +259,9 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
-  expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+  expect(scheduleEventDetailSource).toContain("./schedule/ScheduleGameHubSection");
+  expect(scheduleGameHubSectionSource).not.toContain("../../../../../js/");
+  expect(scheduleGameHubSectionSource).toContain("../../lib/adapters/legacyScheduleHelpers");
 });
 
 describe('native scoring roster fallback', () => {
