@@ -311,7 +311,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
     ],
     P25: [
         { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
-        { action: 'click', actor: 'primary', target: /send/i },
+        { action: 'click', actor: 'primary', target: /^send message$/i },
         { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /notification|new|unread/i, value: /\{RUN_MARKER\}/, scope: '{RUN_MARKER}' },
         { action: 'expectVisible', actor: 'peer', target: /^unread$/i, scope: '{RUN_MARKER}' },
         { action: 'clickAndExpectRoute', actor: 'peer', target: /notification|open notification/i, route: /messages|schedule|players|teams/, scope: '{RUN_MARKER}' },
@@ -424,7 +424,7 @@ const reversibleClickInversePairs = new Map(Object.entries({
     P22: [['request spot', 'cancel'], ['confirm', 'cancel']],
     P23: [['send', 'delete message'], ['mute', 'unmute']],
     P24: [['send', 'delete message'], ['upload', 'remove attachment']],
-    P25: [['send', 'delete message']],
+    P25: [['send message', 'delete message']],
     P26: [['add friend', 'remove friend'], ['accept', 'remove friend'], ['send', 'delete message']],
     P28: [['create share', 'revoke share']],
     P33: [['upload', 'remove media']], P34: [
@@ -465,7 +465,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:message|chat|attachment|image|photo|upload|send|delete message|remove attachment)$/i
     },
     P25: {
-        primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read|message|chat|send|delete message)$/i,
+        primary: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read|message|chat|send message|delete message)$/i,
         peer: /^(?:notification|notifications|preference|preferences|mute|email|push|sms|save|mark read)$/i
     },
     P26: {
@@ -528,6 +528,9 @@ const stepKeysByAction = new Map([
 ]);
 
 const exactWorkflowActionTargets = new Map([
+    ['P25', new Map([
+        ['fill', { kind: 'placeholder', name: 'Message', exact: false }]
+    ])],
     ['P28', new Map([
         ['fill', { kind: 'placeholder', name: 'Label, like Grandma or babysitter' }]
     ])],
@@ -598,6 +601,7 @@ function parentCoverageActionConstraint(workflowId, capability, action) {
         if (exactTarget) {
             constraint.target.kinds = [exactTarget.kind];
             constraint.target.name = exactTarget.name;
+            constraint.target.exact = exactTarget.exact ?? true;
         }
         const actorTargets = exactWorkflowActorActionTargets.get(workflowId);
         const exactTargetsByActor = actorTargets && Object.fromEntries(
@@ -914,7 +918,12 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         const actor = step.actor || defaultActor;
         const targetName = String(step.target?.name || '');
         const exactTarget = exactWorkflowActionTarget(workflowId, step.action, actor);
-        if (exactTarget && (step.target?.kind !== exactTarget.kind || targetName !== exactTarget.name)) {
+        const expectedExact = exactTarget?.exact ?? true;
+        if (exactTarget && (
+            step.target?.kind !== exactTarget.kind ||
+            targetName !== exactTarget.name ||
+            step.target?.exact !== expectedExact
+        )) {
             throw new Error(`${phase} target must use the trusted ${workflowId}/${step.action} exact locator`);
         }
         const actorTargetCapability = mutationTargetCapabilities.get(workflowId)?.[actor];
@@ -934,7 +943,7 @@ export function assertParentCoverageStepCapability(workflowId, step, phase = 'ex
         }
         const exactControlKinds = exactTarget ? [exactTarget.kind] : ['label', 'testId'];
         if (exactControlTargetActions.has(step.action) && !['rememberControl', 'restoreControl', 'expectUploadDenied'].includes(step.action) && (
-            !exactControlKinds.includes(step.target?.kind) || step.target?.exact !== true
+            !exactControlKinds.includes(step.target?.kind) || step.target?.exact !== expectedExact
         )) {
             throw new Error(`${phase} control mutations must use the exact trusted locator target`);
         }
