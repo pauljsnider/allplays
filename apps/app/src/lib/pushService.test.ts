@@ -25,6 +25,8 @@ const legacyPushMocks = {
 };
 
 const locationAssignMock = vi.fn();
+const androidNotificationChannelSchemaStorageKey = 'allplays.androidNotificationChannelsSchemaVersion';
+const androidNotificationChannelSchemaVersion = '1';
 let localStorageEntries: Map<string, string>;
 
 async function loadPushService() {
@@ -378,7 +380,7 @@ describe('pushService permission states', () => {
         );
     });
 
-    it('creates category Android channels at most once per Android native module session', async () => {
+    it('creates category Android channels once and persists the completed schema', async () => {
         capacitorState.getPlatform.mockReturnValue('android');
         const { ensureAndroidNotificationChannels } = await loadPushService();
 
@@ -411,6 +413,32 @@ describe('pushService permission states', () => {
             name: 'Team',
             importance: 3
         }));
+        expect(localStorageEntries.get(androidNotificationChannelSchemaStorageKey)).toBe(androidNotificationChannelSchemaVersion);
+    });
+
+    it('skips Android channel creation in a new module session when the current schema is persisted', async () => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        const firstSession = await loadPushService();
+        await firstSession.ensureAndroidNotificationChannels();
+
+        vi.resetModules();
+        firebaseMessagingMocks.createChannel.mockClear();
+        const nextSession = await loadPushService();
+
+        await nextSession.ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).not.toHaveBeenCalled();
+    });
+
+    it.each(['0', 'invalid'])('replaces a stale or invalid Android channel schema marker (%s)', async (persistedVersion) => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        localStorageEntries.set(androidNotificationChannelSchemaStorageKey, persistedVersion);
+        const { ensureAndroidNotificationChannels } = await loadPushService();
+
+        await ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(localStorageEntries.get(androidNotificationChannelSchemaStorageKey)).toBe(androidNotificationChannelSchemaVersion);
     });
 
     it('retries Android channel setup after a channel creation failure', async () => {
@@ -421,9 +449,55 @@ describe('pushService permission states', () => {
         const { ensureAndroidNotificationChannels } = await loadPushService();
 
         await ensureAndroidNotificationChannels();
+        expect(localStorageEntries.has(androidNotificationChannelSchemaStorageKey)).toBe(false);
+
         await ensureAndroidNotificationChannels();
 
         expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(10);
+        expect(localStorageEntries.get(androidNotificationChannelSchemaStorageKey)).toBe(androidNotificationChannelSchemaVersion);
+    });
+
+    it('retries Android channel setup after a module reset when local storage is unavailable', async () => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        vi.mocked(window.localStorage.getItem).mockImplementation(() => {
+            throw new Error('storage unavailable');
+        });
+        const firstSession = await loadPushService();
+
+        await firstSession.ensureAndroidNotificationChannels();
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(window.localStorage.setItem).not.toHaveBeenCalled();
+        expect(localStorageEntries.has(androidNotificationChannelSchemaStorageKey)).toBe(false);
+
+        vi.resetModules();
+        firebaseMessagingMocks.createChannel.mockClear();
+        const nextSession = await loadPushService();
+
+        await nextSession.ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(localStorageEntries.has(androidNotificationChannelSchemaStorageKey)).toBe(false);
+    });
+
+    it('retries Android channel setup after a module reset when the schema marker cannot be persisted', async () => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        vi.mocked(window.localStorage.setItem).mockImplementation(() => {
+            throw new Error('storage unavailable');
+        });
+        const firstSession = await loadPushService();
+
+        await firstSession.ensureAndroidNotificationChannels();
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(localStorageEntries.has(androidNotificationChannelSchemaStorageKey)).toBe(false);
+
+        vi.resetModules();
+        firebaseMessagingMocks.createChannel.mockClear();
+        const nextSession = await loadPushService();
+
+        await nextSession.ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(localStorageEntries.has(androidNotificationChannelSchemaStorageKey)).toBe(false);
     });
 
     it('skips Android channel creation outside Android native shells', async () => {
