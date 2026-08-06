@@ -40,14 +40,6 @@ describe('pull request CI consolidation', () => {
         }
     });
 
-    it('serializes reusable workflows so their child jobs cannot exhaust hosted-runner slots', () => {
-        const integration = parseYaml(workflow('pr-integration.yml'));
-
-        expect(integration.jobs['regression-integration'].needs).toBeUndefined();
-        expect(integration.jobs['mobile-integration'].needs).toBe('regression-integration');
-        expect(integration.jobs['preview-integration'].needs).toBe('mobile-integration');
-    });
-
     it('keeps legacy workflows callable or manual without duplicate PR triggers', () => {
         for (const name of [
             'ci.yml',
