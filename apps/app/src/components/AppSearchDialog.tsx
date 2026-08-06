@@ -29,6 +29,7 @@ type AppSearchDialogProps = {
 };
 
 const backdropCloseGuardMs = 750;
+const helpSearchDebounceMs = 150;
 const hydrationSearchFallbackMs = 250;
 const keyboardInsetActivationThresholdPx = 80;
 const remotePlayerSearchCoalesceMs = 120;
@@ -111,17 +112,21 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
     setHelpResults([]);
     setHelpLoading(true);
-    void loadAppSearchHelpResults({ queryText: query, auth, helpRoleFilter })
-      .then((nextHelpResults) => {
-        if (requestId !== helpSearchRequestId.current) return;
-        setHelpResults(nextHelpResults);
-        setHelpLoading(false);
-      })
-      .catch(() => {
-        if (requestId !== helpSearchRequestId.current) return;
-        setHelpResults([]);
-        setHelpLoading(false);
-      });
+    const timeoutId = window.setTimeout(() => {
+      void loadAppSearchHelpResults({ queryText: trimmedQuery, auth, helpRoleFilter })
+        .then((nextHelpResults) => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults(nextHelpResults);
+          setHelpLoading(false);
+        })
+        .catch(() => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults([]);
+          setHelpLoading(false);
+        });
+    }, helpSearchDebounceMs);
+
+    return () => window.clearTimeout(timeoutId);
   }, [auth, helpRoleFilter, open, query]);
 
   useEffect(() => {

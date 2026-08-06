@@ -531,6 +531,7 @@ describe('AppSearchDialog', () => {
   });
 
   it('keeps actions and teams interactive while deferred help results load', async () => {
+    vi.useFakeTimers();
     const onClose = vi.fn();
     let releaseHelp!: (results: any[]) => void;
     getKnownAppSearchTeamsMock.mockReturnValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
@@ -556,6 +557,11 @@ describe('AppSearchDialog', () => {
     expect(screen.getByRole('button', { name: /Rockets/i })).toBeTruthy();
     expect(screen.getByText('Searching help...')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Parent fee guide/i })).toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
 
     await act(async () => {
       releaseHelp([{
@@ -574,14 +580,93 @@ describe('AppSearchDialog', () => {
     expect(screen.getByRole('button', { name: /Parent fee guide/i })).toBeTruthy();
   });
 
-  it('ignores deferred help results after clearing or closing search', async () => {
+  it('debounces rapid help queries and searches only the final trimmed value', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    getKnownAppSearchTeamsMock.mockReturnValue([
+      { id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'al' } });
+    fireEvent.change(input, { target: { value: 'ale' } });
+    fireEvent.change(input, { target: { value: '  alex  ' } });
+
+    expect(screen.getByRole('button', { name: /Browse Teams/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Alexandria/i })).toBeTruthy();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(149);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledTimes(1);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledWith({
+      queryText: 'alex',
+      auth,
+      helpRoleFilter: 'parent'
+    });
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Search like a coach/i })).toBeNull();
+  });
+
+  it('cancels pending help searches when the query shortens, clears, or closes', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'alex' } });
+    fireEvent.change(input, { target: { value: 'a' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search query' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
+      </MemoryRouter>
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale help results replace a newer query', async () => {
+    vi.useFakeTimers();
     const onClose = vi.fn();
     const releases: Array<(results: any[]) => void> = [];
     loadAppSearchHelpResultsMock.mockImplementation(() => new Promise((resolve) => {
       releases.push(resolve);
     }));
 
-    const { rerender } = render(
+    render(
       <MemoryRouter>
         <AppSearchDialog auth={auth} open={true} onClose={onClose} />
       </MemoryRouter>
@@ -597,35 +682,41 @@ describe('AppSearchDialog', () => {
       roles: ['parent'],
       snippet: 'Must not render'
     }];
+    const latestHelpResult = [{
+      id: 'help:latest',
+      kind: 'help',
+      title: 'Latest help result',
+      subtitle: 'Must remain visible',
+      route: '/help/latest',
+      href: 'https://allplays.ai/help-latest.html',
+      roles: ['parent'],
+      snippet: 'Must remain visible'
+    }];
 
     fireEvent.change(input, { target: { value: 'ro' } });
-    await waitFor(() => expect(releases).toHaveLength(1));
-    fireEvent.click(screen.getByRole('button', { name: 'Clear search query' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(releases).toHaveLength(1);
+
+    fireEvent.change(input, { target: { value: 'rock' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(releases).toHaveLength(2);
+
+    await act(async () => {
+      releases[1](latestHelpResult);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Latest help result/i })).toBeTruthy();
+
     await act(async () => {
       releases[0](staleHelpResult);
       await Promise.resolve();
     });
     expect(screen.queryByRole('button', { name: /Stale help result/i })).toBeNull();
-
-    fireEvent.change(input, { target: { value: 'ro' } });
-    await waitFor(() => expect(releases).toHaveLength(2));
-    rerender(
-      <MemoryRouter>
-        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
-      </MemoryRouter>
-    );
-    await act(async () => {
-      releases[1](staleHelpResult);
-      await Promise.resolve();
-    });
-    rerender(
-      <MemoryRouter>
-        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByLabelText('Search teams, players, actions, help')).toHaveValue('');
-    expect(screen.queryByRole('button', { name: /Stale help result/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /Latest help result/i })).toBeTruthy();
   });
 
   it('shows help results for the signed-in user role once the query reaches two characters', async () => {
@@ -902,7 +993,7 @@ describe('AppSearchDialog', () => {
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
   });
 
-  it('coalesces superseded remote player searches while local teams and help keep updating', async () => {
+  it('coalesces superseded remote player and help searches while local teams keep updating', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     const knownTeams: AppSearchTeam[] = [
@@ -920,35 +1011,32 @@ describe('AppSearchDialog', () => {
 
     const input = screen.getByLabelText('Search teams, players, actions, help');
     fireEvent.change(input, { target: { value: 'al' } });
-    await act(async () => {
-      await Promise.resolve();
-    });
     expect(screen.getByRole('button', { name: /Alphas/i })).not.toBeNull();
     expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(180);
+      await vi.advanceTimersByTimeAsync(149);
       await Promise.resolve();
     });
-    expect(searchAppTeamsMock).toHaveBeenCalledWith('al', knownTeams, null);
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
     expect(searchAppPlayersMock).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: 'alex' } });
-    await act(async () => {
-      await Promise.resolve();
-    });
     expect(screen.queryByRole('button', { name: /Alphas/i })).toBeNull();
     expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(360);
+      await vi.advanceTimersByTimeAsync(300);
       await Promise.resolve();
     });
 
     expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
     expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledTimes(1);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledWith(expect.objectContaining({ queryText: 'alex' }));
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
   });
 
   it('waits for the shortened player coalesce window before running remote player search', async () => {
