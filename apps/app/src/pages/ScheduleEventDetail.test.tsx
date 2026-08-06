@@ -236,6 +236,11 @@ vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 
 import {
   ScheduleEventDetail,
+  loadScheduleGameHubSection,
+  parseGameHubPanel,
+  setScheduleGameHubSectionImporterForTest,
+} from './ScheduleEventDetail';
+import {
   createLiveGameChatScrollScheduler,
   isLiveGameChatNearBottom,
   loadGameDayLineupBuilderModule,
@@ -245,13 +250,13 @@ import {
   loadPracticeTimelineServiceModule,
   loadScheduleGameDayService,
   loadStatsheetImportServiceModule,
-  parseGameHubPanel,
   setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
-} from './ScheduleEventDetail';
+} from './schedule/ScheduleGameHubSection';
+import * as scheduleGameHubSectionModule from './schedule/ScheduleGameHubSection';
 import { GameDetail } from './GameDetail';
 import { clearScheduleEventDetailHandoffForTest } from '../lib/scheduleEventDetailHandoff';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
@@ -418,34 +423,40 @@ function buildLiveChatMessages(count: number) {
 }
 
 describe('ScheduleEventDetail deferred game hub loaders', () => {
-  it('keeps closed game hub implementation modules out of the route static imports', () => {
-    let source = '';
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    setScheduleGameHubSectionImporterForTest();
+    setScheduleGameDayServiceImporterForTest();
+  });
+
+  it('keeps the Game hub implementation behind a component-level async boundary', () => {
+    let routeSource = '';
+    let gameHubSource = '';
     try {
-      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      routeSource = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      gameHubSource = readFileSync('src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     } catch {
-      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      routeSource = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      gameHubSource = readFileSync('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     }
 
-    [
-      '../lib/gameDayLineupBuilder',
-      '../lib/gameWrapupService',
-      '../lib/practiceTimelineService',
-      '../lib/statsheetImportService',
-      '../lib/adapters/legacyScheduleHelpers',
-      '../components/schedule/GameReportSections',
-      '../lib/scheduleGameDayService',
-      '../lib/gameDayLineupPublish'
-    ].forEach((modulePath) => {
-      expect(source).not.toMatch(new RegExp(`import\\s+(?!type\\b)[^;]+from ['"]${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
-    });
+    expect(routeSource).toContain("import('./schedule/ScheduleGameHubSection')");
+    expect(routeSource).toContain('<LazyScheduleGameHubSection');
+    expect(routeSource).not.toContain('function StatsheetImportPanel');
+    expect(routeSource).not.toContain('function GameHubLineupBuilderPanel');
+    expect(routeSource).not.toContain('function PracticeTimelineSection');
+    expect(gameHubSource).toContain('function StatsheetImportPanel');
+    expect(gameHubSource).toContain('function GameHubLineupBuilderPanel');
+    expect(gameHubSource).toContain('function PracticeTimelineSection');
   });
 
   it('keeps game-day panel reload scope bounded to event fields that change lineup data', () => {
     let source = '';
     try {
-      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      source = readFileSync('src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     } catch {
-      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      source = readFileSync('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     }
 
     expect(source).toMatch(/eventRef\.current = event;/);
@@ -500,6 +511,36 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     await firstLoad;
     expect(importer).toHaveBeenCalledTimes(1);
     setScheduleGameDayServiceImporterForTest();
+  });
+
+  it('loads the Game hub component once only after Game is selected', async () => {
+    let resolveImporter!: (module: typeof scheduleGameHubSectionModule) => void;
+    const importer = vi.fn(() => new Promise<typeof scheduleGameHubSectionModule>((resolve) => {
+      resolveImporter = resolve;
+    }));
+    setScheduleGameHubSectionImporterForTest(importer);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await screen.findByRole('heading', { name: 'Availability' });
+    expect(importer).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(await screen.findByTestId('schedule-game-hub-loading')).toHaveTextContent('Loading Game hub...');
+    await act(async () => resolveImporter(scheduleGameHubSectionModule));
+    expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    expect(importer).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Availability' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    expect(importer).toHaveBeenCalledTimes(1);
+
+    expect(loadScheduleGameHubSection()).toBe(loadScheduleGameHubSection());
   });
 });
 
