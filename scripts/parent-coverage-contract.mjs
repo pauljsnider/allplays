@@ -351,7 +351,7 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /revoke share/i }
     ],
     P29: [
-        { action: 'clickAndExpectDownload', actor: 'primary', target: /calendar|ics|export/i },
+        { action: 'clickAndExpectDownload', actor: 'primary', target: /^Download \.ics$/ },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /calendar|feed|download/i }
     ],
     P30: [
@@ -490,7 +490,7 @@ const readOnlyInteractionTargetCapabilities = new Map(Object.entries({
     P07: { clickAndExpectGoogleAuth: /^(?:continue with google|sign in with google|google)$/i },
     P10: { clickAndExpectRoute: /^(?:schedule|tasks?|rideshare|notifications?|profile|view all)$/i },
     P25: { clickAndExpectRoute: /^(?:notification|open notification)$/i },
-    P29: { clickAndExpectDownload: /^(?:download calendar|download ics|calendar feed|export calendar)$/i },
+    P29: { clickAndExpectDownload: /^Download \.ics$/ },
     P31: { clickAndExpectStripeCheckout: /^(?:register|start registration|checkout|continue to checkout|pay registration fee)$/i },
     P32: { clickAndExpectDownload: /^(?:download|download certificate|download award)$/i }
 }));
