@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P23",
+  "title": "Team chat message lifecycle mute and read state",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Mute notifications",
+        "exact": true
+      }
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Mute notifications",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Message",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "team-chat-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "team-chat-message",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "{RUN_MARKER}",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}"
+    },
+    {
+      "action": "reload",
+      "actor": "primary"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Read",
+        "exact": true
+      }
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Mute",
+        "exact": true
+      },
+      "mutationId": "team-chat-mute",
+      "scope": "Team Chat",
+      "commitMutation": true
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Unmute notifications",
+        "exact": true
+      }
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "team-chat-message",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Unmute",
+        "exact": true
+      },
+      "mutationId": "team-chat-mute",
+      "scope": "Team Chat"
+    }
+  ]
+}
