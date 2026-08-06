@@ -268,6 +268,19 @@ describe('parent coverage contract boundary', () => {
             name: 'Write one short note',
             exact: true
         });
+
+        const notifications = parentCoverageAuthoringContext('P25');
+        expect(notifications.actionConstraints.fill.target).toMatchObject({
+            kinds: ['placeholder'],
+            name: 'Message',
+            exact: false
+        });
+        const notificationTargets = new RegExp(
+            notifications.mutationTargetPatterns.primary.pattern,
+            notifications.mutationTargetPatterns.primary.flags
+        );
+        expect(notificationTargets.test('Send message')).toBe(true);
+        expect(notificationTargets.test('Send')).toBe(false);
     });
 
     it('rejects the stale P12 Name locator at the trusted contract boundary', () => {
@@ -1116,8 +1129,8 @@ describe('parent coverage contract boundary', () => {
             workflowId: 'P25', title: catalog.workflows[24].title, actors: ['primary', 'peer'],
             mutatesProduction: true, cleanupRequired: true,
             steps: [
-                { action: 'fill', actor: 'primary', target: { kind: 'label', name: 'Message', exact: true }, value: '{RUN_MARKER}', mutationId: 'notification-message' },
-                { action: 'click', actor: 'primary', target: button('Send'), mutationId: 'notification-message', commitMutation: true },
+                { action: 'fill', actor: 'primary', target: { kind: 'placeholder', name: 'Message', exact: false }, value: '{RUN_MARKER}', mutationId: 'notification-message' },
+                { action: 'click', actor: 'primary', target: button('Send message'), mutationId: 'notification-message', commitMutation: true },
                 { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Notification', exact: true }, value: '{RUN_MARKER}', scope: '{RUN_MARKER}' },
                 { action: 'expectVisible', actor: 'peer', target: { kind: 'text', name: 'Unread', exact: true }, scope: '{RUN_MARKER}' },
                 { action: 'clickAndExpectRoute', actor: 'peer', target: button('Open notification'), route: '/messages/{TEAM_ID}', scope: '{RUN_MARKER}' },
@@ -1135,6 +1148,30 @@ describe('parent coverage contract boundary', () => {
         });
 
         expect(validateContract(notification, catalog, 'P25').workflowId).toBe('P25');
+
+        const staleInput = {
+            ...notification,
+            steps: notification.steps.map((step) => {
+                if (step.action === 'fill') {
+                    return { ...step, target: { kind: 'label', name: 'Message', exact: true } };
+                }
+                return step;
+            })
+        };
+        expect(() => validateContract(staleInput, catalog, 'P25'))
+            .toThrow(/trusted P25\/fill exact locator/);
+
+        const staleSendButton = {
+            ...notification,
+            steps: notification.steps.map((step) => {
+                if (step.action === 'click' && step.target?.name === 'Send message') {
+                    return { ...step, target: button('Send') };
+                }
+                return step;
+            })
+        };
+        expect(() => validateContract(staleSendButton, catalog, 'P25'))
+            .toThrow(/outside the trusted P25\/primary mutation capability/);
     });
 
     it('does not let a lifecycle declaration transfer another actor mutation authority', () => {
