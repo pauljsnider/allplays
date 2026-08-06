@@ -59,7 +59,10 @@ import type { PracticeFeedItem } from '../../lib/gameWrapupService';
 import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../../lib/practiceTimelineService';
 import type { TrackStatsheetReviewRow } from '../../lib/statsheetImportService';
 import type { AuthState } from '../../lib/types';
+import { createLogger } from '../../lib/logger';
 import { useScheduleEventDetailContext } from './ScheduleEventDetailContext';
+
+const logger = createLogger('schedule-event-detail');
 
 type LiveGameChatModule = typeof import('../../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../../lib/liveGameReactionsService');
@@ -950,7 +953,7 @@ export function ScheduleGameHubSection({ auth, event, childEvents, requestedPane
         const players = await loadHomeScoringPlayers(event.teamId, event.id);
         if (!cancelled) setHomeScoringPlayers(Array.isArray(players) ? players : []);
       } catch (error) {
-        console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
+        logger.warn('Unable to load home scoring players.', { error });
         if (!cancelled) setHomeScoringPlayers([]);
       } finally {
         if (!cancelled) setLoadingHomeScoringPlayers(false);
@@ -1681,7 +1684,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
           await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         } catch (publishError) {
           liveBroadcastFailure = true;
-          console.warn('[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:', publishError);
+          logger.warn('Wrap-up score saved but live play-by-play posting failed.', { error: publishError });
         }
       }
 
@@ -1701,7 +1704,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
           setPracticeFeedItems(finalPracticeFeedItems);
         } catch (aiError) {
           aiFailure = true;
-          console.warn('[schedule-event-detail] Wrap-up AI failed:', aiError);
+          logger.warn('Wrap-up AI failed.', { error: aiError });
         }
       }
 
@@ -2744,7 +2747,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
         await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
-        console.warn('[schedule-event-detail] Score saved but live play-by-play posting failed:', publishError);
+        logger.warn('Score saved but live play-by-play posting failed.', { error: publishError });
         setStatus({ tone: 'warning', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
       }
     } catch (error: any) {
@@ -2951,7 +2954,7 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
         setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
       } catch (error) {
         if (!cancelled) {
-          console.warn('[schedule-event-detail] Unable to load foul tracker state:', error);
+          logger.warn('Unable to load foul tracker state.', { error });
           setLiveEvents([]);
           setFoulHistoryLoadFailed(true);
           setStatus({ tone: 'error', message: 'Foul history could not be loaded. Refresh before recording fouls.' });

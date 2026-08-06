@@ -1908,8 +1908,8 @@ describe('ScheduleEventDetail assignments', () => {
     expect(warning.className).toContain('text-amber-700');
     expect(warning.className).not.toContain('text-rose-700');
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Score saved but live play-by-play posting failed:',
-      publishError
+      '[schedule-event-detail] Score saved but live play-by-play posting failed.',
+      { error: { name: 'Error', message: publishError.message } }
     );
     consoleWarn.mockRestore();
   });
@@ -2318,8 +2318,8 @@ describe('ScheduleEventDetail assignments', () => {
 
     expect(scheduleServiceMocks.recordPlayerGameStat).not.toHaveBeenCalled();
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Unable to load foul tracker state:',
-      historyError
+      '[schedule-event-detail] Unable to load foul tracker state.',
+      { error: { name: 'Error', message: historyError.message } }
     );
     consoleWarn.mockRestore();
   });
@@ -4732,7 +4732,10 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
     });
-    expect(consoleWarn).toHaveBeenCalledWith('[schedule-event-detail] Wrap-up AI failed:', aiError);
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[schedule-event-detail] Wrap-up AI failed.',
+      { error: { name: 'Error', message: aiError.message } }
+    );
     consoleWarn.mockRestore();
   });
 
@@ -4766,8 +4769,8 @@ describe('ScheduleEventDetail wrap-up', () => {
     });
     expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalled();
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:',
-      publishError
+      '[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed.',
+      { error: { name: 'Error', message: publishError.message } }
     );
     consoleWarn.mockRestore();
   });
