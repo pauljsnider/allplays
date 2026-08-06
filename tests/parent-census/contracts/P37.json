@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P37",
+  "title": "Lifecycle account deletion request",
+  "actors": [
+    "lifecycle"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": false,
+  "lifecycleTransition": true,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "lifecycle"
+    },
+    {
+      "action": "goto",
+      "actor": "lifecycle",
+      "route": "/profile/settings?section=security"
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete my account",
+        "exact": true
+      }
+    },
+    {
+      "action": "fillActorPassword",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Account password (email sign-in only)",
+        "exact": true
+      }
+    },
+    {
+      "action": "fill",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "label",
+        "name": "Type DELETE to confirm",
+        "exact": true
+      },
+      "value": "DELETE"
+    },
+    {
+      "action": "click",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete account",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "lifecycle",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Sign in",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectRoute",
+      "actor": "lifecycle",
+      "route": "/auth"
+    }
+  ],
+  "cleanupSteps": []
+}
