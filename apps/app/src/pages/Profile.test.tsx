@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
@@ -64,7 +64,8 @@ const pushServiceMocks = vi.hoisted(() => ({
 }));
 
 const shellLayoutMocks = vi.hoisted(() => ({
-  isNative: false
+  isNative: false,
+  isDesktopWeb: false
 }));
 
 const initialLoadTelemetryMocks = vi.hoisted(() => ({
@@ -83,7 +84,7 @@ vi.mock('../lib/publicActions', () => ({
   sharePublicUrl: vi.fn(async () => ({ shared: true }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktop: false, isNative: shellLayoutMocks.isNative, isDesktopWeb: false })
+  useShellLayout: () => ({ isDesktop: shellLayoutMocks.isDesktopWeb, isNative: shellLayoutMocks.isNative, isDesktopWeb: shellLayoutMocks.isDesktopWeb })
 }));
 vi.mock('../lib/telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof import('../lib/telemetry')>(),
@@ -199,6 +200,7 @@ describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     shellLayoutMocks.isNative = false;
+    shellLayoutMocks.isDesktopWeb = false;
     profileServiceMocks.loadProfileDocument.mockResolvedValue({
       fullName: 'Pat Parent',
       phone: '555-0100',
@@ -394,11 +396,13 @@ describe('Profile', () => {
     await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
     fireEvent.click(screen.getByLabelText('Live Chat'));
     expect(await screen.findByText('Unsaved changes')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeTruthy();
 
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
     await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
     fireEvent.click(screen.getByLabelText('Live Score'));
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('region', { name: 'Gold Team notification preferences with unsaved changes' })).toBeTruthy();
 
     fireEvent.change(teamSelect, { target: { value: 'team-1' } });
     await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
@@ -414,12 +418,49 @@ describe('Profile', () => {
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
     await waitFor(() => expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true));
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Gold Team notification preferences with unsaved changes' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
 
     expect(await screen.findByText('save failed')).toBeTruthy();
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps the mobile dirty tray visible and disabled until save succeeds', async () => {
+    const saveRequest = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(() => saveRequest.promise);
+
+    renderProfile('/profile?section=alerts');
+
+    fireEvent.click(await screen.findByLabelText('Live Chat'));
+    const tray = screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    expect(within(tray).getByText('Blue Team')).toBeTruthy();
+    expect(within(tray).getByText('Unsaved changes')).toBeTruthy();
+
+    const saveButton = within(tray).getByRole('button', { name: 'Save preferences' });
+    fireEvent.click(saveButton);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeTruthy();
+
+    await act(async () => {
+      saveRequest.resolve({ liveChat: false, liveScore: false, schedule: true });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeNull();
+    });
+  });
+
+  it('retains the inline save action on desktop web', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    renderProfile('/profile?section=alerts');
+
+    fireEvent.click(await screen.findByLabelText('Live Chat'));
+
+    expect(screen.queryByRole('region', { name: /notification preferences with unsaved changes/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
   });
 
   it('keeps semantic mobile profile navigation in a two-column grid', async () => {
