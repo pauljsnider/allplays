@@ -459,6 +459,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   autoComplete="off"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || !isNativeRuntime()) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.blur();
+                  }}
                   className="min-h-11 w-full rounded-xl border border-gray-200 px-3 pr-11 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   placeholder="Search teams, players, actions, help..."
                   aria-label="Search teams, players, actions, help"
