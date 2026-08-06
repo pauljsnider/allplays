@@ -4088,6 +4088,150 @@ describe('native parent schedule Firestore mapping', () => {
     });
   });
 
+  it.each([
+    {
+      name: 'closed',
+      range: {
+        startDate: new Date('2026-06-01T00:00:00.000Z'),
+        endDate: new Date('2026-06-30T23:59:59.000Z')
+      },
+      expectedFilters: [
+        { op: 'GREATER_THAN_OR_EQUAL', value: '2026-06-01T00:00:00.000Z' },
+        { op: 'LESS_THAN_OR_EQUAL', value: '2026-06-30T23:59:59.000Z' }
+      ]
+    },
+    {
+      name: 'start-only',
+      range: { startDate: new Date('2026-06-01T00:00:00.000Z') },
+      expectedFilters: [
+        { op: 'GREATER_THAN_OR_EQUAL', value: '2026-06-01T00:00:00.000Z' }
+      ]
+    },
+    {
+      name: 'end-only',
+      range: { endDate: new Date('2026-06-30T23:59:59.000Z') },
+      expectedFilters: [
+        { op: 'LESS_THAN_OR_EQUAL', value: '2026-06-30T23:59:59.000Z' }
+      ]
+    }
+  ])('queries native practice sessions with a $name date range', async ({ range, expectedFilters }) => {
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockRejectedValueOnce(new Error('offline'));
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: { 'team-1': range }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+    expect(requestUrl).not.toContain('/documents/teams/team-1/practiceSessions');
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.from).toEqual([{ collectionId: 'practiceSessions' }]);
+    expect(body.structuredQuery.orderBy).toEqual([
+      { field: { fieldPath: 'date' }, direction: 'DESCENDING' }
+    ]);
+    expect(body.structuredQuery.where.compositeFilter.filters).toEqual(
+      expectedFilters.map(({ op, value }) => ({
+        fieldFilter: {
+          field: { fieldPath: 'date' },
+          op,
+          value: { timestampValue: value }
+        }
+      }))
+    );
+  });
+
+  it('merges bounded native practices with games without listing practiceSessions', async () => {
+    const startDate = new Date('2026-06-01T00:00:00.000Z');
+    const endDate = new Date('2026-06-30T23:59:59.000Z');
+    vi.mocked(getPracticeSessions).mockRejectedValueOnce(new Error('offline'));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any, init?: RequestInit) => {
+      const requestUrl = String(input);
+      expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+      expect(requestUrl).not.toContain('/documents/teams/team-1/practiceSessions');
+      const body = JSON.parse(String(init?.body));
+      if (body.structuredQuery.from[0].collectionId === 'games') {
+        return {
+          ok: true,
+          json: async () => ([
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-in-range',
+                fields: {
+                  date: { timestampValue: '2026-06-10T18:00:00.000Z' },
+                  opponent: { stringValue: 'Tigers' }
+                }
+              }
+            },
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/practice-in-range',
+                fields: {
+                  type: { stringValue: 'practice' },
+                  date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+                  title: { stringValue: 'Practice' }
+                }
+              }
+            },
+            {
+              document: {
+                name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/practice-out-of-range',
+                fields: {
+                  type: { stringValue: 'practice' },
+                  date: { timestampValue: '2025-06-20T18:00:00.000Z' },
+                  title: { stringValue: 'Old practice' }
+                }
+              }
+            }
+          ])
+        } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ([
+          {
+            document: {
+              name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/practiceSessions/session-in-range',
+              fields: {
+                eventId: { stringValue: 'practice-in-range' },
+                date: { timestampValue: '2026-06-20T18:00:00.000Z' }
+              }
+            }
+          },
+          {
+            document: {
+              name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/practiceSessions/session-out-of-range',
+              fields: {
+                eventId: { stringValue: 'practice-out-of-range' },
+                date: { timestampValue: '2025-06-20T18:00:00.000Z' }
+              }
+            }
+          }
+        ])
+      } as any;
+    });
+
+    const result = await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: { 'team-1': { startDate, endDate } }
+    });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-in-range', 'practice-in-range']);
+    expect(result.events.find((event) => event.id === 'practice-in-range')).toMatchObject({
+      type: 'practice',
+      practiceSessionId: 'session-in-range'
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('drops malformed Firestore schedule event records at the mapper boundary', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue({
       ok: true,
