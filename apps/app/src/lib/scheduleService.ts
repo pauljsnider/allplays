@@ -1194,6 +1194,48 @@ async function nativeQueryScheduleEventDocuments(teamId: string, range: Schedule
     : [];
 }
 
+async function nativeQueryPracticeSessionDocuments(teamId: string, range: ScheduleDateRange): Promise<FirestoreDocument[]> {
+  const filters = [
+    range.startDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'GREATER_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.startDate)
+          }
+        }
+      : null,
+    range.endDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'LESS_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.endDate)
+          }
+        }
+      : null
+  ].filter(Boolean) as Array<Record<string, unknown>>;
+  const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'practiceSessions' }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters
+          }
+        },
+        orderBy: [{ field: { fieldPath: 'date' }, direction: 'DESCENDING' }]
+      }
+    })
+  });
+
+  return Array.isArray(payload)
+    ? payload.map((entry) => mapFirestoreDocument(entry?.document as NativeFirestoreDocument)).filter(Boolean) as FirestoreDocument[]
+    : [];
+}
+
 async function nativeQuerySharedTournamentScheduleDocuments(
   teamId: string,
   groups: TournamentScheduleGroupQuery[]
@@ -3291,7 +3333,9 @@ async function loadPracticeSessions(teamId: string, range: ScheduleDateRange = {
     `practice sessions ${teamId}`,
     () => Promise.resolve(getPracticeSessions(teamId, range)),
     async () => {
-      const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
+      const docs = (range.startDate || range.endDate)
+        ? await nativeQueryPracticeSessionDocuments(teamId, range)
+        : await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
       const windowed = (range.startDate || range.endDate)
         ? docs.filter((doc) => isEventWithinRange(doc, range))
         : docs;
