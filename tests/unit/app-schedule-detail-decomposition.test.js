@@ -11,19 +11,17 @@ function readRepoFile(path) {
 describe('ScheduleEventDetail decomposition', () => {
     it('keeps extracted navigation, availability, RSVP, and rideshare pieces wired in', () => {
         const source = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const gameHubSource = readRepoFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
         const rideshareSource = readRepoFile('apps/app/src/components/schedule/RideshareSection.tsx');
 
         expect(source).toContain("from '../components/schedule/AssignmentsSection'");
         expect(source).toContain("from '../components/schedule/CompactMeta'");
         expect(source).toContain("from '../components/schedule/EventSectionNav'");
-        expect(source).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
-        expect(source).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
-        expect(source).toContain('const DeferredGameReportSections = lazy(() => (');
+        expect(source).toContain("type ScheduleGameHubSectionModule = typeof import('./schedule/ScheduleGameHubSection');");
+        expect(source).toContain("scheduleGameHubSectionImporter = () => import('./schedule/ScheduleGameHubSection');");
+        expect(source).toContain('let LazyScheduleGameHubSection = createLazyScheduleGameHubSection();');
         expect(source).toContain("from '../components/schedule/PlayerSwitcher'");
-        expect(source).toContain("from '../components/schedule/PracticeAttendancePanel'");
-        expect(source).toContain("from '../components/schedule/ReportMarkdownText'");
         expect(source).toContain("from '../components/schedule/RideshareSection'");
-        expect(source).toContain("from '../components/schedule/ScoreStepper'");
         expect(source).toContain("from '../components/schedule/ScheduleStatus'");
         expect(source).toContain("from '../components/schedule/AvailabilityPanels'");
         expect(source).toContain("from '../components/schedule/StaffRsvpBreakdownPanel'");
@@ -34,8 +32,15 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
         expect(source).toContain('useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp, sharedNoteExplicitlyChosen })');
         expect(source).toContain('useStaffRsvpBreakdown(staffRsvpLoader)');
-        expect(source).toContain('<DeferredGameReportSections event={event} />');
+        expect(source).toContain('<GameHubSection');
         expect(source).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
+        expect(gameHubSource).toContain("type GameReportSectionsModule = typeof import('../../components/schedule/GameReportSections');");
+        expect(gameHubSource).toContain("gameReportSectionsModulePromise = import('../../components/schedule/GameReportSections');");
+        expect(gameHubSource).toContain('const DeferredGameReportSections = lazy(() => (');
+        expect(gameHubSource).toContain("from '../../components/schedule/PracticeAttendancePanel'");
+        expect(gameHubSource).toContain("from '../../components/schedule/ReportMarkdownText'");
+        expect(gameHubSource).toContain("from '../../components/schedule/ScoreStepper'");
+        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} />');
         expect(source).not.toMatch(/^function GameReportSections\b/m);
         expect(source).not.toMatch(/^function GameReportSectionContent\b/m);
         expect(source).not.toMatch(/^function PlayerSwitcher\b/m);

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const teamDrillsPageSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.tsx', import.meta.url), 'utf8');
 const teamDrillsServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.ts', import.meta.url), 'utf8');
 const practiceAiCoachServiceSource = readFileSync(new URL('../../apps/app/src/lib/practiceAiCoachService.ts', import.meta.url), 'utf8');
-const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
+const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', import.meta.url), 'utf8');
 const practiceTimelineServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/practiceTimelineService.test.ts', import.meta.url), 'utf8');
 const teamDrillsPageTestSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.test.tsx', import.meta.url), 'utf8');
 const scheduleEventDetailTestSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.test.tsx', import.meta.url), 'utf8');
