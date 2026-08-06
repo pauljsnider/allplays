@@ -72,6 +72,7 @@
             <a href="#ai" class="rounded-xl border-2 border-gray-200 bg-white px-8 py-4 text-center text-base font-bold text-gray-700 shadow-sm transition hover:bg-gray-50">See it in ChatGPT</a>
           </div>
           <p class="mt-5 text-sm text-gray-500">Free to start · iOS, Android &amp; web · Baseball to soccer, and everything between.</p>
+          <p class="mt-3 text-sm font-medium text-gray-600"><a href="compare.html" class="text-primary-700 underline decoration-primary-300 underline-offset-2 hover:text-primary-800">See how we&#39;re different from everyone else</a> · <a href="app.html" class="text-primary-700 underline decoration-primary-300 underline-offset-2 hover:text-primary-800">Get the app</a></p>
         </div>
 
         <!-- Right: "the sentence" demo — signature creative -->
@@ -121,7 +122,7 @@
     <div class="container mx-auto px-4">
       <p class="mb-8 text-center text-sm font-semibold uppercase tracking-widest text-gray-500">Built for every team, every sport, every sideline</p>
       <div class="mx-auto grid max-w-5xl grid-cols-2 gap-8 text-center md:grid-cols-4">
-        <div><div class="text-3xl font-bold text-primary-600 md:text-4xl">72</div><div class="mt-1 text-sm font-medium text-gray-600">Actions the AI can take for you</div></div>
+        <div><div class="text-3xl font-bold text-primary-600 md:text-4xl">100+</div><div class="mt-1 text-sm font-medium text-gray-600">Actions the AI can take for you</div></div>
         <div><div class="text-3xl font-bold text-primary-600 md:text-4xl">10K+</div><div class="mt-1 text-sm font-medium text-gray-600">Games tracked live</div></div>
         <div><div class="text-3xl font-bold text-primary-600 md:text-4xl">All&nbsp;Sports</div><div class="mt-1 text-sm font-medium text-gray-600">Baseball to soccer</div></div>
         <div><div class="text-3xl font-bold text-primary-600 md:text-4xl">1st</div><div class="mt-1 text-sm font-medium text-gray-600">Youth platform in ChatGPT &amp; Claude</div></div>
@@ -179,27 +180,43 @@
       </div>
 
       <div class="mx-auto mt-14 grid max-w-6xl gap-6 lg:grid-cols-3">
-        <!-- ChatGPT card -->
-        <div class="rounded-2xl border border-white/20 bg-white/10 p-6 backdrop-blur-md lg:col-span-2">
-          <div class="mb-4 flex items-center gap-2 text-sm font-semibold text-primary-100">
-            <span class="eyebrow text-[10px]">Live in ChatGPT &amp; Claude</span>
+        <!-- ChatGPT / Claude window mock -->
+        <div class="overflow-hidden rounded-2xl bg-white text-gray-900 shadow-2xl ring-1 ring-black/5 lg:col-span-2">
+          <div class="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+            <div class="flex items-center gap-2">
+              <span class="flex h-6 w-6 items-center justify-center rounded-full bg-[#10a37f] text-[13px] font-bold text-white">✦</span>
+              <span class="text-sm font-semibold text-gray-800">ChatGPT</span>
+              <span class="text-gray-300">·</span>
+              <span class="text-sm font-medium text-gray-400">Claude</span>
+            </div>
+            <span class="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700 ring-1 ring-primary-100">ALL PLAYS connected</span>
           </div>
-          <div class="space-y-3">
-            <div class="flex justify-end"><div class="max-w-[80%] rounded-2xl rounded-br-md bg-white/20 px-4 py-2.5 text-[15px]">What does my family have this weekend?</div></div>
-            <div class="rounded-2xl rounded-bl-md bg-white/10 px-4 py-3 text-[15px] ring-1 ring-white/15">
-              <p class="text-primary-50">You've got two events:</p>
-              <div class="mt-2 space-y-2">
-                <div class="rounded-lg bg-white/10 px-3 py-2"><b>Sat 9:00a</b> — Maya, Basketball vs. Hawks · <span class="text-primary-100/80">Lincoln Gym</span> · <span class="font-semibold text-amber-200">RSVP needed</span></div>
-                <div class="rounded-lg bg-white/10 px-3 py-2"><b>Sun 2:00p</b> — Leo, Soccer practice · <span class="text-primary-100/80">Field 4</span> · <span class="font-semibold text-emerald-200">You're in</span></div>
+          <div class="space-y-4 px-4 py-5">
+            <div class="flex justify-end"><div class="max-w-[85%] rounded-2xl rounded-br-sm bg-gray-100 px-4 py-2.5 text-[15px] text-gray-800">What does my family have this weekend?</div></div>
+            <div class="flex gap-3">
+              <span class="mt-0.5 flex h-7 w-7 flex-none items-center justify-center overflow-hidden rounded-full ring-1 ring-gray-200"><img src="img/logo_small.png" alt="ALL PLAYS" class="h-full w-full object-cover"></span>
+              <div class="min-w-0 flex-1 text-[15px] leading-relaxed text-gray-800">
+                <p class="mb-2 text-xs text-gray-400"><span class="font-semibold text-gray-600">ALL PLAYS</span> · used <span class="font-mono text-gray-500">get_family_schedule</span></p>
+                <p class="mb-2.5">You've got two events this weekend:</p>
+                <div class="space-y-2">
+                  <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"><b>Sat 9:00 AM</b> — Maya · Basketball vs. Hawks<div class="mt-0.5 text-xs text-gray-500">Lincoln Gym · <span class="font-semibold text-amber-600">RSVP needed</span></div></div>
+                  <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2"><b>Sun 2:00 PM</b> — Leo · Soccer practice<div class="mt-0.5 text-xs text-gray-500">Field 4 · <span class="font-semibold text-emerald-600">You&#39;re going</span></div></div>
+                </div>
+                <p class="mt-3 text-sm text-gray-500">Want me to RSVP Maya for Saturday and share it with Grandma? →</p>
               </div>
-              <p class="mt-3 text-xs text-primary-100/70">Deep links open right in ALL PLAYS →</p>
+            </div>
+          </div>
+          <div class="border-t border-gray-100 p-3">
+            <div class="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-4 py-2.5">
+              <span class="flex-1 truncate text-[15px] text-gray-400">Message ChatGPT…</span>
+              <span class="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-gray-900 text-white"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M5 12l7-7 7 7"/></svg></span>
             </div>
           </div>
         </div>
         <!-- Why it matters -->
         <div class="rounded-2xl border border-white/20 bg-white/10 p-6 backdrop-blur-md">
           <h3 class="text-lg font-bold text-white">Why no one else can do this</h3>
-          <p class="mt-3 text-sm leading-relaxed text-primary-50">Every competitor was built as a system of forms. ALL PLAYS was built as a system of <span class="font-semibold text-white">intent</span> — so it plugs straight into the AI assistants your family already uses.</p>
+          <p class="mt-3 text-sm leading-relaxed text-primary-50">Everyone else built a system of forms. ALL PLAYS was built as a system of <span class="font-semibold text-white">intent</span> — so it plugs straight into the AI assistants your family already uses.</p>
           <div class="mt-5 space-y-3 text-sm">
             <div class="flex items-center gap-3"><svg class="h-5 w-5 flex-none text-primary-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg><span class="text-primary-50">Permission-aware — only ever your data</span></div>
             <div class="flex items-center gap-3"><svg class="h-5 w-5 flex-none text-primary-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span class="text-primary-50">Confirms before it changes anything</span></div>
