@@ -44,7 +44,7 @@ function validContract({ steps, ...overrides } = {}) {
 }
 
 function validP12Contract() {
-    const name = { kind: 'label', name: 'Name', exact: true };
+    const name = { kind: 'label', name: 'Full name', exact: true };
     const phone = { kind: 'label', name: 'Phone', exact: true };
     const save = { kind: 'role', role: 'button', name: 'Save', exact: true };
     return validContract({
@@ -199,6 +199,12 @@ describe('parent coverage contract boundary', () => {
             phases: ['cleanup'],
             target: { kinds: ['label', 'testId'], exact: true }
         });
+        const profileTargets = new RegExp(
+            profile.mutationTargetPatterns.primary.pattern,
+            profile.mutationTargetPatterns.primary.flags
+        );
+        expect(profileTargets.test('Full name')).toBe(true);
+        expect(profileTargets.test('Name')).toBe(false);
 
         const image = parentCoverageAuthoringContext('P13');
         expect(image.actionConstraints.uploadSyntheticImage).toMatchObject({
@@ -235,6 +241,22 @@ describe('parent coverage contract boundary', () => {
             name: 'Write one short note',
             exact: true
         });
+    });
+
+    it('rejects the stale P12 Name locator at the trusted contract boundary', () => {
+        const contract = validP12Contract();
+        expect(validateContract(contract, catalog, 'P12').workflowId).toBe('P12');
+
+        const staleTarget = { kind: 'label', name: 'Name', exact: true };
+        expect(() => validateContract({
+            ...contract,
+            steps: contract.steps.map((step) => step.target?.name === 'Full name'
+                ? { ...step, target: staleTarget }
+                : step),
+            cleanupSteps: contract.cleanupSteps.map((step) => step.target?.name === 'Full name'
+                ? { ...step, target: staleTarget }
+                : step)
+        }, catalog, 'P12')).toThrow(/outside the trusted P12\/primary mutation capability/);
     });
 
     it('requires P34 primary caption fills to use the composer label', () => {
@@ -623,7 +645,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Name', exact: true },
+                target: { kind: 'label', name: 'Full name', exact: true },
                 option: 'Bad Key',
                 mutationId: 'profile-fields'
             }]
@@ -636,7 +658,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'label', name: 'Name', exact: true },
+                target: { kind: 'label', name: 'Full name', exact: true },
                 option: 'different-key',
                 mutationId: 'profile-fields'
             }]
@@ -726,7 +748,7 @@ describe('parent coverage contract boundary', () => {
             ...reversible,
             cleanupSteps: [{
                 action: 'fill',
-                target: { kind: 'label', name: 'Name', exact: true },
+                target: { kind: 'label', name: 'Full name', exact: true },
                 value: 'Unverified replacement value',
                 mutationId: 'profile-fields'
             }]
@@ -952,12 +974,12 @@ describe('parent coverage contract boundary', () => {
             mutatesProduction: true,
             cleanupRequired: true,
             steps: [
-                { action: 'rememberControl', target: { kind: 'text', name: 'Name' }, option: 'profile-name' },
-                { action: 'fill', target: { kind: 'label', name: 'Name', exact: true }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
+                { action: 'rememberControl', target: { kind: 'text', name: 'Full name' }, option: 'profile-name' },
+                { action: 'fill', target: { kind: 'label', name: 'Full name', exact: true }, value: '{RUN_MARKER}', mutationId: 'profile-name' }
             ],
             cleanupSteps: [{
                 action: 'restoreControl',
-                target: { kind: 'text', name: 'Name' },
+                target: { kind: 'text', name: 'Full name' },
                 option: 'profile-name',
                 mutationId: 'profile-name'
             }]
