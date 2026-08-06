@@ -1,0 +1,228 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P25",
+  "title": "Notification delivery deep link read state and preferences",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/home"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/home"
+    },
+    {
+      "action": "fill",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Message",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "mutationId": "notification-message"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Send",
+        "exact": true
+      },
+      "mutationId": "notification-message",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Notification",
+        "exact": true
+      },
+      "value": "{RUN_MARKER}",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Unread",
+        "exact": true
+      },
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "clickAndExpectRoute",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Open notification",
+        "exact": true
+      },
+      "route": "/messages/{TEAM_ID}",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Unread",
+        "exact": true
+      },
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Read",
+        "exact": true
+      },
+      "value": "Read",
+      "scope": "{RUN_MARKER}"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/profile/settings?section=alerts&teamId={TEAM_ID}"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/profile/settings?section=alerts&teamId={TEAM_ID}"
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Notification preferences",
+        "exact": true
+      },
+      "value": "Notification preferences"
+    },
+    {
+      "action": "rememberControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Email",
+        "exact": true
+      },
+      "option": "notification-email"
+    },
+    {
+      "action": "uncheck",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Email",
+        "exact": true
+      },
+      "mutationId": "notification-preference"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "notification-preference",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Notification preferences saved.",
+        "exact": true
+      },
+      "value": "Notification preferences saved."
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "restoreControl",
+      "actor": "primary",
+      "target": {
+        "kind": "label",
+        "name": "Email",
+        "exact": true
+      },
+      "option": "notification-email",
+      "mutationId": "notification-preference"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Save",
+        "exact": true
+      },
+      "mutationId": "notification-preference"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/messages/{TEAM_ID}"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Delete message",
+        "exact": true
+      },
+      "mutationId": "notification-message",
+      "scope": "{RUN_MARKER}"
+    }
+  ]
+}
