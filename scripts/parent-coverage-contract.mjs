@@ -273,10 +273,10 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|submit/i }
     ],
     P20: [
-        { action: 'click', actor: 'primary', target: /claim/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /claimed|release|you/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /claimed|unavailable|primary/i },
-        { action: 'click', phase: 'cleanup', actor: 'primary', target: /release/i }
+        { action: 'click', actor: 'primary', target: /^sign up$/i },
+        { action: 'expectText', actor: 'primary', target: /^you$/i, value: /^you$/i },
+        { action: 'expectHidden', actor: 'peer', target: /^sign up$/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /^release$/i }
     ],
     P21: [
         { action: 'fill', actor: 'primary', target: /ride|seat|address|note/i, value: /\{RUN_MARKER\}/ },
@@ -417,7 +417,7 @@ const reversibleClickInversePairs = new Map(Object.entries({
     P09: [['request access', 'cancel request'], ['send request', 'cancel request']],
     P13: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
     P14: [['upload', 'remove image'], ['upload image', 'remove image'], ['upload photo', 'remove photo']],
-    P20: [['claim', 'release']], P21: [
+    P20: [['sign up', 'release']], P21: [
         ['offer ride', 'cancel'], ['create offer', 'cancel'],
         ['close offer', 'reopen offer'], ['reopen offer', 'close offer']
     ],
@@ -448,8 +448,8 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P17: { primary: /^(?:rsvp|going|not going|maybe|note|sibling|save|update rsvp)$/i },
     P19: { primary: /^(?:packet|form|complete|incomplete|checklist|save|submit)$/i },
     P20: {
-        primary: /^(?:task|assignment|claim|release|volunteer|save|cancel)$/i,
-        peer: /^(?:task|assignment|claim|release|volunteer|save|cancel)$/i
+        primary: /^(?:task|assignment|sign up|release|volunteer|save|cancel)$/i,
+        peer: /^(?:task|assignment|sign up|release|volunteer|save|cancel)$/i
     },
     P21: { primary: /^(?:ride|rideshare|seat|address|note|offer ride|create offer|close offer|reopen offer|save|cancel)$/i },
     P22: {
