@@ -403,14 +403,34 @@ describe('parent coverage contract boundary', () => {
 
         const staleTargets = [
             ['fill', 'Message', { kind: 'label', name: 'Message', exact: true }],
+            ['fill', 'Message', { kind: 'placeholder', name: 'Chat', exact: false }],
             ['click', 'Send message', { kind: 'role', role: 'button', name: 'Send', exact: true }],
             ['click', 'Mute notifications', { kind: 'role', role: 'button', name: 'Mute', exact: true }],
-            ['click', 'Unmute notifications', { kind: 'role', role: 'button', name: 'Unmute', exact: true }]
+            ['click', 'Unmute notifications', { kind: 'role', role: 'button', name: 'Unmute', exact: true }],
+            ['click', 'Delete', { kind: 'role', role: 'button', name: 'Delete message', exact: true }]
         ];
 
         for (const [action, currentName, staleTarget] of staleTargets) {
             const rewrite = (step) => step.action === action && step.target?.name === currentName
                 ? { ...step, target: staleTarget }
+                : step;
+            expect(() => validateContract({
+                ...contract,
+                steps: contract.steps.map(rewrite),
+                cleanupSteps: contract.cleanupSteps.map(rewrite)
+            }, catalog, 'P23')).toThrow(/trusted P23/);
+        }
+
+        const staleActors = [
+            ['Send message', 'peer'],
+            ['Delete', 'peer'],
+            ['Mute notifications', 'primary'],
+            ['Unmute notifications', 'primary']
+        ];
+
+        for (const [targetName, staleActor] of staleActors) {
+            const rewrite = (step) => step.target?.name === targetName
+                ? { ...step, actor: staleActor }
                 : step;
             expect(() => validateContract({
                 ...contract,
