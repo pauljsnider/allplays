@@ -206,6 +206,21 @@ describe('parent coverage contract boundary', () => {
         expect(profileTargets.test('Full name')).toBe(true);
         expect(profileTargets.test('Name')).toBe(false);
 
+        const rideRequest = parentCoverageAuthoringContext('P22');
+        const primaryRideTargets = new RegExp(
+            rideRequest.mutationTargetPatterns.primary.pattern,
+            rideRequest.mutationTargetPatterns.primary.flags
+        );
+        const peerRideTargets = new RegExp(
+            rideRequest.mutationTargetPatterns.peer.pattern,
+            rideRequest.mutationTargetPatterns.peer.flags
+        );
+        expect(primaryRideTargets.test('Confirm')).toBe(true);
+        expect(primaryRideTargets.test('Approve')).toBe(false);
+        expect(peerRideTargets.test('Request spot')).toBe(true);
+        expect(peerRideTargets.test('Request ride')).toBe(false);
+        expect(rideRequest.reversibleClickInverses).toContainEqual(['request spot', 'cancel']);
+
         const image = parentCoverageAuthoringContext('P13');
         expect(image.actionConstraints.uploadSyntheticImage).toMatchObject({
             phases: ['execution'],
@@ -849,22 +864,49 @@ describe('parent coverage contract boundary', () => {
         }, catalog, 'P26')).toThrow(/one actor|target-specific inverse/);
     });
 
-    it('models a P22 ride request and owner approval as one cancellable lifecycle', () => {
+    it('models a P22 ride request and owner confirmation as one cancellable lifecycle', () => {
         const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
         const ride = validContract({
             workflowId: 'P22', title: catalog.workflows[21].title, actors: ['primary', 'peer'],
             mutatesProduction: true, cleanupRequired: true,
             steps: [
-                { action: 'click', actor: 'peer', target: button('Request ride'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'click', actor: 'peer', target: button('Request spot'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
                 { action: 'expectText', actor: 'primary', target: { kind: 'text', name: 'Ride request pending', exact: true }, value: 'pending' },
-                { action: 'click', actor: 'primary', target: button('Approve'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
-                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'Approved', exact: true }, value: 'Approved' }
+                { action: 'click', actor: 'primary', target: button('Confirm'), mutationId: 'ride-request', scope: '{RUN_MARKER}', commitMutation: true },
+                { action: 'expectText', actor: 'peer', target: { kind: 'text', name: 'confirmed', exact: false }, value: 'confirmed' }
             ],
             cleanupSteps: [
                 { action: 'click', actor: 'peer', target: button('Cancel'), mutationId: 'ride-request', scope: '{RUN_MARKER}' }
             ]
         });
         expect(validateContract(ride, catalog, 'P22').workflowId).toBe('P22');
+
+        const staleRequest = {
+            ...ride,
+            steps: ride.steps.map((step, index) => index === 0
+                ? { ...step, target: button('Request ride') }
+                : step)
+        };
+        expect(() => validateContract(staleRequest, catalog, 'P22'))
+            .toThrow(/outside the trusted P22\/peer mutation capability/);
+
+        const staleDecision = {
+            ...ride,
+            steps: ride.steps.map((step, index) => index === 2
+                ? { ...step, target: button('Approve') }
+                : step)
+        };
+        expect(() => validateContract(staleDecision, catalog, 'P22'))
+            .toThrow(/outside the trusted P22\/primary mutation capability/);
+
+        const staleOutcome = {
+            ...ride,
+            steps: ride.steps.map((step, index) => index === 3
+                ? { ...step, target: { kind: 'text', name: 'Approved', exact: true }, value: 'Approved' }
+                : step)
+        };
+        expect(() => validateContract(staleOutcome, catalog, 'P22'))
+            .toThrow(/ordered trusted P22 peer expectVisible\|expectText workflow behavior/);
     });
 
     it('requires a distinct run-scoped inverse for every AI attachment', () => {
