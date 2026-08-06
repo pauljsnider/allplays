@@ -426,6 +426,7 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     setScheduleGameHubSectionImporterForTest();
     setScheduleGameDayServiceImporterForTest();
   });
@@ -442,7 +443,8 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     }
 
     expect(routeSource).toContain("import('./schedule/ScheduleGameHubSection')");
-    expect(routeSource).toContain('<LazyScheduleGameHubSection');
+    expect(routeSource).toContain('<ErrorBoundary name="schedule-game-hub"');
+    expect(routeSource).toContain('<GameHubSection');
     expect(routeSource).not.toContain('function StatsheetImportPanel');
     expect(routeSource).not.toContain('function GameHubLineupBuilderPanel');
     expect(routeSource).not.toContain('function PracticeTimelineSection');
@@ -513,11 +515,14 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     setScheduleGameDayServiceImporterForTest();
   });
 
-  it('loads the Game hub component once only after Game is selected', async () => {
+  it('loads the Game hub only when selected and retries a rejected chunk import', async () => {
     let resolveImporter!: (module: typeof scheduleGameHubSectionModule) => void;
-    const importer = vi.fn(() => new Promise<typeof scheduleGameHubSectionModule>((resolve) => {
-      resolveImporter = resolve;
-    }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const importer = vi.fn()
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockImplementationOnce(() => new Promise<typeof scheduleGameHubSectionModule>((resolve) => {
+        resolveImporter = resolve;
+      }));
     setScheduleGameHubSectionImporterForTest(importer);
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent()],
@@ -530,15 +535,17 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     expect(importer).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(await screen.findByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByTestId('schedule-game-hub-loading')).toHaveTextContent('Loading Game hub...');
     await act(async () => resolveImporter(scheduleGameHubSectionModule));
     expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
-    expect(importer).toHaveBeenCalledTimes(1);
+    expect(importer).toHaveBeenCalledTimes(2);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Availability' })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
     expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
-    expect(importer).toHaveBeenCalledTimes(1);
+    expect(importer).toHaveBeenCalledTimes(2);
 
     expect(loadScheduleGameHubSection()).toBe(loadScheduleGameHubSection());
   });

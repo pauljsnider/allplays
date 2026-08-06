@@ -15,6 +15,7 @@ import { exportCalendarIcsFile } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { CompactMeta } from '../components/schedule/CompactMeta';
@@ -161,14 +162,22 @@ export function loadScheduleGameHubSection() {
   return scheduleGameHubSectionPromise;
 }
 
-export function setScheduleGameHubSectionImporterForTest(importer?: () => Promise<ScheduleGameHubSectionModule>) {
+function resetScheduleGameHubSectionLoader() {
   scheduleGameHubSectionPromise = null;
+}
+
+export function setScheduleGameHubSectionImporterForTest(importer?: () => Promise<ScheduleGameHubSectionModule>) {
+  resetScheduleGameHubSectionLoader();
   scheduleGameHubSectionImporter = importer || (() => import('./schedule/ScheduleGameHubSection'));
 }
 
-const LazyScheduleGameHubSection = lazy(() => (
-  loadScheduleGameHubSection().then((module) => ({ default: module.ScheduleGameHubSection }))
-));
+function createLazyScheduleGameHubSection() {
+  return lazy(() => (
+    loadScheduleGameHubSection().then((module) => ({ default: module.ScheduleGameHubSection }))
+  ));
+}
+
+let LazyScheduleGameHubSection = createLazyScheduleGameHubSection();
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
@@ -176,6 +185,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
+  const [GameHubSection, setGameHubSection] = useState(() => LazyScheduleGameHubSection);
+  const retryScheduleGameHubSection = useCallback(() => {
+    resetScheduleGameHubSectionLoader();
+    LazyScheduleGameHubSection = createLazyScheduleGameHubSection();
+    setGameHubSection(LazyScheduleGameHubSection);
+  }, []);
   const initialHandoffScopeRef = useRef({
     userId: auth.user?.uid || '',
     teamId: decodedTeamId,
@@ -652,30 +667,32 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
         {resolvedActiveSection === 'assignments' ? <AssignmentsSection /> : null}
         {resolvedActiveSection === 'game' ? (
-          <Suspense fallback={(
-            <div
-              className="min-h-40 rounded-2xl border border-gray-200 bg-white p-4 text-sm font-semibold text-gray-500 shadow-sm"
-              data-testid="schedule-game-hub-loading"
-            >
-              Loading Game hub...
-            </div>
-          )}>
-            <LazyScheduleGameHubSection
-              key={selectedEvent.eventKey}
-              auth={auth}
-              event={selectedEvent}
-              childEvents={events}
-              requestedPanel={requestedGameHubPanel}
-              onPanelChange={selectGameHubPanel}
-              onScoreUpdated={handleScoreUpdated}
-              onLiveClockUpdated={handleLiveClockUpdated}
-              onWrapupCompleted={handleWrapupCompleted}
-              onStatsheetImported={handleStatsheetImported}
-              onGameCancelled={handleGameCancelled}
-              onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
-              onGamePlanPublished={handleGamePlanPublished}
-            />
-          </Suspense>
+          <ErrorBoundary name="schedule-game-hub" onRetry={retryScheduleGameHubSection}>
+            <Suspense fallback={(
+              <div
+                className="min-h-40 rounded-2xl border border-gray-200 bg-white p-4 text-sm font-semibold text-gray-500 shadow-sm"
+                data-testid="schedule-game-hub-loading"
+              >
+                Loading Game hub...
+              </div>
+            )}>
+              <GameHubSection
+                key={selectedEvent.eventKey}
+                auth={auth}
+                event={selectedEvent}
+                childEvents={events}
+                requestedPanel={requestedGameHubPanel}
+                onPanelChange={selectGameHubPanel}
+                onScoreUpdated={handleScoreUpdated}
+                onLiveClockUpdated={handleLiveClockUpdated}
+                onWrapupCompleted={handleWrapupCompleted}
+                onStatsheetImported={handleStatsheetImported}
+                onGameCancelled={handleGameCancelled}
+                onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
+                onGamePlanPublished={handleGamePlanPublished}
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : null}
       </div>
       </div>
