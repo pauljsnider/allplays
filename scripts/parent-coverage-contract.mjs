@@ -206,13 +206,13 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /player|athlete|parent/i }
     ],
     P12: [
-        { action: 'rememberControl', actor: 'primary', target: /name/i },
+        { action: 'rememberControl', actor: 'primary', target: /^full name$/i },
         { action: 'rememberControl', actor: 'primary', target: /phone/i },
-        { action: 'fill', actor: 'primary', target: /name/i, value: /\{RUN_MARKER\}/ },
+        { action: 'fill', actor: 'primary', target: /^full name$/i, value: /\{RUN_MARKER\}/ },
         { action: 'fill', actor: 'primary', target: /phone/i },
         { action: 'click', actor: 'primary', target: /save|update profile/i },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /saved|updated|\{RUN_MARKER\}/i },
-        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /name/i },
+        { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /^full name$/i },
         { action: 'restoreControl', phase: 'cleanup', actor: 'primary', target: /phone/i },
         { action: 'click', phase: 'cleanup', actor: 'primary', target: /save|update profile/i }
     ],
@@ -441,7 +441,7 @@ const mutationTargetCapabilities = new Map(Object.entries({
     P05: { lifecycle: /^(?:email|password|password reset email|forgot password\?|new password|confirm password|send reset email|reset password|continue to login)$/i },
     P08: { lifecycle: /^(?:join code|invite code|access code|redeem|join|apply code|continue with code|sign in to accept|create account with code|accept invite|continue)$/i },
     P09: { primary: /^(?:player search|search|team|player|relationship|request access|send request|cancel request)$/i },
-    P12: { primary: /^(?:name|phone|save|save changes|update profile)$/i },
+    P12: { primary: /^(?:full name|phone|save|save changes|update profile)$/i },
     P13: { primary: /^(?:profile image|profile photo|image|photo|upload|upload image|remove image|remove photo|save|cancel)$/i },
     P14: { primary: /^(?:child|athlete|player|name|details|image|photo|upload|upload image|remove image|remove photo|save|save changes)$/i },
     P16: { primary: /^(?:team|filter|calendar|date|schedule|event|apply|reset filters)$/i },
