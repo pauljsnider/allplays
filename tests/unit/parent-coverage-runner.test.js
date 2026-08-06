@@ -121,20 +121,34 @@ describe('parent coverage cleanup execution', () => {
         expect(runnerSource).toContain('return root.getByPlaceholder(name, options);');
     });
 
-    it('settles Google handoff listeners for both popup and same-tab flows', async () => {
+    it('waits through Firebase auth-handler navigation for popup and same-tab Google handoffs', async () => {
         const page = new EventEmitter();
         page.mainFrame = () => ({ url: () => 'https://accounts.google.com/o/oauth2/auth' });
-        const popup = { id: 'popup' };
+        let popupUrl = 'https://game-flow-c6311.firebaseapp.com/__/auth/handler';
+        const popup = {
+            id: 'popup',
+            waitForURL: vi.fn(async (predicate) => {
+                expect(predicate(new URL(popupUrl))).toBe(false);
+                popupUrl = 'https://accounts.google.com/o/oauth2/auth';
+                expect(predicate(new URL(popupUrl))).toBe(true);
+            })
+        };
         await expect(clickAndExpectGoogleAuth(page, {
             click: () => page.emit('popup', popup)
         }, 50)).resolves.toBe(popup);
+        expect(popup.waitForURL).toHaveBeenCalledOnce();
         expect(page.listenerCount('popup')).toBe(0);
         expect(page.listenerCount('framenavigated')).toBe(0);
 
-        const mainFrame = { url: () => 'https://accounts.google.com/o/oauth2/auth' };
+        let mainFrameUrl = 'https://game-flow-c6311.firebaseapp.com/__/auth/handler';
+        const mainFrame = { url: () => mainFrameUrl };
         page.mainFrame = () => mainFrame;
         await expect(clickAndExpectGoogleAuth(page, {
-            click: () => page.emit('framenavigated', mainFrame)
+            click: () => {
+                page.emit('framenavigated', mainFrame);
+                mainFrameUrl = 'https://accounts.google.com/o/oauth2/auth';
+                page.emit('framenavigated', mainFrame);
+            }
         }, 50)).resolves.toBeNull();
         expect(page.listenerCount('popup')).toBe(0);
         expect(page.listenerCount('framenavigated')).toBe(0);
