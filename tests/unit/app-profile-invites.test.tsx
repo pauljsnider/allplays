@@ -596,11 +596,11 @@ describe('Profile invites', () => {
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
     const liveChatToggle = await screen.findByLabelText('Live Chat') as HTMLInputElement;
-    const saveButton = screen.getByRole('button', { name: 'Save preferences' });
     expect(liveChatToggle.checked).toBe(true);
 
     fireEvent.click(liveChatToggle);
-    fireEvent.click(saveButton);
+    const dirtyTray = screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    fireEvent.click(within(dirtyTray).getByRole('button', { name: 'Save preferences' }));
 
     await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
       liveChat: false,
