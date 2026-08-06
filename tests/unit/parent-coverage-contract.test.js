@@ -109,6 +109,51 @@ function validP21Contract() {
     });
 }
 
+function validP23Contract() {
+    const button = (name) => ({ kind: 'role', role: 'button', name, exact: true });
+    return validContract({
+        workflowId: 'P23', title: catalog.workflows[22].title, actors: ['primary', 'peer'],
+        mutatesProduction: true, cleanupRequired: true,
+        steps: [
+            {
+                action: 'fill', actor: 'primary',
+                target: { kind: 'placeholder', name: 'Message', exact: false },
+                value: '{RUN_MARKER}', mutationId: 'team-message'
+            },
+            {
+                action: 'click', actor: 'primary', target: button('Send message'),
+                mutationId: 'team-message', commitMutation: true
+            },
+            {
+                action: 'expectText', actor: 'peer',
+                target: { kind: 'text', name: '{RUN_MARKER}', exact: true }, value: '{RUN_MARKER}'
+            },
+            {
+                action: 'expectText', actor: 'primary',
+                target: { kind: 'text', name: 'Read', exact: true }, value: 'Read'
+            },
+            {
+                action: 'click', actor: 'peer', target: button('Mute notifications'),
+                mutationId: 'team-mute', scope: '{TEAM_ID}', commitMutation: true
+            },
+            {
+                action: 'expectVisible', actor: 'peer',
+                target: button('Unmute notifications')
+            }
+        ],
+        cleanupSteps: [
+            {
+                action: 'click', actor: 'primary', target: button('Delete'),
+                mutationId: 'team-message', scope: '{RUN_MARKER}'
+            },
+            {
+                action: 'click', actor: 'peer', target: button('Unmute notifications'),
+                mutationId: 'team-mute', scope: '{TEAM_ID}'
+            }
+        ]
+    });
+}
+
 function validP28Contract() {
     return validContract({
         workflowId: 'P28', title: catalog.workflows[27].title, actors: ['primary', 'anonymous'],
@@ -281,6 +326,29 @@ describe('parent coverage contract boundary', () => {
         );
         expect(notificationTargets.test('Send message')).toBe(true);
         expect(notificationTargets.test('Send')).toBe(false);
+
+        const teamChat = parentCoverageAuthoringContext('P23');
+        expect(teamChat.actionConstraints.fill.target).toMatchObject({
+            kinds: ['placeholder'],
+            name: 'Message',
+            exact: false
+        });
+        const primaryChatTargets = new RegExp(
+            teamChat.mutationTargetPatterns.primary.pattern,
+            teamChat.mutationTargetPatterns.primary.flags
+        );
+        const peerChatTargets = new RegExp(
+            teamChat.mutationTargetPatterns.peer.pattern,
+            teamChat.mutationTargetPatterns.peer.flags
+        );
+        expect(primaryChatTargets.test('Send message')).toBe(true);
+        expect(primaryChatTargets.test('Send')).toBe(false);
+        expect(peerChatTargets.test('Mute notifications')).toBe(true);
+        expect(peerChatTargets.test('Mute')).toBe(false);
+        expect(teamChat.reversibleClickInverses).toEqual([
+            ['send message', 'delete'],
+            ['mute notifications', 'unmute notifications']
+        ]);
     });
 
     it('rejects the stale P12 Name locator at the trusted contract boundary', () => {
@@ -327,6 +395,49 @@ describe('parent coverage contract boundary', () => {
                 }
             ]
         }, catalog, 'P20')).toThrow(/ordered trusted P20 primary expectText workflow behavior/);
+    });
+
+    it('rejects stale P23 chat locators at the trusted contract boundary', () => {
+        const contract = validP23Contract();
+        expect(validateContract(contract, catalog, 'P23').workflowId).toBe('P23');
+
+        const staleTargets = [
+            ['fill', 'Message', { kind: 'label', name: 'Message', exact: true }],
+            ['fill', 'Message', { kind: 'placeholder', name: 'Chat', exact: false }],
+            ['click', 'Send message', { kind: 'role', role: 'button', name: 'Send', exact: true }],
+            ['click', 'Mute notifications', { kind: 'role', role: 'button', name: 'Mute', exact: true }],
+            ['click', 'Unmute notifications', { kind: 'role', role: 'button', name: 'Unmute', exact: true }],
+            ['click', 'Delete', { kind: 'role', role: 'button', name: 'Delete message', exact: true }]
+        ];
+
+        for (const [action, currentName, staleTarget] of staleTargets) {
+            const rewrite = (step) => step.action === action && step.target?.name === currentName
+                ? { ...step, target: staleTarget }
+                : step;
+            expect(() => validateContract({
+                ...contract,
+                steps: contract.steps.map(rewrite),
+                cleanupSteps: contract.cleanupSteps.map(rewrite)
+            }, catalog, 'P23')).toThrow(/trusted P23/);
+        }
+
+        const staleActors = [
+            ['Send message', 'peer'],
+            ['Delete', 'peer'],
+            ['Mute notifications', 'primary'],
+            ['Unmute notifications', 'primary']
+        ];
+
+        for (const [targetName, staleActor] of staleActors) {
+            const rewrite = (step) => step.target?.name === targetName
+                ? { ...step, actor: staleActor }
+                : step;
+            expect(() => validateContract({
+                ...contract,
+                steps: contract.steps.map(rewrite),
+                cleanupSteps: contract.cleanupSteps.map(rewrite)
+            }, catalog, 'P23')).toThrow(/trusted P23/);
+        }
     });
 
     it('requires P34 primary caption fills to use the composer label', () => {

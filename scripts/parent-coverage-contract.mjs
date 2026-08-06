@@ -294,14 +294,14 @@ const workflowCoverageRequirements = new Map(Object.entries({
         { action: 'click', phase: 'cleanup', actor: 'peer', target: /cancel/i }
     ],
     P23: [
-        { action: 'fill', actor: 'primary', target: /message|chat/i, value: /\{RUN_MARKER\}/ },
-        { action: 'click', actor: 'primary', target: /send/i },
+        { action: 'fill', actor: 'primary', target: /^message$/i, value: /\{RUN_MARKER\}/ },
+        { action: 'click', actor: 'primary', target: /^send message$/i },
         { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /\{RUN_MARKER\}|message/i, value: /\{RUN_MARKER\}/ },
         { actions: ['expectVisible', 'expectText'], actor: 'primary', target: /read|seen/i },
-        { action: 'click', actor: 'peer', target: /mute/i },
-        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /muted|unmute/i },
-        { action: 'click', phase: 'cleanup', actor: 'primary', target: /delete message/i },
-        { action: 'click', phase: 'cleanup', actor: 'peer', target: /unmute/i }
+        { action: 'click', actor: 'peer', target: /^mute notifications$/i },
+        { actions: ['expectVisible', 'expectText'], actor: 'peer', target: /^unmute notifications$/i },
+        { action: 'click', phase: 'cleanup', actor: 'primary', target: /^delete$/i },
+        { action: 'click', phase: 'cleanup', actor: 'peer', target: /^unmute notifications$/i }
     ],
     P24: [
         { action: 'uploadSyntheticImage', actor: 'primary', target: /attachment|image|photo|upload/i },
@@ -422,7 +422,7 @@ const reversibleClickInversePairs = new Map(Object.entries({
         ['close offer', 'reopen offer'], ['reopen offer', 'close offer']
     ],
     P22: [['request spot', 'cancel'], ['confirm', 'cancel']],
-    P23: [['send', 'delete message'], ['mute', 'unmute']],
+    P23: [['send message', 'delete'], ['mute notifications', 'unmute notifications']],
     P24: [['send', 'delete message'], ['upload', 'remove attachment']],
     P25: [['send message', 'delete message']],
     P26: [['add friend', 'remove friend'], ['accept', 'remove friend'], ['send', 'delete message']],
@@ -457,8 +457,8 @@ const mutationTargetCapabilities = new Map(Object.entries({
         peer: /^(?:request spot|cancel)$/i
     },
     P23: {
-        primary: /^(?:message|chat|mute|unmute|send|delete message|mark read)$/i,
-        peer: /^(?:message|chat|mute|unmute|send|delete message|mark read)$/i
+        primary: /^(?:message|send message|delete)$/i,
+        peer: /^(?:mute notifications|unmute notifications)$/i
     },
     P24: {
         primary: /^(?:message|chat|attachment|image|photo|upload|send|delete message|remove attachment)$/i,
@@ -528,6 +528,9 @@ const stepKeysByAction = new Map([
 ]);
 
 const exactWorkflowActionTargets = new Map([
+    ['P23', new Map([
+        ['fill', { kind: 'placeholder', name: 'Message', exact: false }]
+    ])],
     ['P25', new Map([
         ['fill', { kind: 'placeholder', name: 'Message', exact: false }]
     ])],
