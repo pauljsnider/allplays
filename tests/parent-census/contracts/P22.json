@@ -1,0 +1,207 @@
+{
+  "schemaVersion": "parent-coverage-contract-v1",
+  "workflowId": "P22",
+  "title": "Peer ride request and owner decision",
+  "actors": [
+    "primary",
+    "peer"
+  ],
+  "viewport": "mobile",
+  "mutatesProduction": true,
+  "cleanupRequired": true,
+  "lifecycleTransition": false,
+  "steps": [
+    {
+      "action": "login",
+      "actor": "peer"
+    },
+    {
+      "action": "goto",
+      "actor": "peer",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "peer",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Rideshare",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Request ride",
+        "exact": true
+      },
+      "scope": "Ride request"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Request ride",
+        "exact": true
+      },
+      "mutationId": "ride-request",
+      "scope": "Ride request",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Ride requested for",
+        "exact": false
+      },
+      "value": "Ride requested for"
+    },
+    {
+      "action": "login",
+      "actor": "primary"
+    },
+    {
+      "action": "goto",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectRoute",
+      "actor": "primary",
+      "route": "/schedule/{TEAM_ID}/{EVENT_ID}?section=rideshare"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "heading",
+        "name": "Rideshare",
+        "exact": true
+      }
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "pending",
+        "exact": true
+      },
+      "value": "pending",
+      "scope": "Ride request"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Approve",
+        "exact": true
+      },
+      "scope": "Ride request"
+    },
+    {
+      "action": "click",
+      "actor": "primary",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Approve",
+        "exact": true
+      },
+      "mutationId": "ride-request",
+      "scope": "Ride request",
+      "commitMutation": true
+    },
+    {
+      "action": "expectText",
+      "actor": "primary",
+      "target": {
+        "kind": "text",
+        "name": "Ride request confirmed.",
+        "exact": true
+      },
+      "value": "confirmed"
+    },
+    {
+      "action": "reload",
+      "actor": "peer"
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "approved",
+        "exact": true
+      },
+      "value": "approved",
+      "scope": "Ride request"
+    }
+  ],
+  "cleanupSteps": [
+    {
+      "action": "reload",
+      "actor": "peer"
+    },
+    {
+      "action": "expectVisible",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Cancel",
+        "exact": true
+      },
+      "scope": "Ride request"
+    },
+    {
+      "action": "click",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Cancel",
+        "exact": true
+      },
+      "mutationId": "ride-request",
+      "scope": "Ride request"
+    },
+    {
+      "action": "expectText",
+      "actor": "peer",
+      "target": {
+        "kind": "text",
+        "name": "Ride request cancelled.",
+        "exact": true
+      },
+      "value": "cancelled"
+    },
+    {
+      "action": "expectHidden",
+      "actor": "peer",
+      "target": {
+        "kind": "role",
+        "role": "button",
+        "name": "Cancel",
+        "exact": true
+      },
+      "scope": "Ride request"
+    }
+  ]
+}
