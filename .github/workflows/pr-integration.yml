@@ -21,10 +21,12 @@ jobs:
     uses: ./.github/workflows/regression-guards.yml
 
   mobile-integration:
+    needs: regression-integration
     if: ${{ github.event.pull_request.draft == false }}
     uses: ./.github/workflows/mobile-build.yml
 
   preview-integration:
+    needs: mobile-integration
     if: ${{ github.event.pull_request.draft == false }}
     uses: ./.github/workflows/preview-smoke.yml
 
