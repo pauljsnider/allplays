@@ -341,6 +341,25 @@ function buildLargeHomeModel() {
   };
 }
 
+function buildHomeWithRsvpNeeded(rsvpNeeded: number) {
+  const rsvpAction = {
+    id: 'rsvp:single',
+    kind: 'rsvp',
+    tone: 'amber',
+    title: 'Pat Player needs availability',
+    detail: 'Bears Game · Tue, Jun 1',
+    to: '/schedule/team-1/game-1',
+    priority: 10,
+    date: new Date('2100-06-01T18:00:00Z')
+  };
+  return {
+    ...baseHome,
+    players: baseHome.players.map((player) => ({ ...player, rsvpNeeded })),
+    actionItems: rsvpNeeded > 0 ? [rsvpAction] : [],
+    metrics: { ...baseHome.metrics, rsvpNeeded }
+  };
+}
+
 const signedInAuth: AuthState = {
   user: {
     uid: 'parent-1',
@@ -571,6 +590,51 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: /Unread4/ }).getAttribute('href')).toBe('/messages');
     expect(screen.getByRole('link', { name: /Feed1/ }).getAttribute('href')).toBe('/home?section=feed');
     expect(screen.getByRole('link', { name: /Requests1/ }).getAttribute('href')).toBe('/home?section=friends');
+  });
+
+  it('shows a section-level Multi RSVP action for two due responses with the bulk query contract', async () => {
+    const multiRsvpHome = buildHomeWithRsvpNeeded(2);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: multiRsvpHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(multiRsvpHome);
+
+    renderHome(signedInAuth);
+
+    const summaryActions = await screen.findByRole('region', { name: 'Availability summary actions' });
+    expect(within(summaryActions).getByText('2 responses due')).toBeTruthy();
+    expect(within(summaryActions).getByRole('link', { name: 'Multi RSVP' }).getAttribute('href')).toBe('/schedule?bulkRsvp=1');
+  });
+
+  it.each([0, 1])('hides the section-level Multi RSVP action when %i responses are due', async (rsvpNeeded) => {
+    const home = buildHomeWithRsvpNeeded(rsvpNeeded);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(home);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Your day' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Availability summary actions' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP' })).toBeNull();
+  });
+
+  it('removes Multi RSVP after refresh leaves one eligible response', async () => {
+    const initialHome = buildHomeWithRsvpNeeded(2);
+    const refreshedHome = buildHomeWithRsvpNeeded(1);
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockResolvedValueOnce({ home: initialHome, schedule: [] })
+      .mockResolvedValueOnce({ home: refreshedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData
+      .mockResolvedValueOnce(initialHome)
+      .mockResolvedValueOnce(refreshedHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('link', { name: 'Multi RSVP' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Multi RSVP' })).toBeNull();
+      expect(screen.getByRole('link', { name: /Availability.*1.*Needs a response/i }).getAttribute('href')).toBe('/schedule/team-1/game-1');
+    });
   });
 
   it.each([
