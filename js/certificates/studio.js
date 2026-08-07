@@ -22,7 +22,7 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=4433159';
+} from '../db.js?v=4433160';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443336';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443318';
 import { TEMPLATES } from './templates.js?v=2';
