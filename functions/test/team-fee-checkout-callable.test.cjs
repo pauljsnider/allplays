@@ -9,11 +9,13 @@ const originalPaymentsEnabled = process.env.PAYMENTS_ENABLED;
 let adminStub;
 let functionsStub;
 let StripeStub;
+const resendStub = { Resend: class ResendMock {} };
 
 function patchedModuleLoad(request, parent, isMain) {
     if (request === 'firebase-admin' && adminStub) return adminStub;
     if (request === 'firebase-functions' && functionsStub) return functionsStub;
     if (request === 'stripe' && StripeStub) return StripeStub;
+    if (request === 'resend') return resendStub;
     return originalModuleLoad(request, parent, isMain);
 }
 
