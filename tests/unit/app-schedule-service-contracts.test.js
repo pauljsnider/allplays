@@ -147,13 +147,15 @@ const rsvpMocks = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
-        isNativePlatform: () => false
+        isNativePlatform: () => false,
+        getPlatform: () => 'ios'
     }
 }));
 
 vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
     Capacitor: {
-        isNativePlatform: () => false
+        isNativePlatform: () => false,
+        getPlatform: () => 'ios'
     }
 }));
 
