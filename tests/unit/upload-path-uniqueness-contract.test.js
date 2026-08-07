@@ -8,11 +8,13 @@ function readRepoFile(relativePath) {
 describe('durable upload object identities', () => {
     it('includes a cryptographically secure attempt token in every direct browser upload path', () => {
         const dbSource = readRepoFile('js/db.js');
+        const fallbackMediaSource = readRepoFile('js/fallback-media-paths.js');
         const emailSource = readRepoFile('js/team-email-attachments.js');
         const certificateSource = readRepoFile('js/certificates/assets.js');
 
         expect(dbSource).toContain('team-videos/${ts}_${nonce}_game-clip_');
-        expect(dbSource).toContain('team-photos/${ts}_${nonce}_stat-sheet_');
+        expect(dbSource).toContain('buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce)');
+        expect(fallbackMediaSource).toContain('/${ts}_${requireSecureUploadToken(nonce)}_${safeName}');
         expect(dbSource).toContain('/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}');
         expect(dbSource).toContain('/${Date.now()}_${createSecureUploadToken()}_${kind}_${safeName}');
         expect(emailSource).toContain('/${ts}_${createSecureUploadToken()}_${safeFileName(file.name)}');

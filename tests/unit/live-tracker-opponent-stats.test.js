@@ -481,12 +481,12 @@ describe('live tracker opponent stats harness', () => {
   it('rewrites module imports when cache-buster versions and formatting change', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')
       .replace(
-        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433159';",
-        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433159';"
+        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433161';",
+        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=4433161';"
       )
       .replace('./firebase.js?v=15', './firebase.js?v=15')
-      .replace('./utils.js?v=443336', './utils.js?v=4433123')
-      .replace('./auth.js?v=4433162', './auth.js?v=4433162');
+      .replace('./utils.js?v=443337', './utils.js?v=4433123')
+      .replace('./auth.js?v=4433163', './auth.js?v=4433163');
 
     const rewritten = buildModuleSource(source);
 

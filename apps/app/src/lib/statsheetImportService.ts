@@ -364,7 +364,7 @@ export async function applyTrackStatsheetImportForApp({
   let statSheetPhotoUrl = String(uploadedPhotoUrl || '')
   let newlyUploadedPhoto: { url: string; path: string; storage?: 'image' | 'primary' } | null = null
   if (file && !statSheetPhotoUrl) {
-    const uploaded = await uploadStatSheetPhoto(teamId, file, { returnUpload: true })
+    const uploaded = await uploadStatSheetPhoto(teamId, gameId, file, { returnUpload: true })
     statSheetPhotoUrl = String(uploaded?.url || '')
     if (uploaded?.path) {
       newlyUploadedPhoto = {
