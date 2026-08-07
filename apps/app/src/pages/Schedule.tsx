@@ -783,8 +783,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
       bulkRsvpQueryHandledRef.current = false;
       return;
     }
-    if (bulkRsvpQueryHandledRef.current || rsvpHydrationPending || scheduleReadLoading || bulkRsvpCandidates.length < 2) return;
+    if (bulkRsvpQueryHandledRef.current || rsvpHydrationPending || scheduleReadLoading) return;
     bulkRsvpQueryHandledRef.current = true;
+    if (bulkRsvpCandidates.length < 2) return;
     setBulkRsvpResult(null);
     setBulkRsvpOpen(true);
   }, [bulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);

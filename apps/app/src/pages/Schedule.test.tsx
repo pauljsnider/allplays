@@ -767,15 +767,118 @@ describe('Schedule', () => {
     expect(await screen.findByText('1 saved; 1 RSVP needs another try.')).toBeTruthy();
   });
 
-  it('opens multi RSVP from a shareable schedule query after hydration', async () => {
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+  it('opens multi RSVP once only after authoritative RSVP and private-note hydration completes', async () => {
+    const schedule = {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
-      events: [buildScheduleEvent(1), buildScheduleEvent(2)]
+      events: [
+        buildScheduleEvent(1, { myRsvpNoteHydrated: false }),
+        buildScheduleEvent(2, { myRsvpNoteHydrated: false })
+      ]
+    };
+    let reportHydrationProgress!: (events: ParentScheduleEvent[]) => void;
+    let finishHydration!: (value: typeof schedule) => void;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementationOnce((_schedule: unknown, _user?: unknown, _options?: unknown) => {
+      const options = _options as { onProgress: (events: ParentScheduleEvent[]) => void };
+      reportHydrationProgress = options.onProgress;
+      return new Promise<typeof schedule>((resolve) => {
+        finishHydration = resolve;
+      });
     });
 
     renderSchedule('/schedule?bulkRsvp=1');
 
-    expect(await screen.findByRole('dialog', { name: 'Respond to multiple events' })).toBeTruthy();
+    await waitFor(() => expect(typeof reportHydrationProgress).toBe('function'));
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+
+    const hydratedSchedule = {
+      ...schedule,
+      events: schedule.events.map((event, index) => ({
+        ...event,
+        myRsvp: index === 0 ? 'going' as const : 'not_responded' as const,
+        myRsvpNote: index === 0 ? 'Arriving late' : null,
+        myRsvpNoteHydrated: true
+      }))
+    };
+    act(() => reportHydrationProgress(hydratedSchedule.events));
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+
+    act(() => finishHydration(hydratedSchedule));
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(within(dialog).getByText('1 selected')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+
+    act(() => reportHydrationProgress(hydratedSchedule.events.map((event) => ({ ...event }))));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
+  });
+
+  it('constrains query-opened bulk RSVP rows by team and player', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Hawks' },
+        { playerId: 'player-3', playerName: 'Jordan', teamId: 'team-2', teamName: 'Hawks' }
+      ],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, {
+          eventKey: 'team-2::event-2::player-2',
+          teamId: 'team-2',
+          teamName: 'Hawks',
+          childId: 'player-2',
+          childName: 'Sam'
+        }),
+        buildScheduleEvent(3, {
+          eventKey: 'team-2::event-3::player-2',
+          teamId: 'team-2',
+          teamName: 'Hawks',
+          childId: 'player-2',
+          childName: 'Sam'
+        }),
+        buildScheduleEvent(4, {
+          eventKey: 'team-2::event-4::player-3',
+          teamId: 'team-2',
+          teamName: 'Hawks',
+          childId: 'player-3',
+          childName: 'Jordan'
+        })
+      ]
+    });
+
+    renderSchedule('/schedule?teamId=team-2&playerId=player-2&bulkRsvp=1');
+
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(within(dialog).getAllByLabelText(/^Select Sam /)).toHaveLength(2);
+    expect(within(dialog).queryByLabelText(/^Select Pat /)).toBeNull();
+    expect(within(dialog).queryByLabelText(/^Select Jordan /)).toBeNull();
+  });
+
+  it('does not open query-requested bulk RSVP when fewer than two eligible rows remain', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, {
+          eventKey: 'team-1::event-2::player-2',
+          childId: 'player-2',
+          childName: 'Sam'
+        })
+      ]
+    });
+
+    renderSchedule('/schedule?playerId=player-1&bulkRsvp=1');
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Player filter'), { target: { value: '' } });
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled());
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
   });
 
   it('keeps team and player filters after an empty schedule refresh fails', async () => {
