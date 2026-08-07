@@ -44,7 +44,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
                 streamAccessMode: 'selected_volunteers',
                 streamVolunteerEmails: ['legacy-streamer@example.com'],
                 teamPermissions: {
-                    scorekeeping: { mode: 'selected', memberIds: ['scorekeeper-1'] },
+                    scorekeeping: { mode: 'selected', memberIds: ['scorekeeper-1', 'scorekeeper-2'] },
                     videography: { mode: 'selected', memberIds: ['videographer-1'] },
                     streaming: { mode: 'selected', memberIds: ['streamer-1'] },
                     teamMediaManagement: { mode: 'selected', memberIds: ['media-1'] }
@@ -93,6 +93,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
             for (const uid of [
                 'owner-1',
                 'scorekeeper-1',
+                'scorekeeper-2',
                 'videographer-1',
                 'streamer-1',
                 'media-1',
@@ -218,6 +219,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
         await assertFails(updateDoc(gameRef, {
             status: 'completed',
+            liveStatus: 'completed'
+        }));
+        await assertFails(updateDoc(gameRef, {
+            status: 'completed',
             liveStatus: 'completed',
             completedBy: 'unrelated-1',
             completedAt: serverTimestamp()
@@ -242,7 +247,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         }));
         await assertSucceeds(updateDoc(selectedGameRef, {
             status: 'completed',
-            liveStatus: 'completed'
+            liveStatus: 'completed',
+            completedBy: 'scorekeeper-1',
+            completedAt: serverTimestamp()
         }));
 
         await testEnv.withSecurityRulesDisabled(async (context) => {
@@ -261,6 +268,27 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
             liveStatus: 'completed',
             completedBy: 'confirmed-scorekeeper',
             completedAt: serverTimestamp()
+        }));
+    });
+
+    it('preserves delegated completion attribution across a second partial transition', async () => {
+        const firstScorekeeperRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
+        await assertSucceeds(updateDoc(firstScorekeeperRef, {
+            status: 'completed',
+            completedBy: 'scorekeeper-1',
+            completedByName: 'First Scorekeeper',
+            completedAt: serverTimestamp()
+        }));
+
+        const secondScorekeeperRef = doc(authedDb('scorekeeper-2'), 'teams/public-team/games/game-1');
+        await assertFails(updateDoc(secondScorekeeperRef, {
+            liveStatus: 'completed',
+            completedBy: 'scorekeeper-2',
+            completedByName: 'Second Scorekeeper',
+            completedAt: serverTimestamp()
+        }));
+        await assertSucceeds(updateDoc(secondScorekeeperRef, {
+            liveStatus: 'completed'
         }));
     });
 

@@ -678,18 +678,25 @@ service cloud.firestore {
     }
 
     function isDelegatedScorekeeperCompletionAttributionValid() {
+      let completionAlreadyRecorded = resource.data.get('status', 'scheduled') == 'completed' ||
+        resource.data.get('liveStatus', 'scheduled') == 'completed';
       let completionFieldsChanged = request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['completedAt', 'completedBy', 'completedByName']);
       let completedByNameChanged = request.resource.data.diff(resource.data).affectedKeys()
         .hasAny(['completedByName']);
-      return !completionFieldsChanged ||
-             (isDelegatedScorekeeperCompletionTransition() &&
-              request.resource.data.completedBy == request.auth.uid &&
+      return isDelegatedScorekeeperCompletionTransition()
+        ? (completionAlreadyRecorded
+            ? !completionFieldsChanged &&
+              request.resource.data.completedBy is string &&
+              request.resource.data.completedBy.size() > 0 &&
+              request.resource.data.completedAt is timestamp
+            : request.resource.data.completedBy == request.auth.uid &&
               request.resource.data.completedAt == request.time &&
               (!completedByNameChanged ||
                (request.resource.data.completedByName is string &&
                 request.resource.data.completedByName.size() > 0 &&
-                request.resource.data.completedByName.size() <= 120)));
+                request.resource.data.completedByName.size() <= 120)))
+        : !completionFieldsChanged;
     }
 
     function isScoreMetadataAttributionValid() {
