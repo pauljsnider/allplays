@@ -6,6 +6,7 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
 import { assertSafeAppCheckBuildEnvironment } from './build/appCheckBuildGuard.js';
 import { createProductionArtifactGuard } from './build/productionArtifactGuard.js';
+import { createNativeFirebaseRuntimeTransform } from './build/nativeFirebaseRuntimeTransform';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDirectory, '../..');
@@ -38,6 +39,7 @@ export default defineConfig(({ mode }) => {
     }
   },
   plugins: [
+    createNativeFirebaseRuntimeTransform(repoRoot),
     react(),
     visualizer({
       filename: 'bundle-visualizer.html',
