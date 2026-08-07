@@ -6,6 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const testDir = dirname(fileURLToPath(import.meta.url));
 const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '..', relativePath), 'utf8');
 
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'web')
+}));
+
+vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
+
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
   const transactionGet = vi.fn();
@@ -3590,8 +3597,12 @@ describe('staff RSVP management', () => {
     expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'practice-1__2026-07-13');
   });
 
-  it('attributes native fallback staff RSVP rows through roster parent links', async () => {
-    (globalThis as any).window.location.protocol = 'capacitor:';
+  it('uses the native RSVP fallback before the Android bridge is injected at https://localhost', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
     vi.mocked(getRsvpBreakdownByPlayer).mockRejectedValue(new Error('primary unavailable'));
     vi.mocked(getPlayers).mockResolvedValue([
       { id: 'p1', name: 'Avery Smith', parentUserId: 'parent-1' },

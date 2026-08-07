@@ -1,5 +1,12 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'web')
+}));
+
+vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
 
 const firebaseAuthSdk = vi.hoisted(() => {
   const resolvedConfig = {
@@ -45,6 +52,9 @@ vi.mock('./logger', () => ({
 }));
 
 describe('firebaseAuthRuntime', () => {
+  const originalLocation = window.location;
+  const originalIndexedDb = window.indexedDB;
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -53,6 +63,36 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.initializePrimaryAppCheck.mockResolvedValue({ state: 'ready' });
     firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    capacitorCoreMock.getPlatform.mockReturnValue('web');
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
+    Object.defineProperty(window, 'indexedDB', { value: originalIndexedDb, writable: true, configurable: true });
+  });
+
+  it('uses native auth persistence before the Android bridge is injected at https://localhost', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
+    Object.defineProperty(window, 'indexedDB', {
+      value: { deleteDatabase: vi.fn() },
+      writable: true,
+      configurable: true
+    });
+    firebaseAuthSdk.initializeAuth.mockReturnValue({ nativeAuth: true });
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
+      { name: '[DEFAULT]', created: true },
+      { persistence: firebaseAuthSdk.indexedDBLocalPersistence }
+    );
+    expect(firebaseAuthSdk.getAuth).not.toHaveBeenCalled();
+    expect(runtime.auth).toEqual({ nativeAuth: true });
   });
 
   it('initializes the default app when only named apps are registered', async () => {

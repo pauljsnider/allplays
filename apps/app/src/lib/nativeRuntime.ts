@@ -2,12 +2,17 @@ import { Capacitor } from '@capacitor/core';
 
 /**
  * Single source of truth for "are we running inside the Capacitor native
- * WebView" — Capacitor.isNativePlatform() alone misses the `capacitor:`
- * protocol fallback some native builds boot through, so every call site
- * needs both checks. Keeping this in one place avoids the two checks
- * silently drifting apart across call sites.
+ * WebView". Android uses `https://localhost`; iOS and older shells can use
+ * `capacitor:` or `ionic:`. The Android origin must be recognized on its own:
+ * during early startup Capacitor derives its platform result from the native
+ * bridge, which may not have been injected yet.
  */
 export function isNativeRuntime(): boolean {
   if (Capacitor.isNativePlatform()) return true;
-  return typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
+  if (typeof window === 'undefined') return false;
+
+  const { protocol, hostname } = window.location;
+  return protocol === 'capacitor:'
+    || protocol === 'ionic:'
+    || (protocol === 'https:' && hostname === 'localhost');
 }
