@@ -119,6 +119,24 @@ export function getPublicSmokePages() {
             path: '/account-deletion.html',
             titlePatterns: [/Delete Account.*ALL PLAYS/i],
             readySelectors: ['main']
+        },
+        {
+            name: 'compare',
+            path: '/compare.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
+        },
+        {
+            name: 'about',
+            path: '/about.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
+        },
+        {
+            name: 'app landing',
+            path: '/app.html',
+            titlePatterns: [/ALL PLAYS/i],
+            readySelectors: ['#header-container', 'footer']
         }
     ];
 }
