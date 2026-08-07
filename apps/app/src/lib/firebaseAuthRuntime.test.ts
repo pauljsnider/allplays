@@ -87,6 +87,10 @@ describe('firebaseAuthRuntime', () => {
 
     const runtime = await import('./firebaseAuthRuntime');
 
+    expect(firebaseAuthSdk.resolvePrimaryFirebaseConfig).not.toHaveBeenCalled();
+    expect(firebaseAuthSdk.initializeApp).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'game-flow-c6311'
+    }));
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
       { persistence: firebaseAuthSdk.indexedDBLocalPersistence }
@@ -118,5 +122,15 @@ describe('firebaseAuthRuntime', () => {
     expect(firebaseAuthSdk.initializeApp).not.toHaveBeenCalled();
     expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith(existingDefaultApp);
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
+  });
+
+  it('does not block auth startup while native App Check attestation is pending', async () => {
+    firebaseAuthSdk.initializePrimaryAppCheck.mockReturnValue(new Promise(() => undefined));
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, auth: true });
   });
 });
