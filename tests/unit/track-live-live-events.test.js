@@ -43,7 +43,7 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('id="goal-note-input"');
     expect(source).toContain('id="live-notes-list"');
     expect(source).toContain('resolveGoalSportTrackerProfile');
-    expect(source).toContain("from './js/live-game-state.js?v=13'");
+    expect(source).toContain("from './js/live-game-state.js?v=14'");
     expect(source).toContain("from './js/live-tracker-notes.js?v=3'");
     expect(source).toContain('buildGoalSportNoteText');
     expect(source).toContain('removeGameSummaryLine');
