@@ -32,6 +32,29 @@ const { useShellLayoutMock, subscribeToNotificationInboxMock, subscribeToUnreadN
   updateAppIconBadgeMock: vi.fn(() => Promise.resolve()),
 }));
 
+const notificationSheetSuspension = vi.hoisted(() => {
+  let pending: Promise<void> | null = null;
+  let release: (() => void) | null = null;
+
+  return {
+    suspend() {
+      pending = new Promise<void>((resolve) => {
+        release = () => {
+          pending = null;
+          resolve();
+        };
+      });
+    },
+    current() {
+      return pending;
+    },
+    resolve() {
+      release?.();
+      release = null;
+    },
+  };
+});
+
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: useShellLayoutMock,
 }));
@@ -79,16 +102,21 @@ vi.mock('./NotificationInboxSheet', () => ({
     inboxState: 'loading' | 'ready' | 'error';
     onClose: () => void;
     onRetry?: () => void;
-  }) => (
-    <div role="dialog" aria-label="Notifications">
-      <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
-      {onRetry ? <button type="button" onClick={onRetry}>Retry notifications</button> : null}
-      <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
-      {items.map((item) => (
-        <div key={item.id}>{item.text}</div>
-      ))}
-    </div>
-  ),
+  }) => {
+    const pending = notificationSheetSuspension.current();
+    if (pending) throw pending;
+
+    return (
+      <div role="dialog" aria-label="Notifications">
+        <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
+        {onRetry ? <button type="button" onClick={onRetry}>Retry notifications</button> : null}
+        <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
+        {items.map((item) => (
+          <div key={item.id}>{item.text}</div>
+        ))}
+      </div>
+    );
+  },
 }));
 
 function ReportDiscoveredScheduleAccess({
@@ -255,6 +283,7 @@ describe('AppShell', () => {
   });
 
   beforeEach(() => {
+    notificationSheetSuspension.resolve();
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       value: 'visible',
@@ -577,6 +606,50 @@ describe('AppShell', () => {
     );
 
     expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Loading notifications…');
+  });
+
+  it('shows and dismisses notification loading feedback while the lazy sheet is suspended', async () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+    notificationSheetSuspension.suspend();
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Loading notifications' })).toBeTruthy();
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }));
+    expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+
+    act(() => notificationSheetSuspension.resolve());
+    await act(async () => Promise.resolve());
+    expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+
+    notificationSheetSuspension.suspend();
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+    expect(screen.getByRole('status', { name: 'Loading notifications' })).toBeTruthy();
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
+    });
+
+    act(() => notificationSheetSuspension.resolve());
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('loading');
+    });
+    expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
   });
 
   it('announces load failures without hydrating the full inbox behind the badge', async () => {
