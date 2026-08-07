@@ -40,12 +40,18 @@ describe('mobile release workflow', () => {
         const androidSteps = workflow.jobs['android-release'].steps;
         const buildStep = androidSteps.find((step) => step.name === 'Build signed Android release artifacts');
         const artifactStep = androidSteps.find((step) => step.name === 'Upload signed Android artifacts');
+        const startStep = androidSteps.find((step) => step.name === 'Start Android release emulator');
         const verifyIndex = androidSteps.findIndex((step) => step.name === 'Verify signed release APK in emulator');
         const uploadIndex = androidSteps.findIndex((step) => step.name === 'Upload to Play internal testing');
 
         expect(buildStep.run).toContain(':app:bundleRelease :app:assembleRelease');
+        expect(buildStep.env.ALLPLAYS_ANDROID_VERSION_CODE).toContain('inputs.android_version_code');
         expect(artifactStep.with.path).toContain('app-release.aab');
         expect(artifactStep.with.path).toContain('app-release.apk');
+        expect(startStep.run).toContain('"$ANDROID_SDK_ROOT/emulator/emulator"');
+        expect(startStep.run).not.toContain('adb wait-for-device');
+        expect(startStep.run).toContain('kill -0 "$emulator_pid"');
+        expect(startStep.run).toContain('boot_deadline=$((SECONDS + 180))');
         expect(androidSteps[verifyIndex].run).toContain(':app:connectedReleaseAndroidTest');
         expect(verifyIndex).toBeGreaterThan(-1);
         expect(uploadIndex).toBeGreaterThan(verifyIndex);

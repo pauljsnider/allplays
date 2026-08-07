@@ -7,6 +7,11 @@ on:
         description: Store version, for example 1.0.0
         required: true
         default: 1.0.0
+      android_version_code:
+        description: Optional Play version code override (defaults to the workflow run number)
+        required: false
+        type: string
+        default: ''
       upload_android:
         description: Upload Android bundle to the Play internal track
         type: boolean
@@ -85,7 +90,7 @@ jobs:
           ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ALLPLAYS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ALLPLAYS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ALLPLAYS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ALLPLAYS_ANDROID_VERSION_CODE: ${{ inputs.android_version_code || github.run_number }}
           ALLPLAYS_VERSION_NAME: ${{ inputs.version_name }}
         run: |
           npm run mobile:sync
@@ -114,18 +119,23 @@ jobs:
             --force \
             --name allplays-release \
             --package "system-images;android-35;google_apis;x86_64"
-          emulator \
+          "$ANDROID_SDK_ROOT/emulator/emulator" \
             -avd allplays-release \
             -no-window \
             -no-audio \
             -no-boot-anim \
             -no-snapshot \
             -gpu swiftshader_indirect &
-          adb wait-for-device
+          emulator_pid=$!
           boot_deadline=$((SECONDS + 180))
           until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Android emulator exited before completing startup." >&2
+              exit 1
+            fi
             if [ "$SECONDS" -ge "$boot_deadline" ]; then
               echo "Android emulator did not finish booting within 180 seconds." >&2
+              adb devices >&2 || true
               exit 1
             fi
             sleep 2
@@ -137,7 +147,7 @@ jobs:
           ALLPLAYS_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ALLPLAYS_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ALLPLAYS_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ALLPLAYS_ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ALLPLAYS_ANDROID_VERSION_CODE: ${{ inputs.android_version_code || github.run_number }}
           ALLPLAYS_VERSION_NAME: ${{ inputs.version_name }}
         working-directory: android
         run: ./gradlew :app:connectedReleaseAndroidTest
@@ -147,7 +157,7 @@ jobs:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           ANDROID_BUNDLE_PATH: android/app/build/outputs/bundle/release/app-release.aab
           ANDROID_PACKAGE_NAME: ai.allplays.lite
-          ALLPLAYS_RELEASE_NAME: ALL PLAYS ${{ inputs.version_name }} (${{ github.run_number }})
+          ALLPLAYS_RELEASE_NAME: ALL PLAYS ${{ inputs.version_name }} (${{ inputs.android_version_code || github.run_number }})
         run: node scripts/upload-play-internal.mjs
 
   ios-release:
