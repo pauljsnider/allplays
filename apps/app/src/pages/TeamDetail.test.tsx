@@ -78,6 +78,9 @@ const moreTabRenderMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => ({
+  usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
 vi.mock('./team-detail/moreTabLoader', () => moreTabLoaderMocks);
@@ -126,6 +129,7 @@ vi.mock('lucide-react', () => {
     ImageIcon: Icon,
     LinkIcon: Icon,
     Link2: Icon,
+    LockKeyhole: Icon,
     Loader2: Icon,
     MapPin: Icon,
     MessageCircle: Icon,

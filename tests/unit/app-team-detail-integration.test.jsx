@@ -75,6 +75,9 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     loadParentSchedule: scheduleServiceMocks.loadParentSchedule,
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
 }));
+vi.mock('../../apps/app/src/lib/usePremiumFeatureAccess.ts', () => ({
+    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 
 import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl } from '../../apps/app/src/pages/team-detail/MoreTab.tsx';

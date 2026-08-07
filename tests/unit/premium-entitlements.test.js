@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     isValidPremiumEntitlementRecord,
     readAccountPremiumEntitlement,
@@ -15,6 +15,9 @@ function mockFirebaseForDocs(docs) {
         })
     };
 }
+
+const premiumClosed = async () => ({ state: 'ready', openToAll: false, reason: 'entitlement-required' });
+const premiumOpen = async () => ({ state: 'ready', openToAll: true, reason: 'global-open' });
 
 describe('premium entitlement helpers', () => {
     it('accepts active unexpired team-pass entitlements for the current team', () => {
@@ -69,6 +72,7 @@ describe('premium entitlement helpers', () => {
             user: { uid: 'user_123' },
             teamAccessInfo: { hasAccess: true },
             currentSeasonId: '2026',
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', teamId: 'team_123', tier: 'team-pass', seasonId: '2026' }]) }
         })).resolves.toMatchObject({ state: 'unlocked' });
 
@@ -77,6 +81,7 @@ describe('premium entitlement helpers', () => {
             user: { uid: 'user_123' },
             teamAccessInfo: { hasAccess: true },
             currentSeasonId: '2026',
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', teamId: 'team_123', tier: 'team-pass', seasonId: '2025' }]) }
         })).resolves.toMatchObject({ state: 'locked' });
 
@@ -85,6 +90,7 @@ describe('premium entitlement helpers', () => {
             user: { uid: 'user_123' },
             teamAccessInfo: { hasAccess: false },
             currentSeasonId: '2026',
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', teamId: 'team_123', tier: 'team-pass', seasonId: '2026' }]) }
         })).resolves.toMatchObject({ state: 'locked' });
     });
@@ -101,12 +107,40 @@ describe('premium entitlement helpers', () => {
     it('unlocks player premium for the current user with a valid account record', async () => {
         await expect(readAccountPremiumEntitlement({
             user: { uid: 'user_123' },
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', accountUserId: 'user_123' }]) }
         })).resolves.toMatchObject({ state: 'unlocked' });
 
         await expect(readAccountPremiumEntitlement({
             user: { uid: 'user_123' },
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', accountUserId: 'other_user' }]) }
         })).resolves.toMatchObject({ state: 'locked' });
+    });
+
+    it('unlocks account and team premium globally without reading entitlement collections', async () => {
+        const getDocs = vi.fn(() => {
+            throw new Error('entitlements should not be read while global access is open');
+        });
+        const firebase = {
+            db: {},
+            collection: vi.fn(),
+            getDocs
+        };
+
+        await expect(readAccountPremiumEntitlement({
+            user: null,
+            configReader: premiumOpen,
+            deps: { firebase }
+        })).resolves.toMatchObject({ state: 'unlocked', reason: 'global-open' });
+        await expect(readTeamPremiumEntitlement({
+            teamId: 'team_123',
+            user: null,
+            teamAccessInfo: { hasAccess: false },
+            currentSeasonId: '2026',
+            configReader: premiumOpen,
+            deps: { firebase }
+        })).resolves.toMatchObject({ state: 'unlocked', reason: 'global-open' });
+        expect(getDocs).not.toHaveBeenCalled();
     });
 });

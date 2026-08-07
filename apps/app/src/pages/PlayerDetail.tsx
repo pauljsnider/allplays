@@ -58,6 +58,7 @@ import {
 } from '../lib/playerService';
 import { AvatarImage } from '../components/AvatarImage';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
+import { PremiumGate } from '../components/PremiumGate';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
@@ -76,6 +77,8 @@ import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import { InviteResultCard } from './parent-tools/shared';
 import type { AuthState, AuthUser } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
+import { PREMIUM_FEATURES, PREMIUM_SCOPES, type PremiumAccessResult } from '../lib/premiumAccessService';
+import { usePremiumFeatureAccess } from '../lib/usePremiumFeatureAccess';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
 type AthleteProfilePrivacy = 'private' | 'public';
@@ -382,6 +385,11 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
+  const playerPremiumAccess = usePremiumFeatureAccess({
+    scope: PREMIUM_SCOPES.ACCOUNT,
+    feature: PREMIUM_FEATURES.PLAYER_ANALYTICS,
+    user: playerAuthUser
+  });
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
   const [activeSection, setActiveSection] = useState<PlayerSectionId>(() => getPlayerSectionFromSearch(searchParams));
@@ -798,6 +806,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             force: true
           })}
           initialPanel={getReportPanelFromSearch(searchParams)}
+          premiumAccess={playerPremiumAccess}
         />
       ) : null}
       {activeSection === 'profile' ? (
@@ -882,7 +891,8 @@ function ReportsSection({
   videoClipsError,
   onVideoClipsOpen,
   onRetryVideoClips,
-  initialPanel
+  initialPanel,
+  premiumAccess
 }: {
   data: ParentPlayerDetailData;
   statsDetailState: PlayerStatsDetailLoadState;
@@ -893,6 +903,7 @@ function ReportsSection({
   onVideoClipsOpen: () => void;
   onRetryVideoClips: () => void;
   initialPanel: ReportPanelId;
+  premiumAccess: PremiumAccessResult;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activePanel, setActivePanel] = useState<ReportPanelId>(initialPanel);
@@ -952,8 +963,8 @@ function ReportsSection({
         <div className="mt-3">
           {statsDetailState === 'loading' && !statsDetail ? <StatsDetailLoadingNotice /> : null}
           {statsDetailError && !statsDetail ? <StatsDetailErrorNotice error={statsDetailError} onRetry={onRetryStatsDetail} /> : null}
-          {activePanel === 'overview' ? <StatsOverviewPanel statsDetail={statsDetail} rows={reportRows} loading={statsDetailState === 'loading'} /> : null}
-          {activePanel === 'games' ? <GameStatsPanel rows={reportRows} hasMore={statsDetail?.summary.hasMoreGames} gameLimit={statsDetail?.summary.gameLimit} /> : null}
+          {activePanel === 'overview' ? <StatsOverviewPanel statsDetail={statsDetail} rows={reportRows} loading={statsDetailState === 'loading'} premiumAccess={premiumAccess} /> : null}
+          {activePanel === 'games' ? <GameStatsPanel rows={reportRows} hasMore={statsDetail?.summary.hasMoreGames} gameLimit={statsDetail?.summary.gameLimit} premiumAccess={premiumAccess} /> : null}
           {activePanel === 'season' ? <SeasonAveragesPanel rows={reportRows} statsDetail={statsDetail} /> : null}
           {activePanel === 'events' ? <GameEventsPanel statsDetail={statsDetail} fallbackEvents={data.events} loading={statsDetailState === 'loading'} /> : null}
           {activePanel === 'clips' ? (
@@ -1008,11 +1019,13 @@ function StatsDetailErrorNotice({ error, onRetry }: { error: AppServiceError; on
 function StatsOverviewPanel({
   statsDetail,
   rows,
-  loading
+  loading,
+  premiumAccess
 }: {
   statsDetail: ParentPlayerStatsDetailData | null;
   rows: ParentPlayerStatRow[];
   loading: boolean;
+  premiumAccess: PremiumAccessResult;
 }) {
   const summary = statsDetail?.summary;
   const averages = summary?.averages || Object.fromEntries(getSeasonAverages(rows).map(([key, value]) => [key.toLowerCase(), Number(value) || 0]));
@@ -1040,50 +1053,56 @@ function StatsOverviewPanel({
         )) : <div className="col-span-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No season stats yet.</div>}
       </div>
 
-      {summary?.topStats.length ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {summary.topStats.map((stat) => (
-            <div key={stat.id} className="rounded-xl border border-primary-100 bg-primary-50 p-3">
-              <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">{stat.label}</div>
-              <div className="mt-1 flex items-end justify-between gap-3">
-                <div className="text-2xl font-black text-primary-900">#{stat.rank}</div>
-                <div className="text-right">
-                  <div className="text-lg font-black text-gray-950">{stat.formattedValue}</div>
-                  <div className="text-[10px] font-bold uppercase tracking-[0.04em] text-gray-500">of {stat.totalPlayers}</div>
+      <PremiumGate access={premiumAccess} label="advanced player analytics">
+        <div className="space-y-3">
+          {summary?.topStats.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {summary.topStats.map((stat) => (
+                <div key={stat.id} className="rounded-xl border border-primary-100 bg-primary-50 p-3">
+                  <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">{stat.label}</div>
+                  <div className="mt-1 flex items-end justify-between gap-3">
+                    <div className="text-2xl font-black text-primary-900">#{stat.rank}</div>
+                    <div className="text-right">
+                      <div className="text-lg font-black text-gray-950">{stat.formattedValue}</div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.04em] text-gray-500">of {stat.totalPlayers}</div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
 
-      <PlayerChartsPanel rows={rows} totals={totals} primaryStatKey={primaryStatKey} />
+          <PlayerChartsPanel rows={rows} totals={totals} primaryStatKey={primaryStatKey} />
 
-      {summary?.trends.length ? (
-        <div className="space-y-2">
-          {summary.trends.map((trend) => (
-            <div key={trend.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <div>
-                <div className="text-sm font-black text-gray-950">{trend.label}</div>
-                <div className="text-xs font-semibold text-gray-500">Recent {formatAverage(trend.recentAverage)} vs earlier {formatAverage(trend.earlierAverage)}</div>
-              </div>
-              <div className={`flex items-center gap-1 text-sm font-black ${trend.direction === 'up' ? 'text-emerald-700' : trend.direction === 'down' ? 'text-rose-700' : 'text-gray-500'}`}>
-                {trend.direction === 'up' && ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : trend.direction === 'down' && ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
-                {trend.direction === 'neutral' ? 'Even' : `${trend.percentChange}%`}
-              </div>
+          {summary?.trends.length ? (
+            <div className="space-y-2">
+              {summary.trends.map((trend) => (
+                <div key={trend.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <div>
+                    <div className="text-sm font-black text-gray-950">{trend.label}</div>
+                    <div className="text-xs font-semibold text-gray-500">Recent {formatAverage(trend.recentAverage)} vs earlier {formatAverage(trend.earlierAverage)}</div>
+                  </div>
+                  <div className={`flex items-center gap-1 text-sm font-black ${trend.direction === 'up' ? 'text-emerald-700' : trend.direction === 'down' ? 'text-rose-700' : 'text-gray-500'}`}>
+                    {trend.direction === 'up' && ArrowUp ? <ArrowUp className="h-4 w-4" aria-hidden="true" /> : trend.direction === 'down' && ArrowDown ? <ArrowDown className="h-4 w-4" aria-hidden="true" /> : null}
+                    {trend.direction === 'neutral' ? 'Even' : `${trend.percentChange}%`}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          ) : loading ? null : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Track more games to see trends.</div>}
         </div>
-      ) : loading ? null : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Track more games to see trends.</div>}
+      </PremiumGate>
     </div>
   );
 }
 
-function GameStatsPanel({ rows, hasMore = false, gameLimit = 0 }: { rows: ParentPlayerStatRow[]; hasMore?: boolean; gameLimit?: number }) {
+function GameStatsPanel({ rows, hasMore = false, gameLimit = 0, premiumAccess }: { rows: ParentPlayerStatRow[]; hasMore?: boolean; gameLimit?: number; premiumAccess: PremiumAccessResult }) {
   return (
     <div className="space-y-3">
       {hasMore ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">Showing the latest {gameLimit} tracked games for speed.</div> : null}
-      <GameStatsTrendPanel rows={rows} />
+      <PremiumGate access={premiumAccess} label="game-by-game performance trends">
+        <GameStatsTrendPanel rows={rows} />
+      </PremiumGate>
       {rows.length ? rows.map((row) => (
         <StatRow key={row.event.eventKey} row={row} />
       )) : <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No tracked game stats yet.</div>}

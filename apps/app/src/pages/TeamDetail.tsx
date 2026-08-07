@@ -39,6 +39,8 @@ import { loadParentTeamDetail, loadParentTeamDetailBootstrap, loadTeamDetailInsi
 import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { buildTeamDetailNavigation, type TeamNavigationItem, type TeamNavigationSection } from '../lib/teamNavigation';
 import type { AuthState } from '../lib/types';
+import { PREMIUM_FEATURES, PREMIUM_SCOPES, type PremiumAccessResult } from '../lib/premiumAccessService';
+import { usePremiumFeatureAccess } from '../lib/usePremiumFeatureAccess';
 import { loadInsightsTab } from './team-detail/insightsTabLoader';
 import { loadMoreTab } from './team-detail/moreTabLoader';
 import { loadRosterTab } from './team-detail/rosterTabLoader';
@@ -95,6 +97,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const location = useLocation();
   const navigate = useNavigate();
   const authUserId = auth.user?.uid || '';
+  const teamPremiumAccess = usePremiumFeatureAccess({
+    scope: PREMIUM_SCOPES.TEAM,
+    feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
+    user: auth.user,
+    teamId
+  });
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppServiceError | null>(null);
@@ -588,7 +596,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         </div>
       </nav>
 
-      {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
+      {activeTab === 'overview' ? <OverviewTab model={model} premiumAccess={teamPremiumAccess} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onScheduleLoaded={setAuthoritativeUpcomingCount} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
       {activeTab === 'roster' ? (
         <ErrorBoundary name="team-detail-roster" onRetry={() => setRosterTabRetryVersion((current) => current + 1)}>
@@ -600,7 +608,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'insights' ? (
         <ErrorBoundary name="team-detail-insights" onRetry={() => setInsightsTabRetryVersion((current) => current + 1)}>
           <Suspense fallback={<div className="app-card p-4 text-sm font-semibold text-gray-500" role="status" aria-label="Loading insights" aria-live="polite">Loading insights…</div>}>
-            <LazyInsightsTab model={model} loading={insightsLoading} error={insightsError} />
+            <LazyInsightsTab model={model} loading={insightsLoading} error={insightsError} premiumAccess={teamPremiumAccess} />
           </Suspense>
         </ErrorBoundary>
       ) : null}
@@ -658,7 +666,7 @@ function TeamHero({ model, upcomingCount = null }: { model: TeamDetailModel; upc
   );
 }
 
-function OverviewTab({ model }: { model: TeamDetailModel }) {
+function OverviewTab({ model, premiumAccess }: { model: TeamDetailModel; premiumAccess: PremiumAccessResult }) {
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2">
@@ -692,7 +700,7 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
         </div>
       </section>
 
-      <TeamPassCard model={model} />
+      <TeamPassCard model={model} premiumAccess={premiumAccess} />
     </div>
   );
 }
@@ -1072,7 +1080,16 @@ function InlineDeferredError({ title, message }: { title: string; message: strin
   );
 }
 
-function TeamPassCard({ model }: { model: TeamDetailModel }) {
+function TeamPassCard({ model, premiumAccess }: { model: TeamDetailModel; premiumAccess: PremiumAccessResult }) {
+  const copy = premiumAccess.state === 'unlocked' && ['global-open', 'default-open'].includes(premiumAccess.reason)
+    ? 'Premium features are open to everyone. No Team Pass purchase is needed while global access is enabled.'
+    : premiumAccess.state === 'unlocked'
+      ? 'This team has active premium access. Team Pass status and checkout remain on the website.'
+      : premiumAccess.state === 'loading'
+        ? 'Checking Team Pass access for this team.'
+        : premiumAccess.state === 'unavailable'
+          ? 'Team Pass access could not be verified right now. Try again later.'
+          : 'An active Team Pass is required for team analytics and archived replay when the team enables that gate.';
   return (
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
@@ -1082,7 +1099,7 @@ function TeamPassCard({ model }: { model: TeamDetailModel }) {
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-gray-950">Team Pass</div>
           <div className="mt-1 text-sm font-semibold leading-6 text-gray-600">
-            Parents can view team content through their team access. Staff-managed pass setup and checkout stay on the current website until the payment flow is migrated.
+            {copy}
           </div>
           <button type="button" className="ghost-button mt-3 !min-h-9 text-xs" onClick={() => openPublicUrl(model.team.websiteUrl)}>
             Open website team page

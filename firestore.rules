@@ -41,6 +41,13 @@ service cloud.firestore {
                (data.rolloutNote is string && data.rolloutNote.size() <= 500));
     }
 
+    function isPremiumAccessConfigPayloadValid(data) {
+      return data.keys().hasOnly(['openToAll', 'updatedAt']) &&
+             data.keys().hasAll(['openToAll']) &&
+             data.openToAll is bool &&
+             (!data.keys().hasAny(['updatedAt']) || data.updatedAt is timestamp);
+    }
+
     function isOwner(userId) {
       return request.auth.uid == userId;
     }
@@ -2926,6 +2933,19 @@ service cloud.firestore {
 
     match /publicProfileAuthIdentities/{userId} {
       allow read, write: if false;
+    }
+
+    // One public boolean coordinates premium presentation across legacy web,
+    // the React/Capacitor app, and the archived replay viewer. It contains no
+    // account, billing, or provider identifiers.
+    match /platformConfig/{configId} {
+      allow get: if configId == 'premium';
+      allow list: if false;
+      allow create, update: if configId == 'premium' &&
+                            isVerifiedForSensitiveWrite() &&
+                            isGlobalAdmin() &&
+                            isPremiumAccessConfigPayloadValid(request.resource.data);
+      allow delete: if false;
     }
 
     // Users collection - users should only write their own profile.
