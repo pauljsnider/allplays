@@ -8,7 +8,7 @@ const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '.
 
 const capacitorCoreMock = vi.hoisted(() => ({
   isNativePlatform: vi.fn(() => false),
-  getPlatform: vi.fn(() => 'ios')
+  getPlatform: vi.fn(() => 'web')
 }));
 
 vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
@@ -3597,8 +3597,7 @@ describe('staff RSVP management', () => {
     expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'practice-1__2026-07-13');
   });
 
-  it('attributes native fallback staff RSVP rows through roster parent links', async () => {
-    (window as any).androidBridge = {};
+  it('uses the native RSVP fallback before the Android bridge is injected at https://localhost', async () => {
     Object.defineProperty(window, 'location', {
       value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
       writable: true,
