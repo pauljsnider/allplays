@@ -16,6 +16,7 @@ import {
   Home,
   ImagePlus,
   KeyRound,
+  Loader2,
   LogOut,
   LogIn,
   MessageCircle,
@@ -51,6 +52,42 @@ import {
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
+
+function NotificationInboxLoadingDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal
+      ariaLabel="Notifications"
+      onClose={onClose}
+      overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center"
+    >
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-app-lg">
+        <div className="flex items-center justify-between border-b border-gray-200 p-4">
+          <div>
+            <div className="app-label">Inbox</div>
+            <h2 className="text-lg font-black text-gray-950">Notifications</h2>
+          </div>
+          <button
+            type="button"
+            className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
+            onClick={onClose}
+            aria-label="Close notifications"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+        <div
+          className="flex flex-col items-center gap-3 px-4 py-12 text-center"
+          role="status"
+          aria-label="Loading notifications"
+          data-testid="notification-inbox-chunk-loading"
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" aria-hidden="true" />
+          <p className="text-sm font-semibold text-gray-500">Loading notifications…</p>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -716,7 +753,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
 
       {inboxOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<NotificationInboxLoadingDialog onClose={() => setInboxOpen(false)} />}>
           <NotificationInboxSheet
             items={inboxItems}
             inboxState={inboxState === 'idle' ? 'loading' : inboxState}
