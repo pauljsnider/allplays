@@ -26,6 +26,15 @@ export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.n
     return `stat-sheets/team-games/${safeTeamId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
 }
 
+export function buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
+    const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
+    const safeGameId = sanitizePathSegment(gameId, 'unknown-game');
+    const safeUserId = sanitizePathSegment(userId, 'unknown-user');
+    const safeName = sanitizePathSegment(fileName, 'stat-sheet');
+
+    return `stat-sheets/team-games/${safeTeamId}/${safeGameId}/${safeUserId}/${ts}_${requireSecureUploadToken(nonce)}_${safeName}`;
+}
+
 export function buildDrillDiagramFallbackPath(teamId, drillId, userId, fileName, ts = Date.now(), nonce = createSecureUploadToken()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeDrillId = sanitizePathSegment(drillId, 'unknown-drill');

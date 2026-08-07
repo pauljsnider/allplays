@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildChatAttachmentFallbackPath, buildDrillDiagramFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from '../../js/fallback-media-paths.js';
+import {
+    buildChatAttachmentFallbackPath,
+    buildDrillDiagramFallbackPath,
+    buildGameClipFallbackPath,
+    buildGameScopedStatSheetFallbackPath,
+    buildStatSheetFallbackPath
+} from '../../js/fallback-media-paths.js';
 
 const rules = readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8');
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -15,6 +21,7 @@ function extractRuleBlock(startMarker) {
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
 const cachedLegacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/team/{userId}/{fileName}');
 const legacyChatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
+const gameScopedStatSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{gameId}/{userId}/{fileName}');
 const statSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
 const drillFallbackRules = extractRuleBlock('match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
 const clipFallbackRules = extractRuleBlock('match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
@@ -71,6 +78,8 @@ describe('fallback media paths and Storage rules', () => {
             .toBe('stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user_42/1700000000000_upload-2_my_photo_1_.png');
         expect(buildStatSheetFallbackPath('team/alpha', 'user 42', 'box score (1).png', 1700000000001, 'upload-3'))
             .toBe('stat-sheets/team-games/team_alpha/user_42/1700000000001_upload-3_box_score_1_.png');
+        expect(buildGameScopedStatSheetFallbackPath('team/alpha', 'game/beta', 'user 42', 'box score (1).png', 1700000000001, 'upload-3'))
+            .toBe('stat-sheets/team-games/team_alpha/game_beta/user_42/1700000000001_upload-3_box_score_1_.png');
         expect(buildDrillDiagramFallbackPath('team/alpha', 'drill 7', 'user 42', 'diagram #1.png', 1700000000002, 'upload-4'))
             .toBe('stat-sheets/drills/team_alpha/drill_7/user_42/1700000000002_upload-4_diagram_1.png');
         expect(buildGameClipFallbackPath('team/alpha', 'game 7', 'user 42', 'clip #1.mp4', 1700000000001, 'upload-5'))
@@ -189,8 +198,18 @@ describe('fallback media paths and Storage rules', () => {
     });
 
     it('limits stat sheet and drill fallback access to team-scoped readers and current uploader/admin writes', () => {
+        expect(gameScopedStatSheetFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) ||');
+        expect(gameScopedStatSheetFallbackRules).toContain('canScorekeepStorageGame(teamId, gameId)');
+        expect(gameScopedStatSheetFallbackRules).toContain('request.auth.uid == userId');
+        expect(gameScopedStatSheetFallbackRules).toContain('isAllowedStatSheetUpload(request.resource.contentType, request.resource.size);');
+        expect(gameScopedStatSheetFallbackRules).toContain('allow update: if false;');
+        expect(rules).toContain('function hasConfirmedStorageGameRsvp(teamId, gameId)');
+        expect(rules).toContain("teamPermission(teamId, 'scorekeeping').get('mode', '') == 'all_confirmed'");
+        expect(rules).toContain("teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected'");
+
         expect(statSheetFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
         expect(statSheetFallbackRules).toContain('request.auth.uid == userId');
+        expect(statSheetFallbackRules).not.toContain('gameId');
         expect(rules).toContain('function canDeleteOwnTeamScopedUpload(teamId, userId)');
         expect(statSheetFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');
         expect(statSheetFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');

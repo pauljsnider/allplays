@@ -179,6 +179,39 @@ service firebase.storage {
          contentType.matches('video/.*'));
     }
 
+    function isAllowedStatSheetUpload(contentType, size) {
+      return size > 0 &&
+        size <= 20 * 1024 * 1024 &&
+        contentType.matches('image/.*');
+    }
+
+    function storageGamePath(teamId, gameId) {
+      return /databases/(default)/documents/teams/$(teamId)/games/$(gameId);
+    }
+
+    function isScorekeeperVisibleStorageGame(teamId, gameId) {
+      let gamePath = storageGamePath(teamId, gameId);
+      return firestore.exists(gamePath) &&
+        firestore.get(gamePath).data.get('status', 'scheduled') != 'cancelled' &&
+        firestore.get(gamePath).data.get('liveStatus', '') != 'deleted';
+    }
+
+    function hasConfirmedStorageGameRsvp(teamId, gameId) {
+      let rsvpPath = /databases/(default)/documents/teams/$(teamId)/games/$(gameId)/rsvps/$(request.auth.uid);
+      return firestore.exists(rsvpPath) &&
+        firestore.get(rsvpPath).data.get('response', firestore.get(rsvpPath).data.get('status', '')) in
+          ['going', 'yes', 'confirmed', 'attending'];
+    }
+
+    function canScorekeepStorageGame(teamId, gameId) {
+      return isSignedIn() &&
+        isScorekeeperVisibleStorageGame(teamId, gameId) &&
+        ((teamPermission(teamId, 'scorekeeping').get('mode', '') == 'all_confirmed' &&
+          hasConfirmedStorageGameRsvp(teamId, gameId)) ||
+         (teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected' &&
+          request.auth.uid in teamPermission(teamId, 'scorekeeping').get('memberIds', [])));
+    }
+
     function isAllowedCertificateImageUpload(contentType, size) {
       return size > 0 &&
         size <= 5 * 1024 * 1024 &&
@@ -288,6 +321,21 @@ service firebase.storage {
       allow create: if false;
       allow delete: if isVerifiedForSensitiveWrite() &&
         (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));
+      allow update: if false;
+    }
+
+    match /stat-sheets/team-games/{teamId}/{gameId}/{userId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId) ||
+        (request.auth.uid == userId && canScorekeepStorageGame(teamId, gameId));
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        (isTeamOwnerOrAdmin(teamId) || canScorekeepStorageGame(teamId, gameId)) &&
+        isScorekeeperVisibleStorageGame(teamId, gameId) &&
+        isAllowedStatSheetUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() &&
+        (isTeamOwnerOrAdmin(teamId) ||
+         (request.auth.uid == userId && canScorekeepStorageGame(teamId, gameId)));
       allow update: if false;
     }
 

@@ -40,7 +40,23 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 await firestore.doc('teams/team-a').set({
                     ownerId: 'owner-a',
                     ownerEmail: 'legacy-owner@example.com',
-                    adminEmails: ['admin-a@example.com']
+                    adminEmails: ['admin-a@example.com'],
+                    teamPermissions: {
+                        scorekeeping: {
+                            mode: 'selected',
+                            memberIds: ['selected-scorekeeper']
+                        }
+                    }
+                });
+                await firestore.doc('teams/team-confirmed').set({
+                    ownerId: 'confirmed-owner',
+                    adminEmails: [],
+                    teamPermissions: {
+                        scorekeeping: {
+                            mode: 'all_confirmed',
+                            memberIds: []
+                        }
+                    }
                 });
                 await firestore.doc('teams/team-b').set({ ownerId: 'owner-b', adminEmails: [] });
                 await firestore.doc('teams/legacy-team').set({
@@ -75,6 +91,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     type: 'group',
                     participantIds: ['user:member-a']
                 });
+                await firestore.doc('teams/team-a/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
+                await firestore.doc('teams/team-a/games/cancelled-game').set({ status: 'cancelled', liveStatus: 'scheduled' });
+                await firestore.doc('teams/team-confirmed/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
+                await firestore.doc('teams/team-confirmed/games/game-b').set({ status: 'scheduled', liveStatus: 'live' });
+                await firestore.doc('teams/team-confirmed/games/game-a/rsvps/confirmed-scorekeeper').set({ response: 'going' });
 
                 const storage = context.storage();
                 await storage.ref('team-media/team-a/folder-a/owner-a/existing.jpg').put(
@@ -117,6 +138,86 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 )
             );
         });
+
+        it('allows bounded game-scoped statsheet images for managers and exact-game scorekeepers', async () => {
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+            const selectedStorage = testEnv.authenticatedContext('selected-scorekeeper', {
+                email: 'selected@example.com',
+                email_verified: true
+            }).storage();
+            const confirmedStorage = testEnv.authenticatedContext('confirmed-scorekeeper', {
+                email: 'confirmed@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(ownerStorage.ref('stat-sheets/team-games/team-a/game-a/owner-a/owner.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertSucceeds(adminStorage.ref('stat-sheets/team-games/team-a/game-a/admin-a/admin.png').put(
+                new Uint8Array([1]),
+                { contentType: 'image/png' }
+            ));
+            await assertSucceeds(selectedStorage.ref('stat-sheets/team-games/team-a/game-a/selected-scorekeeper/selected.webp').put(
+                new Uint8Array([1]),
+                { contentType: 'image/webp' }
+            ));
+            await assertSucceeds(confirmedStorage.ref('stat-sheets/team-games/team-confirmed/game-a/confirmed-scorekeeper/confirmed.jpg').put(
+                new Uint8Array(20 * 1024 * 1024),
+                { contentType: 'image/jpeg' }
+            ));
+        }, 30000);
+
+        it('denies unauthorized, wrong-game, mismatched-uploader, invalid-type, empty, and oversized statsheets', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const confirmedStorage = testEnv.authenticatedContext('confirmed-scorekeeper', {
+                email: 'confirmed@example.com',
+                email_verified: true
+            }).storage();
+            const selectedStorage = testEnv.authenticatedContext('selected-scorekeeper', {
+                email: 'selected@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-a/game-a/member-a/parent.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(confirmedStorage.ref('stat-sheets/team-games/team-confirmed/game-b/confirmed-scorekeeper/wrong-game.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-a/game-a/another-user/mismatched.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-a/game-a/selected-scorekeeper/not-image.txt').put(
+                new Uint8Array([1]),
+                { contentType: 'text/plain' }
+            ));
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-a/game-a/selected-scorekeeper/empty.jpg').put(
+                new Uint8Array(0),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-a/game-a/selected-scorekeeper/oversized.jpg').put(
+                new Uint8Array((20 * 1024 * 1024) + 1),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-a/cancelled-game/selected-scorekeeper/cancelled.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+        }, 30000);
 
         it('allows only the signed-in profile owner or linked player editor to upload profile photos', async () => {
             const memberStorage = testEnv.authenticatedContext('member-a', {
