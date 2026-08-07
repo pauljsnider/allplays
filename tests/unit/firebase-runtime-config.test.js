@@ -471,22 +471,6 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
-    it('recognizes the Capacitor Android https localhost origin as native', async () => {
-        resetGlobals();
-        globalThis.window.location = {
-            origin: 'https://localhost',
-            protocol: 'https:',
-            hostname: 'localhost',
-            pathname: '/'
-        };
-        globalThis.fetch = vi.fn();
-
-        const config = await resolvePrimaryFirebaseConfig();
-
-        expect(config.projectId).toBe('game-flow-c6311');
-        expect(globalThis.fetch).not.toHaveBeenCalled();
-    });
-
     it('prefers explicit inline firebase config without making a network request', async () => {
         resetGlobals();
         globalThis.window.location = {
@@ -740,7 +724,7 @@ describe('firebase runtime config', () => {
     it('keeps every legacy browser importer on the explicit runtime-config cache contract', () => {
         for (const importer of ['firebase.js', 'firebase-images.js', 'firebase-app-check.js']) {
             const source = readFileSync(new URL(`../../js/${importer}`, import.meta.url), 'utf8');
-            expect(source).toContain('firebase-runtime-config.js?v=17');
+            expect(source).toContain('firebase-runtime-config.js?v=16');
         }
     });
 

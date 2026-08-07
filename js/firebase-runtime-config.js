@@ -184,10 +184,8 @@ function isBundledProductionFirebaseConfig(config) {
     return config?.projectId === DEFAULT_PRIMARY_FIREBASE_CONFIG.projectId;
 }
 
-function isNativeRuntimeLocation(protocol, hostname) {
-    return protocol === 'capacitor:'
-        || protocol === 'ionic:'
-        || (protocol === 'https:' && hostname === 'localhost');
+function isNativeRuntimeProtocol(protocol) {
+    return protocol === 'capacitor:' || protocol === 'ionic:';
 }
 
 async function fetchFirebaseConfigFromHosting() {
@@ -239,7 +237,7 @@ export async function resolvePrimaryFirebaseConfig() {
     const canonicalProductionHost = isCanonicalProductionHostname(runtimeHostname);
     const productionFirebaseHostingHost = isProductionFirebaseHostingHostname(runtimeHostname);
     const productionRuntimeHost = canonicalProductionHost || productionFirebaseHostingHost;
-    const nativeRuntime = isNativeRuntimeLocation(runtimeProtocol, runtimeHostname);
+    const nativeRuntime = isNativeRuntimeProtocol(runtimeProtocol);
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
         globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')

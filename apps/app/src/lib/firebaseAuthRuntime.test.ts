@@ -87,6 +87,10 @@ describe('firebaseAuthRuntime', () => {
 
     const runtime = await import('./firebaseAuthRuntime');
 
+    expect(firebaseAuthSdk.resolvePrimaryFirebaseConfig).not.toHaveBeenCalled();
+    expect(firebaseAuthSdk.initializeApp).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'game-flow-c6311'
+    }));
     expect(firebaseAuthSdk.initializeAuth).toHaveBeenCalledWith(
       { name: '[DEFAULT]', created: true },
       { persistence: firebaseAuthSdk.indexedDBLocalPersistence }

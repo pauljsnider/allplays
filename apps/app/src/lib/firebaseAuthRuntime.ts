@@ -23,10 +23,16 @@ import {
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
 import { isNativeRuntime } from './nativeRuntime';
+import { nativeFirebaseConfig } from '../config/firebaseRuntimeConfig';
 
 const logger = createLogger('firebase');
 
-const firebaseConfig = await resolvePrimaryFirebaseConfig();
+// Capacitor serves bundled assets from https://localhost on Android. That
+// origin has no Firebase Hosting endpoints, so native builds must use the
+// same checked-in production config that is packaged with the application.
+const firebaseConfig = isNativeRuntime()
+  ? nativeFirebaseConfig
+  : await resolvePrimaryFirebaseConfig();
 // Only reuse the primary '[DEFAULT]' app. Other named apps (e.g. the
 // game-flow-img image-upload project) can register while the config fetch
 // above is awaiting, and getApp() throws app/no-app when only they exist.
