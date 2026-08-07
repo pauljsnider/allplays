@@ -337,10 +337,14 @@ test('CSV roster review saves family contacts and sends imported invitations', a
     await expect(page.locator('#csv-import-status')).toContainText('Imported 1 player row. Family invites: 1 emailed.');
     await expect(page.locator('#import-csv-btn')).toBeEnabled();
     await expect(page.locator('#import-csv-btn')).toHaveText('Review CSV');
-    await expect(page.getByText('Family contacts', { exact: true })).toBeVisible();
-    await expect(page.getByText('Pat Lee', { exact: true })).toBeVisible();
-    await expect(page.getByText('pat@example.com · Mother · Invite needed')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Send / resend invite' })).toBeVisible();
+    await expect(page.locator('#csv-import-preview')).toBeHidden();
+
+    const importedPlayerRow = page.locator('#roster-list tr').filter({ hasText: 'Avery Lee' });
+    await expect(importedPlayerRow).toBeVisible();
+    await expect(importedPlayerRow.getByText('Family contacts', { exact: true })).toBeVisible();
+    await expect(importedPlayerRow.getByText('Pat Lee', { exact: true })).toBeVisible();
+    await expect(importedPlayerRow.getByText('pat@example.com · Mother · Invite needed')).toBeVisible();
+    await expect(importedPlayerRow.getByRole('button', { name: 'Send / resend invite' })).toBeVisible();
 
     expect(await page.evaluate(() => globalThis.__rosterCsvAdds || [])).toEqual([
         expect.objectContaining({ name: 'Avery Lee', number: '4', position: 'Forward' })
