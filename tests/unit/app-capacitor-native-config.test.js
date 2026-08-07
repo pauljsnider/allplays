@@ -172,7 +172,7 @@ describe('Capacitor native config', () => {
         const expectedDependencies = {
             'lucide-react': { group: 'dependencies', specifier: '^1.27.0', version: '1.27.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
-            'web-vitals': { group: 'dependencies', specifier: '^6.0.1', version: '6.0.1' },
+            'web-vitals': { group: 'dependencies', specifier: '^6.0.1', version: '6.1.0' },
             globals: { group: 'devDependencies', specifier: '^17.8.0', version: '17.8.0' },
             postcss: { group: 'devDependencies', specifier: '^8.5.24', version: '8.5.24' }
         };
@@ -305,8 +305,8 @@ describe('Capacitor native config', () => {
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.2', version: '8.2.2' },
-            firebase: { specifier: '12.17.0', version: '12.17.0' },
-            'web-vitals': { specifier: '^6.0.1', version: '6.0.1' }
+            firebase: { specifier: '12.17.1', version: '12.17.1' },
+            'web-vitals': { specifier: '^6.0.1', version: '6.1.0' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
@@ -319,15 +319,17 @@ describe('Capacitor native config', () => {
         });
 
         expect(appPnpmLock).toContain("'@capacitor/camera@8.2.2':");
-        expect(appPnpmLock).toContain('firebase@12.17.0:');
-        expect(appPnpmLock).not.toContain('firebase@12.16.0:');
+        expect(appPnpmLock).toContain('firebase@12.17.1:');
+        expect(appPnpmLock).not.toContain('firebase@12.17.0:');
+        expect(appPnpmLock).toContain('web-vitals@6.1.0:');
         [
             '@capacitor-firebase/app-check',
             '@capacitor-firebase/authentication',
             '@capacitor-firebase/messaging',
             '@capacitor-firebase/performance'
         ].forEach((plugin) => {
-            expect(appPnpmLock).toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)`);
+            expect(appPnpmLock).toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.1)`);
+            expect(appPnpmLock).not.toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)`);
         });
     });
 
