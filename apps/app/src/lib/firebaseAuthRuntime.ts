@@ -22,6 +22,7 @@ import {
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
 
 const logger = createLogger('firebase');
 
@@ -33,26 +34,8 @@ const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[D
 const app = existingDefaultApp || initializeApp(firebaseConfig);
 await initializePrimaryAppCheck(app);
 
-function isCapacitorNativeRuntime() {
-  const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
-  if (protocol === 'capacitor:' || protocol === 'ionic:') {
-    return true;
-  }
-
-  const capacitor = typeof window !== 'undefined' ? (window as any).Capacitor : null;
-  if (!capacitor) {
-    return false;
-  }
-
-  if (typeof capacitor.isNativePlatform === 'function') {
-    return capacitor.isNativePlatform();
-  }
-
-  return capacitor.getPlatform?.() === 'ios' || capacitor.getPlatform?.() === 'android';
-}
-
 function initializeFirebaseAuth(appInstance: typeof app) {
-  if (!isCapacitorNativeRuntime()) {
+  if (!isNativeRuntime()) {
     return getAuth(appInstance);
   }
   if (typeof window !== 'undefined' && typeof window.indexedDB?.deleteDatabase !== 'function') {

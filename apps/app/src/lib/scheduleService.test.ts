@@ -3591,7 +3591,11 @@ describe('staff RSVP management', () => {
   });
 
   it('attributes native fallback staff RSVP rows through roster parent links', async () => {
-    (globalThis as any).window.location.protocol = 'capacitor:';
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
+      writable: true,
+      configurable: true
+    });
     vi.mocked(getRsvpBreakdownByPlayer).mockRejectedValue(new Error('primary unavailable'));
     vi.mocked(getPlayers).mockResolvedValue([
       { id: 'p1', name: 'Avery Smith', parentUserId: 'parent-1' },

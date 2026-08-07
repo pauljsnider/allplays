@@ -98,6 +98,7 @@ import {
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
+import { isNativeRuntime } from './nativeRuntime';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
 import {
   countOpenScheduleAssignments,
@@ -1008,10 +1009,6 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
   return Promise.race([promise, timeout]).finally(() => {
     if (timeoutId !== undefined) timers.clearTimeout(timeoutId);
   });
-}
-
-function isNativeRuntime() {
-  return typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
 }
 
 function getProjectId() {

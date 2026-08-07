@@ -38,10 +38,21 @@ describe('isNativeRuntime', () => {
         expect(isNativeRuntime()).toBe(true);
     });
 
+    it('returns true for Capacitor Android at https://localhost even if the bridge is not ready yet', () => {
+        capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        Object.defineProperty(window, 'location', {
+            value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
+            writable: true,
+            configurable: true
+        });
+
+        expect(isNativeRuntime()).toBe(true);
+    });
+
     it('returns false in a regular web browser', () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
         Object.defineProperty(window, 'location', {
-            value: { ...originalLocation, protocol: 'https:' },
+            value: { ...originalLocation, protocol: 'https:', hostname: 'allplays.ai' },
             writable: true,
             configurable: true
         });
