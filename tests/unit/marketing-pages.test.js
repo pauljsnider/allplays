@@ -63,5 +63,9 @@ describe('marketing pages integration', () => {
         it('avoids the word competitor', () => {
             expect(html).not.toMatch(/competitor/i);
         });
+
+        it('has no dead placeholder links', () => {
+            expect(html).not.toContain('href="#"');
+        });
     });
 });
