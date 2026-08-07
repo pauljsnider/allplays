@@ -37,6 +37,12 @@ export function transformNativeFirebaseBootstrap(source: string): string {
   return source.replace(LEGACY_BLOCKING_APP_CHECK, CAPACITOR_NON_BLOCKING_APP_CHECK);
 }
 
+export function isNativeFirebaseTransformEnabled(
+  environment: Readonly<Record<string, string | undefined>>
+): boolean {
+  return environment.ALLPLAYS_CAPACITOR_BUILD === '1';
+}
+
 export function createNativeFirebaseRuntimeTransform(repoRoot: string): Plugin {
   const runtimeConfigPath = path.resolve(repoRoot, 'js/firebase-runtime-config.js');
   const firebaseBootstrapPath = path.resolve(repoRoot, 'js/firebase.js');

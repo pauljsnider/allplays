@@ -6,7 +6,10 @@ import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
 import { assertSafeAppCheckBuildEnvironment } from './build/appCheckBuildGuard.js';
 import { createProductionArtifactGuard } from './build/productionArtifactGuard.js';
-import { createNativeFirebaseRuntimeTransform } from './build/nativeFirebaseRuntimeTransform';
+import {
+  createNativeFirebaseRuntimeTransform,
+  isNativeFirebaseTransformEnabled
+} from './build/nativeFirebaseRuntimeTransform';
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDirectory, '../..');
@@ -22,6 +25,7 @@ const bundleVisualizerTooltipFixPlugin = {
 
 export default defineConfig(({ mode }) => {
   assertSafeAppCheckBuildEnvironment(mode, loadEnv(mode, appDirectory, 'VITE_'));
+  const capacitorBuild = isNativeFirebaseTransformEnabled(process.env);
 
   return {
   base: './',
@@ -39,7 +43,7 @@ export default defineConfig(({ mode }) => {
     }
   },
   plugins: [
-    createNativeFirebaseRuntimeTransform(repoRoot),
+    ...(capacitorBuild ? [createNativeFirebaseRuntimeTransform(repoRoot)] : []),
     react(),
     visualizer({
       filename: 'bundle-visualizer.html',

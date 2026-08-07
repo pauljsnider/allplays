@@ -2,11 +2,19 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  isNativeFirebaseTransformEnabled,
   transformNativeFirebaseBootstrap,
   transformNativeFirebaseRuntimeConfig
 } from '../../build/nativeFirebaseRuntimeTransform';
 
 describe('Capacitor Firebase runtime transform', () => {
+  it('is enabled only for an explicitly requested Capacitor artifact', () => {
+    expect(isNativeFirebaseTransformEnabled({})).toBe(false);
+    expect(isNativeFirebaseTransformEnabled({ ALLPLAYS_CAPACITOR_BUILD: '0' })).toBe(false);
+    expect(isNativeFirebaseTransformEnabled({ ALLPLAYS_CAPACITOR_BUILD: 'true' })).toBe(false);
+    expect(isNativeFirebaseTransformEnabled({ ALLPLAYS_CAPACITOR_BUILD: '1' })).toBe(true);
+  });
+
   it('teaches the actual legacy bootstrap that Android https localhost is native', () => {
     const repoRoot = path.resolve(process.cwd(), process.cwd().endsWith('apps/app') ? '../..' : '.');
     const source = readFileSync(path.join(repoRoot, 'js/firebase-runtime-config.js'), 'utf8');
