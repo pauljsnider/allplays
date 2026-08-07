@@ -11,6 +11,7 @@ import {
     getDoc,
     getDocs,
     query,
+    serverTimestamp,
     setDoc,
     updateDoc,
     where
@@ -59,6 +60,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
                 officiatingAuthorizedUserIds: ['official-1'],
                 officiatingAuthorizedEmails: ['official@example.com']
             });
+            await setDoc(doc(firestore, 'teams/public-team/games/game-2'), {
+                type: 'game',
+                visibility: 'public',
+                status: 'scheduled',
+                liveStatus: 'scheduled'
+            });
+            await setDoc(doc(firestore, 'teams/public-team/games/game-2/rsvps/confirmed-scorekeeper'), {
+                response: 'confirmed'
+            });
             await setDoc(doc(firestore, 'teams/public-team/games/game-1/liveEvents/event-1'), {
                 type: 'score',
                 points: 1
@@ -88,10 +98,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
                 'media-1',
                 'official-1',
                 'legacy-streamer',
+                'confirmed-scorekeeper',
+                'admin-1',
                 'unrelated-1'
             ]) {
                 await setDoc(doc(firestore, `users/${uid}`), {
-                    isAdmin: false,
+                    isAdmin: uid === 'admin-1',
                     parentTeamIds: [],
                     parentPlayerKeys: []
                 });
@@ -191,5 +203,78 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         await assertFails(updateDoc(doc(unrelatedDb, 'teams/public-team/games/game-1'), {
             homeScore: 99
         }));
+    });
+
+    it('denies delegated scorekeepers destructive game lifecycle updates', async () => {
+        const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
+        for (const field of ['status', 'liveStatus']) {
+            for (const value of ['deleted', 'cancelled', 'canceled']) {
+                await assertFails(updateDoc(gameRef, { [field]: value }));
+            }
+        }
+    });
+
+    it('requires delegated completion attribution to identify the scorekeeper on a completion transition', async () => {
+        const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
+        await assertFails(updateDoc(gameRef, {
+            status: 'completed',
+            liveStatus: 'completed',
+            completedBy: 'unrelated-1',
+            completedAt: serverTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef, {
+            completedBy: 'scorekeeper-1',
+            completedAt: serverTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef, {
+            status: 'completed',
+            liveStatus: 'completed',
+            completedBy: 'scorekeeper-1',
+            completedAt: new Date(0)
+        }));
+    });
+
+    it('allows score-only and supported completion updates for selected and confirmed scorekeepers', async () => {
+        const selectedGameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
+        await assertSucceeds(updateDoc(selectedGameRef, {
+            homeScore: 2,
+            awayScore: 1
+        }));
+        await assertSucceeds(updateDoc(selectedGameRef, {
+            status: 'completed',
+            liveStatus: 'completed'
+        }));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await updateDoc(doc(context.firestore(), 'teams/public-team'), {
+                'teamPermissions.scorekeeping.mode': 'all_confirmed',
+                'teamPermissions.scorekeeping.memberIds': []
+            });
+        });
+        const confirmedGameRef = doc(authedDb('confirmed-scorekeeper'), 'teams/public-team/games/game-2');
+        await assertSucceeds(updateDoc(confirmedGameRef, {
+            homeScore: 3,
+            awayScore: 2
+        }));
+        await assertSucceeds(updateDoc(confirmedGameRef, {
+            status: 'completed',
+            liveStatus: 'completed',
+            completedBy: 'confirmed-scorekeeper',
+            completedAt: serverTimestamp()
+        }));
+    });
+
+    it('retains owner and administrator lifecycle authority denied to delegated scorekeepers', async () => {
+        for (const [uid, email, gameId] of [
+            ['owner-1', 'owner@example.com', 'game-1'],
+            ['admin-1', 'admin-1@example.com', 'game-2']
+        ]) {
+            const gameRef = doc(authedDb(uid, email), `teams/public-team/games/${gameId}`);
+            for (const field of ['status', 'liveStatus']) {
+                for (const value of ['deleted', 'cancelled', 'canceled']) {
+                    await assertSucceeds(updateDoc(gameRef, { [field]: value }));
+                }
+            }
+        }
     });
 });

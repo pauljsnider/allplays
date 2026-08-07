@@ -23,6 +23,18 @@ describe('stream and score Firestore rules', () => {
         expect(rules).toContain('isScoreMetadataAttributionValid() &&');
     });
 
+    it('uses an explicit delegated scorekeeper lifecycle allow-list with authenticated completion attribution', () => {
+        expect(rules).toContain('function isDelegatedScorekeeperLifecycleTransitionAllowed()');
+        expect(rules).toContain("existingStatus in ['scheduled', 'live']");
+        expect(rules).toContain("nextStatus == 'completed'");
+        expect(rules).toContain("existingLiveStatus == 'scheduled' && nextLiveStatus == 'live'");
+        expect(rules).toContain('function isDelegatedScorekeeperCompletionAttributionValid()');
+        expect(rules).toContain('request.resource.data.completedBy == request.auth.uid');
+        expect(rules).toContain('request.resource.data.completedAt == request.time');
+        expect(rules).toContain('isDelegatedScorekeeperCompletionTransition()');
+        expect(rules).not.toContain('function keepsScorekeeperGameLifecycleVisible()');
+    });
+
     it('limits streaming helpers to broadcast-session metadata for eligible games', () => {
         expect(rules).toContain('function canStreamGame(teamId, gameId)');
         expect(rules).toContain("request.auth.uid in permission.get('memberIds', [])");
