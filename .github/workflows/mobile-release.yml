@@ -115,10 +115,14 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Start Android release emulator
         run: |
-          echo no | avdmanager create avd \
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          avdmanager create avd \
             --force \
             --name allplays-release \
-            --package "system-images;android-35;google_apis;x86_64"
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device "pixel_2"
+          test -f "$ANDROID_AVD_HOME/allplays-release.ini"
           "$ANDROID_SDK_ROOT/emulator/emulator" \
             -avd allplays-release \
             -no-window \
