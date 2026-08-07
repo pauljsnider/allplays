@@ -8,6 +8,7 @@ const authServiceMocks = vi.hoisted(() => ({
     applyEmailActionCode: vi.fn(),
     confirmReset: vi.fn(),
     getRouteForUser: vi.fn(() => '/home'),
+    readPendingInvite: vi.fn(() => ({ code: '', type: 'parent' })),
     reloadCurrentUser: vi.fn(),
     resendVerificationEmail: vi.fn(),
     verifyResetCode: vi.fn()

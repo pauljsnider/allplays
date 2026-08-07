@@ -6,7 +6,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, setDoc, Timestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const accessCodeMatch = rules.match(/match \/accessCodes\/\{codeId\} \{[\s\S]*?\n\s*\}/);
@@ -22,6 +22,7 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain('function canReadAccessCode(data)');
         expect(rules).toContain("data.generatedBy == request.auth.uid");
         expect(rules).toContain("request.auth.token.email.lower() == data.email.lower()");
+        expect(rules).toContain('isFamilyInviteAccessCode(data) && verifiedAuthEmailMatches');
         expect(rules).toContain("request.auth.token.phone_number == data.phone");
         expect(rules).toContain('isTeamOwnerOrAdmin(data.teamId)');
         expect(accessCodeRules).toContain('allow get: if resource == null || canReadAccessCode(resource.data);');
@@ -141,8 +142,7 @@ describe('access code Firestore rules', () => {
         expect(parentInviteRedemptionRule).toContain("resource.data.get('expiresAt', null) == null");
         expect(parentInviteRedemptionRule).toContain('resource.data.expiresAt > request.time');
         expect(parentInviteRedemptionRule).toContain("!('email' in resource.data)");
-        expect(parentInviteRedemptionRule).toContain('request.auth.token.email is string');
-        expect(parentInviteRedemptionRule).toContain('request.auth.token.email.lower() == resource.data.email.lower()');
+        expect(parentInviteRedemptionRule).toContain("verifiedAuthEmailMatches(resource.data.get('email', null))");
     });
 
     it('does not let parent_invite redemption rely only on writable key narrowing', () => {
@@ -154,7 +154,7 @@ describe('access code Firestore rules', () => {
         expect(authorizationGuards).toContain("resource.data.get('revoked', false) != true");
         expect(authorizationGuards).toContain("resource.data.get('active', true) != false");
         expect(authorizationGuards).toContain("resource.data.get('status', 'active') != 'revoked'");
-        expect(authorizationGuards).toContain('request.auth.token.email.lower() == resource.data.email.lower()');
+        expect(authorizationGuards).toContain("verifiedAuthEmailMatches(resource.data.get('email', null))");
     });
 
     it('requires household_invite creation to match an organizer-owned family membership and linked parent scope', () => {
@@ -176,7 +176,7 @@ describe('access code Firestore rules', () => {
     it('locks household_invite updates to invited-email redemption or organizer revocation', () => {
         expect(rules).toContain('function isHouseholdInviteRedemptionUpdate()');
         expect(rules).toContain("resource.data.get('type', null) == 'household_invite'");
-        expect(rules).toContain("request.auth.token.email.lower() == resource.data.email.lower()");
+        expect(rules).toContain('verifiedAuthEmailMatches(resource.data.email)');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
         expect(rules).toContain('function isHouseholdInviteRevocationUpdate()');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])");
@@ -223,6 +223,48 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             await setDoc(doc(firestore, 'accessCodeValidationRateLimits/server-owned'), {
                 count: 1,
                 resetAt: Date.now() + 60_000
+            });
+            const expiresAt = Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000);
+            await setDoc(doc(firestore, 'accessCodes/PARENTEMAIL'), {
+                code: 'PARENTEMAIL',
+                type: 'parent_invite',
+                generatedBy: 'owner-a',
+                email: 'recipient@example.com',
+                teamId: 'team-a',
+                playerId: 'player-a',
+                createdAt: Timestamp.now(),
+                expiresAt,
+                used: false,
+                usedBy: null,
+                usedAt: null
+            });
+            await setDoc(doc(firestore, 'accessCodes/PARENTLEGACY'), {
+                code: 'PARENTLEGACY',
+                type: 'parent_invite',
+                generatedBy: 'owner-a',
+                teamId: 'team-a',
+                playerId: 'player-a',
+                createdAt: Timestamp.now(),
+                expiresAt,
+                used: false,
+                usedBy: null,
+                usedAt: null
+            });
+            await setDoc(doc(firestore, 'accessCodes/HOUSEEMAIL'), {
+                code: 'HOUSEEMAIL',
+                type: 'household_invite',
+                generatedBy: 'owner-a',
+                organizerUserId: 'owner-a',
+                familyMembershipId: 'member-a',
+                email: 'recipient@example.com',
+                teamId: 'team-a',
+                playerId: 'player-a',
+                createdAt: Timestamp.now(),
+                expiresAt,
+                used: false,
+                usedBy: null,
+                usedAt: null,
+                revoked: false
             });
         });
     });
@@ -306,6 +348,64 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             doc(unrelatedDb, 'accessCodes/COPE1234'),
             coParentInvitePayload('unrelated-user')
         ));
+    });
+
+    it('denies matching unverified reads and redemption writes for email-targeted family invites', async () => {
+        const unverifiedDb = testEnv.authenticatedContext('recipient', {
+            email: 'recipient@example.com',
+            email_verified: false
+        }).firestore();
+
+        for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL']) {
+            const codeRef = doc(unverifiedDb, `accessCodes/${codeId}`);
+            await assertFails(getDoc(codeRef));
+            await assertFails(updateDoc(codeRef, {
+                used: true,
+                usedBy: 'recipient',
+                usedAt: Timestamp.now()
+            }));
+        }
+    });
+
+    it('allows verified matching redemption and preserves non-email legacy parent redemption', async () => {
+        const verifiedDb = testEnv.authenticatedContext('recipient', {
+            email: 'recipient@example.com',
+            email_verified: true
+        }).firestore();
+        const legacyDb = testEnv.authenticatedContext('legacy-parent', {
+            email: 'legacy@example.com',
+            email_verified: false
+        }).firestore();
+
+        for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL']) {
+            const codeRef = doc(verifiedDb, `accessCodes/${codeId}`);
+            await assertSucceeds(getDoc(codeRef));
+            await assertSucceeds(updateDoc(codeRef, {
+                used: true,
+                usedBy: 'recipient',
+                usedAt: Timestamp.now()
+            }));
+        }
+
+        await assertSucceeds(updateDoc(doc(legacyDb, 'accessCodes/PARENTLEGACY'), {
+            used: true,
+            usedBy: 'legacy-parent',
+            usedAt: Timestamp.now()
+        }));
+    });
+
+    it('denies verified mismatched family invite recipients', async () => {
+        const mismatchedDb = testEnv.authenticatedContext('other-recipient', {
+            email: 'other@example.com',
+            email_verified: true
+        }).firestore();
+
+        await assertFails(getDoc(doc(mismatchedDb, 'accessCodes/PARENTEMAIL')));
+        await assertFails(updateDoc(doc(mismatchedDb, 'accessCodes/PARENTEMAIL'), {
+            used: true,
+            usedBy: 'other-recipient',
+            usedAt: Timestamp.now()
+        }));
     });
 
     it('preserves permitted standard and parent invite creation', async () => {

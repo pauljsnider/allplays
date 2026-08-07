@@ -174,12 +174,14 @@ function makeFirestore(seed = {}) {
   return {
     _state: state,
     _transactionWrites: transactionWrites,
+    _transactionCalls: 0,
     FieldValue: fieldValue,
     Timestamp: FakeTimestamp,
     FieldPath: { documentId: () => '__name__' },
     doc,
     collection,
     async runTransaction(handler) {
+      this._transactionCalls += 1;
       const transaction = {
         get: (ref) => ref.get(),
         set: (ref, value, options) => {
@@ -512,6 +514,27 @@ test('cleanupInviteSignupOnAuthDelete uses the auth-delete record without fetchi
 });
 
 for (const [label, type, callableName, code] of familyInviteCases) {
+  test(`${label} redemption rejects a matching unverified token before a transaction with zero writes`, async () => {
+    const uid = 'invited-parent';
+    const seed = redemptionSeed(type, { uid });
+    const before = clone(seed);
+    const { firestore, mod } = loadFunctions(seed);
+
+    await assert.rejects(
+      mod[callableName](
+        { userId: uid, code, authEmail: 'invited@example.com' },
+        { auth: { uid, token: { email: 'invited@example.com', email_verified: false } } }
+      ),
+      (error) => error?.code === 'permission-denied'
+    );
+
+    assert.equal(firestore._transactionCalls, 0);
+    assert.deepEqual(firestore._transactionWrites, []);
+    Object.entries(before).forEach(([path, value]) => {
+      assert.deepEqual(firestore.snapshot(path), value);
+    });
+  });
+
   test(`${label} redemption rejects spoofed request email when Auth has no email with zero writes`, async () => {
     const uid = 'invited-parent';
     const seed = redemptionSeed(type, { uid });
@@ -527,6 +550,7 @@ for (const [label, type, callableName, code] of familyInviteCases) {
     );
 
     assert.deepEqual(firestore._transactionWrites, []);
+    assert.equal(firestore._transactionCalls, 0);
     Object.entries(before).forEach(([path, value]) => {
       assert.deepEqual(firestore.snapshot(path), value);
     });
@@ -546,6 +570,7 @@ for (const [label, type, callableName, code] of familyInviteCases) {
     );
 
     assert.deepEqual(firestore._transactionWrites, []);
+    assert.equal(firestore._transactionCalls, 0);
     assert.equal(firestore.snapshot('accessCodes/invite-1').status, 'pending');
     assert.deepEqual(firestore.snapshot(`users/${uid}`).parentTeamIds, []);
     assert.equal(firestore.snapshot('teams/team-1/players/player-1/private/profile'), undefined);
@@ -561,6 +586,7 @@ for (const [label, type, callableName, code] of familyInviteCases) {
     );
 
     assert.equal(result.success, true);
+    assert.equal(firestore._transactionCalls, 1);
     assert.equal(firestore.snapshot('accessCodes/invite-1').status, 'accepted');
     assert.deepEqual(firestore.snapshot(`users/${uid}`).parentTeamIds, ['team-1']);
     assert.equal(

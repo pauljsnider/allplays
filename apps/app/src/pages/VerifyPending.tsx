@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, LogOut, Mail, Send } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
-import { getRouteForUser, reloadCurrentUser, resendVerificationEmail } from '../lib/authService';
+import { getRouteForUser, readPendingInvite, reloadCurrentUser, resendVerificationEmail } from '../lib/authService';
 import type { AuthState } from '../lib/types';
 import { getSafeAuthNextRoute } from '../lib/authNextRoute';
 
@@ -10,7 +10,11 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const nextRoute = getSafeAuthNextRoute(searchParams.get('next'));
-  const continueRoute = nextRoute || getRouteForUser(auth.user);
+  const pendingInvite = readPendingInvite();
+  const pendingInviteRoute = pendingInvite.code
+    ? `/accept-invite?code=${encodeURIComponent(pendingInvite.code)}&type=${encodeURIComponent(pendingInvite.type)}`
+    : '';
+  const continueRoute = nextRoute || pendingInviteRoute || getRouteForUser(auth.user);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -28,7 +32,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
       await reloadCurrentUser(); // Ensure native session is refreshed
       const refreshedUser = await auth.refresh();
       if (refreshedUser?.emailVerified === true) {
-        navigate(nextRoute || getRouteForUser(refreshedUser), { replace: true });
+        navigate(nextRoute || pendingInviteRoute || getRouteForUser(refreshedUser), { replace: true });
         return;
       }
       setShowSecondaryOptions(true);
