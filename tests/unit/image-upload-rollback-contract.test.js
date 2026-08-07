@@ -85,7 +85,7 @@ describe('legacy image upload rollback contracts', () => {
     it('rolls back direct game statsheet uploads when the game update fails', () => {
         const source = read('game.html');
 
-        expect(source).toContain("uploadStatSheetPhoto(teamId, file, { returnUpload: true })");
+        expect(source).toContain("uploadStatSheetPhoto(teamId, gameId, file, { returnUpload: true })");
         expect(source).toContain('{ path: upload.path, storage: upload.storage }');
         expect(source).toContain('if (newlyUploadedStatSheet && !statSheetPersisted)');
         expect(source).toContain('await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);');
@@ -93,10 +93,14 @@ describe('legacy image upload rollback contracts', () => {
 
     it('waits for replacement confirmation before uploading a tracked statsheet and preserves uncertain commits', () => {
         const source = read('track-statsheet.html');
+        const dbSource = read('js/db.js');
         const confirmIndex = source.indexOf("confirm('This game already has tracked data. Replace it with the stat sheet results?')");
-        const uploadIndex = source.indexOf("uploadStatSheetPhoto(currentTeamId, statSheetFile, { returnUpload: true })");
+        const uploadIndex = source.indexOf("uploadStatSheetPhoto(currentTeamId, currentGameId, statSheetFile, { returnUpload: true })");
 
         expect(uploadIndex).toBeGreaterThan(confirmIndex);
+        expect(dbSource).toContain('export async function uploadStatSheetPhoto(teamId, gameId, file, options = {})');
+        expect(dbSource).toContain('buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce)');
+        expect(dbSource).not.toContain('buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce)');
         expect(source).toContain('{ commitStateUnknown: true }');
         expect(source).toContain("error?.commitStateUnknown !== true");
         expect(source).toContain("storage: lateUpload.storage");

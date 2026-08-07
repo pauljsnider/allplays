@@ -300,7 +300,7 @@ describe('applyTrackStatsheetImportForApp', () => {
       replaceExisting: true
     })
 
-    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file, { returnUpload: true })
+    expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', 'game-1', file, { returnUpload: true })
     expect(firebaseMocks.writeBatch).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },

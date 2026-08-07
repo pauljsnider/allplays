@@ -85,7 +85,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(buildGameClipFallbackPath('team/alpha', 'game 7', 'user 42', 'clip #1.mp4', 1700000000001, 'upload-5'))
             .toBe('game-clips/team_alpha/game_7/user_42/1700000000001_upload-5_clip_1.mp4');
         expect(dbSource).toContain('buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts)');
-        expect(dbSource).toContain('buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce)');
+        expect(dbSource).toContain('buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce)');
         expect(dbSource).toContain('buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now())');
         expect(dbSource).toContain('buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce)');
     });
@@ -208,7 +208,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(rules).toContain("teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected'");
 
         expect(statSheetFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
-        expect(statSheetFallbackRules).toContain('request.auth.uid == userId');
+        expect(statSheetFallbackRules).toContain('allow create: if false;');
         expect(statSheetFallbackRules).not.toContain('gameId');
         expect(rules).toContain('function canDeleteOwnTeamScopedUpload(teamId, userId)');
         expect(statSheetFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');

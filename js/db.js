@@ -37,7 +37,7 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildGameScopedStatSheetFallbackPath } from './fallback-media-paths.js?v=4';
 import { createSecureUploadToken } from './secure-upload-token.js?v=1';
 import {
     buildPlayerProfilePhotoPath,
@@ -730,7 +730,7 @@ export async function uploadGameClip(teamId, gameId, file) {
     };
 }
 
-export async function uploadStatSheetPhoto(teamId, file, options = {}) {
+export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -739,32 +739,18 @@ export async function uploadStatSheetPhoto(teamId, file, options = {}) {
 
     const userId = getRequiredSignedInUserId();
     if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
+    if (typeof gameId !== 'string' || !gameId.trim()) {
+        throw new Error('Game-scoped stat sheet upload requires a game.');
+    }
     const ts = Date.now();
     const nonce = createSecureUploadToken();
-    const path = `team-photos/${ts}_${nonce}_stat-sheet_${file.name}`;
-    if (await canUseLegacyImageStorage('stat sheet upload')) {
-        try {
-            const storageRef = ref(imageStorage, path);
-            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
-            const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
-            console.log('Stat sheet URL (image storage):', downloadURL);
-            return options?.returnUpload === true
-                ? { url: downloadURL, path, storage: 'image' }
-                : downloadURL;
-        } catch (error) {
-            const code = error?.code || '';
-            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
-            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-        }
-    }
-
-    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce);
-    const fallbackRef = ref(storage, fallbackPath);
-    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const path = buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
+    const storageRef = ref(storage, path);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
     const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Stat sheet URL (main storage):', downloadURL);
     return options?.returnUpload === true
-        ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+        ? { url: downloadURL, path, storage: 'primary' }
         : downloadURL;
 }
 

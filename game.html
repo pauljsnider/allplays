@@ -388,7 +388,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433160';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433161';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443337';
         import { checkAuth } from './js/auth.js?v=4433163';
@@ -740,7 +740,7 @@
                 let newlyUploadedStatSheet = null;
                 let statSheetPersisted = false;
                 try {
-                    const upload = await uploadStatSheetPhoto(teamId, file, { returnUpload: true });
+                    const upload = await uploadStatSheetPhoto(teamId, gameId, file, { returnUpload: true });
                     const url = typeof upload === 'string' ? upload : upload.url;
                     newlyUploadedStatSheet = typeof upload === 'string'
                         ? null

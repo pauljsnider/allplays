@@ -342,11 +342,7 @@ service firebase.storage {
     match /stat-sheets/team-games/{teamId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
-      allow create: if isVerifiedForSensitiveWrite() &&
-        canAccessTeamMedia(teamId) &&
-        request.auth.uid == userId &&
-        request.resource.size > 0 &&
-        request.resource.size <= 20 * 1024 * 1024;
+      allow create: if false;
       allow delete: if isVerifiedForSensitiveWrite() &&
         (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));
       allow update: if false;
