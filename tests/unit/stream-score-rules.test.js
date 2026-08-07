@@ -25,6 +25,10 @@ describe('stream and score Firestore rules', () => {
 
     it('uses an explicit delegated scorekeeper lifecycle allow-list with authenticated completion attribution', () => {
         expect(rules).toContain('function isDelegatedScorekeeperLifecycleTransitionAllowed()');
+        expect(rules).toContain("!resource.data.keys().hasAny(['status'])");
+        expect(rules).toContain("request.resource.data.keys().hasAny(['status'])");
+        expect(rules).toContain("!resource.data.keys().hasAny(['liveStatus'])");
+        expect(rules).toContain("request.resource.data.keys().hasAny(['liveStatus'])");
         expect(rules).toContain("existingStatus in ['scheduled', 'live', 'completed']");
         expect(rules).toContain("nextStatus in ['scheduled', 'live', 'completed']");
         expect(rules).toContain("existingLiveStatus in ['scheduled', 'live', 'completed']");
