@@ -273,8 +273,12 @@ describe('Capacitor native config', () => {
         expect(rootPackage.scripts['mobile:run:android']).toContain('mobile:sync:native-debug');
         expect(rootPackage.scripts['mobile:run:android']).not.toContain('app:build');
 
+        expect(appPackage.scripts['build:native']).toContain('ALLPLAYS_CAPACITOR_BUILD=1');
+        expect(appPackage.scripts['build:native']).not.toContain('ALLPLAYS_APP_CHECK_NATIVE_DEBUG');
         expect(rootPackage.scripts['app:build']).not.toContain('native-debug');
-        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build && npx cap sync');
+        expect(rootPackage.scripts['app:build']).not.toContain('app:build:native');
+        expect(rootPackage.scripts['app:build:native']).toContain('build:native');
+        expect(rootPackage.scripts['mobile:sync']).toBe('npm run app:build:native && npx cap sync');
         expect(rootPackage.scripts['mobile:sync']).not.toContain('native-debug');
     });
 
