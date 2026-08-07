@@ -88,9 +88,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=136';
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=21';
-        import { checkAuth } from './js/auth.js?v=141';
+        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=4433159';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=443336';
+        import { checkAuth } from './js/auth.js?v=4433162';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -142,9 +142,6 @@
                     }
                     if (profile?.email) {
                         user.profileEmail = profile.email;
-                        if (!user.email) {
-                            user.email = profile.email;
-                        }
                     }
                 } catch (e) {
                     console.error('Error loading user profile:', e);
@@ -156,7 +153,7 @@
                 const [coachTeams, parentTeams] = await Promise.all([
                     canManageAllTeams
                         ? getTeams({ includePrivate: true })
-                        : getUserTeamsWithAccess(user.uid, user.email || profile?.email),
+                        : getUserTeamsWithAccess(user.uid, user.email),
                     getParentTeams(user.uid)
                 ]);
 
@@ -191,7 +188,7 @@
                 const unreadLookupUser = {
                     ...user,
                     uid: user.uid,
-                    email: user.email || user.profileEmail || profile?.email || null
+                    email: user.email || null
                 };
                 const conversationLookupByTeam = allTeams.reduce((acc, team) => {
                     acc[team.id] = {

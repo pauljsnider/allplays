@@ -11,10 +11,12 @@ import {
   computeAppSearchResults,
   getImmediateAppTeamSearchResults,
   getKnownAppSearchTeams,
+  loadAppSearchHelpResults,
   loadAppSearchTeams,
   searchAppTeams,
   searchAppPlayers,
   type AppSearchItem,
+  type AppSearchHelp,
   type AppSearchPlayer,
   type AppSearchTeam
 } from '../lib/searchService';
@@ -27,6 +29,7 @@ type AppSearchDialogProps = {
 };
 
 const backdropCloseGuardMs = 750;
+const helpSearchDebounceMs = 150;
 const hydrationSearchFallbackMs = 250;
 const keyboardInsetActivationThresholdPx = 80;
 const remotePlayerSearchCoalesceMs = 120;
@@ -41,10 +44,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [playersRetrying, setPlayersRetrying] = useState(false);
+  const [helpResults, setHelpResults] = useState<AppSearchHelp[]>([]);
+  const [helpLoading, setHelpLoading] = useState(false);
   const [searchAttempt, setSearchAttempt] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const helpSearchRequestId = useRef(0);
   const playerSearchGenerationRef = useRef(0);
   const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -56,11 +62,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const helpRoleFilter = derivePrimaryHelpRole(auth);
 
   const results = useMemo(
-    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
-    [auth, helpRoleFilter, players, query, teams]
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpResults }),
+    [auth, helpResults, players, query, teams]
   );
-  const helpResults = results.help ?? [];
-  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
+  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...results.help, ...results.players];
 
   useEffect(() => {
     if (!open) return;
@@ -83,6 +88,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersError('');
     setPlayersLoading(false);
     setPlayersRetrying(false);
+    setHelpResults([]);
+    setHelpLoading(false);
     clearScheduledPlayerSearch();
     const knownTeams = getKnownAppSearchTeams(auth.user);
     baseTeamsRef.current = knownTeams;
@@ -92,6 +99,35 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setTeamsError('');
     setTeamsRetrying(false);
   }, [auth.user, open]);
+
+  useEffect(() => {
+    const requestId = ++helpSearchRequestId.current;
+    const trimmedQuery = query.trim();
+
+    if (!open || trimmedQuery.length < 2) {
+      setHelpResults([]);
+      setHelpLoading(false);
+      return;
+    }
+
+    setHelpResults([]);
+    setHelpLoading(true);
+    const timeoutId = window.setTimeout(() => {
+      void loadAppSearchHelpResults({ queryText: trimmedQuery, auth, helpRoleFilter })
+        .then((nextHelpResults) => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults(nextHelpResults);
+          setHelpLoading(false);
+        })
+        .catch(() => {
+          if (requestId !== helpSearchRequestId.current) return;
+          setHelpResults([]);
+          setHelpLoading(false);
+        });
+    }, helpSearchDebounceMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [auth, helpRoleFilter, open, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -381,8 +417,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           ? 'No matching teams'
           : ''
     : teamsError;
-  const helpStatus = hasRealQuery && helpResults.length === 0
-    ? 'No matching help articles'
+  const helpStatus = hasRealQuery && helpLoading
+    ? 'Searching help...'
+    : hasRealQuery && results.help.length === 0
+      ? 'No matching help articles'
     : '';
   const playersStatus = !hasRealQuery
     ? 'Type at least 2 characters to search players'
@@ -426,6 +464,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   autoComplete="off"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || !isNativeRuntime()) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.currentTarget.blur();
+                  }}
                   className="min-h-11 w-full rounded-xl border border-gray-200 px-3 pr-11 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   placeholder="Search teams, players, actions, help..."
                   aria-label="Search teams, players, actions, help"
@@ -487,7 +531,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
             <SearchSection
               title="Help"
-              items={helpResults}
+              items={results.help}
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
@@ -513,7 +557,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               title="Players"
               items={results.players}
               activeIndex={activeIndex}
-              offset={results.actions.length + results.teams.length + helpResults.length}
+              offset={results.actions.length + results.teams.length + results.help.length}
               status={playersStatus}
               statusTone={playersError && !playersRetrying ? 'error' : 'neutral'}
               onRetry={playersError ? () => retrySearch('players') : undefined}

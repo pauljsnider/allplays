@@ -105,6 +105,7 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         'normalizeNotificationPreferences',
         'getCandidateUsersForTeam',
         'buildTeamNotificationRecipientRef',
+        'getEnabledNotificationAuthUserIds',
         `${helperSource}\nreturn { getTargetsForCategory, getLegacyTargetsForCategory, canReceiveCategoryNotification };`
     );
 
@@ -115,7 +116,8 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         { media: false },
         (prefs) => ({ media: prefs?.media === true }),
         getCandidateUsersForTeam,
-        (teamId, uid) => ({ teamId, uid })
+        (teamId, uid) => ({ teamId, uid }),
+        async (userIds) => new Set(userIds)
     );
 
     return {
@@ -130,7 +132,7 @@ describe('team media notification recipients', () => {
     it('registers batched team media push notification queue and dispatcher functions', () => {
         expect(functionsSource).toContain('exports.queueTeamMediaNotificationBatch = functions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/mediaItems/{itemId}')");
-        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
         expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');

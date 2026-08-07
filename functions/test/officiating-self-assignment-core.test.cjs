@@ -70,6 +70,13 @@ test('isEligibleOpenOfficiatingSlotParticipant accepts staff and linked parents 
         email: 'parent2@example.com',
         teamId: 'team-1'
     }), false);
+    assert.equal(isEligibleOpenOfficiatingSlotParticipant({
+        team,
+        user: { email: 'assistant@example.com', profileEmail: 'assistant@example.com' },
+        uid: 'former-assistant',
+        email: '',
+        teamId: 'team-1'
+    }), false);
 });
 
 test('buildOpenOfficiatingSlotClaimUpdate changes exactly the requested open slot', () => {

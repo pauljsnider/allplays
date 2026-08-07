@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=141';
+import { checkAuth } from './auth.js?v=4433162';
 import {
     getTeam,
     getTeamMediaFolders,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=136';
+} from './db.js?v=4433159';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -31,7 +31,8 @@ import {
     isTeamMediaDocument,
     normalizeTeamMediaVideoDraft,
     sortByMediaOrder
-} from './team-media-utils.js?v=5';
+} from './team-media-utils.js?v=44338';
+import { validateTeamMediaUploadBatch } from './team-media-upload-limits.js?v=44531';
 
 const state = {
     teamId: '',
@@ -729,6 +730,11 @@ els.uploadForm.addEventListener('submit', async (event) => {
         showAlert('Choose at least one image to upload.', 'error');
         return;
     }
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+        showAlert(batchValidation.message, 'error');
+        return;
+    }
 
     const { uploadedCount } = await uploadSelectedFiles({
         files,
@@ -754,6 +760,11 @@ els.fileUploadForm.addEventListener('submit', async (event) => {
     }
     if (files.length === 0) {
         showAlert('Choose at least one file to upload.', 'error');
+        return;
+    }
+    const batchValidation = validateTeamMediaUploadBatch(files);
+    if (!batchValidation.valid) {
+        showAlert(batchValidation.message, 'error');
         return;
     }
 

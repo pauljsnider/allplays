@@ -6,7 +6,7 @@ import { AuthPage } from './AuthPage';
 import type { AuthState, AuthUser } from '../lib/types';
 
 const authServiceMocks = vi.hoisted(() => ({
-  completeGoogleRedirect: vi.fn(async () => null),
+  completeGoogleRedirect: vi.fn(async (): Promise<any> => null),
   describeAuthError: vi.fn((error: Error) => error.message),
   getRouteForUser: vi.fn((user: AuthUser | null) => {
     if (!user) {
@@ -59,6 +59,7 @@ function renderAuthPage(path = '/auth') {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/auth" element={<AuthPage auth={auth} />} />
+        <Route path="/parent-tools/fees" element={<div>Family fee destination</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -126,6 +127,19 @@ describe('AuthPage native post-login routing', () => {
     await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith(null));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a family fee next route when Google popup fallback completes by redirect', async () => {
+    authServiceMocks.completeGoogleRedirect.mockResolvedValueOnce({
+      user: { uid: 'parent-1', email: 'parent@example.com' },
+      wasNewUser: false
+    });
+    const feeRoute = '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1';
+
+    renderAuthPage(`/auth?next=${encodeURIComponent(feeRoute)}`);
+
+    expect(await screen.findByText('Family fee destination')).toBeTruthy();
+    expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('routes the Apple button through native sign-in and reloads the home page', async () => {

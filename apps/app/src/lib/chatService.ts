@@ -1,4 +1,5 @@
 import { isNativeRuntime } from './nativeRuntime';
+import { createSecureUploadToken } from './secureUploadToken';
 import {
   canAccessTeamChat,
   canModerateChat,
@@ -74,6 +75,7 @@ const chatUploadTimeoutMs = 25000;
 const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
+const chatUnreadCountTimeoutMs = 3000;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -143,6 +145,18 @@ export type TeamEmailDraft = {
   authorName?: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+};
+
+export const TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
+
+export type TeamEmailSavedCursor = {
+  updatedAt: unknown;
+  id: string;
+};
+
+export type TeamEmailSavedPage<T> = {
+  items: T[];
+  nextCursor: TeamEmailSavedCursor | null;
 };
 
 export type ChatInboxLoadResult = {
@@ -922,7 +936,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   let teams: Record<string, any>[] = [];
   try {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
-      getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
+      getUserTeamsWithAccess(user.uid, user.email || ''),
       getParentTeams(user.uid)
     ]), 'Chat teams load');
     if (memberTeamsResult.status === 'rejected' && parentTeamsResult.status === 'rejected') {
@@ -1009,16 +1023,18 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       latestMessageAtByConversationByTeam[team.id]
     ))
     .map((team) => team.id);
+  const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
       latestMessageAtByTeam,
       latestMessageAtByConversationByTeam,
       conversationIdsByTeam,
       conversationLookupByTeam,
-      defaultConversationOnly: !includeLastMessages
+      defaultConversationOnly: !includeLastMessages,
+      deadlineAt: unreadDeadlineAt
     })),
     'Chat unread counts',
-    3000
+    chatUnreadCountTimeoutMs
   ).catch(() => ({} as Record<string, number>));
 
   const previews = includeLastMessages
@@ -1268,7 +1284,7 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
   const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^%\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
   const safeUserId = String(userId).replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
-  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${safeName}`;
+  const path = `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${Date.now()}_${createSecureUploadToken()}_${safeName}`;
   const requestUrl = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
   const abortController = new AbortController();
   let uploadTimeoutId: number | undefined;
@@ -1278,36 +1294,43 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
       reject(new Error('Chat media upload timed out. Check your connection and try again.'));
     }, chatUploadTimeoutMs);
   });
-  const uploadRequest = fetch(requestUrl, {
-    method: 'POST',
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': file.type || 'application/octet-stream'
-    }, requestUrl),
-    body: file,
-    signal: abortController.signal
-  });
-  const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
-    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
-  }
-  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
-  const url = token
-    ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
-    : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
+  try {
+    const uploadRequest = fetch(requestUrl, {
+      method: 'POST',
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${idToken}`,
+        'Content-Type': file.type || 'application/octet-stream'
+      }, requestUrl),
+      body: file,
+      signal: abortController.signal
+    });
+    const response = await Promise.race([uploadRequest, uploadTimeout]).finally(() => {
+      if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
+    }
+    const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+    const url = token
+      ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+      : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
 
-  return {
-    type: isVideo ? 'video' : 'image',
-    url,
-    path,
-    name: file.name || null,
-    mimeType: file.type || null,
-    size: Number.isFinite(file.size) ? file.size : null,
-    thumbnailUrl: null
-  };
+    return {
+      type: isVideo ? 'video' : 'image',
+      url,
+      path,
+      name: file.name || null,
+      mimeType: file.type || null,
+      size: Number.isFinite(file.size) ? file.size : null,
+      thumbnailUrl: null
+    };
+  } catch (error) {
+    if (uploadTimeoutId) window.clearTimeout(uploadTimeoutId);
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    await deleteNativePrimaryStorageFile(path).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
@@ -1325,6 +1348,22 @@ export async function uploadTeamChatAttachment(teamId: string, file: File, conve
   } catch (error) {
     throw error;
   }
+}
+
+export async function deleteTeamChatAttachments(attachments: ChatAttachment[]) {
+  const cleanupAttachments = (Array.isArray(attachments) ? attachments : [])
+    .filter((attachment) => Boolean(attachment?.path));
+  if (!cleanupAttachments.length) return;
+  if (isNativeRuntime()) {
+    const { deleteNativePrimaryStorageFile } = await import('./nativeStorageUpload');
+    const results = await Promise.allSettled(cleanupAttachments.map((attachment) => (
+      deleteNativePrimaryStorageFile(String(attachment.path))
+    )));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    return;
+  }
+  await deleteUploadedChatAttachments(cleanupAttachments);
 }
 
 async function uploadTeamChatAttachments({
@@ -1591,7 +1630,7 @@ export async function sendTeamChatMessage({
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
-        await deleteUploadedChatAttachments(cleanupAttachments);
+        await deleteTeamChatAttachments(cleanupAttachments);
       } catch (cleanupError) {
         logger.error('Failed to clean up uploaded chat attachments.', { error: cleanupError });
       }
@@ -1634,19 +1673,39 @@ export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit
   return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
 }
 
-export async function loadTeamEmailDrafts(teamId: string): Promise<TeamEmailDraft[]> {
-  const drafts = await withTimeout(Promise.resolve(getStoredTeamEmailDrafts(teamId)), 'Team email drafts') as Record<string, any>[];
-  return drafts
+export function mergeTeamEmailSavedItems<T extends { id: string }>(current: T[], next: T[]): T[] {
+  const merged = new Map(current.map((item) => [item.id, item]));
+  next.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
+export async function loadTeamEmailDrafts(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailDraft>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailDrafts(teamId, { pageSize, cursor })),
+    'Team email drafts'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((draft) => normalizeTeamEmailDraft(draft))
     .filter((draft): draft is TeamEmailDraft => Boolean(draft))
     .sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
-export async function loadTeamEmailTemplates(teamId: string): Promise<TeamEmailTemplate[]> {
-  const templates = await withTimeout(Promise.resolve(getStoredTeamEmailTemplates(teamId)), 'Team email templates') as Record<string, any>[];
-  return templates
+export async function loadTeamEmailTemplates(
+  teamId: string,
+  { pageSize = TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null }: { pageSize?: number; cursor?: TeamEmailSavedCursor | null } = {}
+): Promise<TeamEmailSavedPage<TeamEmailTemplate>> {
+  const page = await withTimeout(
+    Promise.resolve(getStoredTeamEmailTemplates(teamId, { pageSize, cursor })),
+    'Team email templates'
+  ) as { items?: Record<string, any>[]; nextCursor?: TeamEmailSavedCursor | null };
+  const items = (Array.isArray(page?.items) ? page.items : [])
     .map((template) => normalizeTeamEmailTemplate(template))
     .filter((template): template is TeamEmailTemplate => Boolean(template));
+  return { items, nextCursor: page?.nextCursor || null };
 }
 
 export async function saveTeamEmailDraft({

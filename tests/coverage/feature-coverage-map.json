@@ -157,6 +157,7 @@
                 "requestAccountDeletion",
                 "redeemAdminInvite",
                 "redeemCoParentInvite",
+                "redeemFriendInvite",
                 "redeemHouseholdInvite",
                 "redeemParentInvite",
                 "validateAccessCodeForAcceptance"
@@ -172,6 +173,7 @@
                 "functions/test/auth-email-resend-delivery.test.cjs",
                 "functions/test/co-parent-invite-core.test.cjs",
                 "functions/test/failed-invite-signup-cleanup.test.cjs",
+                "functions/test/friend-invite-redemption.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
                 "tests/unit/mobile-store-legal-pages.test.js",
                 "tests/unit/accept-invite-page.test.js",
@@ -230,6 +232,10 @@
                 "apps/app/src/pages/PlayerDetail.tsx",
                 "apps/app/src/pages/PublicTeamsBrowse.tsx",
                 "apps/app/src/pages/TeamDetail.tsx",
+                "apps/app/src/pages/team-detail/InsightsTab.tsx",
+                "apps/app/src/pages/team-detail/insightsTabLoader.ts",
+                "apps/app/src/pages/team-detail/MoreTab.tsx",
+                "apps/app/src/pages/team-detail/moreTabLoader.ts",
                 "apps/app/src/pages/team-detail/RosterTab.tsx",
                 "apps/app/src/pages/team-detail/rosterTabLoader.ts",
                 "apps/app/src/pages/TeamSettings.tsx",
@@ -243,8 +249,10 @@
                 "notifyParentMembershipRequestUpdated",
                 "queueInviteEmail",
                 "queueParentInviteEmail",
+                "reconcileLegacyTeamOwnership",
                 "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
+                "syncLegacyTeamOwnershipOnAuthCreate",
                 "syncPublicUserProfileOnUserWrite",
                 "syncPublicUserProfileProjection",
                 "syncPublicUserProfilesOnTeamWrite",
@@ -308,6 +316,9 @@
                 "apps/app/src/pages/Schedule.tsx",
                 "apps/app/src/pages/ScheduleEventDetail.tsx",
                 "apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx"
+            ],
+            "appSupportFiles": [
+                "apps/app/src/pages/schedule/ScheduleGameHubSection.tsx"
             ],
             "cloudFunctions": [
                 "createScopedRsvpToken",
@@ -467,6 +478,7 @@
             "appSupportFiles": [
                 "apps/app/src/pages/messages/components/ChatComposer.tsx",
                 "apps/app/src/pages/messages/components/ChatWindow.tsx",
+                "apps/app/src/pages/messages/components/TeamAvatar.tsx",
                 "apps/app/src/pages/messages/components/TeamEmailSheet.tsx",
                 "apps/app/src/pages/messages/hooks/useChatMessages.ts",
                 "apps/app/src/pages/messages/hooks/useChatSheets.ts",
@@ -537,14 +549,19 @@
                 "apps/app/src/pages/TeamMedia.tsx"
             ],
             "cloudFunctions": [
+                "cleanupCertificateSignature",
+                "commitCertificateDefaults",
                 "dispatchDueTeamMediaNotificationBatches",
+                "indexCertificateLegacySignaturesOnDefaultsWrite",
                 "notifyPublishedCertificateAward",
                 "queueTeamMediaNotificationBatch"
             ],
             "unitTests": [
+                "functions/test/certificate-signature-cleanup.test.cjs",
                 "functions/test/team-media-notification-batches.test.js",
                 "tests/unit/athlete-profile-storage-rules.test.js",
                 "tests/unit/certificate-award-notifications.test.js",
+                "tests/unit/certificate-legacy-signature-inventory-backfill.test.js",
                 "tests/unit/certificates-workflow.test.js",
                 "tests/unit/fallback-media-storage.test.js",
                 "tests/unit/team-media-page.test.js",
@@ -778,6 +795,7 @@
                 "getPublicOpportunity",
                 "getPublicTeamCalendarProjection",
                 "getPublicTeamProfile",
+                "listManagedTeams",
                 "listManagedPublicOpportunityTeams",
                 "listMyPublicOpportunities",
                 "listOpportunityInquiries",
@@ -788,6 +806,7 @@
                 "publicTeamGamesV1",
                 "publicTeamRosterV1",
                 "renewPublicOpportunity",
+                "revokeTeamAdminAccess",
                 "replyToOpportunityInquiry",
                 "reportPublicOpportunity",
                 "updatePublicOpportunity"

@@ -1,4 +1,4 @@
-import { checkAuth } from '../auth.js?v=141';
+import { checkAuth } from '../auth.js?v=4433162';
 import {
     getTeam,
     getUserProfile,
@@ -22,12 +22,13 @@ import {
     archiveCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=136';
-import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=21';
-import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=11';
+} from '../db.js?v=4433159';
+import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=443336';
+import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=443318';
 import { TEMPLATES } from './templates.js?v=2';
 import { CERTIFICATE_FONT_OPTIONS, renderCertificate, createPreviewDraft, resolveColors, getContrastWarning } from './renderer.js?v=2';
-import { buildDefaultSigners, normalizeSigners } from './signers.js?v=1';
+import { buildDefaultSigners, normalizeSigners } from './signers.js?v=2';
+import { certificateDefaultsMatch } from './defaultsReconciliation.js?v=1';
 import {
     CERTIFICATE_DESCRIPTION_CHAR_LIMIT,
     generateCertificateDescription,
@@ -76,6 +77,23 @@ const state = {
 };
 
 renderFooter(document.getElementById('footer-container'));
+
+async function persistCertificateDefaults() {
+    try {
+        await setCertificateDefaults(state.teamId, state.shared);
+    } catch (error) {
+        const persistenceError = error instanceof Error ? error : new Error(String(error || 'Unable to save certificate defaults.'));
+        const authoritativeDefaults = await getCertificateDefaults(state.teamId).catch(() => null);
+        if (!authoritativeDefaults) {
+            persistenceError.certificateDefaultsPersistenceState = 'unknown';
+            throw persistenceError;
+        }
+        if (!certificateDefaultsMatch(state.shared, authoritativeDefaults)) {
+            persistenceError.certificateDefaultsPersistenceState = 'not-committed';
+            throw persistenceError;
+        }
+    }
+}
 
 function escapeAttr(value) {
     return String(value ?? '')
@@ -908,21 +926,14 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=2');
+                const { uploadCertificateAsset } = await import('./assets.js?v=7');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
-                state.imageUploadStatus[slot] = asset.firestoreSaveFailed
-                    ? { state: 'ready', message: 'Uploaded for this run.' }
-                    : { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
+                state.imageUploadStatus[slot] = { state: 'ready', message: `Uploaded ${asset.originalFilename || file.name || 'image'}.` };
                 renderSetup();
                 schedulePreviewRender();
-                showAlert(
-                    asset.firestoreSaveFailed
-                        ? 'Image uploaded for this certificate run.'
-                        : 'Image uploaded.',
-                    'success'
-                );
+                showAlert('Image uploaded.', 'success');
             } catch (error) {
                 state.imageUploadStatus[slot] = { state: 'warning', message: `Local preview only. ${formatImageUploadError(error)}` };
                 renderSetup();
@@ -938,6 +949,10 @@ function bindSetupEvents() {
         input.addEventListener('input', () => {
             const index = Number(input.dataset.signerIndex);
             const field = input.dataset.signerField;
+            if (field === 'signatureStyle' && input.value !== 'image') {
+                state.shared.signers[index].signatureImageUrl = null;
+                state.shared.signers[index].signatureImagePath = null;
+            }
             state.shared.signers[index][field] = input.value;
             schedulePreviewRender();
         });
@@ -954,11 +969,25 @@ function bindSetupEvents() {
             const file = input.files?.[0];
             if (!file) return;
             const index = Number(input.dataset.signatureUpload);
+            const previousSigner = { ...state.shared.signers[index] };
             try {
-                const { uploadSignatureImage } = await import('./assets.js?v=2');
-                const result = await uploadSignatureImage(state.user?.uid, file);
+                const { deleteSignatureImage, uploadSignatureImage } = await import('./assets.js?v=7');
+                const result = await uploadSignatureImage(state.teamId, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
+                state.shared.signers[index].signatureImagePath = result.path;
+                try {
+                    await persistCertificateDefaults();
+                } catch (persistenceError) {
+                    if (persistenceError?.certificateDefaultsPersistenceState === 'unknown') {
+                        renderSetup();
+                        schedulePreviewRender();
+                        throw new Error('The signature save status is unknown. Both images were preserved; refresh before retrying.');
+                    }
+                    await deleteSignatureImage(state.teamId, result.path).catch(() => undefined);
+                    state.shared.signers[index] = previousSigner;
+                    throw persistenceError;
+                }
                 renderSetup();
                 schedulePreviewRender();
                 showAlert('Signature image uploaded.', 'success');
@@ -970,7 +999,8 @@ function bindSetupEvents() {
 
     document.querySelectorAll('[data-signer-remove]').forEach((button) => {
         button.addEventListener('click', () => {
-            state.shared.signers.splice(Number(button.dataset.signerRemove), 1);
+            const index = Number(button.dataset.signerRemove);
+            state.shared.signers.splice(index, 1);
             renderSetup();
             schedulePreviewRender();
         });
@@ -1001,7 +1031,8 @@ function bindSetupEvents() {
             name: 'Assistant Coach',
             role: 'Assistant Coach',
             signatureStyle: 'script',
-            signatureImageUrl: null
+            signatureImageUrl: null,
+            signatureImagePath: null
         });
         renderSetup();
         schedulePreviewRender();
@@ -1017,7 +1048,7 @@ async function saveTeamDefaults() {
         return;
     }
     try {
-        await setCertificateDefaults(state.teamId, state.shared);
+        await persistCertificateDefaults();
         showAlert('Certificate defaults saved for this team.', 'success');
     } catch (error) {
         showAlert(error?.message || 'Unable to save certificate defaults.', 'error');

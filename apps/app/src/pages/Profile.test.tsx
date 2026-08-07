@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
@@ -40,6 +40,16 @@ const profileServiceMocks = vi.hoisted(() => ({
   saveProfileDocument: vi.fn(async () => undefined)
 }));
 
+const profilePhotoServiceMocks = vi.hoisted(() => ({
+  acquireProfilePhoto: vi.fn(),
+  deleteProfilePhoto: vi.fn(async () => undefined),
+  normalizeProfilePhoto: vi.fn(async (file: File) => file),
+  uploadProfilePhoto: vi.fn(async () => ({
+    url: 'https://example.test/profile-photo.jpg',
+    path: 'profile-photos/users/user-1/new.jpg'
+  }))
+}));
+
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(async () => undefined),
   getPushNotificationPermissionStatus: vi.fn(async () => ({
@@ -54,7 +64,8 @@ const pushServiceMocks = vi.hoisted(() => ({
 }));
 
 const shellLayoutMocks = vi.hoisted(() => ({
-  isNative: false
+  isNative: false,
+  isDesktopWeb: false
 }));
 
 const initialLoadTelemetryMocks = vi.hoisted(() => ({
@@ -64,6 +75,7 @@ const initialLoadTelemetryMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/authService', () => authServiceMocks);
 vi.mock('../lib/profileService', () => profileServiceMocks);
+vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
 vi.mock('../lib/pushService', () => pushServiceMocks);
 vi.mock('../lib/inviteUrls', () => ({
   buildAppAcceptInviteUrl: vi.fn((code: string) => `https://example.test/app/#/accept-invite?code=${code}`)
@@ -72,7 +84,7 @@ vi.mock('../lib/publicActions', () => ({
   sharePublicUrl: vi.fn(async () => ({ shared: true }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktop: false, isNative: shellLayoutMocks.isNative, isDesktopWeb: false })
+  useShellLayout: () => ({ isDesktop: shellLayoutMocks.isDesktopWeb, isNative: shellLayoutMocks.isNative, isDesktopWeb: shellLayoutMocks.isDesktopWeb })
 }));
 vi.mock('../lib/telemetry', async (importOriginal) => ({
   ...await importOriginal<typeof import('../lib/telemetry')>(),
@@ -123,8 +135,8 @@ const auth: AuthState = {
   isCoach: false,
   isAdmin: false,
   isPlatformAdmin: false,
-  refresh: vi.fn(),
-  signOut: vi.fn()
+  refresh: vi.fn(async () => null),
+  signOut: vi.fn(async () => undefined)
 };
 
 function TestRouteControls() {
@@ -188,6 +200,22 @@ describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     shellLayoutMocks.isNative = false;
+    shellLayoutMocks.isDesktopWeb = false;
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      fullName: 'Pat Parent',
+      phone: '555-0100',
+      photoUrl: '',
+      signInMethod: 'emailLink',
+      hasPassword: false,
+      updatedAt: { seconds: 1717200000 }
+    });
+    profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
+    profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
+    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue({
+      url: 'https://example.test/profile-photo.jpg',
+      path: 'profile-photos/users/user-1/new.jpg'
+    });
+    profilePhotoServiceMocks.deleteProfilePhoto.mockResolvedValue(undefined);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
@@ -209,6 +237,14 @@ describe('Profile', () => {
         callback(0);
         return 0;
       },
+      writable: true
+    });
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:profile-photo-preview'),
+      writable: true
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
       writable: true
     });
   });
@@ -331,7 +367,7 @@ describe('Profile', () => {
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
     expect(pushServiceMocks.getPushNotificationPermissionStatus).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Alerts$/ }));
+    fireEvent.click(screen.getByRole('link', { name: /^Notifications$/ }));
 
     expect(await screen.findByText('Notification preferences')).toBeTruthy();
     await waitFor(() => {
@@ -339,16 +375,105 @@ describe('Profile', () => {
     });
   });
 
-  it('keeps mobile profile section buttons in a two-column grid so Alerts stays reachable', async () => {
+  it('preserves independent unsaved alert drafts across team switches and failed saves', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation(async (_userId: string, teamId: string) => (
+      teamId === 'team-1'
+        ? { liveChat: true, liveScore: false, schedule: true }
+        : { liveChat: true, liveScore: false, schedule: false }
+    ));
+    profileServiceMocks.saveNotificationPreferences
+      .mockImplementationOnce(async (_userId: string, _teamId: string, preferences: unknown) => preferences)
+      .mockRejectedValueOnce(new Error('save failed'));
+
+    renderProfile();
+    fireEvent.click(await screen.findByRole('link', { name: /^Notifications$/ }));
+
+    const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByLabelText('Live Chat'));
+    expect(await screen.findByText('Unsaved changes')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeTruthy();
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByLabelText('Live Score'));
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('region', { name: 'Gold Team notification preferences with unsaved changes' })).toBeTruthy();
+
+    fireEvent.change(teamSelect, { target: { value: 'team-1' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
+      liveChat: false,
+      liveScore: false,
+      schedule: true
+    }));
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull());
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+    await waitFor(() => expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true));
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Gold Team notification preferences with unsaved changes' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save preferences' }));
+
+    expect(await screen.findByText('save failed')).toBeTruthy();
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('keeps the mobile dirty tray visible and disabled until save succeeds', async () => {
+    const saveRequest = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(() => saveRequest.promise);
+
+    renderProfile('/profile?section=alerts');
+
+    fireEvent.click(await screen.findByLabelText('Live Chat'));
+    const tray = screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    expect(within(tray).getByText('Blue Team')).toBeTruthy();
+    expect(within(tray).getByText('Unsaved changes')).toBeTruthy();
+
+    const saveButton = within(tray).getByRole('button', { name: 'Save preferences' });
+    fireEvent.click(saveButton);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeTruthy();
+
+    await act(async () => {
+      saveRequest.resolve({ liveChat: false, liveScore: false, schedule: true });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Blue Team notification preferences with unsaved changes' })).toBeNull();
+    });
+  });
+
+  it('retains the inline save action on desktop web', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    renderProfile('/profile?section=alerts');
+
+    fireEvent.click(await screen.findByLabelText('Live Chat'));
+
+    expect(screen.queryByRole('region', { name: /notification preferences with unsaved changes/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeTruthy();
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
+  });
+
+  it('keeps semantic mobile profile navigation in a two-column grid', async () => {
     renderProfile();
 
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
-    const alertsButton = screen.getByRole('button', { name: /^Alerts$/ });
-    expect(alertsButton).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Invites$/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Security$/ })).toBeTruthy();
+    const notificationsLink = screen.getByRole('link', { name: /^Notifications$/ });
+    expect(notificationsLink).toHaveAttribute('href', '/profile/settings?section=alerts');
+    expect(screen.getByRole('link', { name: /^Invites$/ })).toHaveAttribute('href', '/profile/settings?section=invites');
+    expect(screen.getByRole('link', { name: /^Sign-in & security$/ })).toHaveAttribute('href', '/profile/settings?section=security');
+    expect(screen.getByRole('link', { name: /^Profile$/ })).toHaveAttribute('aria-current', 'page');
 
-    const sectionGrid = alertsButton.parentElement;
+    const sectionGrid = notificationsLink.parentElement;
     expect(sectionGrid).not.toBeNull();
     expect(sectionGrid?.className).toContain('grid-cols-2');
     expect(sectionGrid?.className).toContain('sm:grid-cols-4');
@@ -362,6 +487,162 @@ describe('Profile', () => {
     const familyLink = screen.getByRole('link', { name: 'Open Family workflows' });
     expect(familyLink.getAttribute('href')).toBe('/parent-tools');
     expect(familyLink.textContent).toContain('Player access, household, fees, calendars, sharing, registration, and awards.');
+  });
+
+  it('saves profile presentation fields without rewriting the auth-managed email', async () => {
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    const fullNameInput = await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(fullNameInput, { target: { value: 'Pat Parent Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => {
+      expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
+        fullName: 'Pat Parent Updated',
+        phone: '555-0100',
+        photoUrl: null
+      });
+    });
+    expect(await screen.findByText('Profile saved.')).toBeTruthy();
+  });
+
+  it('deletes an unreferenced upload before retrying a rejected profile document save', async () => {
+    profileServiceMocks.saveProfileDocument
+      .mockRejectedValueOnce(new Error('permission-denied'))
+      .mockResolvedValueOnce(undefined);
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: {
+        files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })]
+      }
+    });
+    await waitFor(() => {
+      expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(await screen.findByText('Upload reached Firebase, but this account does not have permission to save the image.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).toHaveBeenCalledWith('profile-photos/users/user-1/new.jpg');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('Profile saved.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(2);
+    expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists cleanup paths and removes only the previous committed profile image', async () => {
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: {
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/old.jpg',
+        photoPath: 'profile-photos/users/user-1/old.jpg'
+      },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: { files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })] }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', expect.objectContaining({
+      photoUrl: 'https://example.test/profile-photo.jpg',
+      photoPath: 'profile-photos/users/user-1/new.jpg'
+    })));
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).toHaveBeenCalledWith('profile-photos/users/user-1/old.jpg');
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalledWith('profile-photos/users/user-1/new.jpg');
+  });
+
+  it('preserves both profile image objects when the document commit cannot be determined', async () => {
+    profileServiceMocks.saveProfileDocument.mockRejectedValueOnce(new Error('deadline-exceeded'));
+    profileServiceMocks.loadProfileDocument.mockRejectedValueOnce(new Error('offline'));
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: {
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/old.jpg',
+        photoPath: 'profile-photos/users/user-1/old.jpg'
+      },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: { files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })] }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('The profile save status is unknown. The new photo was preserved; refresh before retrying.')).toBeTruthy();
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalled();
+
+    const saveButton = screen.getByRole('button', { name: 'Save profile' });
+    expect(saveButton).toBeDisabled();
+    fireEvent.click(saveButton);
+    expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.deleteProfilePhoto).not.toHaveBeenCalled();
+  });
+
+  it('reports an upload permission failure as Storage failure before profile persistence', async () => {
+    profilePhotoServiceMocks.uploadProfilePhoto.mockRejectedValueOnce(new Error('storage/unauthorized'));
+    renderProfile('/profile', false, false, {
+      ...auth,
+      profile: { fullName: 'Pat Parent', phone: '555-0100', photoUrl: '' },
+      profileHydration: 'success'
+    });
+
+    await screen.findByDisplayValue('Pat Parent');
+    fireEvent.change(screen.getByLabelText('Choose photo'), {
+      target: {
+        files: [new File(['avatar'], 'avatar.png', { type: 'image/png' })]
+      }
+    });
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    expect(await screen.findByText('Firebase Storage denied this profile photo upload. Refresh your session and try again.')).toBeTruthy();
+    expect(profileServiceMocks.saveProfileDocument).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for photo changes when the initial ownership read fails', async () => {
+    profileServiceMocks.loadProfileDocument.mockRejectedValueOnce(new Error('offline'));
+    renderProfile('/profile/settings', false, false, {
+      ...auth,
+      profile: { email: 'parent@example.com' },
+      profileHydration: 'fallback'
+    });
+
+    expect(await screen.findByText('Profile details could not be loaded yet.')).toBeTruthy();
+    const photoInput = screen.getByLabelText('Choose photo') as HTMLInputElement;
+    expect(photoInput.disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText('Your name'), { target: { value: 'Pat Updated' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
+      fullName: 'Pat Updated',
+      phone: ''
+    }));
+    expect(profilePhotoServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
   });
 
   it('disables account merge while parent team eligibility is loading', async () => {
@@ -419,6 +700,33 @@ describe('Profile', () => {
     expect(await screen.findByText('No invites created yet.')).toBeTruthy();
     expect(screen.queryByText('Unable to load invite history.')).toBeNull();
     expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
+  });
+
+  it('blocks phone-only friend invites and guides the user to email', async () => {
+    renderProfile('/profile?section=invites');
+
+    const phoneInput = await screen.findByLabelText('Recipient phone');
+    expect(screen.getByText("Phone-only invites aren't available. Enter the recipient's email to target the invite.")).toBeTruthy();
+
+    fireEvent.change(phoneInput, { target: { value: '555-0100' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    expect(await screen.findByText("Phone-only invites aren't available because sign-in can't verify phone ownership. Enter the recipient's email instead.")).toBeTruthy();
+    expect(profileServiceMocks.createProfileAccessCode).not.toHaveBeenCalled();
+    expect(screen.queryByText('Invite code')).toBeNull();
+  });
+
+  it('continues to create email-targeted friend invites', async () => {
+    renderProfile('/profile?section=invites');
+
+    fireEvent.change(await screen.findByLabelText('Recipient email'), { target: { value: ' friend@example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
+
+    await waitFor(() => {
+      expect(profileServiceMocks.createProfileAccessCode).toHaveBeenCalledWith('user-1', 'friend@example.com', '');
+    });
+    expect(await screen.findByText('Invite code generated.')).toBeTruthy();
+    expect(screen.getAllByText('CODE1234')).toHaveLength(2);
   });
 
   it('renders alerts team controls before the first team preferences finish loading', async () => {

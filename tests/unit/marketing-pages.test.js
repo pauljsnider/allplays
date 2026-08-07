@@ -28,7 +28,7 @@ describe('marketing pages integration', () => {
             // auth.js must be imported dynamically (not statically at the top of the module) so the header
             // still renders when Firebase is unavailable (e.g. localhost); a static import throws and blanks the page.
             expect(html).not.toMatch(/import\s+\{[^}]*checkAuth[^}]*\}\s+from\s+'\.\/js\/auth\.js/);
-            expect(html).toContain("import('./js/auth.js?v=141')");
+            expect(html).toMatch(/import\('\.\/js\/auth\.js\?v=\d+'\)/);
         });
 
         it('uses marketing-friendly language and the updated AI-actions stat', () => {

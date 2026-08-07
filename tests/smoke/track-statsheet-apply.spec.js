@@ -207,8 +207,10 @@ async function installModuleMocks(page) {
         }
 
         export async function uploadPlayerPhoto() {
-            return '';
+            return { url: '', path: '' };
         }
+
+        export async function deleteLegacyImageUpload() {}
 
         export function collection(_db, path) {
             return { path };
@@ -249,6 +251,8 @@ async function installModuleMocks(page) {
             saveStore(store);
             return 'https://img.test/statsheet.png';
         }
+
+        export async function deleteUploadedMediaObjects() {}
 
         export async function updateGame(_teamId, _gameId, patch) {
             const store = loadStore();
@@ -636,7 +640,7 @@ async function installModuleMocks(page) {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: authModule });
     });
 
-    await page.route(/\/js\/team-admin-banner\.js$/, async (route) => {
+    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule });
     });
 
@@ -668,7 +672,7 @@ async function installModuleMocks(page) {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: rosterProfileFieldsModule });
     });
 
-    await page.route(/\/js\/team-access\.js$/, async (route) => {
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule });
     });
 

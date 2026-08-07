@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=136', () => ({
+vi.mock('../../js/db.js?v=4433159', () => ({
     getTeam: mocks.getTeam,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
@@ -36,7 +36,7 @@ vi.mock('../../js/db.js?v=136', () => ({
     updateTeamMediaItem: vi.fn()
 }));
 
-vi.mock('../../js/auth.js?v=141', () => ({
+vi.mock('../../js/auth.js?v=4433162', () => ({
     checkAuth: mocks.checkAuth
 }));
 
@@ -167,6 +167,44 @@ describe('legacy team media upload forms', () => {
         expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
         expect(document.getElementById('file-folder').value).toBe('folderA');
         expect(fileInput.value).toBe('');
+    });
+
+    it('rejects over-limit legacy Team Media batches before progress or upload work starts', async () => {
+        await loadTeamMediaModule();
+
+        const photoInput = document.getElementById('photo-files');
+        const tooManyPhotos = Array.from({ length: 21 }, (_, index) => ({
+            name: `photo-${index + 1}.jpg`,
+            type: 'image/jpeg',
+            size: 1
+        }));
+        document.getElementById('photo-folder').value = 'folderA';
+        setSelectedFiles(photoInput, tooManyPhotos);
+        submitForm(document.getElementById('photo-upload-form'));
+
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('Upload up to 20 files and 100 MiB per batch.'));
+        expect(document.getElementById('team-media-alert').textContent).toContain('Split this selection into smaller batches and try again.');
+        expect(mocks.uploadTeamMediaPhoto).not.toHaveBeenCalled();
+        expect(document.querySelectorAll('#upload-progress [data-upload-row]')).toHaveLength(0);
+        expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(1);
+
+        const fileInput = document.getElementById('media-files');
+        const overByteLimit = [
+            ...Array.from({ length: 10 }, (_, index) => ({
+                name: `packet-${index + 1}.pdf`,
+                type: 'application/pdf',
+                size: 10 * 1024 * 1024
+            })),
+            { name: 'extra.pdf', type: 'application/pdf', size: 1 }
+        ];
+        document.getElementById('file-folder').value = 'folderA';
+        setSelectedFiles(fileInput, overByteLimit);
+        submitForm(document.getElementById('file-upload-form'));
+
+        await vi.waitUntil(() => document.getElementById('team-media-alert').textContent.includes('Upload up to 20 files and 100 MiB per batch.'));
+        expect(mocks.uploadTeamMediaFile).not.toHaveBeenCalled();
+        expect(document.querySelectorAll('#file-upload-progress [data-upload-row]')).toHaveLength(0);
+        expect(mocks.getTeamMediaFolders).toHaveBeenCalledTimes(1);
     });
 
     it('preserves chosen upload albums when album detail filters re-render the page before submit', async () => {

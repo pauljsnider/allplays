@@ -227,6 +227,41 @@ describe('Teams empty state', () => {
     expect(screen.queryByText('No teams available')).toBeNull();
   });
 
+  it('preserves the complete team chooser when a refresh returns incomplete access', async () => {
+    const completeHome = {
+      players: [],
+      teams: [
+        {
+          teamId: 'team-1', teamName: 'Vipers', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+          players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0
+        },
+        {
+          teamId: 'team-2', teamName: 'Current', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+          players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0
+        }
+      ],
+      upcomingEvents: [],
+      actionItems: [],
+      fees: [],
+      metrics: { players: 0, teams: 2, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap
+      .mockResolvedValueOnce(makeTeamSummaryBootstrap(completeHome))
+      .mockRejectedValueOnce(new Error('Team access discovery is incomplete'));
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(completeHome);
+
+    renderTeams();
+
+    expect(await screen.findByRole('heading', { name: '2 teams ready' })).toBeTruthy();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh teams' }));
+
+    expect(await screen.findByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Vipers' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Current' })).toBeTruthy();
+    expect(screen.queryByText('No teams linked yet')).toBeNull();
+  });
+
   it('reuses the fast summary scope when loading the enriched team cards', async () => {
     const fastTeamHome = {
       players: [],

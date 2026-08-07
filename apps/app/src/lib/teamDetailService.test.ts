@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
   addPlayer: vi.fn(),
+  applyRosterCsvImportOperations: vi.fn(),
   createConfig: vi.fn(),
+  deleteLegacyImageUpload: vi.fn(),
   getAggregatedStatsForGames: vi.fn(),
   getAdSpaceSponsors: vi.fn(),
   getConfigs: vi.fn(),
@@ -12,6 +14,7 @@ const dbMocks = vi.hoisted(() => ({
   getLocalAttractionSponsors: vi.fn(),
   getPlayers: vi.fn(),
   getPlayersWithPrivateRosterContacts: vi.fn(),
+  getPlayerPrivateProfile: vi.fn(),
   getPlayerTrackingStatuses: vi.fn(),
   getPublicTrackingItems: vi.fn(),
   getRosterFieldDefinitions: vi.fn(),
@@ -36,8 +39,10 @@ const firebaseMocks = vi.hoisted(() => ({
   collection: vi.fn(),
   db: {},
   doc: vi.fn(),
+  functions: {},
   getDoc: vi.fn(),
   getDocs: vi.fn(),
+  httpsCallable: vi.fn(),
   query: vi.fn(),
   serverTimestamp: vi.fn(() => 'server-timestamp'),
   setDoc: vi.fn(),
@@ -52,6 +57,16 @@ const authServiceMocks = vi.hoisted(() => ({
 
 const scheduleServiceMocks = vi.hoisted(() => ({
   loadTeamOverviewSchedule: vi.fn()
+}));
+const nativeRuntimeState = vi.hoisted(() => ({ isNative: false }));
+const nativeStorageMocks = vi.hoisted(() => ({
+  deleteNativePrimaryStorageFile: vi.fn(),
+  uploadNativePlayerPhotoFile: vi.fn(),
+  uploadNativeTeamPhotoFile: vi.fn()
+}));
+const nativeFirestoreMutationMocks = vi.hoisted(() => ({
+  commitNativeFirestoreWrites: vi.fn(),
+  createNativeFirestoreDocumentId: vi.fn(() => 'native-player-1')
 }));
 
 const seasonRecordMocks = vi.hoisted(() => ({
@@ -118,12 +133,16 @@ vi.mock('../../../../js/team-access.js', () => ({
 vi.mock('../../../../js/team-staff-permissions.js', () => ({ buildTeamStaffPermissionsViewModel: vi.fn(() => ({ staff: [], pendingInvites: [], helperPermissions: [], hasAnyStaff: false })) }));
 vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app/#/accept-invite') }));
+vi.mock('./nativeRuntime', () => ({ isNativeRuntime: () => nativeRuntimeState.isNative }));
+vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
+vi.mock('./nativeFirestoreMutation', () => nativeFirestoreMutationMocks);
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(async () => ({})) }));
 vi.mock('./scheduleService', () => scheduleServiceMocks);
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
+  addRosterPlayerForApp,
   buildTeamAnalytics,
   buildTeamDetailModel,
   createStatTrackerConfigForApp,
@@ -252,17 +271,21 @@ describe('buildTeamAnalytics', () => {
 });
 
 beforeEach(() => {
+  nativeRuntimeState.isNative = false;
+  firebaseMocks.httpsCallable.mockReturnValue(vi.fn().mockResolvedValue({ data: { success: true } }));
   vi.mocked(hasFullTeamAccess).mockImplementation(() => true);
   seasonRecordMocks.listSeasonLabels.mockReturnValue([]);
   dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
     Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
   ));
+  dbMocks.getPlayerPrivateProfile.mockResolvedValue(null);
 });
 
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    nativeRuntimeState.isNative = true;
     Object.defineProperty(window, 'location', {
       value: { protocol: 'capacitor:' },
       writable: true,
@@ -303,7 +326,13 @@ describe('createStatTrackerConfigForApp', () => {
 describe('updateTeamSettingsForApp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', photoUrl: 'https://img.example.test/team.png' });
+    nativeRuntimeState.isNative = false;
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      photoUrl: 'https://img.example.test/team.png',
+      photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+    });
     dbMocks.getPlayersWithPrivateRosterContacts.mockImplementation((_teamId: string, options: any = {}) => (
       Array.isArray(options.players) ? options.players : dbMocks.getPlayers(_teamId, options)
     ));
@@ -346,6 +375,26 @@ describe('updateTeamSettingsForApp', () => {
     }));
   });
 
+  it('binds a browser team photo upload to the team and primary Storage contract', async () => {
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    const file = new File(['photo'], 'team.jpg', { type: 'image/jpeg' });
+
+    await updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: file
+    });
+
+    expect(dbMocks.uploadTeamPhoto).toHaveBeenCalledWith(file, { returnUpload: true, teamId: 'team-1' });
+    expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      photoUrl: 'https://primary.example/team.jpg',
+      photoPath: 'profile-photos/teams/team-1/team/team.jpg'
+    }));
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+  });
+
   it('rejects invalid livestream links before writing', async () => {
     await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
       name: 'Bears',
@@ -353,6 +402,434 @@ describe('updateTeamSettingsForApp', () => {
     })).rejects.toThrow('Livestream link must be a valid YouTube or Twitch URL.');
 
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+  });
+
+  it('uses native Storage and an authenticated REST commit for a team photo', async () => {
+    nativeRuntimeState.isNative = true;
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    const file = new File(['photo'], 'team.jpg', { type: 'image/jpeg' });
+
+    await updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: file
+    });
+
+    expect(nativeStorageMocks.uploadNativeTeamPhotoFile).toHaveBeenCalledWith(file, 'team-1');
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenCalledWith([
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1'],
+        data: expect.objectContaining({
+          photoUrl: 'https://primary.example/team.jpg',
+          photoPath: 'profile-photos/teams/team-1/team/team.jpg'
+        })
+      })
+    ]);
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+    expect(dbMocks.uploadTeamPhoto).not.toHaveBeenCalled();
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+  });
+
+  it('keeps a native team photo when the settings commit outcome is uncertain', async () => {
+    nativeRuntimeState.isNative = true;
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockRejectedValueOnce(new Error('confirmation read unavailable'));
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ambiguous native team save only after the new path is authoritative', async () => {
+    nativeRuntimeState.isNative = true;
+    const newPath = 'profile-photos/teams/team-1/team/team.jpg';
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', photoPath: newPath });
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: newPath
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).resolves.toBeUndefined();
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes an uncommitted native team photo after an authoritative re-read', async () => {
+    nativeRuntimeState.isNative = true;
+    const oldTeam = {
+      id: 'team-1',
+      ownerId: 'owner-1',
+      photoUrl: 'https://img.example.test/team.png',
+      photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+    };
+    dbMocks.getTeam.mockResolvedValueOnce(oldTeam).mockResolvedValueOnce(oldTeam);
+    nativeStorageMocks.uploadNativeTeamPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true })
+    );
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('may have completed');
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.jpg');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+  });
+
+  it('keeps a browser team photo when the document save outcome is uncertain', async () => {
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockRejectedValueOnce(new Error('confirmation read unavailable'));
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('network unavailable'), { code: 'unavailable' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('network unavailable');
+
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ambiguous browser team save only after the new path is authoritative', async () => {
+    const newPath = 'profile-photos/teams/team-1/team/team.jpg';
+    dbMocks.getTeam
+      .mockResolvedValueOnce({
+        id: 'team-1',
+        ownerId: 'owner-1',
+        photoUrl: 'https://img.example.test/team.png',
+        photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+      })
+      .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', photoPath: newPath });
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: newPath
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('network unavailable'), { code: 'unavailable' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).resolves.toBeUndefined();
+
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/old.jpg');
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes a browser team photo when the document save definitely failed', async () => {
+    dbMocks.uploadTeamPhoto.mockResolvedValueOnce({
+      url: 'https://primary.example/team.jpg',
+      path: 'profile-photos/teams/team-1/team/team.jpg'
+    });
+    dbMocks.updateTeam.mockRejectedValueOnce(Object.assign(new Error('save denied'), { code: 'firestore/permission-denied' }));
+
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      photoFile: new File(['photo'], 'team.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('save denied');
+
+    expect(dbMocks.deleteLegacyImageUpload).toHaveBeenCalledWith('profile-photos/teams/team-1/team/team.jpg');
+  });
+});
+
+describe('addRosterPlayerForApp native writes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeRuntimeState.isNative = true;
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.getRosterFieldDefinitions.mockResolvedValue([]);
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockResolvedValue({
+      url: 'https://primary.example/player.jpg',
+      path: 'profile-photos/teams/team-1/players/native-player-1/player.jpg'
+    });
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it.each([
+    ['a non-image file', new File(['text'], 'player.txt', { type: 'text/plain' })],
+    ['an empty image', new File([], 'player.jpg', { type: 'image/jpeg' })],
+    ['an oversized image', new File([new Uint8Array((5 * 1024 * 1024) + 1)], 'player.jpg', { type: 'image/jpeg' })]
+  ])('rejects %s before creating the native player owner', async (_label, photoFile) => {
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile
+    })).rejects.toThrow(/image|5MB/i);
+
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).not.toHaveBeenCalled();
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).not.toHaveBeenCalled();
+  });
+
+  it('creates the player owner before uploading, then persists the final native photo', async () => {
+    const file = new File(['photo'], 'player.jpg', { type: 'image/jpeg' });
+    nativeStorageMocks.uploadNativePlayerPhotoFile.mockImplementationOnce(async () => {
+      expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenCalledTimes(1);
+      expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenNthCalledWith(1, [
+        expect.objectContaining({
+          pathSegments: ['teams', 'team-1', 'players', 'native-player-1'],
+          createOnly: true,
+          data: expect.objectContaining({ name: 'Sam Player', photoUrl: null })
+        }),
+        expect.objectContaining({
+          pathSegments: ['teams', 'team-1', 'players', 'native-player-1', 'private', 'profile'],
+          data: expect.objectContaining({ photoPath: null })
+        })
+      ]);
+      return {
+        url: 'https://primary.example/player.jpg',
+        path: 'profile-photos/teams/team-1/players/native-player-1/player.jpg'
+      };
+    });
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: file
+    });
+
+    expect(result.playerId).toBe('native-player-1');
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).toHaveBeenCalledWith(file, 'team-1', 'native-player-1');
+    expect(nativeFirestoreMutationMocks.commitNativeFirestoreWrites).toHaveBeenNthCalledWith(2, [
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1', 'players', 'native-player-1'],
+        data: expect.objectContaining({ photoUrl: 'https://primary.example/player.jpg' })
+      }),
+      expect.objectContaining({
+        pathSegments: ['teams', 'team-1', 'players', 'native-player-1', 'private', 'profile'],
+        data: expect.objectContaining({ photoPath: 'profile-photos/teams/team-1/players/native-player-1/player.jpg' })
+      })
+    ]);
+    expect(dbMocks.addPlayer).not.toHaveBeenCalled();
+  });
+
+  it('continues an ambiguous owner create only after an authoritative roster read confirms it', async () => {
+    dbMocks.getPlayers
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: 'native-player-1', name: 'Sam Player' }]);
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites
+      .mockRejectedValueOnce(Object.assign(new Error('The owner save may have completed.'), { commitStateUnknown: true }))
+      .mockResolvedValueOnce(undefined);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).resolves.toMatchObject({ playerId: 'native-player-1' });
+
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not upload when an ambiguous owner create cannot be confirmed', async () => {
+    dbMocks.getPlayers.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites.mockRejectedValueOnce(
+      Object.assign(new Error('The owner save may have completed.'), { commitStateUnknown: true })
+    );
+    __resetTeamDetailBaseSnapshotCacheForTests();
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).rejects.toThrow('owner save may have completed');
+
+    expect(nativeStorageMocks.uploadNativePlayerPhotoFile).not.toHaveBeenCalled();
+  });
+
+  it('accepts an ambiguous native photo save after the private path confirms it committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/player.jpg';
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true }));
+    dbMocks.getPlayerPrivateProfile.mockResolvedValueOnce({ photoPath: newPath });
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result.playerId).toBe('native-player-1');
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalledWith(newPath);
+  });
+
+  it('removes an ambiguous native roster photo after the private path proves its save did not commit', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/player.jpg';
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true }));
+    dbMocks.getPlayerPrivateProfile.mockResolvedValueOnce({ photoPath: null });
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).resolves.toMatchObject({
+      playerId: 'native-player-1',
+      player: { photoUrl: null },
+      photoWarning: expect.stringContaining('saving the photo reference failed')
+    });
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(newPath);
+  });
+
+  it('keeps a native roster photo when the authoritative final-save check is unavailable', async () => {
+    nativeFirestoreMutationMocks.commitNativeFirestoreWrites
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(Object.assign(new Error('The save may have completed.'), { commitStateUnknown: true }));
+    dbMocks.getPlayerPrivateProfile.mockRejectedValueOnce(new Error('read unavailable'));
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).resolves.toMatchObject({
+      playerId: 'native-player-1',
+      photoWarning: expect.stringContaining('saving the photo reference failed')
+    });
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('addRosterPlayerForApp browser photo scope', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    nativeRuntimeState.isNative = false;
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    dbMocks.getRosterFieldDefinitions.mockResolvedValue([]);
+    dbMocks.uploadPlayerPhoto.mockResolvedValue({
+      url: 'https://primary.example/player.jpg',
+      path: 'profile-photos/teams/team-1/players/native-player-1/player.jpg'
+    });
+    dbMocks.applyRosterCsvImportOperations.mockResolvedValue([{ playerId: 'native-player-1' }]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it.each([
+    ['a non-image file', new File(['text'], 'player.txt', { type: 'text/plain' })],
+    ['an empty image', new File([], 'player.jpg', { type: 'image/jpeg' })],
+    ['an oversized image', new File([new Uint8Array((5 * 1024 * 1024) + 1)], 'player.jpg', { type: 'image/jpeg' })]
+  ])('rejects %s before creating the browser player owner', async (_label, photoFile) => {
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile
+    })).rejects.toThrow(/image|5MB/i);
+
+    expect(dbMocks.applyRosterCsvImportOperations).not.toHaveBeenCalled();
+    expect(dbMocks.uploadPlayerPhoto).not.toHaveBeenCalled();
+  });
+
+  it('creates the browser player owner before uploading and persists that same id', async () => {
+    const file = new File(['photo'], 'player.jpg', { type: 'image/jpeg' });
+    dbMocks.uploadPlayerPhoto.mockImplementationOnce(async () => {
+      expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenCalledTimes(1);
+      expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenNthCalledWith(1, 'team-1', [expect.objectContaining({
+        type: 'add',
+        playerId: 'native-player-1',
+        payload: expect.objectContaining({ photoUrl: null, photoPath: null })
+      })]);
+      return {
+        url: 'https://primary.example/player.jpg',
+        path: 'profile-photos/teams/team-1/players/native-player-1/player.jpg'
+      };
+    });
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: file
+    });
+
+    expect(dbMocks.uploadPlayerPhoto).toHaveBeenCalledWith(file, {
+      returnUpload: true,
+      teamId: 'team-1',
+      playerId: 'native-player-1'
+    });
+    expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenNthCalledWith(2, 'team-1', [expect.objectContaining({
+      type: 'update',
+      playerId: 'native-player-1',
+      payload: expect.objectContaining({
+        photoUrl: 'https://primary.example/player.jpg',
+        photoPath: 'profile-photos/teams/team-1/players/native-player-1/player.jpg'
+      })
+    })]);
+    expect(result.playerId).toBe('native-player-1');
+  });
+
+  it('reports a post-owner upload failure as a partial success so a retry cannot duplicate the player', async () => {
+    dbMocks.uploadPlayerPhoto.mockRejectedValueOnce(new Error('storage unavailable'));
+
+    await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    })).resolves.toMatchObject({
+      playerId: 'native-player-1',
+      player: { photoUrl: null, photoPath: null },
+      photoWarning: 'Player was added, but the photo upload failed: storage unavailable'
+    });
+
+    expect(dbMocks.applyRosterCsvImportOperations).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a browser photo save when an authoritative read confirms the write committed', async () => {
+    const newPath = 'profile-photos/teams/team-1/players/native-player-1/player.jpg';
+    dbMocks.getPlayers.mockResolvedValueOnce([]);
+    dbMocks.getPlayerPrivateProfile.mockResolvedValueOnce({ photoPath: newPath });
+    dbMocks.applyRosterCsvImportOperations
+      .mockResolvedValueOnce([{ playerId: 'native-player-1' }])
+      .mockRejectedValueOnce(Object.assign(new Error('response unavailable'), { code: 'unavailable' }));
+    __resetTeamDetailBaseSnapshotCacheForTests();
+
+    const result = await addRosterPlayerForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Sam Player',
+      photoFile: new File(['photo'], 'player.jpg', { type: 'image/jpeg' })
+    });
+
+    expect(result.playerId).toBe('native-player-1');
+    expect(dbMocks.deleteLegacyImageUpload).not.toHaveBeenCalledWith(newPath);
   });
 });
 
@@ -382,6 +859,127 @@ describe('team detail bootstrap loading', () => {
     expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
     expect(dbMocks.getGames).not.toHaveBeenCalled();
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
+  });
+
+  it('recovers management access from the authoritative REST document when the web SDK returns a public projection', async () => {
+    const previousFetch = globalThis.fetch;
+    dbMocks.getTeam.mockResolvedValueOnce({
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      isPublic: true,
+      active: true
+    });
+    authServiceMocks.getNativeAuthIdToken.mockResolvedValueOnce('web-token');
+    dbMocks.getRosterFieldDefinitions.mockResolvedValueOnce([]);
+    dbMocks.applyRosterCsvImportOperations.mockResolvedValueOnce([{ playerId: 'player-2' }]);
+    (globalThis as any).fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        name: 'projects/test-project/databases/(default)/documents/teams/team-1',
+        fields: {
+          name: { stringValue: 'Bears' },
+          sport: { stringValue: 'Basketball' },
+          ownerId: { stringValue: 'owner-1' },
+          active: { booleanValue: true }
+        }
+      })
+    }) as any);
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1', roles: ['coach'] } as any);
+
+      expect(model.canManageTeam).toBe(true);
+      expect(model.team.ownerId).toBe('owner-1');
+      expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        includeInactive: true
+      }));
+      expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+
+      await expect(addRosterPlayerForApp('team-1', { uid: 'owner-1', roles: ['coach'] } as any, {
+        name: 'New Player'
+      })).resolves.toMatchObject({ playerId: 'player-2' });
+      expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('grants fresh-session management from the authenticated callable projection without browser REST', async () => {
+    const previousFetch = globalThis.fetch;
+    const fetchMock = vi.fn();
+    (globalThis as any).fetch = fetchMock;
+    dbMocks.getTeam.mockResolvedValueOnce({
+      id: 'team-1',
+      name: 'Bears',
+      sport: 'Basketball',
+      ownerId: 'owner-1',
+      adminEmails: [],
+      active: true,
+      zip: '66210',
+      leagueUrl: 'https://league.example.test/bears',
+      bracketUrl: 'https://bracket.example.test/bears',
+      livestreamUrl: 'https://stream.example.test/bears',
+      scheduleNotifications: { enabled: true }
+    });
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'owner-1' } as any);
+
+      expect(model.canManageTeam).toBe(true);
+      expect(model.team.ownerId).toBe('owner-1');
+      expect(model.team.zip).toBe('66210');
+      expect(model.team.leagueUrl).toBe('https://league.example.test/bears');
+      expect(model.team.bracketUrl).toBe('https://bracket.example.test/bears');
+      expect(model.team.streamUrl).toBe('https://stream.example.test/bears');
+      expect(model.team.scheduleNotifications).toMatchObject({ enabled: true });
+      expect(dbMocks.getPlayersWithPrivateRosterContacts).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        includeInactive: true
+      }));
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it('includes later-page players when the native roster fallback is paginated', async () => {
+    const previousFetch = globalThis.fetch;
+    nativeRuntimeState.isNative = true;
+    dbMocks.getPlayers.mockRejectedValueOnce(new Error('SDK roster unavailable'));
+    authServiceMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+    (globalThis as any).fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/test-project/databases/(default)/documents/teams/team-1/players/player-1',
+            fields: { name: { stringValue: 'First Player' }, active: { booleanValue: true } }
+          }],
+          nextPageToken: 'next page+/='
+        })
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          documents: [{
+            name: 'projects/test-project/databases/(default)/documents/teams/team-1/players/player-2',
+            fields: { name: { stringValue: 'Later Player' }, active: { booleanValue: true } }
+          }]
+        })
+      } as Response);
+
+    try {
+      const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+      expect(model.players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(String(vi.mocked(globalThis.fetch).mock.calls[1][0]))
+        .toContain('pageToken=next+page%2B%2F%3D');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 
   it('loads games and stat configs once a deferred detail surface requests them', async () => {
@@ -790,7 +1388,12 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
     await expect(
       revokeTeamAdminAccessForApp('team-1', 'someoneelse@example.com', teamAdminUser)
     ).resolves.toBeUndefined();
-    expect(dbMocks.updateTeam).toHaveBeenCalled();
+    expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'revokeTeamAdminAccess');
+    expect(firebaseMocks.httpsCallable.mock.results[firebaseMocks.httpsCallable.mock.results.length - 1]?.value).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      email: 'someoneelse@example.com'
+    });
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 
   it('denies a user who is neither owner, adminEmails member, isAdmin, isPlatformAdmin, nor admin-role', async () => {
@@ -799,6 +1402,7 @@ describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js',
     await expect(
       revokeTeamAdminAccessForApp('team-1', 'teamadmin@example.com', randomUser)
     ).rejects.toThrow('You do not have permission to manage admins for this team.');
+    expect(firebaseMocks.httpsCallable).not.toHaveBeenCalled();
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 });

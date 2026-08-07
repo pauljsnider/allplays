@@ -17,6 +17,7 @@ const {
   createAccountDeletionRequestHandler,
   extractAccountProfileStoragePath,
   getAccountEmailQueryCandidates,
+  getCurrentEnabledAuthEmail,
   getAccountTeamPermissionQueryFields,
   getLegacyUnscopedProfilePhotoPaths,
   getAccountDeletionCollectionQueries,
@@ -38,6 +39,12 @@ class HttpsError extends Error {
 test('normalizes explicit account deletion confirmation', () => {
   assert.equal(normalizeConfirmation(' delete '), 'DELETE');
   assert.equal(buildDeletionAuditId('user-1').length, 64);
+});
+
+test('uses only a current enabled Auth email for legacy ownership checks', () => {
+  assert.equal(getCurrentEnabledAuthEmail({ email: ' Current@Example.com ', disabled: false }), 'Current@Example.com');
+  assert.equal(getCurrentEnabledAuthEmail({ email: 'disabled@example.com', disabled: true }), '');
+  assert.equal(getCurrentEnabledAuthEmail(null), '');
 });
 
 test('processes new and retried queued deletion requests only once', () => {
@@ -207,6 +214,31 @@ test('scrubs reusable email and uid grants from team authorization fields', () =
       }
     },
     fieldsToDelete: ['ownerId', 'ownerEmail', 'ownerEmailLower']
+  });
+});
+
+test('canonical ownership prevents a stale owner alias from scrubbing the current owner', () => {
+  assert.deepEqual(buildTeamAccountGrantScrubPlan({
+    ownerId: 'current-owner',
+    ownerEmail: 'current@example.com',
+    ownerEmailLower: 'former@example.com',
+    adminEmails: ['former@example.com', 'remaining@example.com']
+  }, { uid: 'former-owner', email: 'former@example.com' }), {
+    changed: true,
+    update: { adminEmails: ['remaining@example.com'] },
+    fieldsToDelete: []
+  });
+});
+
+test('conflicting legacy owner aliases cannot trigger ownership scrubbing', () => {
+  assert.deepEqual(buildTeamAccountGrantScrubPlan({
+    ownerEmail: 'current@example.com',
+    ownerEmailLower: 'former@example.com',
+    adminEmails: []
+  }, { uid: 'former-owner', email: 'former@example.com' }), {
+    changed: false,
+    update: {},
+    fieldsToDelete: []
   });
 });
 
@@ -411,7 +443,7 @@ test('blocks deletion while the user owns a team', async () => {
     firestore: {
       collection: () => ({
         where: () => ({
-          get: async () => ({ docs: [{ id: 'team-1', data: () => ({ name: 'Bears' }) }] })
+          get: async () => ({ docs: [{ id: 'team-1', data: () => ({ name: 'Bears', ownerId: 'owner-1' }) }] })
         })
       })
     },
@@ -436,7 +468,7 @@ test('blocks deletion for a legacy email-based team owner', async () => {
         where: (field, _operator, value) => ({
           get: async () => ({
             docs: field === 'ownerEmailLower' && value === 'legacy@example.com'
-              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears' }) }]
+              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears', ownerEmailLower: 'legacy@example.com' }) }]
               : []
           })
         })
@@ -464,7 +496,7 @@ test('blocks deletion for a whitespace-padded legacy owner email', async () => {
         where: (field, _operator, value) => ({
           get: async () => ({
             docs: field === 'ownerEmail' && value === ' Legacy@Example.com '
-              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears' }) }]
+              ? [{ id: 'legacy-team', data: () => ({ name: 'Legacy Bears', ownerEmail: ' Legacy@Example.com ' }) }]
               : []
           })
         })
@@ -483,6 +515,45 @@ test('blocks deletion for a whitespace-padded legacy owner email', async () => {
     (error) => error.code === 'failed-precondition' &&
       error.details.ownedTeams[0].name === 'Legacy Bears'
   );
+});
+
+test('allows deletion when only a stale owner alias matches a canonically owned team', async () => {
+  const writes = [];
+  const handler = createAccountDeletionRequestHandler({
+    firestore: {
+      collection: () => ({
+        where: (field, _operator, value) => ({
+          get: async () => ({
+            docs: field === 'ownerEmailLower' && value === 'former@example.com'
+              ? [{
+                  id: 'canonical-team',
+                  data: () => ({
+                    name: 'Current Bears',
+                    ownerId: 'current-owner',
+                    ownerEmailLower: 'former@example.com'
+                  })
+                }]
+              : []
+          })
+        })
+      }),
+      doc: (path) => ({
+        get: async () => ({ exists: false, data: () => ({}) }),
+        set: async (value) => writes.push({ path, value })
+      })
+    },
+    auth: { getUser: async () => ({ email: 'former@example.com' }) },
+    Timestamp: { now: () => 'now' },
+    HttpsError
+  });
+
+  const result = await handler(
+    { confirmation: 'DELETE', source: 'web' },
+    { auth: { uid: 'former-owner', token: { email: 'former@example.com', auth_time: recentAuthTime } } }
+  );
+
+  assert.equal(result.status, 'queued');
+  assert.equal(writes.length, 1);
 });
 
 test('allows deletion after every owned team is deactivated', async () => {
@@ -581,6 +652,14 @@ test('gives the deletion worker extended runtime and automatic event retries', (
   assert.match(teamLoaderSource, /where\('ownerEmailLower', '==', candidate\)/);
   assert.match(functionsSource, /collectionGroup\('chatConversations'\)\.where\('mutedBy', 'array-contains', uid\)/);
   const workerSource = functionsSource.slice(functionsSource.indexOf('exports.processAccountDeletionRequest'));
+  assert.match(
+    workerSource,
+    /const ownerEmail = getCurrentEnabledAuthEmail\(authUser\);/
+  );
+  assert.doesNotMatch(
+    workerSource,
+    /authUser\?\.email \|\| userDoc\.data\(\)\?\.email \|\| snapshot\.data\(\)\?\.email/
+  );
   assert.match(functionsSource, /deleteAccountQuery[\s\S]*firestore\.recursiveDelete\(docSnapshot\.ref\)/);
   assert.ok(workerSource.indexOf('await scrubAccountTeamGrants(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));
   assert.ok(workerSource.indexOf('await scrubAccountChatConversationMembership(') < workerSource.indexOf('admin.auth().deleteUser(uid)'));

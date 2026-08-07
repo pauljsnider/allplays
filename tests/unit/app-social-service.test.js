@@ -25,7 +25,8 @@ const homeMocks = vi.hoisted(() => ({
 }));
 
 const chatMocks = vi.hoisted(() => ({
-    uploadTeamChatAttachment: vi.fn()
+    uploadTeamChatAttachment: vi.fn(),
+    deleteTeamChatAttachments: vi.fn()
 }));
 
 const publicTeamMocks = vi.hoisted(() => ({
@@ -58,6 +59,16 @@ function snapshot(docs) {
     };
 }
 
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((nextResolve, nextReject) => {
+        resolve = nextResolve;
+        reject = nextReject;
+    });
+    return { promise, resolve, reject };
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(globalThis, 'crypto', {
@@ -85,7 +96,8 @@ beforeEach(() => {
         type: 'image',
         url: 'https://img.example.test/upload.png',
         name: 'upload.png',
-        thumbnailUrl: null
+        thumbnailUrl: null,
+        path: 'chat-attachments/team-1/social/upload.png'
     });
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
 });
@@ -511,6 +523,77 @@ describe('React app social service', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
     });
 
+    it('hydrates friend profile teams and post reactions on independent overlapping branches', async () => {
+        const publicTeamRequest = deferred();
+        const postQueryRequest = deferred();
+        const reactionRequest = deferred();
+        publicTeamMocks.getPublicTeamDetail.mockReturnValue(publicTeamRequest.promise);
+        firebaseMocks.getDoc.mockImplementation((ref) => {
+            const path = ref.path.join('/');
+            if (path === 'friendships/friend-1__user-1') {
+                return Promise.resolve({
+                    id: 'friend-1__user-1',
+                    exists: () => true,
+                    data: () => ({ status: 'accepted', memberIds: ['friend-1', 'user-1'] })
+                });
+            }
+            if (path === 'publicUserProfiles/friend-1') {
+                return Promise.resolve({
+                    id: 'friend-1',
+                    exists: () => true,
+                    data: () => ({ displayName: 'Jamie Friend', discoveryTeamIds: ['team-1'] })
+                });
+            }
+            if (path === 'socialPosts/post-1/reactions/user-1') {
+                return reactionRequest.promise;
+            }
+            return Promise.resolve({ id: ref.path.at(-1), exists: () => false, data: () => ({}) });
+        });
+        firebaseMocks.getDocs.mockImplementation((queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'socialPosts') return postQueryRequest.promise;
+            return Promise.resolve(snapshot([]));
+        });
+
+        const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        let completed = false;
+        const profilePromise = loadFriendProfile(user, 'friend-1').then((profile) => {
+            completed = true;
+            return profile;
+        });
+
+        await vi.waitFor(() => {
+            expect(publicTeamMocks.getPublicTeamDetail).toHaveBeenCalledWith('team-1');
+            expect(firebaseMocks.getDocs).toHaveBeenCalledWith(expect.objectContaining({
+                collectionRef: expect.objectContaining({ path: ['socialPosts'] })
+            }));
+        });
+        expect(completed).toBe(false);
+
+        postQueryRequest.resolve(snapshot([{
+            id: 'post-1',
+            authorId: 'friend-1',
+            authorName: 'Jamie Friend',
+            title: 'Newest post',
+            createdAt: { seconds: 200 },
+            visibleUserIds: ['user-1']
+        }]));
+        await vi.waitFor(() => expect(firebaseMocks.getDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['socialPosts', 'post-1', 'reactions', 'user-1'] })
+        ));
+        expect(completed).toBe(false);
+
+        reactionRequest.resolve({ exists: () => true });
+        await Promise.resolve();
+        expect(completed).toBe(false);
+
+        publicTeamRequest.resolve({ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null });
+        const profile = await profilePromise;
+
+        expect(profile.publicTeams).toEqual([{ id: 'team-1', name: 'Bears', sport: 'Basketball', photoUrl: null }]);
+        expect(profile.posts).toEqual([expect.objectContaining({ id: 'post-1', viewerHasLiked: true })]);
+    });
+
     it('pages past a full hidden post window on a friend profile', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
         const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
@@ -669,8 +752,28 @@ describe('React app social service', () => {
             type: 'image',
             url: 'https://img.example.test/upload.png',
             name: 'upload.png',
-            thumbnailUrl: null
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
         });
+    });
+
+    it('discards an uploaded social attachment when its post is not saved', async () => {
+        const { discardSocialPostMediaUpload } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await discardSocialPostMediaUpload({
+            type: 'image',
+            url: 'https://img.example.test/upload.png',
+            name: 'upload.png',
+            thumbnailUrl: null,
+            storagePath: 'chat-attachments/team-1/social/upload.png'
+        });
+
+        expect(chatMocks.deleteTeamChatAttachments).toHaveBeenCalledWith([
+            expect.objectContaining({
+                url: 'https://img.example.test/upload.png',
+                path: 'chat-attachments/team-1/social/upload.png'
+            })
+        ]);
     });
 
     it('hides social posts only for the current viewer', async () => {

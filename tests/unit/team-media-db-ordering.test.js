@@ -110,14 +110,17 @@ vi.mock('../../js/firebase-images.js?v=11', () => ({
     requireImageAuth: vi.fn()
 }));
 
-vi.mock('../../js/team-media-utils.js?v=5', () => teamMediaUtilsMocks);
+vi.mock('../../js/team-media-utils.js?v=44338', () => teamMediaUtilsMocks);
 
 vi.mock('../../js/vendor/firebase-storage.js', () => ({
     uploadBytesResumable: vi.fn((_storageRef, _file, _metadata) => {
         const task = {
             snapshot: { ref: { fullPath: 'team-media/mock-upload' } },
-            on: vi.fn((_event, _progress, _error, complete) => {
-                uploadTaskQueue.push(() => complete());
+            on: vi.fn((_event, _progress, error, complete) => {
+                uploadTaskQueue.push({
+                    complete,
+                    fail: () => error(new Error('upload response lost'))
+                });
             })
         };
         return task;
@@ -160,7 +163,7 @@ describe('team media db ordering', () => {
         const uploadPromises = files.map((file) => uploadTeamMediaPhoto('team-1', 'folder-1', file));
         expect(uploadTaskQueue).toHaveLength(2);
 
-        uploadTaskQueue.splice(0).forEach((complete) => complete());
+        uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
         await expect(Promise.all(uploadPromises)).resolves.toEqual(['media-1', 'media-2']);
 
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
@@ -192,7 +195,7 @@ describe('team media db ordering', () => {
             url: 'https://youtu.be/replay123'
         });
         const filePromise = uploadTeamMediaFile('team-1', 'folder-1', file);
-        uploadTaskQueue.splice(0).forEach((complete) => complete());
+        uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
         const fileId = await filePromise;
 
         expect(linkId).toBe('media-1');
@@ -231,7 +234,7 @@ describe('team media db ordering', () => {
 
         const uploadedFilePromise = uploadTeamMediaFile('team-1', 'folder-1', docFile, { returnItem: true });
         const uploadedPhotoPromise = uploadTeamMediaPhoto('team-1', 'folder-1', photoFile, { returnItem: true });
-        uploadTaskQueue.splice(0).forEach((complete) => complete());
+        uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
 
         await expect(uploadedFilePromise).resolves.toMatchObject({
             id: 'media-1',
@@ -247,6 +250,58 @@ describe('team media db ordering', () => {
             order: 1,
             url: 'https://cdn.example.test/uploaded-file'
         });
+    });
+
+    it('deletes a completed photo upload when reserving its media order fails', async () => {
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('folder update denied'));
+        const { uploadTeamMediaPhoto } = await import('../../js/db.js');
+        const uploadPromise = uploadTeamMediaPhoto(
+            'team-1',
+            'folder-1',
+            new File(['photo'], 'tipoff.jpg', { type: 'image/jpeg' })
+        );
+
+        uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
+
+        await expect(uploadPromise).rejects.toThrow('folder update denied');
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
+            fullPath: expect.stringMatching(/^team-media\/team-1\/folder-1\/user-1\/.+-tipoff\.jpg$/)
+        }));
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
+    it('deletes a completed file upload when its media document cannot be saved', async () => {
+        firebaseMocks.addDoc.mockRejectedValueOnce(new Error('media create denied'));
+        const { uploadTeamMediaFile } = await import('../../js/db.js');
+        const uploadPromise = uploadTeamMediaFile(
+            'team-1',
+            'folder-1',
+            new File(['document'], 'lineup.pdf', { type: 'application/pdf' })
+        );
+
+        uploadTaskQueue.splice(0).forEach(({ complete }) => complete());
+
+        await expect(uploadPromise).rejects.toThrow('media create denied');
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
+            fullPath: expect.stringMatching(/^team-media\/team-1\/folder-1\/user-1\/.+-lineup\.pdf$/)
+        }));
+    });
+
+    it.each([
+        ['photo', 'tipoff.jpg', 'image/jpeg', 'uploadTeamMediaPhoto'],
+        ['file', 'lineup.pdf', 'application/pdf', 'uploadTeamMediaFile']
+    ])('cleans the reserved %s path when a resumable upload response is lost', async (_kind, name, type, helperName) => {
+        const db = await import('../../js/db.js');
+        const uploadPromise = db[helperName]('team-1', 'folder-1', new File(['payload'], name, { type }));
+
+        expect(uploadTaskQueue).toHaveLength(1);
+        uploadTaskQueue.shift().fail();
+
+        await expect(uploadPromise).rejects.toThrow('upload response lost');
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith(expect.objectContaining({
+            fullPath: expect.stringMatching(new RegExp(`^team-media/team-1/folder-1/user-1/.+-${name.replace('.', '\\.')}$`))
+        }));
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
     });
 
     it('re-resolves storage-backed media URLs and strips legacy cached url fields', async () => {

@@ -140,25 +140,46 @@ export async function loadParentTeamsSummaryBootstrap(
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
-        const [chatInbox, scheduleScope] = await Promise.all([
-          loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
+        const [chatInboxResult, scheduleScope] = await Promise.all([
+          loadChatInbox(user, { includeLastMessages: false })
+            .then((chatInbox) => ({ chatInbox, error: null }))
+            .catch((error) => ({
+              chatInbox: { teams: [] },
+              error: toAppServiceError(error, 'Unable to load team chat.')
+            })),
+          loadParentScheduleScope(user).catch((error) => {
             throw toAppServiceError(error, 'Unable to load teams.');
-          }),
-          loadParentScheduleScope(user)
+          })
         ]);
+        const hasParentLinkedTeams = scheduleScope.children.length > 0;
+        if (scheduleScope.isPartial === true && !hasParentLinkedTeams) {
+          if (chatInboxResult.error) {
+            throw chatInboxResult.error;
+          }
+          throw toAppServiceError(
+            new Error('Team access discovery is incomplete. Try loading teams again.'),
+            'Unable to load teams.'
+          );
+        }
+        if (chatInboxResult.error) {
+          logger.warn('Team chat summary failed; using schedule access for the team chooser.', {
+            error: chatInboxResult.error
+          });
+        }
         const model = buildParentHomeModel({
           children: scheduleScope.children,
           events: [],
           inboxTeams: mergeTeamSummaries(
             normalizeStaffTeams({ children: [], events: [], staffTeams: scheduleScope.staffTeams }),
-            normalizeInboxTeams(chatInbox.teams || [])
+            normalizeInboxTeams(chatInboxResult.chatInbox.teams || [])
           ),
           fees: []
         });
         timer.end({
           children: scheduleScope.children.length,
           teams: model.teams.length,
-          inboxTeams: chatInbox.teams?.length || 0
+          inboxTeams: chatInboxResult.chatInbox.teams?.length || 0,
+          chatPartial: Boolean(chatInboxResult.error)
         });
         return {
           home: model,
@@ -169,7 +190,12 @@ export async function loadParentTeamsSummaryBootstrap(
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
+    {
+      ttlMs: teamsSummaryTtlMs,
+      force: options.force,
+      persist: false,
+      shouldCache: (result) => result.scheduleScope.isPartial !== true
+    }
   );
 }
 

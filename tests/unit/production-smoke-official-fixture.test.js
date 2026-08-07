@@ -8,8 +8,13 @@ import {
     officialFixtureSlotId
 } from '../../scripts/maintain-production-smoke-official-fixture.mjs';
 import {
+    FIREBASE_REST_REQUEST_TIMEOUT_MS,
     createFirebaseRestSession,
-    patchFirestoreDocumentFields
+    deleteFirestoreDocument,
+    findFirestoreDocumentsByStringArrayContains,
+    isEmptyFirestoreDocument,
+    patchFirestoreDocumentFields,
+    restoreFirestoreDocumentFields
 } from '../smoke/helpers/firebase-rest.js';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
@@ -194,6 +199,102 @@ describe('production officials smoke fixture maintenance', () => {
         });
     });
 
+    it('restores only named image fields and deletes fields absent from the original snapshot', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ fields: {} })
+        });
+
+        await restoreFirestoreDocumentFields(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'users/smoke-user',
+            {
+                fields: {
+                    photoUrl: { stringValue: 'https://example.test/original.png' },
+                    fullName: { stringValue: 'Concurrent edits must survive' }
+                }
+            },
+            ['photoUrl', 'photoPath'],
+            { updateTime: '2026-08-02T20:00:00.000Z' }
+        );
+
+        const [requestUrl, request] = fetchMock.mock.calls[0];
+        const url = new URL(requestUrl);
+        expect(url.searchParams.getAll('updateMask.fieldPaths')).toEqual(['photoPath', 'photoUrl']);
+        expect(url.searchParams.get('currentDocument.updateTime')).toBe('2026-08-02T20:00:00.000Z');
+        expect(JSON.parse(request.body)).toEqual({
+            fields: {
+                photoUrl: { stringValue: 'https://example.test/original.png' }
+            }
+        });
+    });
+
+    it('deletes a smoke-created document only at the verified update time', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+            ok: true,
+            status: 200
+        });
+
+        await deleteFirestoreDocument(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'teams/allplays-smoke-team-v1/players/allplays-smoke-player-v1/private/profile',
+            { updateTime: '2026-08-02T22:00:00.000Z' }
+        );
+
+        const [requestUrl, request] = fetchMock.mock.calls[0];
+        expect(new URL(requestUrl).searchParams.get('currentDocument.updateTime')).toBe(
+            '2026-08-02T22:00:00.000Z'
+        );
+        expect(request).toMatchObject({
+            method: 'DELETE',
+            headers: { authorization: 'Bearer redacted-token' }
+        });
+    });
+
+    it('bounds Firebase requests and retries only retry-safe cleanup operations', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503,
+                arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0))
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200
+            });
+
+        await deleteFirestoreDocument(
+            {
+                projectId: 'smoke-project',
+                idToken: 'redacted-token'
+            },
+            'teams/allplays-smoke-team-v1/games/allplays-smoke-game-v1'
+        );
+
+        expect(FIREBASE_REST_REQUEST_TIMEOUT_MS).toBe(30_000);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        for (const [, request] of fetchMock.mock.calls) {
+            expect(request.signal).toBeInstanceOf(AbortSignal);
+        }
+    });
+
+    it('distinguishes an empty interrupted image document from a metadata-bearing fixture', () => {
+        expect(isEmptyFirestoreDocument({ fields: {} })).toBe(true);
+        expect(isEmptyFirestoreDocument({
+            fields: {
+                smokeOwned: { booleanValue: true },
+                parentUserId: { stringValue: 'smoke-parent' }
+            }
+        })).toBe(false);
+        expect(isEmptyFirestoreDocument(null)).toBe(false);
+    });
+
     it('loads canonical-host Firebase configuration from the AllPlays runtime fallback', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch')
             .mockResolvedValueOnce({
@@ -214,7 +315,8 @@ describe('production officials smoke fixture maintenance', () => {
                 ok: true,
                 json: vi.fn().mockResolvedValue({
                     idToken: 'redacted-token',
-                    localId: 'smoke-user'
+                    localId: 'smoke-user',
+                    email: 'Canonical.Smoke@example.com'
                 })
             });
 
@@ -226,7 +328,8 @@ describe('production officials smoke fixture maintenance', () => {
             projectId: 'runtime-project',
             storageBucket: 'runtime-bucket',
             idToken: 'redacted-token',
-            localId: 'smoke-user'
+            localId: 'smoke-user',
+            email: 'Canonical.Smoke@example.com'
         });
 
         expect(fetchMock.mock.calls[0][0]).toBe('https://allplays.ai/__/firebase/init.json');
@@ -244,6 +347,68 @@ describe('production officials smoke fixture maintenance', () => {
             email: 'smoke@example.com',
             password: 'exact password',
             returnSecureToken: true
+        });
+    });
+
+    it('does not retry authentication POST requests when their result is uncertain', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch')
+            .mockResolvedValueOnce({
+                ok: true,
+                json: vi.fn().mockResolvedValue({
+                    apiKey: 'runtime-api-key',
+                    projectId: 'runtime-project'
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: false,
+                status: 503
+            });
+
+        await expect(createFirebaseRestSession({
+            appBaseUrl: 'https://allplays.ai/app/',
+            email: 'smoke@example.com',
+            password: 'exact password'
+        })).rejects.toThrow('Firebase smoke authentication failed with status 503');
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    });
+
+    it('runs the same array-contains query used for staff team discovery', async () => {
+        const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+            ok: true,
+            json: vi.fn().mockResolvedValue([
+                {
+                    document: {
+                        name: 'projects/runtime-project/databases/(default)/documents/teams/smoke-team',
+                        fields: {
+                            adminEmails: {
+                                arrayValue: {
+                                    values: [{ stringValue: 'coach@example.com' }]
+                                }
+                            }
+                        }
+                    }
+                }
+            ])
+        });
+
+        await expect(findFirestoreDocumentsByStringArrayContains(
+            { projectId: 'runtime-project', idToken: 'redacted-token' },
+            'teams',
+            'adminEmails',
+            'coach@example.com'
+        )).resolves.toHaveLength(1);
+
+        expect(fetchMock.mock.calls[0][0]).toBe(
+            'https://firestore.googleapis.com/v1/projects/runtime-project/databases/(default)/documents:runQuery'
+        );
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body).structuredQuery.where).toEqual({
+            fieldFilter: {
+                field: { fieldPath: 'adminEmails' },
+                op: 'ARRAY_CONTAINS',
+                value: { stringValue: 'coach@example.com' }
+            }
         });
     });
 

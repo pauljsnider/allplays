@@ -10,6 +10,9 @@ export async function getPlayers() {
 export async function getPlayersWithPrivateRosterContacts() {
     return globalThis.__rosterCsvSavedPlayers || [];
 }
+export async function getPlayerPrivateProfile() {
+    return {};
+}
 export async function addPlayer(_teamId, payload) {
     globalThis.__rosterCsvAdds = globalThis.__rosterCsvAdds || [];
     globalThis.__rosterCsvAdds.push(payload);
@@ -45,8 +48,9 @@ export async function getGames() {
     return [];
 }
 export async function uploadPlayerPhoto() {
-    return 'https://example.test/photo.png';
+    return { url: 'https://example.test/photo.png', path: 'profile-photos/teams/team-1/players/player-1/photo.png' };
 }
+export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, fields, contacts) {
     globalThis.__rosterCsvPrivateWrites = globalThis.__rosterCsvPrivateWrites || [];

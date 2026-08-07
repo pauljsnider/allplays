@@ -27,6 +27,7 @@ import {
     rejectTeamRegistration
 } from './adapters/legacyParentTools';
 import { formatCurrencyFromCents as formatCurrency } from './money';
+import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
@@ -313,11 +314,7 @@ export async function initiateRegistrationCheckout(
         options.publicCheckoutCapability
     );
 
-    if (!result?.checkoutUrl) {
-        throw new Error('Failed to get checkout URL.');
-    }
-
-    return { success: true, checkoutUrl: result.checkoutUrl };
+    return { success: true, checkoutUrl: requireTrustedStripeCheckoutUrl(result?.checkoutUrl) };
 }
 
 export async function cancelRegistrationCheckout(

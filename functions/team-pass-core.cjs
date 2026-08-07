@@ -1,4 +1,5 @@
 const TEAM_PASS_TIER = 'team-pass';
+const crypto = require('node:crypto');
 
 function asTrimmedString(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -36,7 +37,9 @@ function normalizeTeamPassCheckoutInput(data = {}) {
 
 function isEligibleTeamPassPurchaser({ team = {}, user = {}, uid = '', email = '' } = {}) {
   const normalizedUid = asTrimmedString(uid);
-  const normalizedEmail = normalizeEmail(email || user.email);
+  // Email-based authority must come from the caller's current Auth token.
+  // A mutable users/{uid} profile can outlive an Auth email change.
+  const normalizedEmail = normalizeEmail(email);
   if (!normalizedUid) return false;
 
   if (team.ownerId === normalizedUid) return true;
@@ -50,6 +53,33 @@ function isEligibleTeamPassPurchaser({ team = {}, user = {}, uid = '', email = '
   if (parentTeamIds.includes(team.id)) return true;
 
   return false;
+}
+
+function buildTeamPassCheckoutAttemptId({ teamId, seasonId, tier } = {}) {
+  const normalized = normalizeTeamPassCheckoutInput({ teamId, seasonId, tier });
+  const digest = crypto.createHash('sha256')
+    .update([
+      normalized.teamId,
+      normalized.seasonId,
+      normalized.tier
+    ].join('|'))
+    .digest('hex');
+  return `team_pass_attempt_${digest}`;
+}
+
+function buildTeamPassCheckoutIdempotencyKey({
+  teamId,
+  seasonId,
+  tier,
+  checkoutCreationReservationId
+} = {}) {
+  const attemptId = buildTeamPassCheckoutAttemptId({ teamId, seasonId, tier });
+  const reservationId = asTrimmedString(checkoutCreationReservationId);
+  if (!reservationId) throw new Error('Missing checkout creation reservation id');
+  const digest = crypto.createHash('sha256')
+    .update([attemptId, reservationId].join('|'))
+    .digest('hex');
+  return `team_pass_checkout_${digest}`;
 }
 
 function isPaidCheckoutSession(session = {}) {
@@ -105,6 +135,8 @@ module.exports = {
   TEAM_PASS_TIER,
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
+  buildTeamPassCheckoutAttemptId,
+  buildTeamPassCheckoutIdempotencyKey,
   isPaidCheckoutSession,
   hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,

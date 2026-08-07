@@ -6,6 +6,7 @@ function readSource(path) {
 }
 
 const detailSource = readSource('apps/app/src/pages/ScheduleEventDetail.tsx');
+const gameHubSource = readSource('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
 const contextSource = readSource('apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx');
 const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
@@ -91,7 +92,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(ridesHookSource).toContain('const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();');
         expect(ridesHookSource).toContain('const [offers, setOffers] = useState<ScheduleRideOffer[]>([]);');
         expect(ridesHookSource).toContain('const summary = loading && !offers.length ? event.rideshareSummary : summarizeParentScheduleRideOffers(offers);');
-        expect(ridesHookSource).toContain('() => loadParentScheduleRideOffers(currentEvent)');
+        expect(ridesHookSource).toContain('() => loadParentScheduleRideOffers(currentEvent, authUserRef.current, childEventsRef.current)');
         expect(ridesHookSource).toContain('const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {');
         expect(ridesHookSource).toContain('await createParentScheduleRideOffer(event, auth.user!, input);');
         expect(ridesHookTestSource).toContain("describe('useScheduleRideOffers'");
@@ -119,10 +120,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             "import { CompactMeta } from '../components/schedule/CompactMeta';",
             "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
-            "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
-            "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
-            "import { ScoreStepper } from '../components/schedule/ScoreStepper';",
             "import { Status } from '../components/schedule/ScheduleStatus';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
@@ -131,6 +129,13 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             'AttentionPanel'
         ].forEach((snippet) => {
             expect(detailSource).toContain(snippet);
+        });
+        [
+            "import { PracticeAttendancePanel } from '../../components/schedule/PracticeAttendancePanel';",
+            "import { ReportMarkdownText } from '../../components/schedule/ReportMarkdownText';",
+            "import { ScoreStepper } from '../../components/schedule/ScoreStepper';"
+        ].forEach((snippet) => {
+            expect(gameHubSource).toContain(snippet);
         });
 
         [
@@ -179,15 +184,15 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps child switching and game report rendering in extracted schedule components', () => {
         expect(detailSource).toContain("import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';");
-        expect(detailSource).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
-        expect(detailSource).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
-        expect(detailSource).toContain('const DeferredGameReportSections = lazy(() => (');
+        expect(gameHubSource).toContain("type GameReportSectionsModule = typeof import('../../components/schedule/GameReportSections');");
+        expect(gameHubSource).toContain("gameReportSectionsModulePromise = import('../../components/schedule/GameReportSections');");
+        expect(gameHubSource).toContain('const DeferredGameReportSections = lazy(() => (');
         expect(detailSource).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
-        expect(detailSource).toContain('<DeferredGameReportSections event={event} />');
+        expect(gameHubSource).toContain('<DeferredGameReportSections event={event} />');
         expect(detailSource).not.toMatch(/^function PlayerSwitcher\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSections\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSectionContent\b/m);
-        expect(detailSource).not.toMatch(/loadGameReportSections\(/);
+        expect(gameHubSource).not.toMatch(/loadGameReportSections\(/);
 
         expect(playerSwitcherSource).toContain('export function PlayerSwitcher');
         expect(playerSwitcherSource).toContain('data-testid="event-player-switcher"');

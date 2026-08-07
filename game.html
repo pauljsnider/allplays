@@ -388,18 +388,18 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=136';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, deleteUploadedMediaObjects, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=4433159';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=21';
-        import { checkAuth } from './js/auth.js?v=141';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=443336';
+        import { checkAuth } from './js/auth.js?v=4433162';
         import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
-        import { resolveLiveStatConfig } from './js/live-game-state.js?v=4';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443318';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=13';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=4';
-        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=3';
+        import { buildHighlightShareUrl, normalizeGameRecapHighlightClips, resolveReplayVideoOptions } from './js/live-game-video.js?v=443314';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -737,9 +737,16 @@
                 saveBtn.disabled = true;
                 uploadBtn.disabled = true;
                 status.textContent = 'Uploading...';
+                let newlyUploadedStatSheet = null;
+                let statSheetPersisted = false;
                 try {
-                    const url = await uploadStatSheetPhoto(teamId, file);
+                    const upload = await uploadStatSheetPhoto(teamId, file, { returnUpload: true });
+                    const url = typeof upload === 'string' ? upload : upload.url;
+                    newlyUploadedStatSheet = typeof upload === 'string'
+                        ? null
+                        : { path: upload.path, storage: upload.storage };
                     await updateGame(teamId, gameId, { statSheetPhotoUrl: url });
+                    statSheetPersisted = true;
                     game.statSheetPhotoUrl = url;
                     img.src = url;
                     img.classList.remove('hidden');
@@ -751,6 +758,9 @@
                     removeBtn?.classList.remove('hidden');
                     status.textContent = 'Saved.';
                 } catch (error) {
+                    if (newlyUploadedStatSheet && !statSheetPersisted) {
+                        await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+                    }
                     console.error('Stat sheet upload failed:', error);
                     status.textContent = `Error: ${error.message}`;
                 } finally {

@@ -256,7 +256,8 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('useIndexedStaffMemberships: true');
         expect(functionsSource).toContain('if (publicUserProfileProjection.isPublicProfileAuthUserNotFound(error))');
         expect(functionsSource).toContain('throw error;');
-        expect(functionsSource).toContain("reason: authIdentity.userMissing === true ? 'auth-user-missing' : 'email-unverified'");
+        expect(functionsSource).toContain("reason: authIdentity.userMissing === true");
+        expect(functionsSource).toContain("? 'auth-user-disabled'");
     });
 
     it('refreshes server-owned public projection when a parent membership request is approved', () => {

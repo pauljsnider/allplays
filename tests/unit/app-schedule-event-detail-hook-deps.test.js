@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('React app schedule event detail hook dependencies', () => {
     it('keeps event-driven editors and score autosave wired to current props', () => {
-        const source = readFileSync(resolve('apps/app/src/pages/ScheduleEventDetail.tsx'), 'utf8');
+        const source = readFileSync(resolve('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx'), 'utf8');
 
         expect(source).toContain('const formResetKey = buildGameFormResetKey(event);');
         expect(source).toContain('}, [formResetKey]);');

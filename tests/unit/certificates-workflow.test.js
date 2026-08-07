@@ -230,6 +230,7 @@ describe('awards and certificates workflow wiring', () => {
     it('adds the certificates studio page with the expected workflow mount points', () => {
         const html = readRepoFile('certificates.html');
         const studio = readRepoFile('js/certificates/studio.js');
+        const db = readRepoFile('js/db.js');
         const css = readRepoFile('css/certificates.css');
         const assets = readRepoFile('js/certificates/assets.js');
         const firebaseConfig = readRepoFile('firebase.json');
@@ -244,11 +245,23 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=22');
+        expect(html).toContain('./js/certificates/studio.js?v=443333');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=136'");
+        expect(studio).toContain("from './signers.js?v=2'");
+        expect(studio).toContain("from './defaultsReconciliation.js?v=1'");
+        expect(studio).toContain('if (!certificateDefaultsMatch(state.shared, authoritativeDefaults))');
+        expect(studio).toContain("from '../db.js?v=4433159'");
+        expect(db).toContain("from './certificates/persistence.js?v=1'");
+        expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
+        expect(studio).toContain("import('./assets.js?v=7')");
+        expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
+        expect(studio).toContain('signers: normalizeSigners(state.shared.signers),');
+        expect(studio).not.toContain('.map(({ signatureImagePath, ...signer }) => signer)');
+        expect(studio).toContain('await persistCertificateDefaults();');
+        expect(studio).not.toContain('pendingSignatureCleanupPaths');
+        expect(studio).toContain('Both images were preserved; refresh before retrying.');
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
@@ -297,7 +310,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain('Uploaded for this run');
+        expect(studio).toContain("import('./assets.js?v=7')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');

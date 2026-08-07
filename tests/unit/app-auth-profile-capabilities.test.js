@@ -333,7 +333,8 @@ describe('React app auth/profile capability parity', () => {
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);");
         expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
-        expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId]');
+        expect(turnOnGameDayAlerts).toContain('const sourceDraft = notificationPreferenceDraftsByTeamIdRef.current[teamId];');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = sourceDraft || notificationPreferencesByTeamId[teamId]');
         expect(turnOnGameDayAlerts).toContain('loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
         expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferencesOnce(user.uid, teamId));');
@@ -457,7 +458,7 @@ describe('React app auth/profile capability parity', () => {
     it('routes the basketball sideline tracker capability to the native game hub lineup and sub flow', () => {
         const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
         const capabilityPage = readProjectFile('apps/app/src/pages/CapabilityPage.tsx');
-        const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const scheduleGameHub = readProjectFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
 
         expectContains(capabilities, [
             "capability('track-basketball', 'Basketball sideline tracker', 'track-basketball.html', 'Tracking', 'Starting five setup, published-lineup substitutions, on-court rotation, personal fouls, team foul bonus indicators, playing-time visibility, and shared live log handoff in the app game hub.', ['Starting five', 'Published lineup handoff', 'Substitutions', 'Personal fouls', 'Team foul bonus', 'On-court rotation', 'Playing-time visibility', 'Shared live log'], '/schedule', 'native-shell', staffRoles)",
@@ -467,7 +468,7 @@ describe('React app auth/profile capability parity', () => {
             "capability.status === 'native-shell'",
             'Open app route'
         ]);
-        expectContains(scheduleEventDetail, [
+        expectContains(scheduleGameHub, [
             'Lineup builder',
             'Substitution plan',
             'Projected playing time',
@@ -491,6 +492,7 @@ describe('React app auth/profile capability parity', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
         const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const scheduleGameHub = readProjectFile('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx');
         const gameReportContent = readProjectFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
         const scheduleHub = readProjectFile('apps/app/src/lib/scheduleHub.ts');
         const scheduleService = readProjectFile('apps/app/src/lib/scheduleService.ts');
@@ -528,6 +530,9 @@ describe('React app auth/profile capability parity', () => {
             'Availability',
             'Rideshare',
             'Assignments',
+            'GameHubSection'
+        ]);
+        expectContains(scheduleGameHub, [
             'Game hub',
             'Practice hub',
             'PracticePacketSection'

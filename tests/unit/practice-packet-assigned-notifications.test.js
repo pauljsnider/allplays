@@ -15,7 +15,7 @@ function extractChunk(startMarker, endMarker) {
 function extractNotifyPracticePacketAssigned() {
     return [
         extractChunk('function buildPracticePacketNotificationDestination(', 'function buildNotificationLink'),
-        extractChunk('exports.notifyPracticePacketAssigned = functions.firestore', 'function writePublicRsvpCors')
+        extractChunk('exports.notifyPracticePacketAssigned = retryableNotificationFunctions.firestore', 'function writePublicRsvpCors')
     ].join('\n');
 }
 
@@ -66,7 +66,7 @@ function buildHarness({
         'getTargetsForCategory',
         'getCandidateUsersForTeam',
         'sendDirectTargetsNotification',
-        `${extractNotifyPracticePacketAssigned()}\nreturn exports.notifyPracticePacketAssigned;`
+        `${extractNotifyPracticePacketAssigned().replaceAll('retryableNotificationFunctions.', 'functions.')}\nreturn exports.notifyPracticePacketAssigned;`
     );
     const trigger = factory(
         exportsObject,

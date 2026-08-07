@@ -4,12 +4,14 @@ import {
   loadSentTeamEmails,
   loadTeamEmailDrafts,
   loadTeamEmailTemplates,
+  mergeTeamEmailSavedItems,
   saveTeamEmailDraft,
   saveTeamEmailTemplate,
   sendTeamEmailMessage,
   type ChatConversation,
   type SentTeamEmail,
   type TeamEmailDraft,
+  type TeamEmailSavedCursor,
   type TeamEmailTemplate
 } from '../../../lib/chatService';
 import {
@@ -80,6 +82,8 @@ export default function TeamEmailSheet({
   const [emailLoadingDrafts, setEmailLoadingDrafts] = useState(false);
   const [emailLoadingHistory, setEmailLoadingHistory] = useState(false);
   const [emailLoadingTemplates, setEmailLoadingTemplates] = useState(false);
+  const [draftNextCursor, setDraftNextCursor] = useState<TeamEmailSavedCursor | null>(null);
+  const [templateNextCursor, setTemplateNextCursor] = useState<TeamEmailSavedCursor | null>(null);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
   const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
@@ -114,10 +118,14 @@ export default function TeamEmailSheet({
     }
   }, [teamId]);
 
-  const reloadEmailTemplates = useCallback(async ({ suppressErrorStatus = false } = {}) => {
+  const reloadEmailTemplates = useCallback(async ({ suppressErrorStatus = false, append = false } = {}) => {
     setEmailLoadingTemplates(true);
     try {
-      emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));
+      const page = await loadTeamEmailTemplates(teamId, { cursor: append ? templateNextCursor : null });
+      emailDispatch(emailComposerActions.setTemplates(
+        append ? mergeTeamEmailSavedItems(emailState.templates, page.items) : page.items
+      ));
+      setTemplateNextCursor(page.nextCursor);
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -128,12 +136,16 @@ export default function TeamEmailSheet({
     } finally {
       setEmailLoadingTemplates(false);
     }
-  }, [teamId]);
+  }, [emailState.templates, teamId, templateNextCursor]);
 
-  const reloadEmailDrafts = useCallback(async ({ suppressErrorStatus = false } = {}) => {
+  const reloadEmailDrafts = useCallback(async ({ suppressErrorStatus = false, append = false } = {}) => {
     setEmailLoadingDrafts(true);
     try {
-      emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));
+      const page = await loadTeamEmailDrafts(teamId, { cursor: append ? draftNextCursor : null });
+      emailDispatch(emailComposerActions.setDrafts(
+        append ? mergeTeamEmailSavedItems(emailState.drafts, page.items) : page.items
+      ));
+      setDraftNextCursor(page.nextCursor);
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -144,7 +156,7 @@ export default function TeamEmailSheet({
     } finally {
       setEmailLoadingDrafts(false);
     }
-  }, [teamId]);
+  }, [draftNextCursor, emailState.drafts, teamId]);
 
   useEffect(() => {
     if (!open) {
@@ -155,6 +167,8 @@ export default function TeamEmailSheet({
       openForTeamRef.current = teamId;
       emailDispatch(emailComposerActions.updateTemplateName(''));
       emailDispatch(emailComposerActions.clearSelectedDraft());
+      setDraftNextCursor(null);
+      setTemplateNextCursor(null);
       setEmailStatus(null);
       setEmailHistoryStatus(null);
     }
@@ -199,7 +213,6 @@ export default function TeamEmailSheet({
       emailDispatch(emailComposerActions.updateTemplateName(''));
       emailDispatch(emailComposerActions.setTemplates([savedTemplate, ...emailState.templates.filter((item) => item.id !== savedTemplate.id)]));
       setEmailStatus({ tone: 'success', message: `Saved template "${savedTemplate.name}".` });
-      void reloadEmailTemplates({ suppressErrorStatus: true });
     } catch (saveError: any) {
       setEmailStatus({ tone: 'error', message: saveError?.message || 'Could not save team email template.' });
     } finally {
@@ -227,7 +240,6 @@ export default function TeamEmailSheet({
         emailDispatch(emailComposerActions.saveDraft(savedDraft));
       }
       setEmailStatus({ tone: 'success', message: `Saved draft "${savedDraft?.subject || emailState.subject || 'Untitled draft'}". No email was sent.` });
-      void reloadEmailDrafts({ suppressErrorStatus: true });
     } catch (saveError: any) {
       setEmailStatus({ tone: 'error', message: saveError?.message || 'Could not save team email draft.' });
     } finally {
@@ -280,11 +292,13 @@ export default function TeamEmailSheet({
       templateName={emailState.templateName}
       savingDraft={emailSavingDraft}
       loadingDrafts={emailLoadingDrafts}
+      hasMoreDrafts={Boolean(draftNextCursor)}
       templates={emailState.templates}
       sending={emailSending}
       savingTemplate={emailSavingTemplate}
       loadingHistory={emailLoadingHistory}
       loadingTemplates={emailLoadingTemplates}
+      hasMoreTemplates={Boolean(templateNextCursor)}
       recipientOptionsLoading={recipientOptionsLoading}
       recipientOptionsError={recipientOptionsError}
       status={emailStatus}
@@ -302,8 +316,10 @@ export default function TeamEmailSheet({
       onSaveTemplate={handleSaveEmailTemplate}
       onSubmit={handleSendEmail}
       onRefreshDrafts={reloadEmailDrafts}
+      onLoadMoreDrafts={() => reloadEmailDrafts({ append: true })}
       onRefreshHistory={reloadSentEmailHistory}
       onRefreshTemplates={reloadEmailTemplates}
+      onLoadMoreTemplates={() => reloadEmailTemplates({ append: true })}
       onRetryRecipientOptions={() => {
         void ensureRecipientOptionsLoaded().catch(() => undefined);
       }}
@@ -323,11 +339,13 @@ function TeamEmailSheetView({
   templateName,
   savingDraft,
   loadingDrafts,
+  hasMoreDrafts,
   templates,
   sending,
   savingTemplate,
   loadingHistory,
   loadingTemplates,
+  hasMoreTemplates,
   recipientOptionsLoading,
   recipientOptionsError,
   status,
@@ -345,8 +363,10 @@ function TeamEmailSheetView({
   onSaveTemplate,
   onSubmit,
   onRefreshDrafts,
+  onLoadMoreDrafts,
   onRefreshHistory,
   onRefreshTemplates,
+  onLoadMoreTemplates,
   onRetryRecipientOptions,
   onEditAudience,
   onStatusClose,
@@ -360,11 +380,13 @@ function TeamEmailSheetView({
   templateName: string;
   savingDraft: boolean;
   loadingDrafts: boolean;
+  hasMoreDrafts: boolean;
   templates: TeamEmailTemplate[];
   sending: boolean;
   savingTemplate: boolean;
   loadingHistory: boolean;
   loadingTemplates: boolean;
+  hasMoreTemplates: boolean;
   recipientOptionsLoading: boolean;
   recipientOptionsError: string | null;
   status: ChatStatus | null;
@@ -382,8 +404,10 @@ function TeamEmailSheetView({
   onSaveTemplate: () => void;
   onSubmit: (event?: FormEvent) => void;
   onRefreshDrafts: () => void;
+  onLoadMoreDrafts: () => void;
   onRefreshHistory: () => void;
   onRefreshTemplates: () => void;
+  onLoadMoreTemplates: () => void;
   onRetryRecipientOptions: () => void;
   onEditAudience: () => void;
   onStatusClose: () => void;
@@ -456,6 +480,12 @@ function TeamEmailSheetView({
           })}
         </div>
       )}
+      {hasMoreDrafts ? (
+        <button type="button" className="ghost-button w-full !h-9 !min-h-9 text-xs" onClick={onLoadMoreDrafts} disabled={loadingDrafts}>
+          {loadingDrafts ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+          Load more drafts
+        </button>
+      ) : null}
       {!draftAudienceSupported ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
           Draft saving is available only for Selected members.
@@ -498,6 +528,12 @@ function TeamEmailSheetView({
         <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
           No saved team email templates yet.
         </div>
+      ) : null}
+      {hasMoreTemplates ? (
+        <button type="button" className="ghost-button w-full !h-9 !min-h-9 text-xs" onClick={onLoadMoreTemplates} disabled={loadingTemplates}>
+          {loadingTemplates ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+          Load more templates
+        </button>
       ) : null}
       <label className="block">
         <span className="app-label">Save current email as template</span>

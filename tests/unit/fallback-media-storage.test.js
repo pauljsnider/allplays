@@ -65,29 +65,29 @@ function canAccessLegacyGameClipFallback({ authUid }) {
 
 describe('fallback media paths and Storage rules', () => {
     it('builds team-scoped fallback paths with uploader context', () => {
-        expect(buildChatAttachmentFallbackPath('team/alpha', 'group user 42', 'user 42', 'my photo (1).png', 1700000000000))
-            .toBe('stat-sheets/team-chat/team_alpha/group_user_42/user_42/1700000000000_my_photo_1_.png');
-        expect(buildChatAttachmentFallbackPath('team/alpha', 'group_user%3Acoach-1', 'user 42', 'my photo (1).png', 1700000000000))
-            .toBe('stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user_42/1700000000000_my_photo_1_.png');
-        expect(buildStatSheetFallbackPath('team/alpha', 'user 42', 'box score (1).png', 1700000000001))
-            .toBe('stat-sheets/team-games/team_alpha/user_42/1700000000001_box_score_1_.png');
-        expect(buildDrillDiagramFallbackPath('team/alpha', 'drill 7', 'user 42', 'diagram #1.png', 1700000000002))
-            .toBe('stat-sheets/drills/team_alpha/drill_7/user_42/1700000000002_diagram_1.png');
-        expect(buildGameClipFallbackPath('team/alpha', 'game 7', 'user 42', 'clip #1.mp4', 1700000000001))
-            .toBe('game-clips/team_alpha/game_7/user_42/1700000000001_clip_1.mp4');
+        expect(buildChatAttachmentFallbackPath('team/alpha', 'group user 42', 'user 42', 'my photo (1).png', 1700000000000, 'upload-1'))
+            .toBe('stat-sheets/team-chat/team_alpha/group_user_42/user_42/1700000000000_upload-1_my_photo_1_.png');
+        expect(buildChatAttachmentFallbackPath('team/alpha', 'group_user%3Acoach-1', 'user 42', 'my photo (1).png', 1700000000000, 'upload-2'))
+            .toBe('stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user_42/1700000000000_upload-2_my_photo_1_.png');
+        expect(buildStatSheetFallbackPath('team/alpha', 'user 42', 'box score (1).png', 1700000000001, 'upload-3'))
+            .toBe('stat-sheets/team-games/team_alpha/user_42/1700000000001_upload-3_box_score_1_.png');
+        expect(buildDrillDiagramFallbackPath('team/alpha', 'drill 7', 'user 42', 'diagram #1.png', 1700000000002, 'upload-4'))
+            .toBe('stat-sheets/drills/team_alpha/drill_7/user_42/1700000000002_upload-4_diagram_1.png');
+        expect(buildGameClipFallbackPath('team/alpha', 'game 7', 'user 42', 'clip #1.mp4', 1700000000001, 'upload-5'))
+            .toBe('game-clips/team_alpha/game_7/user_42/1700000000001_upload-5_clip_1.mp4');
         expect(dbSource).toContain('buildChatAttachmentFallbackPath(teamId, conversationId, userId, file.name, ts)');
-        expect(dbSource).toContain('buildStatSheetFallbackPath(teamId, userId, file.name, Date.now())');
+        expect(dbSource).toContain('buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce)');
         expect(dbSource).toContain('buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now())');
-        expect(dbSource).toContain('buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts)');
+        expect(dbSource).toContain('buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce)');
     });
 
     it('limits fallback chat media access to the same team audience and current uploader/admin delete rights', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
-        expect(rules).toContain("team.get('ownerEmail', '').lower() == request.auth.token.email.lower()");
-        expect(dbSource).toContain('where("ownerEmail", "==", ownerEmail)');
-        expect(dbSource).toContain('where("ownerEmailLower", "==", normalizedEmail)');
-        expect(dbSource).toContain('const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {');
-        expect(dbSource).toContain('Optional team access query failed');
+        expect(rules).toContain("team.get('ownerId', '') == ''");
+        expect(rules).toContain('ownerEmail.lower() == request.auth.token.email.lower()');
+        expect(rules).toContain('ownerEmail.lower() == ownerEmailLower.lower()');
+        expect(dbSource).toContain("httpsCallable(functions, 'listManagedTeams')");
+        expect(dbSource).not.toContain('Optional team access query failed');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
         expect(chatFallbackRules).toContain("allow create: if ((isSignedIn() && conversationId == 'team') ||\n        isVerifiedForSensitiveWrite()) &&");

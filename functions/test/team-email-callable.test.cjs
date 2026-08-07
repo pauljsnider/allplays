@@ -4,6 +4,8 @@ const Module = require('node:module');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
+const originalSenderSendLimit = process.env.TEAM_EMAIL_SENDER_SEND_LIMIT;
+const originalTeamSendLimit = process.env.TEAM_EMAIL_TEAM_SEND_LIMIT;
 
 let adminStub;
 let functionsStub;
@@ -34,9 +36,11 @@ function makeFunctionsStub() {
     onRun: (handler) => handler,
     document() { return this; },
     schedule() { return this; },
-    timeZone() { return this; }
+    timeZone() { return this; },
+    user() { return this; }
   };
   triggerChain.https = triggerChain;
+  triggerChain.auth = triggerChain;
   triggerChain.firestore = triggerChain;
   triggerChain.pubsub = triggerChain;
 
@@ -56,6 +60,7 @@ function makeFirestore(seed) {
   const committedWrites = [];
   const collectionCounters = new Map();
   let mailJobRefsCreated = 0;
+  let transactionQueue = Promise.resolve();
 
   function snapshot(path) {
     const value = state.get(path);
@@ -80,8 +85,9 @@ function makeFirestore(seed) {
 
   function collection(path) {
     return {
-      doc() {
+      doc(requestedId) {
         if (path === 'mail') mailJobRefsCreated += 1;
+        if (requestedId) return doc(`${path}/${requestedId}`);
         const nextId = (collectionCounters.get(path) || 0) + 1;
         collectionCounters.set(path, nextId);
         return doc(`${path}/auto-${nextId}`);
@@ -144,27 +150,40 @@ function makeFirestore(seed) {
         }
       };
     },
-    async runTransaction(handler) {
-      return handler({
-        get: async (ref) => snapshot(ref.path),
-        set(ref, value, options) {
-          committedWrites.push({ path: ref.path, value, options });
-          state.set(ref.path, value);
-        }
-      });
+    runTransaction(handler) {
+      const execute = async () => {
+        const writes = [];
+        const result = await handler({
+          get: async (ref) => snapshot(ref.path),
+          set(ref, value, options) {
+            writes.push({ path: ref.path, value, options });
+          }
+        });
+        writes.forEach((write) => {
+          committedWrites.push(write);
+          state.set(write.path, write.value);
+        });
+        return result;
+      };
+      const result = transactionQueue.then(execute, execute);
+      transactionQueue = result.then(() => undefined, () => undefined);
+      return result;
     },
     get mailJobRefsCreated() {
       return mailJobRefsCreated;
     },
     get committedWrites() {
       return committedWrites;
+    },
+    documentsWithPrefix(prefix) {
+      return [...state.entries()].filter(([path]) => path.startsWith(prefix));
     }
   };
 }
 
-function loadCallables(seed, storageMetadata = {}) {
+function loadCallables(seed, storageMetadata = {}, sharedFirestore = null) {
   delete require.cache[repoIndexPath];
-  const firestore = makeFirestore(seed);
+  const firestore = sharedFirestore || makeFirestore(seed);
   const fieldValue = {
     serverTimestamp: () => 'SERVER_TIMESTAMP',
     delete: () => ({ __op: 'delete' }),
@@ -209,6 +228,8 @@ function loadCallables(seed, storageMetadata = {}) {
 
 test.beforeEach(() => {
   Module._load = patchedModuleLoad;
+  process.env.TEAM_EMAIL_SENDER_SEND_LIMIT = '2';
+  process.env.TEAM_EMAIL_TEAM_SEND_LIMIT = '3';
 });
 
 test.afterEach(() => {
@@ -217,7 +238,44 @@ test.afterEach(() => {
   adminStub = null;
   functionsStub = null;
   StripeStub = null;
+  if (originalSenderSendLimit === undefined) delete process.env.TEAM_EMAIL_SENDER_SEND_LIMIT;
+  else process.env.TEAM_EMAIL_SENDER_SEND_LIMIT = originalSenderSendLimit;
+  if (originalTeamSendLimit === undefined) delete process.env.TEAM_EMAIL_TEAM_SEND_LIMIT;
+  else process.env.TEAM_EMAIL_TEAM_SEND_LIMIT = originalTeamSendLimit;
 });
+
+function makeRateLimitSeed() {
+  return {
+    'teams/team-1': { ownerId: 'owner-1', adminEmails: [] },
+    'teams/team-2': { ownerId: 'owner-1', adminEmails: [] },
+    'users/owner-1': { fullName: 'Owner' },
+    'users/admin-2': { fullName: 'Admin Two', isAdmin: true },
+    'users/admin-3': { fullName: 'Admin Three', isAdmin: true },
+    'users/admin-4': { fullName: 'Admin Four', isAdmin: true },
+    'teams/team-1/players/player-1': {
+      active: true,
+      parents: [{ userId: 'parent-1', email: 'parent@example.com' }]
+    },
+    'teams/team-2/players/player-2': {
+      active: true,
+      parents: [{ userId: 'parent-2', email: 'other-parent@example.com' }]
+    },
+    'teams/team-1/emailDrafts/draft-1': {
+      subject: 'Saved update',
+      body: 'Saved message.',
+      targetType: 'full_team'
+    }
+  };
+}
+
+function sendRateLimitedEmail(callables, { teamId = 'team-1', uid = 'owner-1', draftId = '' } = {}) {
+  return callables.sendTeamEmail({
+    teamId,
+    draftId,
+    subject: 'Update',
+    body: 'Practice moved.'
+  }, { auth: { uid, token: { email: `${uid}@example.com` } } });
+}
 
 test('sendTeamEmail rejects an unauthorized caller before creating mail jobs', async () => {
   const { callables, firestore } = loadCallables({
@@ -233,6 +291,90 @@ test('sendTeamEmail rejects an unauthorized caller before creating mail jobs', a
     (error) => error.code === 'permission-denied'
   );
   assert.equal(firestore.mailJobRefsCreated, 0);
+  assert.equal(firestore.documentsWithPrefix('teamEmailRateLimits/').length, 0);
+});
+
+test('sendTeamEmail validates payloads before reserving rate-limit capacity', async () => {
+  const { callables, firestore } = loadCallables({
+    'teams/team-1': { ownerId: 'owner-1', adminEmails: [] },
+    'users/owner-1': { fullName: 'Owner' }
+  });
+
+  await assert.rejects(
+    callables.sendTeamEmail(
+      { teamId: 'team-1', subject: '', body: 'Practice moved.' },
+      { auth: { uid: 'owner-1', token: { email: 'owner@example.com' } } }
+    ),
+    (error) => error.code === 'invalid-argument'
+  );
+  assert.equal(firestore.documentsWithPrefix('teamEmailRateLimits/').length, 0);
+  assert.equal(firestore.mailJobRefsCreated, 0);
+});
+
+test('sendTeamEmail keeps sender and team limits durable across handler reloads with no rejected side effects', async () => {
+  const firstLoad = loadCallables(makeRateLimitSeed());
+  await sendRateLimitedEmail(firstLoad.callables);
+
+  const secondLoad = loadCallables({}, {}, firstLoad.firestore);
+  await sendRateLimitedEmail(secondLoad.callables);
+  await assert.rejects(
+    sendRateLimitedEmail(secondLoad.callables, { draftId: 'draft-1' }),
+    (error) => error.code === 'resource-exhausted' && /try again in about/.test(error.message)
+  );
+
+  assert.equal(firstLoad.firestore.committedWrites.filter((write) => write.path.startsWith('mail/')).length, 2);
+  assert.equal(firstLoad.firestore.committedWrites.filter((write) => write.path.startsWith('teams/team-1/teamEmails/')).length, 2);
+  assert.equal(firstLoad.firestore.committedWrites.filter((write) => write.path === 'teams/team-1/emailDrafts/draft-1').length, 0);
+  assert.equal(firstLoad.firestore.committedWrites.filter((write) => write.path.startsWith('users/parent-1/notificationInbox/')).length, 2);
+
+  const otherTeamResult = await sendRateLimitedEmail(secondLoad.callables, { teamId: 'team-2' });
+  assert.equal(otherTeamResult.recipientCount, 1);
+});
+
+test('sendTeamEmail enforces the team-wide limit sequentially across isolated senders', async () => {
+  const { callables, firestore } = loadCallables(makeRateLimitSeed());
+  await sendRateLimitedEmail(callables, { uid: 'owner-1' });
+  await sendRateLimitedEmail(callables, { uid: 'owner-1' });
+  await sendRateLimitedEmail(callables, { uid: 'admin-2' });
+
+  await assert.rejects(
+    sendRateLimitedEmail(callables, { uid: 'admin-2', draftId: 'draft-1' }),
+    (error) => error.code === 'resource-exhausted'
+  );
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('mail/')).length, 3);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('teams/team-1/teamEmails/')).length, 3);
+  assert.equal(firestore.committedWrites.filter((write) => write.path === 'teams/team-1/emailDrafts/draft-1').length, 0);
+});
+
+test('sendTeamEmail atomically caps concurrent requests at the sender limit', async () => {
+  const { callables, firestore } = loadCallables(makeRateLimitSeed());
+  const results = await Promise.allSettled([
+    sendRateLimitedEmail(callables),
+    sendRateLimitedEmail(callables),
+    sendRateLimitedEmail(callables)
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 2);
+  assert.equal(results.filter((result) => result.status === 'rejected' && result.reason.code === 'resource-exhausted').length, 1);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('mail/')).length, 2);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('teams/team-1/teamEmails/')).length, 2);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('users/parent-1/notificationInbox/')).length, 2);
+});
+
+test('sendTeamEmail atomically caps concurrent requests at the team-wide limit', async () => {
+  const { callables, firestore } = loadCallables(makeRateLimitSeed());
+  const results = await Promise.allSettled([
+    sendRateLimitedEmail(callables, { uid: 'owner-1' }),
+    sendRateLimitedEmail(callables, { uid: 'admin-2' }),
+    sendRateLimitedEmail(callables, { uid: 'admin-3' }),
+    sendRateLimitedEmail(callables, { uid: 'admin-4' })
+  ]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 3);
+  assert.equal(results.filter((result) => result.status === 'rejected' && result.reason.code === 'resource-exhausted').length, 1);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('mail/')).length, 3);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('teams/team-1/teamEmails/')).length, 3);
+  assert.equal(firestore.committedWrites.filter((write) => write.path.startsWith('users/parent-1/notificationInbox/')).length, 3);
 });
 
 test('sendTeamEmail rejects a cross-team recipient before creating mail jobs', async () => {

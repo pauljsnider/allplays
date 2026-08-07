@@ -29,14 +29,14 @@ describe('media and award notification contract', () => {
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
         expect(functionsSource).toContain('audienceContext');
-        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
         expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
         expect(firestoreIndexes).toContain('"fieldPath": "status"');
         expect(firestoreIndexes).toContain('"fieldPath": "dueAt"');
     });
 
     it('claims and sends published award notifications to linked parents only once', () => {
-        expect(functionsSource).toContain('exports.notifyPublishedCertificateAward = functions.firestore');
+        expect(functionsSource).toContain('exports.notifyPublishedCertificateAward = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/certificates/{certificateId}')");
         expect(functionsSource).toContain("String(afterData.status || '').trim() === 'published'");
         expect(functionsSource).toContain('const claimed = await claimPublishedCertificateAwardNotification(change.after.ref, eventId);');

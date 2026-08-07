@@ -19,6 +19,7 @@ import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { captureHandledAppError, createAppTimer } from './telemetry';
+import { getFriendInviteTargetError } from './friendInviteCapabilities';
 
 export {
   acquireProfilePhoto,
@@ -62,6 +63,7 @@ export type ProfileDocument = {
   displayName?: string;
   phone?: string;
   photoUrl?: string | null;
+  photoPath?: string | null;
   signInMethod?: string;
   hasPassword?: boolean;
   updatedAt?: unknown;
@@ -288,6 +290,29 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
+export async function loadManagedTeamsFromNativeCallable() {
+  const token = await getNativeAuthIdToken(true);
+  if (!token) throw new Error('Native auth token is unavailable.');
+  const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listManagedTeams`;
+  const response = await withTimeout(fetch(requestUrl, {
+    method: 'POST',
+    headers: await getPrimaryAppCheckHeaders({
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }, requestUrl),
+    body: JSON.stringify({ data: {} })
+  }), 'Managed team load');
+  const payload = await response.json().catch(() => ({}));
+  const result = payload?.result || payload?.data;
+  if (!response.ok || !Array.isArray(result?.items)) {
+    throw new Error(payload?.error?.message || 'Managed teams response is invalid.');
+  }
+  return {
+    teams: result.items.filter((team: any) => team && typeof team === 'object' && !Array.isArray(team)),
+    isPartial: result.isPartial === true
+  };
+}
+
 function getProfileParentTeamIds(profile: ProfileDocument) {
   return [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
     .map((link: any) => link?.teamId)
@@ -330,26 +355,18 @@ async function nativeSaveProfileDocument(userId: string, profile: ProfileDocumen
   });
 }
 
-async function nativeLoadNotificationTeams(userId: string, email?: string | null): Promise<NotificationTeam[]> {
+async function nativeLoadNotificationTeams(userId: string, _email?: string | null): Promise<NotificationTeam[]> {
   const profile = await nativeLoadProfileDocument(userId).catch(() => ({}));
-  const emailCandidates = Array.from(new Set([
-    String(email || '').trim(),
-    String((profile as any)?.email || '').trim(),
-    String(email || (profile as any)?.email || '').trim().toLowerCase()
-  ].filter(Boolean)));
-  const normalizedEmail = emailCandidates.find((candidate) => candidate === candidate.toLowerCase()) || '';
-  const ownerEmailLookups = emailCandidates.map((ownerEmail) =>
-    nativeRunQuery('teams', 'ownerEmail', 'EQUAL', ownerEmail).catch(() => [])
-  );
-  const [ownedTeams, adminTeams, ownerEmailLowerTeams, ...ownerEmailTeams] = await Promise.all([
-    nativeRunQuery('teams', 'ownerId', 'EQUAL', userId).catch(() => []),
-    normalizedEmail ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', normalizedEmail).catch(() => []) : Promise.resolve([]),
-    normalizedEmail ? nativeRunQuery('teams', 'ownerEmailLower', 'EQUAL', normalizedEmail).catch(() => []) : Promise.resolve([]),
-    ...ownerEmailLookups
+  const [managedTeamResult, parentTeams] = await Promise.all([
+    loadManagedTeamsFromNativeCallable(),
+    nativeLoadTeamsByIds(getProfileParentTeamIds(profile))
   ]);
-  const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
+  if (managedTeamResult.isPartial) {
+    throw new Error('Managed team discovery returned partial results.');
+  }
   const map = new Map<string, NotificationTeam>();
-  filterActiveTeams([...ownedTeams, ...adminTeams, ...ownerEmailLowerTeams, ...ownerEmailTeams.flat(), ...parentTeams]).forEach((team: any) => {
+  filterActiveTeams([...managedTeamResult.teams, ...parentTeams])
+    .forEach((team: any) => {
     if (team?.id) {
       map.set(team.id, { id: team.id, name: team.name || team.id });
     }
@@ -630,8 +647,9 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
   const normalizedEmail = String(email || '').trim();
   const normalizedPhone = String(phone || '').trim();
-  if (!normalizedEmail && !normalizedPhone) {
-    throw new Error('Enter an email or phone number for the invite.');
+  const targetError = getFriendInviteTargetError(normalizedEmail, normalizedPhone);
+  if (targetError) {
+    throw new Error(targetError);
   }
 
   const code = generateAccessCode();

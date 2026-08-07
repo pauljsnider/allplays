@@ -1,10 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+    assertUnprivilegedParentFixture,
     buildActivePlayerPatch,
     buildActiveTeamPatch,
+    buildCanonicalStaffAccessPatch,
+    buildCanonicalStaffProfilePatch,
     buildParentMembershipPatch,
-    inspectParentFixture
+    inspectParentFixture,
+    inspectStaffTeamDiscovery
 } from '../../scripts/maintain-production-smoke-parent-fixture.mjs';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
@@ -52,17 +56,30 @@ function buildPlayerDocument({
     };
 }
 
+function buildStaffDocument({ coachOf = [] } = {}) {
+    return {
+        updateTime: '2026-07-29T18:00:00.000Z',
+        fields: {
+            coachOf: stringArray(coachOf)
+        }
+    };
+}
+
 function buildTeamDocument({
     active = true,
     archived = false,
-    status = 'active'
+    status = 'active',
+    ownerId = '',
+    adminEmails = []
 } = {}) {
     return {
         updateTime: '2026-07-29T18:00:00.000Z',
         fields: {
             active: { booleanValue: active },
             archived: { booleanValue: archived },
-            status: { stringValue: status }
+            status: { stringValue: status },
+            ownerId: { stringValue: ownerId },
+            adminEmails: stringArray(adminEmails)
         }
     };
 }
@@ -71,6 +88,105 @@ const teamId = 'allplays-smoke-team-v1';
 const playerId = 'allplays-smoke-player-v1';
 
 describe('production parent smoke fixture maintenance', () => {
+    it('requires the exact normalized admin value used by app discovery and Firestore rules', () => {
+        const legacyTeam = buildTeamDocument({
+            ownerId: 'other-owner',
+            adminEmails: [' Coach@Example.com ', 'other@example.com']
+        });
+
+        expect(inspectStaffTeamDiscovery(legacyTeam, buildStaffDocument(), {
+            uid: 'staff-1',
+            email: 'coach@example.com',
+            teamId
+        })).toEqual({
+            ready: false,
+            ownsTeam: false,
+            hasCanonicalAdminEmail: false,
+            hasCoachTeamId: false,
+            ownerQueryFound: false,
+            adminQueryFound: false,
+            directCoachDiscovery: false
+        });
+        expect(buildCanonicalStaffAccessPatch(legacyTeam, ' Coach@Example.com ')).toEqual({
+            fields: {
+                adminEmails: stringArray(['other@example.com', 'coach@example.com'])
+            }
+        });
+        expect(inspectStaffTeamDiscovery(buildTeamDocument({ ownerId: 'staff-1' }), buildStaffDocument(), {
+            uid: 'staff-1',
+            email: 'coach@example.com',
+            teamId,
+            ownerQueryFound: true
+        }).ready).toBe(true);
+        expect(inspectStaffTeamDiscovery(buildTeamDocument({
+            ownerId: 'other-owner',
+            adminEmails: ['coach@example.com']
+        }), buildStaffDocument(), {
+            uid: 'staff-1',
+            email: 'COACH@example.com',
+            teamId,
+            adminQueryFound: true
+        }).ready).toBe(true);
+    });
+
+    it('repairs the canonical coach link used when staff collection queries are partial', () => {
+        const teamDocument = buildTeamDocument({
+            ownerId: 'other-owner',
+            adminEmails: ['coach@example.com']
+        });
+        const staffDocument = buildStaffDocument({ coachOf: ['other-team'] });
+
+        expect(inspectStaffTeamDiscovery(teamDocument, staffDocument, {
+            uid: 'staff-1',
+            email: 'coach@example.com',
+            teamId
+        }).ready).toBe(false);
+        expect(buildCanonicalStaffProfilePatch(staffDocument, teamId)).toEqual({
+            fields: {
+                coachOf: stringArray(['other-team', teamId])
+            }
+        });
+        expect(inspectStaffTeamDiscovery(
+            teamDocument,
+            buildStaffDocument({ coachOf: [teamId] }),
+            {
+                uid: 'staff-1',
+                email: 'coach@example.com',
+                teamId
+            }
+        )).toMatchObject({
+            ready: true,
+            hasCanonicalAdminEmail: true,
+            hasCoachTeamId: true,
+            directCoachDiscovery: true
+        });
+    });
+
+    it('rejects global and team-level privileges for parent-only coverage', () => {
+        const teamDocument = buildTeamDocument();
+        teamDocument.fields.ownerId = { stringValue: 'owner-1' };
+        teamDocument.fields.adminEmails = stringArray(['team-admin@example.com']);
+
+        expect(assertUnprivilegedParentFixture(
+            buildParentDocument(),
+            teamDocument,
+            { uid: 'parent-1', email: 'parent@example.com' }
+        )).toBe(true);
+        expect(() => assertUnprivilegedParentFixture(
+            {
+                ...buildParentDocument(),
+                fields: { ...buildParentDocument().fields, isAdmin: { booleanValue: true } }
+            },
+            teamDocument,
+            { uid: 'parent-1', email: 'parent@example.com' }
+        )).toThrow(/privileged access/);
+        expect(() => assertUnprivilegedParentFixture(
+            buildParentDocument(),
+            teamDocument,
+            { uid: 'parent-1', email: 'team-admin@example.com' }
+        )).toThrow(/privileged access/);
+    });
+
     it('requires the complete parent membership chain and an active player', () => {
         const parentDocument = buildParentDocument({
             parentOf: [

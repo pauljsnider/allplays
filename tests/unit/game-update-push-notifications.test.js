@@ -112,7 +112,7 @@ describe('game schedule update push notifications', () => {
         expect(notifyBody).toContain('body: payload.body');
     });
 
-    it('deduplicates live score sends by the before/after score transition before delivering notifications', async () => {
+    it('passes live score dedup keys into target-resolving delivery', async () => {
         const sendCategoryNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
         const checkAndSetNotificationDedupKeys = vi.fn(async () => true);
         const hasRecentBigMomentLiveEventForScoreState = vi.fn(async () => false);
@@ -127,7 +127,7 @@ describe('game schedule update push notifications', () => {
             'toNumericScore',
             'buildScheduleUpdateNotificationPayload',
             `const exports = {};
-${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = functions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = functions.firestore'))}
+${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = retryableNotificationFunctions.firestore'), functionsSource.indexOf('exports.notifyLiveEventCreated = retryableNotificationFunctions.firestore')).replaceAll('retryableNotificationFunctions.', 'functions.')}
 return exports.notifyGameUpdated;`
         )(
             {
@@ -159,17 +159,13 @@ return exports.notifyGameUpdated;`
             'game-7',
             'score-state:2:0'
         );
-        expect(checkAndSetNotificationDedupKeys).toHaveBeenCalledWith(
-            'team-1',
-            'liveScore',
-            'game-7',
-            ['score:1:0->2:0', 'score-state:2:0']
-        );
+        expect(checkAndSetNotificationDedupKeys).not.toHaveBeenCalled();
         expect(sendCategoryNotification).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
             gameId: 'game-7',
             category: 'liveScore',
-            dedupKey: 'score:1:0->2:0'
+            dedupKey: 'score:1:0->2:0',
+            dedupKeys: ['score:1:0->2:0', 'score-state:2:0']
         }));
     });
 });

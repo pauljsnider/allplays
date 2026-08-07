@@ -37,7 +37,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=22', () => firebaseMocks);
-vi.mock('../../js/db.js?v=136', () => dbMocks);
+vi.mock('../../js/db.js?v=4433159', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=12', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -95,6 +95,29 @@ describe('auth parent membership sync', () => {
         expect(canContributeTeamMedia(hydratedUser, { id: 'team-1', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
         expect(canContributeTeamMedia(hydratedUser, { id: 'legacy-team', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
         expect(canContributeTeamMedia(hydratedUser, { id: 'other-team', ownerId: 'coach-1', adminEmails: [] })).toBe(false);
+    });
+
+    it('keeps a stale profile email separate when the current Auth email is empty', async () => {
+        const user = { uid: 'parent-1', email: null };
+        const callback = vi.fn();
+
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'stale-admin@example.com',
+            roles: ['parent']
+        });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
+            await handler(user);
+            return vi.fn();
+        });
+
+        await checkAuth(callback);
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            email: null,
+            profileEmail: 'stale-admin@example.com'
+        }));
     });
 
     it('filters parent scope migrations down to active team and player links', async () => {

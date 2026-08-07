@@ -17,6 +17,7 @@ import {
     findFirestoreDocumentsByStringField,
     getFirestoreDocument,
     getFirestoreDocumentPath,
+    patchFirestoreDocumentFields,
     restoreFirestoreDocument,
     runSmokeCleanup
 } from './helpers/firebase-rest.js';
@@ -31,6 +32,7 @@ const secretValues = [
     config.parentEmail,
     config.parentPassword
 ];
+const LIVE_ACTION_TIMEOUT_MS = 25_000;
 
 test.skip(!extendedEnabled, 'SMOKE_EXTENDED_WRITES=1 is required');
 test.describe.configure({ mode: 'serial' });
@@ -123,6 +125,7 @@ test.afterAll(async () => {
 
 async function withAuthenticatedPage(session, callback) {
     const { page, issues } = session;
+    page.setDefaultTimeout(LIVE_ACTION_TIMEOUT_MS);
     await callback(page);
     expect(issues.map((issue) => redactSmokeDiagnostic(issue, secretValues))).toEqual([]);
 }
@@ -133,13 +136,101 @@ async function openRoute(page, route) {
     await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toContain(`#${route.split('?')[0]}`);
 }
 
-test('staff smoke writes are deterministic and removed after validation', async () => {
+async function findSmokeChatMessages(text) {
+    const rootMessagesPath = `teams/${config.teamId}/chatMessages`;
+    const rootMessages = await findFirestoreDocumentsByStringField(
+        staffRestSession,
+        rootMessagesPath,
+        'text',
+        text
+    );
+    const conversationsPath = `teams/${config.teamId}/chatConversations`;
+    // An unfiltered collection list can include participant-only friend chats,
+    // which Firestore must reject even for team staff. Mirror the moderator-safe
+    // inbox queries so the smoke test only asks for conversations staff may list.
+    const conversationGroups = await Promise.all([
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'team'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'type',
+            'group'
+        ),
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            conversationsPath,
+            'directAccess',
+            'team_admin'
+        )
+    ]);
+    const conversations = [
+        ...new Map(
+            conversationGroups
+                .flat()
+                .map((conversation) => [getFirestoreDocumentPath(conversation), conversation])
+        ).values()
+    ];
+    const nestedMessages = await Promise.all(conversations.map((conversation) => (
+        findFirestoreDocumentsByStringField(
+            staffRestSession,
+            `${getFirestoreDocumentPath(conversation)}/chatMessages`,
+            'text',
+            text
+        )
+    )));
+    return [...rootMessages, ...nestedMessages.flat()];
+}
+
+async function softDeleteSmokeChatMessage(documentPath) {
+    const message = await getFirestoreDocument(staffRestSession, documentPath);
+    if (!message || message?.fields?.deleted?.booleanValue === true) return;
+    await patchFirestoreDocumentFields(staffRestSession, documentPath, {
+        deleted: { booleanValue: true }
+    });
+}
+
+async function softDeleteSmokeChatMessages(...texts) {
+    const messageGroups = await Promise.all(texts.map((text) => findSmokeChatMessages(text)));
+    const messages = [
+        ...new Map(messageGroups.flat().map((message) => [getFirestoreDocumentPath(message), message])).values()
+    ];
+    await Promise.all(messages.map((message) => (
+        softDeleteSmokeChatMessage(getFirestoreDocumentPath(message))
+    )));
+    return messages.length;
+}
+
+async function openWritableMediaAlbum(page) {
+    await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
+    const photoButton = page.getByRole('button', { name: 'Photo', exact: true });
+    if (await photoButton.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true).catch(() => false)) {
+        return photoButton;
+    }
+
+    const refreshMedia = page.getByRole('button', { name: 'Refresh media' });
+    if (await refreshMedia.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true).catch(() => false)) {
+        await refreshMedia.click({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    } else {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: LIVE_ACTION_TIMEOUT_MS });
+    }
+    await expect(
+        photoButton,
+        'The existing smoke media album must become writable after one bounded read-only refresh'
+    ).toBeVisible({ timeout: LIVE_ACTION_TIMEOUT_MS });
+    return photoButton;
+}
+
+test('staff smoke writes are deterministic and reversed or soft-deleted after validation', async () => {
     test.setTimeout(300_000);
     const playerName = `${smokePrefix}-player`;
     const opponentName = `${smokePrefix}-opponent`;
     const chatText = `${smokePrefix}-chat`;
     const editedChatText = `${chatText}-edited`;
-    const mediaName = `${smokePrefix}-media.png`;
     const cleanupTasks = [
         {
             recordType: 'roster-player',
@@ -160,14 +251,6 @@ test('staff smoke writes are deterministic and removed after validation', async 
             )
         },
         {
-            recordType: 'team-media',
-            cleanup: () => deleteSmokeMediaByTitle(
-                staffRestSession,
-                `teams/${config.teamId}/mediaItems`,
-                mediaName
-            )
-        },
-        {
             recordType: 'chat-notification',
             cleanup: () => deleteFirestoreDocumentsByStringFields(
                 parentRestSession,
@@ -178,6 +261,10 @@ test('staff smoke writes are deterministic and removed after validation', async 
                     body: chatText
                 }
             )
+        },
+        {
+            recordType: 'chat-message',
+            cleanup: () => softDeleteSmokeChatMessages(chatText, editedChatText)
         }
     ];
 
@@ -190,30 +277,38 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await expect(page.getByText(`${playerName} added to roster.`)).toBeVisible({ timeout: 20_000 });
             await expect(page.getByText(playerName, { exact: true })).toBeVisible();
 
-            await openRoute(
-                page,
-                `/schedule?scope=staff&staffTools=1&staffSection=add&teamId=${encodeURIComponent(config.teamId)}`
-            );
-            const createGame = page.locator('section[aria-label="Create game"]');
-            await expect(createGame).toBeVisible({ timeout: 25_000 });
-            await createGame.getByLabel('Opponent').fill(opponentName);
-            await createGame.getByRole('button', { name: 'Create game' }).click();
-            await expect(page.getByText('Game created and schedule refreshed.')).toBeVisible({ timeout: 30_000 });
-            await expect(page.getByText(opponentName, { exact: false }).first()).toBeVisible();
-            const createdEvents = await findFirestoreDocumentsByStringField(
-                staffRestSession,
-                `teams/${config.teamId}/games`,
-                'opponent',
-                opponentName
-            );
-            expect(createdEvents).toHaveLength(1);
-            const createdEventId = getFirestoreDocumentPath(createdEvents[0]).split('/').pop();
-            expect(createdEventId).toBeTruthy();
-            await openRoute(
-                page,
-                `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(createdEventId)}?section=game`
-            );
-            await expect(page.locator('main')).toContainText(opponentName);
+            await test.step('create and verify a schedule game', async () => {
+                await openRoute(
+                    page,
+                    `/schedule?scope=staff&teamId=${encodeURIComponent(config.teamId)}`
+                );
+                const scheduleTools = page.locator('section[aria-label="Manage schedule tools"]');
+                await expect(scheduleTools).toBeVisible({ timeout: 25_000 });
+                const manageSchedule = scheduleTools.locator('button[aria-controls]').first();
+                await expect(manageSchedule).toBeVisible({ timeout: 25_000 });
+                await manageSchedule.click({ timeout: 25_000 });
+                await expect(manageSchedule).toHaveAttribute('aria-expanded', 'true', { timeout: 25_000 });
+                const createGame = page.locator('section[aria-label="Create game"]');
+                await expect(createGame).toBeVisible({ timeout: 25_000 });
+                await createGame.getByLabel('Opponent').fill(opponentName);
+                await createGame.getByRole('button', { name: 'Create game' }).click();
+                await expect(page.getByText('Game created and schedule refreshed.')).toBeVisible({ timeout: 30_000 });
+                await expect(page.getByText(opponentName, { exact: false }).first()).toBeVisible();
+                const createdEvents = await findFirestoreDocumentsByStringField(
+                    staffRestSession,
+                    `teams/${config.teamId}/games`,
+                    'opponent',
+                    opponentName
+                );
+                expect(createdEvents).toHaveLength(1);
+                const createdEventId = getFirestoreDocumentPath(createdEvents[0]).split('/').pop();
+                expect(createdEventId).toBeTruthy();
+                await openRoute(
+                    page,
+                    `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(createdEventId)}?section=game`
+                );
+                await expect(page.locator('main')).toContainText(opponentName);
+            });
 
             await openRoute(page, `/messages/${encodeURIComponent(config.teamId)}`);
             const composer = page.locator('.chat-composer-textarea');
@@ -222,31 +317,29 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await page.getByRole('button', { name: 'Send message' }).click();
             await expect(page.getByText(chatText, { exact: true })).toBeVisible({ timeout: 25_000 });
 
-            const chatDocuments = await findFirestoreDocumentsByStringField(
-                staffRestSession,
-                `teams/${config.teamId}/chatMessages`,
-                'text',
-                chatText
-            );
+            const chatDocuments = await findSmokeChatMessages(chatText);
             expect(chatDocuments).toHaveLength(1);
             const chatDocumentPath = getFirestoreDocumentPath(chatDocuments[0]);
             cleanupTasks.push({
                 recordType: 'chat-message',
-                cleanup: () => deleteFirestoreDocument(staffRestSession, chatDocumentPath)
+                cleanup: () => softDeleteSmokeChatMessage(chatDocumentPath)
             });
 
             const messageRow = page.locator('.message-row-measure').filter({ hasText: chatText });
-            await messageRow.getByRole('button', { name: /^Open actions for / }).click();
+            await messageRow.getByRole('button', { name: /^Open message actions for / }).click();
             await messageRow.getByRole('button', { name: 'Edit' }).click();
             const editDialog = page.getByRole('dialog', { name: 'Edit message' });
             await editDialog.locator('textarea').fill(editedChatText);
             await editDialog.getByRole('button', { name: 'Save' }).click();
             await expect(page.getByText(editedChatText, { exact: true })).toBeVisible({ timeout: 20_000 });
             const editedRow = page.locator('.message-row-measure').filter({ hasText: editedChatText });
-            await editedRow.getByRole('button', { name: /^Open actions for / }).click();
+            await editedRow.getByRole('button', { name: /^Open message actions for / }).click();
             page.once('dialog', (dialog) => dialog.accept());
             await editedRow.getByRole('button', { name: 'Delete' }).click();
             await expect(editedRow.getByText('Message removed')).toBeVisible({ timeout: 20_000 });
+            await expect.poll(async () => (
+                await getFirestoreDocument(staffRestSession, chatDocumentPath)
+            )?.fields?.deleted?.booleanValue).toBe(true);
 
             await openRoute(page, `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}?section=game`);
             const trackerLaunch = page.getByTestId('standard-tracker-launch');
@@ -261,9 +354,41 @@ test('staff smoke writes are deterministic and removed after validation', async 
             await page.getByRole('button', { name: 'Undo last' }).click();
             await expect(page.getByText(/^Undid /).first()).toBeVisible({ timeout: 20_000 });
 
-            await openRoute(page, `/teams/${encodeURIComponent(config.teamId)}/media`);
-            const photoButton = page.getByRole('button', { name: 'Photo' });
-            await expect(photoButton, 'The smoke team must have an existing writable media album').toBeVisible({ timeout: 25_000 });
+        });
+
+        await withAuthenticatedPage(parentNotificationSession, async (page) => {
+            await assertAuthenticatedAppRoute(page, '/home');
+            await page.getByRole('button', { name: 'Notifications' }).first().click();
+            const inbox = page.getByRole('dialog', { name: 'Notifications' });
+            await expect(inbox).toBeVisible();
+            const messageDeepLink = inbox.locator('li').filter({ hasText: chatText }).first();
+            await expect(
+                messageDeepLink,
+                'The new smoke chat message must create a notification for the parent account'
+            ).toBeVisible({ timeout: 25_000 });
+            await messageDeepLink.getByRole('button').click();
+            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/messages(?:\/|\?)/);
+        });
+    } finally {
+        await runSmokeCleanup(runId, cleanupTasks);
+    }
+});
+
+test('staff image upload is persisted and removed after validation', async () => {
+    test.setTimeout(240_000);
+    const mediaName = `${smokePrefix}-media.png`;
+    const cleanupTasks = [{
+        recordType: 'team-media',
+        cleanup: () => deleteSmokeMediaByTitle(
+            staffRestSession,
+            `teams/${config.teamId}/mediaItems`,
+            mediaName
+        )
+    }];
+
+    try {
+        await withAuthenticatedPage(staffSession, async (page) => {
+            await openWritableMediaAlbum(page);
             const photoInput = page.locator('input[type="file"][accept="image/*"]');
             await photoInput.setInputFiles({
                 name: mediaName,
@@ -279,20 +404,6 @@ test('staff smoke writes are deterministic and removed after validation', async 
             page.once('dialog', (dialog) => dialog.accept());
             await deleteMedia.click();
             await expect(page.getByText('Media item deleted.')).toBeVisible({ timeout: 25_000 });
-        });
-
-        await withAuthenticatedPage(parentNotificationSession, async (page) => {
-            await assertAuthenticatedAppRoute(page, '/home');
-            await page.getByRole('button', { name: 'Notifications' }).first().click();
-            const inbox = page.getByRole('dialog', { name: 'Notifications' });
-            await expect(inbox).toBeVisible();
-            const messageDeepLink = inbox.locator('li').filter({ hasText: chatText }).first();
-            await expect(
-                messageDeepLink,
-                'The new smoke chat message must create a notification for the parent account'
-            ).toBeVisible({ timeout: 25_000 });
-            await messageDeepLink.getByRole('button').click();
-            await expect.poll(() => new URL(page.url()).hash, { timeout: 20_000 }).toMatch(/^#\/messages(?:\/|\?)/);
         });
     } finally {
         await runSmokeCleanup(runId, cleanupTasks);

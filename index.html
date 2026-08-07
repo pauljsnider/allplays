@@ -648,12 +648,12 @@
   <script type="module">
     // Render the real site header immediately (Firebase-free), then boot the live homepage on the
     // deployed site. Firebase is disabled on localhost, so live data + auth-aware nav only run in prod.
-    import { renderHeader, formatDate, formatTime } from './js/utils.js?v=21';
+    import { renderHeader, formatDate, formatTime } from './js/utils.js?v=443336';
     renderHeader(document.getElementById('header-container'), null);
     (async () => {
       try {
         const [{ checkAuth, getRedirectUrl }, { getPublicHomepageGames }, { initHomepage }] = await Promise.all([
-          import('./js/auth.js?v=141'),
+          import('./js/auth.js?v=4433162'),
           import('./js/public-homepage-games.js?v=2'),
           import('./js/homepage.js?v=5')
         ]);

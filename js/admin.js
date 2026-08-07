@@ -15,10 +15,10 @@ import {
     getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=136';
+} from './db.js?v=4433159';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=21';
-import { checkAuth } from './auth.js?v=141';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443336';
+import { checkAuth } from './auth.js?v=4433162';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
@@ -278,11 +278,15 @@ function getVisibleTeams() {
 
 function canCurrentUserDeactivateTeam(team) {
     if (!currentUser || !team) return false;
-    if (team.ownerId && currentUser.uid) {
-        return team.ownerId === currentUser.uid;
+    const ownerId = String(team.ownerId || '').trim();
+    if (ownerId) {
+        return Boolean(currentUser.uid && ownerId === currentUser.uid);
     }
-    if (team.ownerEmail && currentUser.email) {
-        return team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
+    const ownerEmails = [...new Set([team.ownerEmail, team.ownerEmailLower]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (ownerEmails.length === 1 && currentUser.email) {
+        return ownerEmails[0] === currentUser.email.trim().toLowerCase();
     }
     return false;
 }

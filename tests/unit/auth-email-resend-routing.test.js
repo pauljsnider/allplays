@@ -118,17 +118,30 @@ describe('authentication email delivery routing', () => {
             .filter(line => /^node "\$firebase_cli" deploy/.test(line));
 
         expect(firebaseDeployCommands).toEqual([
+            'node "$firebase_cli" deploy --only functions:syncLegacyTeamOwnershipOnAuthCreate --project game-flow-c6311 --config "$firebase_config" --non-interactive --force',
             'node "$firebase_cli" deploy --only storage --project game-flow-c6311 --config "$firebase_config" --non-interactive',
             'node "$firebase_cli" deploy "${deploy_args[@]}"'
         ]);
         expect(productionSource).toContain('firebase-tools@14.25.0');
         expect(productionSource).toContain('[[ "$STORAGE_RULES_CHANGED" != "true" ]]');
         expect(productionSource).toContain('exit "$storage_status"');
-        expect(productionSource).toContain('if [[ "$deploy_targets" != "$retry_enabled_function_targets" ]]; then');
+        expect(productionSource).toContain('if [[ "$deploy_targets" != "$retry_enabled_function_targets"');
+        expect(productionSource).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_inventory_producer_target" \\'
+        );
+        expect(productionSource).toContain(
+            '&& "$deploy_targets" != "$retry_enabled_cleanup_compatibility_target" ]]; then'
+        );
         expect(productionSource).toContain('deploy_args+=(--force)');
         expect(productionSource).toContain('Refusing --force outside the reviewed retry-enabled function allowlist.');
         expect(productionSource).toContain(
-            'retry_enabled_function_targets="functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate"'
+            'retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"'
+        );
+        expect(productionSource).toContain(
+            'retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"'
+        );
+        expect(productionSource).toContain(
+            'retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"'
         );
         expect(productionSource).toContain('"retry-enabled-functions"');
         expect(productionSource.match(/deploy_args\+=\(--force\)/g) ?? []).toHaveLength(1);
@@ -145,7 +158,7 @@ describe('authentication email delivery routing', () => {
         expect(productionSource).toContain(
             '"https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"'
         );
-        expect(productionSource).toContain('if verify_active_firestore_rules; then');
+        expect(productionSource).toContain('if verify_active_firestore_rules "$final_firestore_rules"; then');
         expect(productionSource).toContain('retry_firebase_deploy "firestore:indexes" "firestore-indexes" 3 15');
         expect(productionSource).toContain('currently unavailable projects:test request');
         expect(productionSource).toContain('retry_firebase_deploy "hosting,functions" "application"');

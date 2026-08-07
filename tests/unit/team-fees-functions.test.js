@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    hasLegacyReadableTeamFeeCheckoutState,
+    buildLegacyReadableTeamFeeCheckoutAttempt,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeeBalanceCents,
@@ -15,6 +18,9 @@ const {
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
     canReuseTeamFeeCheckoutSession,
+    isCanonicalStripeCheckoutUrl,
+    getTeamFeeCheckoutReuseFailure,
+    getNewTeamFeeCheckoutSessionFailure,
     getTeamFeeCheckoutGuardFailure,
     shouldApplyTeamFeeCheckoutSession,
     shouldMarkTeamFeePaidFromEvent,
@@ -28,6 +34,41 @@ const {
 } = require('../../functions/team-fees-core.cjs');
 
 describe('team fee checkout function helpers', () => {
+    it('moves legacy readable checkout state while preserving an existing private attempt', () => {
+        const recipient = {
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',
+            paymentLink: 'https://checkout.stripe.com/c/pay/legacy',
+            checkoutStatus: 'open',
+            stripeCheckoutSessionId: 'cs_legacy',
+            checkoutAttemptToken: 'tok_legacy_123456',
+            checkoutAmountCents: 7500,
+            checkoutCreationPayerUid: 'legacy-payer',
+            checkoutCreationRequest: { idempotencyKey: 'legacy-key' }
+        };
+
+        expect(hasLegacyReadableTeamFeeCheckoutState(recipient)).toBe(true);
+        expect(LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS).toContain('checkoutUrl');
+        expect(buildLegacyReadableTeamFeeCheckoutAttempt({
+            recipient,
+            existingAttempt: {
+                checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+                stripeCheckoutSessionId: 'cs_private',
+                payerUid: 'private-payer'
+            },
+            now: 'server-now'
+        })).toMatchObject({
+            version: 1,
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/private',
+            stripeCheckoutSessionId: 'cs_private',
+            checkoutAttemptToken: 'tok_legacy_123456',
+            checkoutAmountCents: 7500,
+            payerUid: 'private-payer',
+            checkoutCreationRequest: { idempotencyKey: 'legacy-key' },
+            createdAt: 'server-now',
+            updatedAt: 'server-now'
+        });
+    });
+
     it('normalizes bounded team fee checkout input', () => {
         expect(normalizeTeamFeeCheckoutInput({
             teamId: ' team_123 ',
@@ -73,6 +114,13 @@ describe('team fee checkout function helpers', () => {
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'parent_2', user: { parentPlayerKeys: ['team_123::player_1'] } })).toBe(true);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'other_parent', user: { parentTeamIds: ['team_123'] } })).toBe(false);
+        expect(isEligibleTeamFeePayer({
+            team,
+            recipient,
+            uid: 'former_admin',
+            email: '',
+            user: { email: 'coach@example.com', profileEmail: 'coach@example.com' }
+        })).toBe(false);
     });
 
     it('builds parent-dashboard return URLs and safe Stripe metadata', () => {
@@ -107,7 +155,7 @@ describe('team fee checkout function helpers', () => {
 
     it('reuses only currently open checkout sessions for the same amount', () => {
         const recipient = {
-            checkoutUrl: 'https://checkout.stripe.test/session',
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
             stripeCheckoutSessionId: 'cs_123',
             checkoutAttemptToken: 'tok_1234567890abcdef',
             checkoutStatus: 'open',
@@ -119,6 +167,105 @@ describe('team fee checkout function helpers', () => {
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutStatus: 'expired' }, 7500)).toBe(false);
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutAmountCents: 8000 }, 7500)).toBe(false);
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutAttemptToken: '' }, 7500)).toBe(false);
+    });
+
+    it('accepts only canonical credential-free Stripe Checkout destinations', () => {
+        expect(isCanonicalStripeCheckoutUrl('https://checkout.stripe.com/c/pay/cs_test_123')).toBe(true);
+        expect(isCanonicalStripeCheckoutUrl('https://checkout.stripe.com/c/pay/cs_test_123?prefilled_email=parent%40example.com#checkout')).toBe(true);
+
+        for (const destination of [
+            '',
+            'not-a-url',
+            '//checkout.stripe.com/c/pay/cs_test_123',
+            'http://checkout.stripe.com/c/pay/cs_test_123',
+            'https://user:pass@checkout.stripe.com/c/pay/cs_test_123',
+            'https://checkout.stripe.com:8443/c/pay/cs_test_123',
+            'https://stripe.com/c/pay/cs_test_123',
+            'https://checkout.stripe.com.evil.example/c/pay/cs_test_123',
+            'https://evil.example/checkout.stripe.com/c/pay/cs_test_123'
+        ]) {
+            expect(isCanonicalStripeCheckoutUrl(destination), destination).toBe(false);
+        }
+    });
+
+    it('reuses only live Stripe sessions bound to the recipient and current balance', () => {
+        const input = { teamId: 'team_123', batchId: 'batch_456', recipientId: 'player_789' };
+        const checkoutUrl = 'https://checkout.stripe.com/c/pay/cs_test_current';
+        const recipient = {
+            ...input,
+            checkoutUrl,
+            stripeCheckoutSessionId: 'cs_test_current',
+            checkoutAttemptToken: 'tok_current_123456',
+            checkoutStatus: 'open',
+            checkoutAmountCents: 7500,
+            payerUid: 'payer-1',
+            amountDueCents: 7500,
+            paidAmountCents: 0
+        };
+        const session = {
+            id: 'cs_test_current',
+            url: checkoutUrl,
+            mode: 'payment',
+            status: 'open',
+            payment_status: 'unpaid',
+            amount_total: 7500,
+            metadata: {
+                product: 'team_fee',
+                ...input,
+                payerUid: 'payer-1',
+                checkoutAttemptToken: 'tok_current_123456',
+                checkoutAmountCents: '7500'
+            }
+        };
+
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session, input, amountCents: 7500, payerUid: 'payer-1' })).toBe('');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session, input, amountCents: 7500, payerUid: 'payer-2' })).toBe('checkout_payer_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient: { ...recipient, checkoutUrl: 'http://checkout.stripe.com/c/pay/cs_test_current' }, session, input, amountCents: 7500 })).toBe('checkout_url_invalid');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, url: 'https://checkout.stripe.com/c/pay/cs_test_other' }, input, amountCents: 7500 })).toBe('checkout_url_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, id: 'cs_test_other' }, input, amountCents: 7500 })).toBe('checkout_session_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, status: 'expired' }, input, amountCents: 7500 })).toBe('checkout_session_not_open');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, payment_status: 'paid' }, input, amountCents: 7500 })).toBe('checkout_session_not_unpaid');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, mode: 'subscription' }, input, amountCents: 7500 })).toBe('checkout_session_mode_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, amount_total: 7000 }, input, amountCents: 7500 })).toBe('checkout_amount_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, metadata: { ...session.metadata, product: 'registration' } }, input, amountCents: 7500 })).toBe('checkout_product_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, metadata: { ...session.metadata, teamId: 'team_other' } }, input, amountCents: 7500 })).toBe('checkout_team_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient, session: { ...session, metadata: { ...session.metadata, checkoutAttemptToken: 'tok_other_12345678' } }, input, amountCents: 7500 })).toBe('checkout_attempt_mismatch');
+        expect(getTeamFeeCheckoutReuseFailure({ recipient: { ...recipient, checkoutAttemptToken: 'bad token' }, session, input, amountCents: 7500 })).toBe('checkout_attempt_invalid');
+    });
+
+    it('validates newly created Stripe sessions before persistence or return', () => {
+        const input = { teamId: 'team_123', batchId: 'batch_456', recipientId: 'player_789' };
+        const checkoutAttemptToken = 'tok_new_1234567890';
+        const session = {
+            id: 'cs_test_new',
+            url: 'https://checkout.stripe.com/c/pay/cs_test_new',
+            mode: 'payment',
+            status: 'open',
+            payment_status: 'unpaid',
+            amount_total: 7500,
+            metadata: {
+                product: 'team_fee',
+                ...input,
+                payerUid: 'payer-1',
+                checkoutAttemptToken,
+                checkoutAmountCents: '7500'
+            }
+        };
+        const validate = (candidate) => getNewTeamFeeCheckoutSessionFailure({
+            session: candidate,
+            input,
+            checkoutAttemptToken,
+            amountCents: 7500,
+            payerUid: 'payer-1'
+        });
+
+        expect(validate(session)).toBe('');
+        expect(validate({ ...session, id: '' })).toBe('checkout_session_missing');
+        expect(validate({ ...session, url: 'https://example.com/pay' })).toBe('checkout_url_invalid');
+        expect(validate({ ...session, status: 'complete' })).toBe('checkout_session_not_open');
+        expect(validate({ ...session, amount_total: 1 })).toBe('checkout_amount_mismatch');
+        expect(validate({ ...session, metadata: { ...session.metadata, recipientId: 'other' } })).toBe('checkout_recipient_mismatch');
+        expect(validate({ ...session, metadata: { ...session.metadata, payerUid: 'payer-2' } })).toBe('checkout_payer_mismatch');
     });
 
     it('rejects stale team fee checkout sessions when session, token, or balance drifted', () => {
@@ -400,6 +547,8 @@ describe('team fee checkout function helpers', () => {
             source.indexOf('exports.refundStripeTeamFeePayment'),
             source.indexOf('exports.createStripeRegistrationCheckout')
         );
+        expect(refundFunction).toContain("const email = String(context.auth.token?.email || '').trim().toLowerCase();");
+        expect(refundFunction).not.toContain('context.auth.token?.email || user.email');
         expect(refundFunction).not.toContain('assertPaymentsEnabled();');
     });
 
@@ -491,8 +640,9 @@ describe('team fee checkout function helpers', () => {
 
         expect(functionsSource).toContain('checkoutAttemptToken');
         expect(functionsSource).toContain('checkoutAmountCents: amountCents');
-        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, session })');
-        expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, session })');
+        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, checkoutAttempt, session })');
+        expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, checkoutAttempt, session })');
+        expect(functionsSource).toContain('transaction.delete(checkoutAttemptRef)');
         expect(functionsSource).toContain("ignoredReason");
         expect(functionsSource).toContain("recipientRef.collection('adminBilling').doc");
         expect(dbSource).toContain("updatePayload.checkoutStatus = 'stale'");

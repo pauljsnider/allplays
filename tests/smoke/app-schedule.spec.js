@@ -540,6 +540,10 @@ async function mockScheduleModules(page, options = {}) {
                     return schedule;
                 }
 
+                export async function hydrateParentScheduleEventOptionalDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function hydrateParentScheduleRsvps(schedule, user, options = {}) {
                     schedule.events.forEach((event) => {
                         event.myRsvpNoteHydrated = true;
@@ -570,6 +574,12 @@ async function mockScheduleModules(page, options = {}) {
                         window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
                     });
                     return { going: events.length, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
+                export async function enableRsvpForImportedCalendarEvent(event) {
+                    const trackedEventId = 'calendar-materialized-event';
+                    window.__scheduleCalls.materializedEvent = { eventId: event.id, trackedEventId };
+                    return trackedEventId;
                 }
 
                 export async function updateGameScore(teamId, gameId, score, user) {
@@ -1230,7 +1240,7 @@ test('@visual app schedule loads agenda filters, player select, calendar, export
     await expect(page.getByText('vs. Falcons').first()).toBeVisible();
 
     await page.getByRole('button', { name: '.ics' }).click();
-    await expect(page.getByText('Calendar export started.')).toBeVisible();
+    await expect(page.getByText('Calendar download started.')).toBeVisible();
 
     await page.getByLabel('Player', { exact: true }).selectOption('');
     await page.getByRole('button', { name: 'Copy agenda' }).click();

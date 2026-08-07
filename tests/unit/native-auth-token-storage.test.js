@@ -5,8 +5,8 @@ const authSource = readFileSync(
     new URL('../../apps/app/src/lib/authService.ts', import.meta.url),
     'utf8'
 );
-const photoSource = readFileSync(
-    new URL('../../apps/app/src/lib/profilePhotoService.ts', import.meta.url),
+const nativeStorageSource = readFileSync(
+    new URL('../../apps/app/src/lib/nativeStorageUpload.ts', import.meta.url),
     'utf8'
 );
 const capacitorConfig = JSON.parse(readFileSync(
@@ -35,13 +35,15 @@ describe('native credential persistence boundary', () => {
         );
     });
 
-    it('uses an ephemeral image-project token for profile uploads without a persisted session', () => {
-        expect(photoSource).toContain('createEphemeralImageUploadIdToken');
-        expect(photoSource).not.toContain('allplays-image-upload-session');
-        expect(photoSource).not.toContain('refresh_token');
-        expect(photoSource).toContain('accounts:signUp');
-        expect(photoSource).toContain('deleteEphemeralImageUploadUser');
-        expect(photoSource).toContain('accounts:delete');
-        expect(photoSource).not.toContain('window.localStorage');
+    it('uses the signed-in native credential for primary-project profile uploads without persisting tokens', () => {
+        expect(nativeStorageSource).toContain('getNativeAuthIdToken(true)');
+        expect(nativeStorageSource).toContain('getNativeAuthUserId()');
+        expect(nativeStorageSource).toContain('getPrimaryAppCheckHeaders');
+        expect(nativeStorageSource).toContain('profile-photos/users/${userId}');
+        expect(nativeStorageSource).toContain('profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${privateFileName}');
+        expect(nativeStorageSource).not.toContain('profile-photos/teams/${safeTeamId}/players/${safePlayerId}/${userId}');
+        expect(nativeStorageSource).not.toContain('window.localStorage');
+        expect(nativeStorageSource).not.toContain('refresh_token');
+        expect(nativeStorageSource).not.toContain('accounts:signUp');
     });
 });

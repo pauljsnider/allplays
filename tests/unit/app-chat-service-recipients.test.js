@@ -918,6 +918,7 @@ describe('React app chat recipient service', () => {
         ]);
         expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-a', 'team-b'], expect.objectContaining({
             defaultConversationOnly: true,
+            deadlineAt: expect.any(Number),
             conversationIdsByTeam: {
                 'team-a': ['team'],
                 'team-b': ['team', 'staff-conversation']
@@ -929,6 +930,36 @@ describe('React app chat recipient service', () => {
             }
         }));
         expect(dbMocks.getChatConversations).not.toHaveBeenCalled();
+        expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
+    });
+
+    it('passes one shared deadline and keeps many-team fast inbox rows stable', async () => {
+        const teams = Array.from({ length: 12 }, (_, index) => ({
+            id: `team-${String(index + 1).padStart(2, '0')}`,
+            name: `Team ${String(index + 1).padStart(2, '0')}`,
+            sport: 'Soccer'
+        }));
+        const unreadCounts = Object.fromEntries(teams.map((team, index) => [team.id, index % 3]));
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue(teams);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue(unreadCounts);
+
+        const startedAt = Date.now();
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach',
+            roles: ['coach']
+        }, { includeLastMessages: false });
+
+        const unreadOptions = dbMocks.getUnreadChatCounts.mock.calls[0][2];
+        expect(unreadOptions.deadlineAt).toBeGreaterThanOrEqual(startedAt + 3000);
+        expect(unreadOptions.deadlineAt).toBeLessThanOrEqual(Date.now() + 3000);
+        expect(inbox.teams.map((team) => ({ id: team.id, unreadCount: team.unreadCount }))).toEqual(
+            teams.map((team, index) => ({ id: team.id, unreadCount: index % 3 }))
+        );
         expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
     });
 

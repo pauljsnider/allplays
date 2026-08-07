@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 const opportunitySource = source.slice(source.indexOf('// Public sports opportunity board'));
 const manageSource = readFileSync(new URL('../../apps/app/src/pages/OpportunityManage.tsx', import.meta.url), 'utf8');
 
@@ -21,6 +22,8 @@ describe('public opportunity callable wiring', () => {
       'getOpportunityInquiry',
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
+      'listManagedTeams',
+      'revokeTeamAdminAccess',
       'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
       'getPublicTeamCalendarProjection',
@@ -29,9 +32,47 @@ describe('public opportunity callable wiring', () => {
     ].forEach((name) => expect(source).toContain(`exports.${name}`));
   });
 
+  it('deduplicates public calendar projections against tracked team games before serialization', () => {
+    const calendarProjection = source.slice(
+      source.indexOf('exports.getPublicTeamCalendarProjection'),
+      source.indexOf('exports.getPublicGameProjection')
+    );
+    expect(calendarProjection).toContain("firestore.collection(`teams/${teamId}/games`)");
+    expect(calendarProjection).not.toContain(".where('date'");
+    expect(calendarProjection).toContain('orderBy(admin.firestore.FieldPath.documentId())');
+    expect(calendarProjection).toContain(".select('calendarEventUid', 'date', 'type', 'location', 'opponent', 'title', 'visibility', 'isPrivate', 'private', 'deleted', 'status', 'liveStatus')");
+    expect(calendarProjection).toContain('scanBoundedPublicCalendarTrackingEvents');
+    expect(calendarProjection).toContain('maxDocuments: PUBLIC_TEAM_API_MAX_GAME_SCAN_DOCUMENTS');
+    expect(calendarProjection).toContain('calendarEventUid: normalizeFamilyShareText(gameSnap.data()?.calendarEventUid)');
+    expect(calendarProjection).toContain('type: normalizeFamilyShareText(gameSnap.data()?.type)');
+    expect(calendarProjection).toContain('location: normalizeFamilyShareText(gameSnap.data()?.location)');
+    expect(calendarProjection).toContain('opponent: normalizeFamilyShareText(gameSnap.data()?.opponent)');
+    expect(calendarProjection).toContain('title: normalizeFamilyShareText(gameSnap.data()?.title)');
+    expect(calendarProjection).toContain('visibility: normalizeFamilyShareText(gameSnap.data()?.visibility)');
+    expect(calendarProjection).toContain('isPrivate: gameSnap.data()?.isPrivate === true');
+    expect(calendarProjection).toContain('private: gameSnap.data()?.private === true');
+    expect(calendarProjection).toContain('deleted: gameSnap.data()?.deleted === true');
+    expect(calendarProjection).toContain('status: normalizeFamilyShareText(gameSnap.data()?.status)');
+    expect(calendarProjection).toContain('liveStatus: normalizeFamilyShareText(gameSnap.data()?.liveStatus)');
+    expect(calendarProjection).toContain('.filter(canTrackedCalendarEventSuppressPublicProjection)');
+    const sourceListIndex = calendarProjection.indexOf('const calendarUrls = []');
+    const emptyReturnIndex = calendarProjection.indexOf('if (calendarUrls.length === 0)');
+    const trackingScanIndex = calendarProjection.indexOf('const trackedCalendarEvents');
+    expect(sourceListIndex).toBeGreaterThan(-1);
+    expect(emptyReturnIndex).toBeGreaterThan(sourceListIndex);
+    expect(trackingScanIndex).toBeGreaterThan(emptyReturnIndex);
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('events: []');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('truncated: false');
+    expect(calendarProjection.slice(emptyReturnIndex, trackingScanIndex)).toContain('nextCursor: null');
+    expect(calendarProjection).toContain('!isFamilyShareCalendarEventTracked(event, trackedCalendarEvents)');
+    expect(calendarProjection.indexOf('isFamilyShareCalendarEventTracked'))
+      .toBeLessThan(calendarProjection.indexOf('serializePublicCalendarEvent'));
+  });
+
   it('server-verifies publishing roles, verified email, expiration, rate limits, and private notifications', () => {
     expect(source).toContain("context.auth.token?.email_verified !== true");
-    expect(source).toContain('hasTeamAdminAccess({ team, user: caller.user, uid: caller.uid, email: caller.email })');
+    expect(source).toContain("const rawEmail = String(context.auth.token?.email || '').trim();");
+    expect(source).toContain('hasOpportunityTeamAdminAccess(caller, team)');
     expect(source).toContain('isOpportunityTeamDiscoverable(team)');
     expect(source).toContain("status: 'active'");
     expect(source).toContain('buildOpportunityExpiry(now.toMillis())');
@@ -87,7 +128,8 @@ describe('public opportunity callable wiring', () => {
   it('requires verified inquiry senders and allow-lists public team profiles', () => {
     expect(source).toMatch(/createOpportunityInquiry[\s\S]*requireOpportunityAuth\(context, \{ verified: true \}\)/);
     expect(source).toContain('exports.getPublicTeamProfile');
-    expect(source).toContain('const item = serializePublicTeamProfile(teamSnap.id, team);');
+    expect(source).toContain('item = serializePublicTeamProfile(teamSnap.id, team);');
+    expect(source).toContain('item = serializeManagedTeamDocument(teamSnap.id, team);');
     expect(source).toContain('return { item };');
   });
 
@@ -107,17 +149,19 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain("conversation.directAccess === 'team_admin'");
     expect(source).toContain('canMessageAcceptedFriendForTeam({');
     expect(source).toContain('hasTeamAdminAccess({');
-    expect(source).toContain('initiatorId === caller.uid\n      ? caller.email');
-    expect(source).toContain('await admin.auth().getUser(recipientId)');
-    expect(source).toContain('userId: recipientId,\n    email: recipientEmail');
-    expect(source).toContain('batch.create(messageRef, message);');
+    expect(source).toContain('initiatorId === callerUid ? callerEmail : recipientEmail');
+    expect(source).toContain('admin.auth().getUser(callerUid)');
+    expect(source).toContain('admin.auth().getUser(recipientId)');
+    expect(source).toContain('userId: recipientId,\n        email: recipientEmail');
+    expect(source).toContain('firestore.runTransaction(async (transaction) => {');
+    expect(source).toContain('transaction.create(messageRef, message);');
     expect(source).toContain('if (!clientMessageId || !isAlreadyExistsError(error)) throw error;');
     expect(source).toContain('existingMessage.clientMessageId !== clientMessageId');
   });
 
   it('revokes private team inquiry access and notifications from former administrators', () => {
     expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*isOpportunityPlatformAdmin\(caller\)[\s\S]*inquiry\.senderId === caller\.uid/);
-    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasTeamAdminAccess/);
+    expect(source).toMatch(/canAccessOpportunityInquiry[\s\S]*inquiry\.participantIds\.includes\(caller\.uid\)[\s\S]*hasOpportunityTeamAdminAccess/);
     expect(source).toContain('scanned.map((docSnap) => canAccessOpportunityInquiry(caller, docSnap.data() || {}))');
     expect(source).toContain("collectionRef.where('teamId', 'in', teamIds)");
     expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');
@@ -141,6 +185,51 @@ describe('public opportunity callable wiring', () => {
     expect(source).toContain('listOpportunityManagedTeamDocuments(caller)');
     expect(source).toContain(".where('teamId', 'in', managedTeamIds.slice(index, index + 30))");
     expect(source).toContain('managedListingSnaps.forEach');
+  });
+
+  it('uses protected legacy coachOf grants only after stale invite evidence is excluded', () => {
+    const resolverStart = source.indexOf('async function listStaffTeamDocuments(caller)');
+    const resolverSource = source.slice(
+      resolverStart,
+      source.indexOf('\nexports.revokeTeamAdminAccess', resolverStart)
+    );
+    const listManagedTeamsSource = source.slice(
+      source.indexOf('exports.listManagedTeams'),
+      source.indexOf('\nexports.getPublicTeamProfile')
+    );
+
+    expect(resolverSource).toContain('caller.user?.coachOf');
+    expect(resolverSource).toContain('const legacyCoachTeamLimit = 180;');
+    expect(resolverSource).toContain('const coachTeamIdsAreIncomplete = allCoachTeamIds.length > legacyCoachTeamLimit;');
+    expect(resolverSource).toContain("firestore.collection('accessCodes')");
+    expect(resolverSource).toContain(".where('type', '==', 'admin_invite')");
+    expect(resolverSource).not.toContain(".where('usedBy', '==', caller.uid)");
+    expect(resolverSource).not.toContain(".where('email', 'in', coachInviteEmailCandidates)");
+    expect(resolverSource).toContain(".where('teamId', 'in', teamIds)");
+    expect(resolverSource.match(/\.limit\(legacyCoachInviteEvidenceLimit \+ 1\)/g)).toHaveLength(1);
+    expect(resolverSource).not.toContain(".where('teamId', '==', teamSnap.id)");
+    expect(resolverSource).toContain('result.value.size > legacyCoachInviteEvidenceLimit');
+    expect(resolverSource).toContain('if (usedBy === caller.uid)');
+    expect(resolverSource).toContain('normalizeStablePrincipalUid(invite.usedBy)');
+    expect(resolverSource).not.toContain("String(invite.usedBy || '').trim()");
+    expect(resolverSource).toContain('generatedBy is intentionally');
+    expect(resolverSource).toContain('teamsWithCallerBoundInviteEvidence.add(teamId)');
+    expect(resolverSource).toContain('teamsWithUnresolvedInviteEvidence.add(teamId)');
+    expect(resolverSource).toContain('!teamsWithUnresolvedInviteEvidence.has(teamSnap.id)');
+    expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
+    expect(listManagedTeamsSource).toContain('? serializeManagedTeamDocument(teamSnap.id, team)');
+    expect(listManagedTeamsSource).toContain(': serializeStaffTeamProfile(teamSnap.id, team)');
+  });
+
+  it('declares the bounded legacy coach invite-evidence indexes', () => {
+    const accessCodeIndexes = firestoreIndexes.indexes.filter((index) => (
+      index.collectionGroup === 'accessCodes' && index.queryScope === 'COLLECTION'
+    ));
+    const fieldSignature = (index) => index.fields
+      .map(({ fieldPath, order }) => `${fieldPath}:${order}`)
+      .join(',');
+
+    expect(accessCodeIndexes.some((index) => fieldSignature(index) === 'type:ASCENDING,teamId:ASCENDING')).toBe(true);
   });
 
   it('queries unexpired listings with a bounded, cursor-resumable filtered scan', () => {

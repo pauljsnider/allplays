@@ -76,7 +76,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
 }));
 
-import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl } from '../../apps/app/src/pages/team-detail/MoreTab.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -364,7 +365,7 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Insights');
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledWith('team-1', auth.user);
-        expect(container.textContent).toContain('Bring ball');
+        await waitFor(() => expect(container.textContent).toContain('Bring ball'));
         expect(container.textContent).toContain('Points');
         expect(container.textContent).toContain('88');
 

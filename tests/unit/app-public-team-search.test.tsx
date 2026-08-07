@@ -95,6 +95,23 @@ describe('PublicTeamSearch', () => {
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
     });
 
+    it('uses a smaller page and skips roster-count fan-out for embedded discovery', async () => {
+        renderSearch({ pageSize: 12, showRosterCounts: false });
+
+        expect(getPublicTeamsPage).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({
+            searchText: undefined,
+            cursor: null,
+            includeRosterCounts: false,
+            pageSize: 12
+        }));
+        expect(await screen.findByText('Atlanta United')).toBeTruthy();
+        expect(hydratePublicTeamRosterCounts).not.toHaveBeenCalled();
+        expect(screen.queryByText(/^(Loading roster count|Roster count unavailable|\d+ players?)$/i)).toBeNull();
+    });
+
     it('keeps the public browse route decoupled from the private Teams page module', () => {
         const source = readFileSync(resolve(import.meta.dirname, '../../apps/app/src/components/PublicTeamSearch.tsx'), 'utf8');
 

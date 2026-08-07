@@ -236,17 +236,17 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=136';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, deleteLegacyImageUpload, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=4433159';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=21';
-        import { checkAuth } from './js/auth.js?v=141';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443336';
+        import { checkAuth } from './js/auth.js?v=4433162';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=22";
         import { db } from './js/firebase.js?v=22';
-        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443318';
+        import { hasFullTeamAccess } from './js/team-access.js?v=44338';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { readAccountPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
 
@@ -1217,6 +1217,7 @@
             emergencyContactPhone,
             medicalInfo,
             photoUrl,
+            photoPath,
             profile,
             privateProfileLoadFailed,
             privateFieldsDirty
@@ -1240,11 +1241,41 @@
                 data.photoUrl = photoUrl;
             }
 
+            if (typeof photoPath !== 'undefined') {
+                data.photoPath = photoPath;
+            }
+
             if (profile) {
                 data.profile = profile;
             }
 
             return data;
+        }
+
+        function isDefinitiveFirestoreWriteFailure(error) {
+            const code = String(error?.code || '').trim().toLowerCase().split('/').pop() || '';
+            return new Set([
+                'already-exists',
+                'failed-precondition',
+                'invalid-argument',
+                'not-found',
+                'out-of-range',
+                'permission-denied',
+                'resource-exhausted',
+                'unauthenticated',
+                'unimplemented'
+            ]).has(code);
+        }
+
+        async function getPlayerPhotoPersistenceState(expectedPhotoPath) {
+            try {
+                const privateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer?.id);
+                return String(privateProfile?.photoPath || '').trim() === String(expectedPhotoPath || '').trim()
+                    ? 'committed'
+                    : 'not-committed';
+            } catch (_) {
+                return 'unknown';
+            }
         }
 
         document.getElementById('close-edit-modal').addEventListener('click', () => {
@@ -1279,14 +1310,17 @@
             const btn = document.getElementById('save-player-btn');
             btn.disabled = true;
             btn.textContent = 'Saving...';
+            let newlyUploadedPlayerPhotoPath = '';
+            let playerPhotoPersisted = false;
+            const previousPhotoPath = String(currentPrivateProfile?.photoPath || currentPlayer?.photoPath || '').trim();
 
             try {
                 const photoFile = document.getElementById('edit-photo-input').files[0];
-                let photoUrl;
-                if (photoFile) {
-                    photoUrl = await uploadPlayerPhoto(photoFile);
+                if (photoFile && privateProfileLoadFailed) {
+                    throw new Error('The existing player photo state could not be loaded. Refresh before replacing the photo.');
                 }
-
+                let photoUrl;
+                let photoPath;
                 const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
                 const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
                 const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
@@ -1298,11 +1332,23 @@
                     return;
                 }
 
+                if (photoFile) {
+                    const uploadedPhoto = await uploadPlayerPhoto(photoFile, {
+                        returnUpload: true,
+                        teamId: currentTeamId,
+                        playerId: currentPlayer.id
+                    });
+                    photoUrl = uploadedPhoto.url;
+                    newlyUploadedPlayerPhotoPath = uploadedPhoto.path;
+                    photoPath = newlyUploadedPlayerPhotoPath || null;
+                }
+
                 const data = buildPlayerProfileUpdatePayload({
                     emergencyContactName: document.getElementById('edit-ec-name').value,
                     emergencyContactPhone: document.getElementById('edit-ec-phone').value,
                     medicalInfo: document.getElementById('edit-medical-info').value,
                     photoUrl,
+                    photoPath,
                     profile: editableRosterFields.length ? { ...(currentPlayer.profile || {}), customFields: profileValues } : null,
                     privateProfileLoadFailed,
                     privateFieldsDirty
@@ -1316,7 +1362,28 @@
                     privateData.medicalInfo = medicalInfo;
                 }
 
-                await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                try {
+                    await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                    playerPhotoPersisted = Boolean(newlyUploadedPlayerPhotoPath);
+                } catch (error) {
+                    const persistenceState = newlyUploadedPlayerPhotoPath && !isDefinitiveFirestoreWriteFailure(error)
+                        ? await getPlayerPhotoPersistenceState(newlyUploadedPlayerPhotoPath)
+                        : 'not-committed';
+                    if (persistenceState === 'committed') {
+                        playerPhotoPersisted = true;
+                    } else {
+                        if (persistenceState === 'unknown') {
+                            playerPhotoPersisted = true;
+                        }
+                        throw error;
+                    }
+                }
+                if (newlyUploadedPlayerPhotoPath && previousPhotoPath && previousPhotoPath !== newlyUploadedPlayerPhotoPath) {
+                    await deleteLegacyImageUpload(previousPhotoPath).catch(() => undefined);
+                }
+                if (playerPhotoPersisted) {
+                    document.getElementById('edit-photo-input').value = '';
+                }
                 if (Object.keys(privateData).length > 0) {
                     await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);
                 }
@@ -1324,6 +1391,9 @@
                 alert('Profile updated!');
                 location.reload();
             } catch (err) {
+                if (newlyUploadedPlayerPhotoPath && !playerPhotoPersisted) {
+                    await deleteLegacyImageUpload(newlyUploadedPlayerPhotoPath).catch(() => undefined);
+                }
                 console.error(err);
                 alert('Error updating profile: ' + err.message);
                 btn.disabled = false;

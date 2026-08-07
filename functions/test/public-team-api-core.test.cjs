@@ -3,6 +3,7 @@ const test = require('node:test');
 const {
   buildPublicGamesResponse,
   buildPublicRosterResponse,
+  canTrackedCalendarEventSuppressPublicProjection,
   canProjectPublicGame,
   getPublicOpponentStatKeys,
   isStrictPublicTeam,
@@ -10,12 +11,73 @@ const {
   parsePublicProjectionCursor,
   parsePublicGamesQuery,
   publicHttpUrl,
+  scanBoundedPublicCalendarTrackingEvents,
   sanitizePublicLocation,
   serializePublicCalendarEvent,
   serializePublicGame,
   serializePublicOpponentStats,
   serializePublicTeamProfile
 } = require('../public-team-api-core.cjs');
+const { isFamilyShareCalendarEventTracked } = require('../family-share-view-core.cjs');
+
+test('paginates calendar tracking scans and fails closed at the document cap', async () => {
+  const pages = [
+    { documents: [{ date: 'ordinary-1' }, { date: 'ordinary-2' }], nextCursor: 'page-2' },
+    { documents: [{ calendarEventUid: 'tracked-later', date: 'game-date' }], nextCursor: null }
+  ];
+  const tracked = await scanBoundedPublicCalendarTrackingEvents(
+    async () => pages.shift(),
+    { maxDocuments: 4, pageSize: 2 }
+  );
+  assert.deepEqual(tracked, [{ calendarEventUid: 'tracked-later', date: 'game-date' }]);
+
+  await assert.rejects(
+    scanBoundedPublicCalendarTrackingEvents(
+      async ({ after }) => ({ documents: [{ calendarEventUid: `tracked-${after || 1}` }], nextCursor: 'next' }),
+      { maxDocuments: 2, pageSize: 1 }
+    ),
+    /tracking scan limit exceeded/
+  );
+});
+
+test('keeps a moved tracked occurrence available to suppress its original in-range calendar event', async () => {
+  const originalStartsAt = '2026-08-03T18:00:00.000Z';
+  const movedStartsAt = '2026-08-10T18:00:00.000Z';
+  const feedRange = {
+    from: new Date('2026-08-03T00:00:00.000Z'),
+    to: new Date('2026-08-03T23:59:59.999Z')
+  };
+  assert.equal(new Date(originalStartsAt) >= feedRange.from && new Date(originalStartsAt) <= feedRange.to, true);
+  assert.equal(new Date(movedStartsAt) > feedRange.to, true);
+
+  const trackedEvents = await scanBoundedPublicCalendarTrackingEvents(
+    async () => ({
+      documents: [{
+        calendarEventUid: `opaque-projected-id__${originalStartsAt}`,
+        date: movedStartsAt
+      }],
+      nextCursor: null
+    }),
+    { maxDocuments: 2, pageSize: 2 }
+  );
+
+  assert.equal(isFamilyShareCalendarEventTracked({
+    id: 'opaque-projected-id',
+    startsAt: originalStartsAt
+  }, trackedEvents), true);
+});
+
+test('only tracked events represented by public games suppress calendar projections', () => {
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game' }), true);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({}), true);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'PRACTICE' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', visibility: 'PRIVATE' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', isPrivate: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', private: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', deleted: true }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', status: 'DELETED' }), false);
+  assert.equal(canTrackedCalendarEventSuppressPublicProjection({ type: 'game', liveStatus: 'deleted' }), false);
+});
 
 test('strict public teams require an explicit public flag and cannot be inactive', () => {
   assert.equal(isStrictPublicTeam({ isPublic: true, active: true }), true);
@@ -142,6 +204,9 @@ test('public calendar projection hides feed credentials and keeps only event pre
     opponent: 'Falcons',
     location: 'Public Field',
     status: 'CONFIRMED',
+    calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
+    eventKey: 'SENTINEL_INTERNAL_EVENT_KEY',
+    legacyOpaqueId: 'SENTINEL_LEGACY_OPAQUE_ID',
     sourceUrl: 'https://calendar.example.test/team.ics?token=secret',
     description: 'Private calendar notes',
     childNames: ['Private Child']
@@ -159,6 +224,12 @@ test('public calendar projection hides feed credentials and keeps only event pre
   });
   const serialized = JSON.stringify(event);
   assert.equal(serialized.includes('token=secret'), false);
+  assert.equal(serialized.includes('SENTINEL_CALENDAR_UID_HASH'), false);
+  assert.equal(serialized.includes('calendarUidHash'), false);
+  assert.equal(serialized.includes('SENTINEL_INTERNAL_EVENT_KEY'), false);
+  assert.equal(serialized.includes('eventKey'), false);
+  assert.equal(serialized.includes('SENTINEL_LEGACY_OPAQUE_ID'), false);
+  assert.equal(serialized.includes('legacyOpaqueId'), false);
   assert.equal(serialized.includes('Private calendar notes'), false);
   assert.equal(serialized.includes('Private Child'), false);
 });

@@ -41,6 +41,7 @@ vi.mock('../lib/searchRoutePreload', () => ({
 const {
   getImmediateAppTeamSearchResultsMock,
   getKnownAppSearchTeamsMock,
+  loadAppSearchHelpResultsMock,
   loadAppSearchTeamsMock,
   searchAppTeamsMock,
   searchAppPlayersMock,
@@ -51,19 +52,19 @@ const {
     return teams.filter((team) => team.name.toLowerCase().includes(normalizedQuery));
   }),
   getKnownAppSearchTeamsMock: vi.fn((_user: AuthState['user']): AppSearchTeam[] => []),
+  loadAppSearchHelpResultsMock: vi.fn(),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
   searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<any[]>>(),
 }));
 
 vi.mock('../lib/searchService', () => ({
-  computeAppSearchResults: ({ queryText, players, helpRoleFilter, teams }: {
+  computeAppSearchResults: ({ queryText, players, helpResults = [], teams }: {
     queryText: string;
     teams: Array<{ id: string; name: string; sport?: string; zip?: string }>;
     players: Array<{ id: string; title: string; subtitle?: string; route?: string }>;
-    helpRoleFilter: 'all' | 'parent' | 'coach' | 'admin' | 'member';
+    helpResults?: Array<{ id: string; kind: string; title: string; subtitle: string; route: string; roles: string[] }>;
   }) => {
-    const normalizedQuery = queryText.trim().toLowerCase();
     const actionItems = [{ id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams', route: '/teams' }];
     const teamItems = teams.map((team) => ({
       id: `team:${team.id}`,
@@ -72,39 +73,17 @@ vi.mock('../lib/searchService', () => ({
       subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
       route: `/teams/${team.id}`,
     }));
-    const allHelpItems = normalizedQuery.length >= 2
-      ? [
-        {
-          id: 'help:parent-fees',
-          kind: 'help',
-          title: 'Parent fee guide',
-          subtitle: 'Pay and track team fees',
-          route: '/help/parent-fees',
-          roles: ['parent']
-        },
-        {
-          id: 'help:coach-search',
-          kind: 'help',
-          title: 'Search like a coach',
-          subtitle: 'Use filters to find coaching answers fast',
-          route: '/help/coach-search',
-          roles: ['coach']
-        }
-      ]
-      : [];
-    const helpItems = helpRoleFilter === 'all'
-      ? allHelpItems
-      : allHelpItems.filter((item) => item.roles?.includes(helpRoleFilter));
     return {
       actions: actionItems,
       teams: teamItems,
-      help: helpItems,
+      help: helpResults,
       players,
-      flat: [...actionItems, ...teamItems, ...helpItems, ...players],
+      flat: [...actionItems, ...teamItems, ...helpResults, ...players],
     };
   },
   getImmediateAppTeamSearchResults: getImmediateAppTeamSearchResultsMock,
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
+  loadAppSearchHelpResults: loadAppSearchHelpResultsMock,
   loadAppSearchTeams: loadAppSearchTeamsMock,
   searchAppTeams: searchAppTeamsMock,
   searchAppPlayers: searchAppPlayersMock,
@@ -138,6 +117,28 @@ describe('AppSearchDialog', () => {
     capacitorMocks.isNativePlatform.mockReturnValue(false);
     getKnownAppSearchTeamsMock.mockReturnValue([]);
     loadAppSearchTeamsMock.mockResolvedValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
+    loadAppSearchHelpResultsMock.mockImplementation(async ({ helpRoleFilter }: { helpRoleFilter: string }) => [
+      {
+        id: 'help:parent-fees',
+        kind: 'help',
+        title: 'Parent fee guide',
+        subtitle: 'Pay and track team fees',
+        route: '/help/parent-fees',
+        href: 'https://allplays.ai/help-parent-fees.html',
+        roles: ['parent'],
+        snippet: 'Pay and track team fees'
+      },
+      {
+        id: 'help:coach-search',
+        kind: 'help',
+        title: 'Search like a coach',
+        subtitle: 'Use filters to find coaching answers fast',
+        route: '/help/coach-search',
+        href: 'https://allplays.ai/help-coach-search.html',
+        roles: ['coach'],
+        snippet: 'Use filters to find coaching answers fast'
+      }
+    ].filter((item) => helpRoleFilter === 'all' || item.roles.includes(helpRoleFilter)));
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
     searchAppPlayersMock.mockResolvedValue([]);
     preloadSearchRouteMock.mockImplementation(async () => true);
@@ -228,6 +229,39 @@ describe('AppSearchDialog', () => {
     expect(screen.queryByText('Player search unavailable for this account.')).toBeNull();
     expect(input).toHaveFocus();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('dismisses the native keyboard without opening the highlighted search result', async () => {
+    const onClose = vi.fn();
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+    getKnownAppSearchTeamsMock.mockReturnValue([
+      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'rockets' } });
+    const rocketsResult = await screen.findByRole('button', { name: /Rockets/i });
+
+    input.focus();
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('rockets');
+    expect(input).not.toHaveFocus();
+    expect(rocketsResult).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(rocketsResult);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
   });
 
   it('retries failed team and player searches without changing the query or closing the dialog', async () => {
@@ -496,6 +530,195 @@ describe('AppSearchDialog', () => {
     }
   });
 
+  it('keeps actions and teams interactive while deferred help results load', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    let releaseHelp!: (results: any[]) => void;
+    getKnownAppSearchTeamsMock.mockReturnValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
+    loadAppSearchHelpResultsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHelp = resolve;
+    }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /Browse Teams/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Rockets/i })).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: 'ro' } });
+
+    expect(input).toHaveValue('ro');
+    expect(screen.getByRole('button', { name: /Browse Teams/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Rockets/i })).toBeTruthy();
+    expect(screen.getByText('Searching help...')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Parent fee guide/i })).toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+
+    await act(async () => {
+      releaseHelp([{
+        id: 'help:parent-fees',
+        kind: 'help',
+        title: 'Parent fee guide',
+        subtitle: 'Pay and track team fees',
+        route: '/help/parent-fees',
+        href: 'https://allplays.ai/help-parent-fees.html',
+        roles: ['parent'],
+        snippet: 'Pay and track team fees'
+      }]);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).toBeTruthy();
+  });
+
+  it('debounces rapid help queries and searches only the final trimmed value', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    getKnownAppSearchTeamsMock.mockReturnValue([
+      { id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'al' } });
+    fireEvent.change(input, { target: { value: 'ale' } });
+    fireEvent.change(input, { target: { value: '  alex  ' } });
+
+    expect(screen.getByRole('button', { name: /Browse Teams/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Alexandria/i })).toBeTruthy();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(149);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledTimes(1);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledWith({
+      queryText: 'alex',
+      auth,
+      helpRoleFilter: 'parent'
+    });
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Search like a coach/i })).toBeNull();
+  });
+
+  it('cancels pending help searches when the query shortens, clears, or closes', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'alex' } });
+    fireEvent.change(input, { target: { value: 'a' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search query' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
+      </MemoryRouter>
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let stale help results replace a newer query', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const releases: Array<(results: any[]) => void> = [];
+    loadAppSearchHelpResultsMock.mockImplementation(() => new Promise((resolve) => {
+      releases.push(resolve);
+    }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    const staleHelpResult = [{
+      id: 'help:stale',
+      kind: 'help',
+      title: 'Stale help result',
+      subtitle: 'Must not render',
+      route: '/help/stale',
+      href: 'https://allplays.ai/help-stale.html',
+      roles: ['parent'],
+      snippet: 'Must not render'
+    }];
+    const latestHelpResult = [{
+      id: 'help:latest',
+      kind: 'help',
+      title: 'Latest help result',
+      subtitle: 'Must remain visible',
+      route: '/help/latest',
+      href: 'https://allplays.ai/help-latest.html',
+      roles: ['parent'],
+      snippet: 'Must remain visible'
+    }];
+
+    fireEvent.change(input, { target: { value: 'ro' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(releases).toHaveLength(1);
+
+    fireEvent.change(input, { target: { value: 'rock' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(releases).toHaveLength(2);
+
+    await act(async () => {
+      releases[1](latestHelpResult);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Latest help result/i })).toBeTruthy();
+
+    await act(async () => {
+      releases[0](staleHelpResult);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('button', { name: /Stale help result/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /Latest help result/i })).toBeTruthy();
+  });
+
   it('shows help results for the signed-in user role once the query reaches two characters', async () => {
     const onClose = vi.fn();
     searchAppPlayersMock.mockResolvedValueOnce([{
@@ -519,7 +742,7 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
     expect(await screen.findByText('Players')).not.toBeNull();
     expect(await screen.findByRole('button', { name: /#10 Rocket Kid/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(await screen.findByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
     expect(screen.queryByRole('button', { name: /Search like a coach/i })).toBeNull();
     expect(screen.getByRole('button', { name: /More help results/i })).not.toBeNull();
   });
@@ -770,7 +993,7 @@ describe('AppSearchDialog', () => {
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
   });
 
-  it('coalesces superseded remote player searches while local teams and help keep updating', async () => {
+  it('coalesces superseded remote player and help searches while local teams keep updating', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     const knownTeams: AppSearchTeam[] = [
@@ -790,27 +1013,30 @@ describe('AppSearchDialog', () => {
     fireEvent.change(input, { target: { value: 'al' } });
     expect(screen.getByRole('button', { name: /Alphas/i })).not.toBeNull();
     expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(180);
+      await vi.advanceTimersByTimeAsync(149);
       await Promise.resolve();
     });
-    expect(searchAppTeamsMock).toHaveBeenCalledWith('al', knownTeams, null);
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
     expect(searchAppPlayersMock).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: 'alex' } });
     expect(screen.queryByRole('button', { name: /Alphas/i })).toBeNull();
     expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(loadAppSearchHelpResultsMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(360);
+      await vi.advanceTimersByTimeAsync(300);
       await Promise.resolve();
     });
 
     expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
     expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledTimes(1);
+    expect(loadAppSearchHelpResultsMock).toHaveBeenCalledWith(expect.objectContaining({ queryText: 'alex' }));
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
   });
 
   it('waits for the shortened player coalesce window before running remote player search', async () => {

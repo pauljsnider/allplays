@@ -52,6 +52,11 @@ const staffToolsLoaderMocks = vi.hoisted(() => ({
   load: vi.fn(() => import('../components/schedule/ScheduleStaffTools'))
 }));
 
+const publicActionMocks = vi.hoisted(() => ({
+  exportCalendarIcsFile: vi.fn(),
+  openPublicUrl: vi.fn()
+}));
+
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/telemetry', () => ({
@@ -75,6 +80,7 @@ vi.mock('../lib/useShellLayout', () => ({
 vi.mock('../components/schedule/loadScheduleStaffTools', () => ({
   loadScheduleStaffTools: staffToolsLoaderMocks.load
 }));
+vi.mock('../lib/publicActions', () => publicActionMocks);
 
 const auth: AuthState = {
   user: {
@@ -284,6 +290,7 @@ describe('Schedule', () => {
       isPartial: true
     });
     shellLayoutMocks.isDesktopWeb = false;
+    publicActionMocks.exportCalendarIcsFile.mockResolvedValue('downloaded');
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -975,20 +982,6 @@ describe('Schedule', () => {
       configurable: true,
       value: { writeText: clipboardWrite }
     });
-    let exportedBlob: Blob | null = null;
-    Object.defineProperty(URL, 'createObjectURL', {
-      configurable: true,
-      value: vi.fn((blob: Blob) => {
-        exportedBlob = blob;
-        return 'blob:staff-schedule';
-      })
-    });
-    Object.defineProperty(URL, 'revokeObjectURL', {
-      configurable: true,
-      value: vi.fn()
-    });
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-
     renderSchedule('/schedule?scope=staff');
 
     const teamFilter = await screen.findByLabelText('Team');
@@ -1003,15 +996,86 @@ describe('Schedule', () => {
     expect(clipboardWrite.mock.calls[0][0]).not.toContain('Family-only practice');
 
     fireEvent.click(screen.getByRole('button', { name: '.ics' }));
-    expect(exportedBlob).toBeTruthy();
-    const exportedText = await new Promise<string>((resolveText, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolveText(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsText(exportedBlob as Blob);
+    await waitFor(() => {
+      expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith(
+        'team-schedule.ics',
+        expect.stringContaining('Staff-only opponent')
+      );
     });
-    expect(exportedText).toContain('Staff-only opponent');
-    expect(exportedText).not.toContain('Family-only practice');
+    expect(publicActionMocks.exportCalendarIcsFile.mock.calls[0][1]).not.toContain('Family-only practice');
+  });
+
+  it('exports family, team, and player schedules with native-aware result and failure states', async () => {
+    const schedule = buildMixedTeamScheduleResult();
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    publicActionMocks.exportCalendarIcsFile.mockResolvedValueOnce('shared');
+
+    renderSchedule();
+
+    await screen.findByText('For Pat · Bears');
+    fireEvent.click(screen.getByRole('button', { name: 'Export calendar' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith(
+        'family-schedule.ics',
+        expect.stringContaining('Rivals')
+      );
+      expect(screen.getByText('Calendar file ready to share.')).toBeTruthy();
+    });
+    expect(publicActionMocks.exportCalendarIcsFile.mock.calls[0][1]).toContain('Practice');
+
+    publicActionMocks.exportCalendarIcsFile.mockResolvedValueOnce('downloaded');
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Export calendar' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenLastCalledWith(
+        'family-schedule.ics',
+        expect.stringContaining('Practice')
+      );
+      expect(screen.getByText('Calendar download started.')).toBeTruthy();
+    });
+    expect(publicActionMocks.exportCalendarIcsFile.mock.calls[1][1]).not.toContain('Rivals');
+
+    publicActionMocks.exportCalendarIcsFile.mockRejectedValueOnce(new Error('Sharing failed. Check device sharing permissions and try again.'));
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Player filter'), { target: { value: 'player-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Export calendar' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenLastCalledWith(
+        'pat-schedule.ics',
+        expect.stringContaining('Rivals')
+      );
+      expect(screen.getByText('Sharing failed. Check device sharing permissions and try again.')).toBeTruthy();
+    });
+    expect(screen.queryByText('Calendar file ready to share.')).toBeNull();
+    expect(screen.queryByText('Calendar download started.')).toBeNull();
+  });
+
+  it('prevents overlapping calendar exports while one is pending', async () => {
+    const schedule = buildMixedTeamScheduleResult();
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    let resolveExport!: (result: 'downloaded') => void;
+    publicActionMocks.exportCalendarIcsFile.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveExport = resolve;
+    }));
+
+    renderSchedule();
+
+    await screen.findByText('For Pat · Bears');
+    const exportButton = screen.getByRole('button', { name: 'Export calendar' });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => expect(exportButton).toBeDisabled());
+    fireEvent.click(exportButton);
+    expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledTimes(1);
+
+    resolveExport('downloaded');
+    await waitFor(() => {
+      expect(exportButton).not.toBeDisabled();
+      expect(screen.getByText('Calendar download started.')).toBeTruthy();
+    });
   });
 
   it('keeps explicitly non-linked same-team rows out of family views and copied agendas', async () => {
@@ -1768,7 +1832,9 @@ describe('Schedule', () => {
     expect(await screen.findByText('Showing 10 of 16 events')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Manage schedule with AI' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Show 6 more' }));
-    expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
+    });
 
     fireEvent.click(screen.getByRole('button', { name: 'Go family schedule' }));
 
@@ -1943,6 +2009,29 @@ describe('Schedule', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show packets' }));
     expect(screen.getByRole('button', { name: 'Show packets' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('link', { name: 'Packets' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('labels calendar-only imports without contradicting the RSVP-needed metric', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [buildScheduleEvent(1, {
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        myRsvp: 'not_responded'
+      })]
+    });
+
+    renderSchedule();
+
+    expect((await screen.findAllByText('Calendar only')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Imported')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show rsvp needed' }).textContent).toContain('0');
   });
 
   it('renders web-created tournament game metadata and the create tournament flow', async () => {

@@ -9,7 +9,7 @@ describe('team email draft composer', () => {
     it('pins the fresh db cache-busting version for team chat draft helpers', () => {
         const html = readRepoFile('team-chat.html');
 
-        expect(html).toContain("from './js/db.js?v=136';");
+        expect(html).toContain("from './js/db.js?v=4433159';");
     });
 
     it('wires coach/admin email drafts into team chat', () => {
@@ -19,6 +19,8 @@ describe('team email draft composer', () => {
         expect(html).toContain('getTeamEmailDrafts');
         expect(html).toContain('saveTeamEmailDraft');
         expect(html).toContain('openEmailDraftModal');
+        expect(html).toContain('id="email-drafts-load-more-btn"');
+        expect(html).toContain("loadEmailDrafts({ append: true })");
     });
 
     it('wires reusable email templates into the composer and draft modal', () => {
@@ -29,6 +31,8 @@ describe('team email draft composer', () => {
         expect(html).toContain('getTeamEmailTemplates');
         expect(html).toContain('saveTeamEmailTemplate');
         expect(html).toContain('deleteTeamEmailTemplate');
+        expect(html).toContain('id="email-templates-load-more-btn"');
+        expect(html).toContain("loadEmailTemplates({ append: true })");
         expect(html).toContain('Templates prefill subject and body only. They do not change recipients or send email.');
         expect(html).toContain('Template applied. Recipients were not changed.');
     });

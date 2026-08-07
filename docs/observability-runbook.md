@@ -79,6 +79,8 @@ Safe manual retry:
 
 1. Confirm the failed run targeted `master` and that its summary reports a transient Google API failure rather than a configuration or authorization error. Check the Firebase deploy log or console to determine whether Rules or indexes were already applied.
 2. Confirm `master` still contains the intended Firestore configuration. If a newer production deployment succeeded, no retry is needed.
+   When live source classification fails, use only the emitted immutable ruleset ID, creation time, and SHA-256 digests to investigate. Never copy rule source, credentials, or API response bodies into an issue or pull request. A pre-fingerprint recovery must independently pin the immutable ruleset ID, the exact formatted repository-source digest, and the canonical remote-source digest before it can be accepted.
+   When a transient create or release response committed despite returning an error, reconstruct the formatted source from the exact deployment commit inside the credential-free preparation job. The production job may classify that historical source only when the pinned commit reproduces the formatted digest and the live immutable ruleset ID and canonical digest also match; it must then advance to the current trusted source through the normal release path.
 3. In GitHub Actions, open `deploy-prod`, choose **Run workflow**, select `master`, and run it. Manual dispatch is restricted to the current `master` branch and repeats the protected tests, change detection, keyless authentication, bounded ruleset create/release flow, exact-SHA Firebase/Pages ordering, and fail-closed release marker.
 4. Confirm the Firestore configuration step succeeds before Hosting and Functions, then confirm the production smoke workflow succeeds.
 

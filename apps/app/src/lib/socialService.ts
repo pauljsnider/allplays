@@ -20,7 +20,7 @@ import { loadParentHome } from './homeService';
 import { createLogger } from './logger';
 import { toAppServiceError } from './appErrors';
 import type { ParentHomeModel } from './homeLogic';
-import { uploadTeamChatAttachment } from './chatService';
+import { deleteTeamChatAttachments, uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
 import { getPublicTeamDetail } from './publicTeamsService';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
@@ -67,6 +67,10 @@ export type CreateSocialPostInput = {
   href?: string | null;
   media?: SocialMedia[];
   visibleUserIds?: string[];
+};
+
+export type SocialMediaUpload = SocialMedia & {
+  storagePath: string;
 };
 
 export type FriendProfileModel = {
@@ -349,6 +353,15 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
       limit(12)
     )), 'Public athlete profiles').catch(() => null)
   ]);
+  const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
+  const publicTeamsPromise = Promise.all(
+    uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
+  ).then((teams) => teams.filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
+    id: team.id,
+    name: team.name,
+    sport: team.sport,
+    photoUrl: team.photoUrl
+  })));
   const postDocs = await loadSocialPostQueryPages({
     buildQuery: (cursor) => query(
       collection(db, 'socialPosts'),
@@ -364,16 +377,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     pageSize: socialPostLimit,
     visibleLimit: socialPostLimit
   });
-  const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
-  const publicTeams = (await Promise.all(
-    uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
-  )).filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
-    id: team.id,
-    name: team.name,
-    sport: team.sport,
-    photoUrl: team.photoUrl
-  }));
   const publicChildren = publicChildSnap ? snapshotToDocs(publicChildSnap).map((child) => ({
     id: child.id,
     name: compactString(child.athlete?.name) || 'Athlete profile',
@@ -384,7 +388,10 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
   const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
-  const viewerReactions = await loadViewerSocialPostReactions(posts, viewerId);
+  const [publicTeams, viewerReactions] = await Promise.all([
+    publicTeamsPromise,
+    loadViewerSocialPostReactions(posts, viewerId)
+  ]);
   const hydratedPosts = posts.map((post) => ({
     ...post,
     viewerHasLiked: viewerReactions.has(post.id)
@@ -610,7 +617,7 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
   return mapSocialPost({ id: postRef.id, ...postData });
 }
 
-export async function uploadSocialPostMedia(teamId: string, file: File): Promise<SocialMedia> {
+export async function uploadSocialPostMedia(teamId: string, file: File): Promise<SocialMediaUpload> {
   if (!teamId) {
     throw new Error('Choose a team before adding media.');
   }
@@ -622,8 +629,22 @@ export async function uploadSocialPostMedia(teamId: string, file: File): Promise
     type: attachment.type,
     url: attachment.url,
     name: attachment.name || file.name || null,
-    thumbnailUrl: attachment.thumbnailUrl || null
+    thumbnailUrl: attachment.thumbnailUrl || null,
+    storagePath: String(attachment.path || '')
   };
+}
+
+export async function discardSocialPostMediaUpload(media: SocialMediaUpload | null | undefined) {
+  if (!media?.storagePath) return;
+  await deleteTeamChatAttachments([{
+    type: media.type,
+    url: media.url,
+    path: media.storagePath,
+    name: media.name || null,
+    mimeType: null,
+    size: null,
+    thumbnailUrl: media.thumbnailUrl || null
+  }]);
 }
 
 export async function reactToSocialPost(postId: string, user: AuthUser, reactionKey = 'like') {

@@ -80,6 +80,28 @@ describe('Capacitor native config', () => {
         );
     });
 
+    it('keeps the synchronized Android runtime and camera plugin aligned with the JavaScript lockfile', () => {
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidAppBuild = readProjectFile('android/app/build.gradle');
+        const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const androidProject = [
+            readProjectFile('android/settings.gradle'),
+            readProjectFile('android/build.gradle'),
+            androidAppBuild,
+            androidSettings,
+            androidBuild
+        ].join('\n');
+
+        expect(rootPackageLock.packages['node_modules/@capacitor/android'].version).toBe('8.5.0');
+        expect(rootPackageLock.packages['node_modules/@capacitor/core'].version).toBe('8.5.0');
+        expect(androidSettings).toContain("project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')");
+        expect(androidSettings).toContain("project(':capacitor-camera').projectDir = new File('../node_modules/@capacitor/camera/android')");
+        expect(androidAppBuild).toContain("implementation project(':capacitor-android')");
+        expect(androidBuild).toContain("implementation project(':capacitor-camera')");
+        expect(androidProject).not.toContain('8.4.2');
+    });
+
     it('declares splash screen and status bar plugins in app and native manifests', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));

@@ -24,13 +24,24 @@ async function waitForAuthRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockAppModules(page, { user = null, emailLink = false } = {}) {
-    await page.addInitScript(({ mockUser, mockEmailLink }) => {
+async function mockAppModules(page, { user = null, emailLink = false, friendInviteReplay = false } = {}) {
+    let friendInviteRedemptionAttempts = 0;
+    if (friendInviteReplay) {
+        await page.exposeFunction('mockFriendInviteRedemption', () => {
+            friendInviteRedemptionAttempts += 1;
+            return friendInviteRedemptionAttempts > 1
+                ? { error: 'Unable to redeem friend invite.' }
+                : { error: '' };
+        });
+    }
+
+    await page.addInitScript(({ mockUser, mockEmailLink, mockFriendInviteReplay }) => {
         window.__mockAuthState = {
             user: mockUser,
             profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
         };
         window.__mockEmailLink = mockEmailLink;
+        window.__mockFriendInviteReplay = mockFriendInviteReplay;
         window.__appAuthCalls = {
             signInWithEmail: [],
             signUpWithEmail: [],
@@ -72,13 +83,44 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             canOpenSettings: false
         }];
         window.__mockNotificationPreferenceResponses ??= [];
-    }, { mockUser: user, mockEmailLink: emailLink });
+    }, {
+        mockUser: user,
+        mockEmailLink: emailLink,
+        mockFriendInviteReplay: friendInviteReplay
+    });
+
+    // The app startup timer lazily initializes Firebase Performance. Keep this
+    // module mocked across reloads so auth-flow tests cannot contact Firebase
+    // Installations with the intentionally non-production preview config.
+    await page.route(/\/src\/lib\/performanceInstrumentation\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function now() {
+                    return window.performance.now();
+                }
+
+                export function startPerformanceSpan() {
+                    return {
+                        startedAt: now(),
+                        traceName: 'mock-performance-span',
+                        end() {}
+                    };
+                }
+
+                export function recordCompletedPerformanceSpan() {}
+            `
+        });
+    });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
             contentType: 'application/javascript',
             body: `
+                const refresh = async () => { window.__appAuthCalls.refresh += 1; };
+
                 export function useAuth() {
                     const state = window.__mockAuthState || { user: null, profile: null };
                     const user = state.user || null;
@@ -93,7 +135,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                         isCoach: roles.includes('coach'),
                         isAdmin: roles.includes('admin') || user?.isAdmin === true,
                         isPlatformAdmin: roles.includes('platformAdmin'),
-                        refresh: async () => { window.__appAuthCalls.refresh += 1; },
+                        refresh,
                         signOut: async () => {
                             window.__appAuthCalls.signOut += 1;
                             window.__mockAuthState = { user: null, profile: null };
@@ -200,11 +242,17 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function redeemInviteForUser(userId, code, authEmail) {
                     window.__appAuthCalls.redeemInviteForUser.push({ userId, code, authEmail });
+                    if (window.__mockFriendInviteReplay) {
+                        const replayResult = await window.mockFriendInviteRedemption();
+                        if (replayResult?.error) {
+                            throw new Error(replayResult.error);
+                        }
+                    }
                     return { message: 'Invite accepted.', redirectUrl: 'parent-dashboard.html' };
                 }
 
                 export function mapLegacyRedirectToAppRoute() {
-                    return '/home';
+                    return window.__mockFriendInviteReplay ? '' : '/home';
                 }
 
                 export async function applyEmailActionCode(oobCode) {
@@ -264,8 +312,18 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export function normalizeNotificationPreferences(preferences) {
                     return {
                         liveChat: preferences?.liveChat !== false,
+                        mentions: preferences?.mentions !== false,
                         liveScore: preferences?.liveScore === true,
-                        schedule: preferences?.schedule !== false
+                        gameDay: preferences?.gameDay === true,
+                        schedule: preferences?.schedule !== false,
+                        rsvp: preferences?.rsvp !== false,
+                        fees: preferences?.fees !== false,
+                        practice: preferences?.practice === true,
+                        access: preferences?.access !== false,
+                        rideshare: preferences?.rideshare !== false,
+                        media: preferences?.media === true,
+                        awards: preferences?.awards === true,
+                        officiating: preferences?.officiating === true
                     };
                 }
 
@@ -381,8 +439,13 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function uploadProfilePhoto(file) {
                     window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
-                    return '${mockAvatarUrl}';
+                    return {
+                        url: '${mockAvatarUrl}',
+                        path: 'profile-photos/users/user-1/profile/avatar.png'
+                    };
                 }
+
+                export async function deleteProfilePhoto() {}
             `
         });
     });
@@ -462,6 +525,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function createScheduleImportPractice() {
                     return 'imported-practice';
+                }
+
+                export async function enableRsvpForImportedCalendarEvent() {
+                    return 'calendar-materialized-event';
                 }
 
                 export async function loadParentSchedule() {
@@ -675,6 +742,35 @@ test('signed-in invite and account action routes process existing site flows', a
     }))).toEqual({ resend: 1, refresh: 1 });
 });
 
+test('friend invite acceptance uses the signed-in route and rejects replay generically', async ({ page, baseURL }) => {
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    const user = {
+        uid: 'user-1',
+        email: 'friend@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user, friendInviteReplay: true });
+
+    const inviteUrl = appUrl(baseURL, '/accept-invite?code=FRIEND12&type=friend');
+    await page.goto(inviteUrl, { waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect.poll(async () => page.evaluate(() => window.__appAuthCalls.redeemInviteForUser.length)).toBe(1);
+    await expect(page.getByText('Invite accepted.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByText('Unable to redeem friend invite.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'FRIEND12', authEmail: 'friend@example.com' }
+    ]);
+});
+
 test('profile exposes account, notification, invite, verification, password, upload, and logout capabilities', async ({ page, baseURL }) => {
     const user = {
         uid: 'user-1',
@@ -700,9 +796,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', mockAvatarUrl);
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
-    const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
+    const alertsTab = page.getByRole('link', { name: 'Notifications', exact: true });
     await alertsTab.click();
-    await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(alertsTab).toHaveAttribute('aria-current', 'page');
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(1);
     await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
@@ -719,7 +815,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save preferences' }).click();
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Invites', exact: true }).click();
+    await page.getByRole('link', { name: 'Invites', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Create invite' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await page.getByLabel('Recipient email').fill('friend@example.com');
@@ -751,7 +847,7 @@ test('profile exposes account, notification, invite, verification, password, upl
 
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Security', exact: true }).click();
+    await page.getByRole('link', { name: 'Sign-in & security', exact: true }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
     await expect(page.getByText('Set a password')).toBeVisible();
     await page.locator('input[placeholder="New password"]').fill('new-password');
@@ -779,6 +875,14 @@ test('profile exposes account, notification, invite, verification, password, upl
     expect(profileCalls.profileLoads).toBeGreaterThan(0);
     expect(profileCalls).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
+        saves: [{
+            userId: 'user-1',
+            profile: {
+                fullName: 'Pat Parent Updated',
+                phone: '555-0100',
+                photoUrl: mockAvatarUrl
+            }
+        }],
         push: 1,
         notificationLoads: [
             { userId: 'user-1', teamId: 'team-1' }
@@ -835,7 +939,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     await page.getByLabel('Team').selectOption('team-2');
 
@@ -892,7 +996,7 @@ test('profile alerts recover from blocked native notification permissions', asyn
     });
     await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
     await expect(page.getByText('Notifications are off in device settings')).toBeVisible();
     await page.getByRole('button', { name: 'Open device settings' }).first().click();
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.openPushSettings)).toBe(1);
@@ -900,4 +1004,36 @@ test('profile alerts recover from blocked native notification permissions', asyn
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(page.getByText('Push is allowed on this device')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh push registration' })).toBeVisible();
+});
+
+test('profile keeps dirty notification saves above mobile navigation while scrolling', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: true,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.goto(appUrl(baseURL, '/profile/settings'), { waitUntil: 'domcontentloaded' });
+    await page.getByRole('link', { name: 'Notifications', exact: true }).click();
+
+    await page.getByLabel('Schedule Changes').uncheck();
+    const tray = page.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    const bottomNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+    await expect(tray).toBeVisible();
+
+    await page.getByLabel('Media').scrollIntoViewIfNeeded();
+    await page.getByLabel('Media').check();
+    await expect(tray).toBeVisible();
+
+    const trayBox = await tray.boundingBox();
+    const navigationBox = await bottomNavigation.boundingBox();
+    expect(trayBox).not.toBeNull();
+    expect(navigationBox).not.toBeNull();
+    expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navigationBox.y);
+
+    await tray.getByRole('button', { name: 'Save preferences' }).click();
+    await expect(tray).toHaveCount(0);
 });

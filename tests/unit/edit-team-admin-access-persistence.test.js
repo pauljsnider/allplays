@@ -358,8 +358,12 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto(?:,\s*deleteLegacyImageUpload)?,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, deleteLegacyImageUpload, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
+        )
+        .replace(
+            "import { validateProfilePhotoFile } from './js/profile-photo-paths.js?v=3';",
+            'const { validateProfilePhotoFile } = deps.profilePhotoPaths;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=2';",
@@ -370,7 +374,7 @@ function extractEditTeamModule() {
             'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=21';",
+            /import\s+\{\s*renderHeader,\s*renderFooter,\s*getUrlParams,\s*escapeHtml\s*\}\s+from\s+'\.\/js\/utils\.js\?v=\d+';/,
             'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
@@ -378,7 +382,7 @@ function extractEditTeamModule() {
             'const { checkAuth, sendInviteEmail } = deps.auth;'
         )
         .replace(
-            "import { renderTeamAdminBanner } from './js/team-admin-banner.js';",
+            /import\s+\{\s*renderTeamAdminBanner\s*\}\s+from\s+'\.\/js\/team-admin-banner\.js\?v=\d+';/,
             'const { renderTeamAdminBanner } = deps.teamAdminBanner;'
         )
         .replace(
@@ -386,7 +390,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=4';",
+            /import\s+\{\s*hasFullTeamAccess,\s*normalizeAdminEmailList,\s*normalizeStreamVolunteerEmailList,\s*normalizeTeamPermissions\s*\}\s+from\s+'\.\/js\/team-access\.js\?v=\d+';/,
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
@@ -467,6 +471,7 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
             },
+            async deleteLegacyImageUpload() {},
             async addConfig() {
                 return 'config-1';
             },
@@ -553,6 +558,7 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
+        profilePhotoPaths: await import('../../js/profile-photo-paths.js'),
         editTeamAdminInvites: {
             ...(await import('../../js/edit-team-admin-invites.js')),
             async processPendingAdminInvites() {
@@ -967,6 +973,332 @@ describe('edit team admin access persistence', () => {
                 ownerEmail: 'owner@example.com'
             });
             expect(env.state.createCalls[0].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('creates a team before uploading and saving its final team-owned photo', async () => {
+        const operations = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' }, {
+            db: {
+                async createTeam(teamData) {
+                    operations.push({ type: 'create', teamData: deepClone(teamData) });
+                    return 'team-created';
+                },
+                async uploadTeamPhoto(file, options) {
+                    operations.push({ type: 'upload', file, options: deepClone(options) });
+                    return {
+                        url: 'https://cdn.example.test/team-created.jpg',
+                        path: 'profile-photos/teams/team-created/team/team.jpg'
+                    };
+                },
+                async updateTeam(teamId, teamData) {
+                    operations.push({ type: 'update', teamId, teamData: deepClone(teamData) });
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'team.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(operations.map(({ type }) => type)).toEqual(['create', 'upload', 'update']);
+            expect(operations[0].teamData).toMatchObject({ photoUrl: null, photoPath: null });
+            expect(operations[1].options).toEqual({ returnUpload: true, teamId: 'team-created' });
+            expect(operations[2]).toMatchObject({
+                teamId: 'team-created',
+                teamData: {
+                    photoUrl: 'https://cdn.example.test/team-created.jpg',
+                    photoPath: 'profile-photos/teams/team-created/team/team.jpg'
+                }
+            });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it.each([
+        [{ name: 'empty.jpg', type: 'image/jpeg', size: 0 }, 'non-empty image file'],
+        [{ name: 'notes.txt', type: 'text/plain', size: 123 }, 'image file'],
+        [{ name: 'huge.jpg', type: 'image/jpeg', size: 6 * 1024 * 1024 }, '5 MB or smaller']
+    ])('rejects an invalid new-team photo before creating its owner', async (file, expectedMessage) => {
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [file];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toEqual([]);
+            expect(env.state.updateCalls).toEqual([]);
+            expect(env.alerts.at(-1)).toContain(expectedMessage);
+            expect(env.elements.get('save-btn').disabled).toBe(false);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('lets another team admin replace a team photo and cleans the prior owned path after persistence', async () => {
+        const deletedPaths = [];
+        const initialState = {
+            currentUser: { uid: 'admin-2', email: 'admin2@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: ['admin2@example.com'],
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData).toMatchObject({
+                photoUrl: 'https://cdn.example.test/new.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/new.jpg'
+            });
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves an uploaded replacement when an existing team save outcome is uncertain', async () => {
+        const deletedPaths = [];
+        let teamReads = 0;
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async getTeam() {
+                    teamReads += 1;
+                    if (teamReads === 1) return deepClone(initialState.team);
+                    throw new Error('confirmation read unavailable');
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual([]);
+            expect(env.alerts.at(-1)).toContain('team save may have completed');
+            expect(env.alerts.at(-1)).toContain('uploaded photo was preserved');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('accepts an ambiguous existing-team save only after the new photo path is authoritative', async () => {
+        const deletedPaths = [];
+        let teamReads = 0;
+        const oldTeam = {
+            id: 'team-1',
+            ownerId: 'owner-1',
+            name: 'Photo Sharks',
+            description: '',
+            sport: 'Basketball',
+            notificationEmail: '',
+            leagueUrl: '',
+            standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+            zip: '66209',
+            isPublic: true,
+            photoUrl: 'https://cdn.example.test/old.jpg',
+            photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+        };
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: oldTeam,
+            updateCalls: []
+        }, undefined, {
+            db: {
+                async getTeam() {
+                    teamReads += 1;
+                    return teamReads === 1
+                        ? deepClone(oldTeam)
+                        : { ...deepClone(oldTeam), photoUrl: 'https://cdn.example.test/new.jpg', photoPath: 'profile-photos/teams/team-1/team/new.jpg' };
+                },
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/old.jpg']);
+            expect(env.window.location.href).toMatch(/\/dashboard\.html$/);
+            expect(env.alerts.some((message) => message.includes('may have completed'))).toBe(false);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('deletes an uploaded replacement when an authoritative re-read shows it was not committed', async () => {
+        const deletedPaths = [];
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Photo Sharks',
+                description: '',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                photoUrl: 'https://cdn.example.test/old.jpg',
+                photoPath: 'profile-photos/teams/team-1/team/old.jpg'
+            },
+            updateCalls: []
+        };
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-1/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'firestore/unavailable' });
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual(['profile-photos/teams/team-1/team/new.jpg']);
+            expect(env.window.location.href).not.toBe('dashboard.html');
+            expect(env.alerts.at(-1)).toContain('Error saving team');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves a new team photo when its document update outcome is uncertain', async () => {
+        const deletedPaths = [];
+        const env = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' }, {
+            db: {
+                async createTeam() {
+                    return 'team-created';
+                },
+                async uploadTeamPhoto() {
+                    return {
+                        url: 'https://cdn.example.test/new.jpg',
+                        path: 'profile-photos/teams/team-created/team/new.jpg'
+                    };
+                },
+                async updateTeam() {
+                    throw Object.assign(new Error('network unavailable'), { code: 'unavailable' });
+                },
+                async getTeam() {
+                    throw new Error('confirmation read unavailable');
+                },
+                async deleteLegacyImageUpload(path) {
+                    deletedPaths.push(path);
+                }
+            }
+        });
+        try {
+            env.elements.get('name').value = 'Photo Sharks';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('photo-upload').files = [{ name: 'new.jpg', type: 'image/jpeg', size: 123 }];
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(deletedPaths).toEqual([]);
+            expect(env.alerts.some((message) => message.includes('photo save state could not be confirmed'))).toBe(true);
+            expect(env.window.location.href).toContain('teamId=team-created');
         } finally {
             env.cleanup();
         }

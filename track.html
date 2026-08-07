@@ -274,14 +274,14 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=136';
+        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433159';
         import { db } from './js/firebase.js?v=22';
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=22';
-        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=21';
-        import { checkAuth } from './js/auth.js?v=141';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443336';
+        import { checkAuth } from './js/auth.js?v=4433162';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
-        import { hasScorekeepingTeamAccess } from './js/team-access.js?v=2';
+        import { hasScorekeepingTeamAccess } from './js/team-access.js?v=44338';
         import { commitStandardTrackerFinishData } from './js/track-finish.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';

@@ -9,6 +9,7 @@ const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    hydrateParentScheduleEventOptionalDetails: vi.fn((result) => Promise.resolve(result)),
     loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadStaffPracticePacket: vi.fn(),
@@ -149,7 +150,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection, setScheduleGameDayServiceImporterForTest } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { setScheduleGameDayServiceImporterForTest } from '../../apps/app/src/pages/schedule/ScheduleGameHubSection.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

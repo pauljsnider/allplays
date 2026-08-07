@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 const teamDrillsServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.ts', import.meta.url), 'utf8');
 const practiceAiCoachServiceSource = readFileSync(new URL('../../apps/app/src/lib/practiceAiCoachService.ts', import.meta.url), 'utf8');
 const teamDrillsServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.test.ts', import.meta.url), 'utf8');
-const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
+const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', import.meta.url), 'utf8');
 const practiceTimelineServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/practiceTimelineService.test.ts', import.meta.url), 'utf8');
 const livePracticeNotesTestSource = readFileSync(new URL('./drills-live-practice-notes.test.js', import.meta.url), 'utf8');
 const starterDrillsTestSource = readFileSync(new URL('./practice-starter-drills.test.js', import.meta.url), 'utf8');

@@ -8,7 +8,9 @@ import {
 import {
     collectionGroup,
     deleteDoc,
+    deleteField,
     doc,
+    getDoc,
     getDocs,
     query,
     serverTimestamp,
@@ -52,6 +54,9 @@ describe('team fee recipient Firestore rules', () => {
         expect(nestedRecipientBlock).toContain('resource.data.batchId == batchId');
         expect(nestedRecipientBlock).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
         expect(nestedRecipientBlock).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(request.resource.data)');
+        expect(nestedRecipientBlock).toContain('hasNoChangedServerOwnedTeamFeeCheckoutFields()');
+        expect(nestedRecipientBlock).toContain('hasNoServerOwnedTeamFeeCheckoutFields(resource.data)');
     });
 
     it('uses the owner/admin-only fee financial state guard for recipient updates', () => {
@@ -81,6 +86,11 @@ describe('team fee recipient Firestore rules', () => {
         expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+    });
+
+    it('keeps exact checkout requests in an Admin-SDK-only attempt document', () => {
+        expect(nestedRecipientBlock).toContain('match /checkoutAttempts/{attemptId} {');
+        expect(nestedRecipientBlock).toContain('allow read, create, update, delete: if false;');
     });
 
     it('allows atomic append-only fee audit entries from the authenticated team admin', () => {
@@ -150,6 +160,29 @@ describe('team fee recipient Firestore rules', () => {
             };
         }
 
+        const serverOwnedCheckoutFields = {
+            checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            checkoutURL: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentLink: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentLinkUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            paymentUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
+            checkoutStatus: 'open',
+            checkoutAttemptToken: 'tok_1234567890abcdef',
+            checkoutAmountCents: 2500,
+            checkoutCreatedAt: 'client-time',
+            checkoutCreationReservationId: 'reservation_1234567890',
+            checkoutCreationStartedAt: 'client-time',
+            checkoutCreationPayerUid: 'parent-a',
+            checkoutCreationAmountCents: 2500,
+            checkoutCreationRequest: { version: 1, idempotencyKey: 'forged' },
+            paymentProvider: 'stripe',
+            stripePaymentStatus: 'unpaid',
+            stripePaymentAmountCents: 2500,
+            stripeCheckoutSessionId: 'cs_test_123',
+            checkoutSessionId: 'cs_test_123',
+            lastPaidStripeCheckoutSessionId: 'cs_test_paid'
+        };
+
         async function writeAuditedUpdate(firestore, teamId, batchId, recipientId, actorId, update, auditOverrides = {}) {
             const batch = writeBatch(firestore);
             const auditId = `fee_mutation_${recipientId}_${actorId}_${++auditSequence}`;
@@ -203,6 +236,141 @@ describe('team fee recipient Firestore rules', () => {
             await assertFails(updateDoc(validRef, { status: 'paid' }));
             await assertSucceeds(writeAuditedUpdate(ownerDb, 'team-a', 'batch-a', 'valid', 'owner-a', { status: 'paid' }));
             await assertSucceeds(deleteDoc(validRef));
+        });
+
+        it('keeps checkout lifecycle and Stripe session fields server-owned for every client actor', async () => {
+            const actors = [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com'],
+                ['parent-a', 'parent-a@example.com'],
+                ['unrelated-a', 'unrelated-a@example.com']
+            ];
+
+            for (const [field, value] of Object.entries(serverOwnedCheckoutFields)) {
+                for (const [uid, email] of actors) {
+                    const actorDb = authedFirestore(uid, email);
+                    const createId = `create-${field}-${uid}`;
+                    await assertFails(setDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', createId),
+                        { ...recipientPayload(), [field]: value }
+                    ));
+
+                    const updateId = `update-${field}-${uid}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${updateId}`,
+                        recipientPayload()
+                    );
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', updateId),
+                        { [field]: value }
+                    ));
+
+                    const legacyId = `legacy-${field}-${uid}`;
+                    await seedRecipient(
+                        `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyId}`,
+                        { ...recipientPayload(), [field]: value }
+                    );
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                        { [field]: null }
+                    ));
+                    await assertFails(updateDoc(
+                        recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                        { [field]: deleteField() }
+                    ));
+                }
+            }
+        }, 30000);
+
+        it('denies every client role access to exact team-fee checkout attempts', async () => {
+            const attemptPath = 'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt/checkoutAttempts/current';
+            await seedRecipient(
+                'teams/team-a/feeBatches/batch-a/feeRecipients/private-attempt',
+                recipientPayload()
+            );
+            await seedRecipient(attemptPath, {
+                reservationId: 'reservation-private',
+                payerUid: 'parent-a',
+                amountCents: 2500,
+                checkoutCreationRequest: {
+                    idempotencyKey: 'private-key',
+                    stripeParams: { customer_email: 'parent-a@example.com' }
+                }
+            });
+
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com'],
+                ['parent-a', 'parent-a@example.com'],
+                ['unrelated-a', 'unrelated-a@example.com']
+            ]) {
+                const attemptRef = doc(authedFirestore(uid, email), attemptPath);
+                await assertFails(getDoc(attemptRef));
+                await assertFails(setDoc(attemptRef, { reservationId: 'forged' }));
+                await assertFails(updateDoc(attemptRef, { payerUid: uid }));
+                await assertFails(deleteDoc(attemptRef));
+            }
+        });
+
+        it('denies owner and admin deletion while an active checkout session is present', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const recipientId = `active-checkout-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${recipientId}`,
+                    {
+                        ...recipientPayload(),
+                        checkoutStatus: 'open',
+                        checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_active',
+                        stripeCheckoutSessionId: 'cs_test_active'
+                    }
+                );
+
+                await assertFails(deleteDoc(recipientRef(
+                    authedFirestore(uid, email),
+                    'team-a',
+                    'batch-a',
+                    recipientId
+                )));
+            }
+        });
+
+        it('preserves owner/admin fee creation and non-checkout mutations', async () => {
+            for (const [uid, email] of [
+                ['owner-a', 'owner-a@example.com'],
+                ['admin-a', 'admin-a@example.com']
+            ]) {
+                const actorDb = authedFirestore(uid, email);
+                const recipientId = `normal-${uid}`;
+                await assertSucceeds(setDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', recipientId),
+                    recipientPayload()
+                ));
+                await assertSucceeds(updateDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', recipientId),
+                    { note: 'Allowed non-checkout update' }
+                ));
+                await assertSucceeds(writeAuditedUpdate(
+                    actorDb,
+                    'team-a',
+                    'batch-a',
+                    recipientId,
+                    uid,
+                    { amountDueCents: 2000, status: 'partial' }
+                ));
+
+                const legacyId = `legacy-compatible-${uid}`;
+                await seedRecipient(
+                    `teams/team-a/feeBatches/batch-a/feeRecipients/${legacyId}`,
+                    { ...recipientPayload(), ...serverOwnedCheckoutFields }
+                );
+                await assertSucceeds(updateDoc(
+                    recipientRef(actorDb, 'team-a', 'batch-a', legacyId),
+                    { note: 'Protected legacy state remains unchanged' }
+                ));
+            }
         });
 
         it('denies parent fee amount/status tampering while allowing owner and admin updates', async () => {

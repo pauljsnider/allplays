@@ -226,6 +226,12 @@ async function renderMessages(initialEntry, authState = auth) {
 
         await flush();
         await flush();
+        await waitForMatch(
+            () => !container.querySelector('[role="status"][aria-label^="Loading team chat"]'),
+            'Messages content to finish loading'
+        );
+        await flush();
+        await flush();
     };
 
     await renderWithAuth(authState);
@@ -518,7 +524,7 @@ beforeEach(() => {
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
     chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
-    chatMocks.loadTeamEmailDrafts.mockResolvedValue([]);
+    chatMocks.loadTeamEmailDrafts.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.loadSentTeamEmails.mockResolvedValue([
         {
             id: 'email-1',
@@ -529,7 +535,7 @@ beforeEach(() => {
             status: 'queued'
         }
     ]);
-    chatMocks.loadTeamEmailTemplates.mockResolvedValue([]);
+    chatMocks.loadTeamEmailTemplates.mockResolvedValue({ items: [], nextCursor: null });
     chatMocks.saveTeamEmailDraft.mockResolvedValue(undefined);
     chatMocks.saveTeamEmailTemplate.mockResolvedValue(undefined);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
@@ -587,6 +593,7 @@ describe('React app messages integration', () => {
             inboxLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
         });
         await flush();
+        await waitForText(container, 'Staff only');
 
         expect(container.textContent).toContain('Staff only');
         expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
@@ -1469,15 +1476,11 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Bring both jerseys.');
         expect(container.textContent).toContain('We can bring snacks.');
 
-        const reactionButtons = Array.from(container.querySelectorAll('button[aria-label="Add reaction"]'));
-        await act(async () => {
-            reactionButtons[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        });
-        await flush();
+        await click(container, 'Open message actions for Coach Jamie');
         await click(container, 'Like');
         expect(chatMocks.toggleTeamChatReaction).toHaveBeenCalledWith('team-1', 'msg-1', 'thumbs_up', 'user-1', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Edit');
         const dialog = container.querySelector('[role="dialog"][aria-label="Edit message"]');
         const editTextarea = dialog.querySelector('textarea');
@@ -1485,7 +1488,7 @@ describe('React app messages integration', () => {
         await click(container, 'Save');
         expect(chatMocks.editTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'We can bring snacks and waters.', 'team');
 
-        await click(container, 'Open actions for You');
+        await click(container, 'Open message actions for You');
         await click(container, 'Delete');
         expect(chatMocks.deleteTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'team');
     });
@@ -3241,7 +3244,7 @@ describe('React app messages integration', () => {
         // Open email sheet for team-1 — first load.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1', { cursor: null });
         await click(container, 'Close Team Email');
 
         // Switch to team-2 via the inbox pane.
@@ -3254,6 +3257,6 @@ describe('React app messages integration', () => {
         // Open email sheet for team-2 — cache was invalidated on team switch, so a fresh load fires.
         await click(container, 'Team Email');
         expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(2);
-        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2', { cursor: null });
     });
 });

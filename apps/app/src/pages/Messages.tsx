@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -30,17 +30,12 @@ import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { startScreenMountTimer } from '../lib/uxTiming';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { AuthState } from '../lib/types';
-import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';
+import { TeamAvatar } from './messages/components/TeamAvatar';
 
-export {
-  MessageAvatar,
-  StatusBanner,
-  TeamAvatar,
-  buildChatViewportSignature,
-  isSelectedConversation,
-  mergeVisibleChatMessages,
-  normalizeConversationId
-} from './messages/components/ChatWindow';
+const LazyChatWindow = lazy(async () => {
+  const chatWindowModule = await import('./messages/components/ChatWindow');
+  return { default: chatWindowModule.ChatWindow };
+});
 
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
@@ -289,17 +284,19 @@ export function Messages({ auth }: { auth: AuthState }) {
                 onReplied={(updated) => setInquiries((current) => current.map((item) => item.id === updated.id ? updated : item))}
               />
             ) : activeTeamId ? (
-              <ChatWindow
-                auth={auth}
-                teamId={activeTeamId}
-                inboxTeam={teams.find((team) => team.id === activeTeamId)}
-                preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
-                initialRecipient={teamId === activeTeamId ? initialRecipient : null}
-                onInboxMuteChange={(nextConversationId, nextIsMuted) => {
-                  setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
-                }}
-                embedded
-              />
+              <Suspense fallback={<MessagesPageSkeleton embedded />}>
+                <LazyChatWindow
+                  auth={auth}
+                  teamId={activeTeamId}
+                  inboxTeam={teams.find((team) => team.id === activeTeamId)}
+                  preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                  initialRecipient={teamId === activeTeamId ? initialRecipient : null}
+                  onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+                    setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+                  }}
+                  embedded
+                />
+              </Suspense>
             ) : (
               <EmptyChatSelection />
             )}
@@ -315,16 +312,18 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   if (activeTeamId) {
     return (
-      <ChatWindow
-        auth={auth}
-        teamId={activeTeamId}
-        inboxTeam={teams.find((team) => team.id === activeTeamId)}
-        preferredConversationId={preferredConversationId}
-        initialRecipient={initialRecipient}
-        onInboxMuteChange={(nextConversationId, nextIsMuted) => {
-          setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
-        }}
-      />
+      <Suspense fallback={<MessagesPageSkeleton />}>
+        <LazyChatWindow
+          auth={auth}
+          teamId={activeTeamId}
+          inboxTeam={teams.find((team) => team.id === activeTeamId)}
+          preferredConversationId={preferredConversationId}
+          initialRecipient={initialRecipient}
+          onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+            setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+          }}
+        />
+      </Suspense>
     );
   }
 

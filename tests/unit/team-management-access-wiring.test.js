@@ -10,7 +10,7 @@ describe('team management page access wiring', () => {
         const html = readRepoFile('dashboard.html');
         expect(html).toContain('import { getTeams, getUserTeamsWithAccess');
         expect(html).toContain('const canManageAllTeams = user.isAdmin === true;');
-        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email)');
     });
 
     it('backs dashboard platform-admin access with protected Firestore admin state', () => {
@@ -26,20 +26,28 @@ describe('team management page access wiring', () => {
         expect(rules).toContain('canReadTeamDocument(teamId, resource.data)');
     });
 
-    it('prefers auth email before profile fallback when loading non-admin dashboard team access', () => {
+    it('uses only the authenticated email when loading non-admin dashboard team access', () => {
         const html = readRepoFile('dashboard.html');
-        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email)');
+        expect(html).not.toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+    });
+
+    it('uses only the authenticated email for calendar team discovery and admin checks', () => {
+        const html = readRepoFile('calendar.html');
+        expect(html).toContain('const email = user.email || null;');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, email)');
+        expect(html).not.toContain('const email = user.email || profile?.email;');
     });
 
     it('uses shared full-access helper in edit roster page', () => {
         const html = readRepoFile('edit-roster.html');
-        expect(html).toContain("from './js/team-access.js'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 
     it('uses shared full-access helper in edit team page', () => {
         const html = readRepoFile('edit-team.html');
-        expect(html).toContain("from './js/team-access.js?v=4'");
+        expect(html).toContain("from './js/team-access.js?v=44338'");
         expect(html).toContain('hasFullTeamAccess(');
     });
 
@@ -61,7 +69,7 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit config page', () => {
         const html = readRepoFile('edit-config.html');
-        expect(html).toContain("from './js/edit-config-access.js?v=2'");
+        expect(html).toContain("from './js/edit-config-access.js?v=44335'");
         expect(html).toContain('getEditConfigAccessDecision(');
     });
 });

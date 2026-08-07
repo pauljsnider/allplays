@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '23 7 * * *'
   workflow_dispatch:
+    inputs:
+      extended_writes:
+        description: Run reversible production write checks for this manual invocation
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -49,6 +55,7 @@ jobs:
           tests/smoke/app-admin-core.spec.js
           tests/smoke/app-authenticated-core.spec.js
           tests/smoke/legacy-authenticated-core.spec.js
+          tests/smoke/app-authenticated-image-writes.spec.js
           tests/smoke/app-authenticated-extended.spec.js
           --config=playwright.smoke.config.js
           --project=smoke
@@ -59,7 +66,7 @@ jobs:
           SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_APP_BASE_URL: https://allplays.ai/app/
           SMOKE_SUITE: extended-production
-          SMOKE_EXTENDED_WRITES: ${{ vars.SMOKE_EXTENDED_WRITES_ENABLED }}
+          SMOKE_EXTENDED_WRITES: ${{ github.event_name == 'workflow_dispatch' && (inputs.extended_writes && '1' || '0') || vars.SMOKE_EXTENDED_WRITES_ENABLED }}
           SMOKE_RUN_ID: ${{ github.run_id }}
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}

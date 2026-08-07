@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import publicTeamApiCore from '../../functions/public-team-api-core.cjs';
 import {
     DomainError,
+    loadManagedTeamsFromCallable,
+    loadPublicTeamCalendarProjection,
     resolveUserContext,
     listMyTeams,
     getFamilySchedule,
@@ -20,8 +23,10 @@ import {
     createUserDb
 } from '../../services/chatgpt-mcp/src/firestoreRest.js';
 
+const { parsePublicGamesQuery } = publicTeamApiCore;
+
 // Minimal fake of the db interface core.js uses (same surface as the
-// firestoreRest adapter): doc(path).get(), collection(path).where()...get().
+// firestoreRest adapter): doc(path).get(), collection(path).where().select()...get().
 // Set docs[path] = DENIED to simulate a Firestore-rules denial.
 const DENIED = Symbol('permission-denied');
 
@@ -41,22 +46,37 @@ function fakeDb({ docs = {}, queries = {} } = {}) {
             };
         },
         collection(path) {
-            const makeQuery = (filters) => ({
+            const makeQuery = (options) => ({
                 where(field, op, value) {
-                    return makeQuery([...filters, { field, op, value }]);
+                    return makeQuery({ ...options, filters: [...options.filters, { field, op, value }] });
                 },
-                orderBy() { return makeQuery(filters); },
-                limit() { return makeQuery(filters); },
+                orderBy(field, direction = 'asc') {
+                    return makeQuery({ ...options, orderBy: { field, direction } });
+                },
+                select(...fields) {
+                    return makeQuery({ ...options, select: fields.flat() });
+                },
+                limit(count) {
+                    return makeQuery({ ...options, limit: count });
+                },
                 async get() {
                     const resolver = queries[path];
                     if (resolver === DENIED) throw new DomainError('permission_denied', 'You do not have access to this data.');
-                    const rows = resolver ? resolver(filters) : [];
+                    const rows = resolver ? resolver(options.filters, options) : [];
+                    const limitedRows = Number.isInteger(options.limit) ? rows.slice(0, options.limit) : rows;
                     return {
-                        docs: rows.map(({ id, data }) => ({ id, data: () => data }))
+                        docs: limitedRows.map(({ id, data }) => ({
+                            id,
+                            data: () => options.select.length
+                                ? Object.fromEntries(options.select
+                                    .filter((field) => Object.hasOwn(data, field))
+                                    .map((field) => [field, data[field]]))
+                                : data
+                        }))
                     };
                 }
             });
-            return makeQuery([]);
+            return makeQuery({ filters: [], orderBy: null, select: [], limit: null });
         }
     };
 }
@@ -87,6 +107,118 @@ function parentDb(extra = {}) {
 }
 
 describe('chatgpt-mcp core: resolveUserContext', () => {
+    it('loads legacy managed teams through the authenticated server-filtered callable', async () => {
+        const fetchImpl = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                result: {
+                    items: [{
+                        id: 'legacy-team',
+                        name: 'Legacy',
+                        ownerEmail: 'Coach@Example.com',
+                        ownerEmailLower: 'coach@example.com'
+                    }],
+                    isPartial: false
+                }
+            })
+        });
+        const managedTeamResult = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl
+        });
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: { teams: () => { throw new Error('Client team discovery must not run.'); } }
+        });
+
+        const context = await resolveUserContext(
+            db,
+            { uid: 'coach-1', email: 'coach@example.com' },
+            { managedTeams: managedTeamResult.teams }
+        );
+
+        expect(fetchImpl).toHaveBeenCalledWith(
+            'https://us-central1-all-plays-prod.cloudfunctions.net/listManagedTeams',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({ Authorization: 'Bearer user-id-token' }),
+                body: JSON.stringify({ data: {} })
+            })
+        );
+        expect(managedTeamResult.isPartial).toBe(false);
+        expect([...context.teams.get('legacy-team').roles]).toEqual(['owner']);
+    });
+
+    it('preserves the callable partial marker so MCP tools can fail closed', async () => {
+        const result = await loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                ok: true,
+                json: async () => ({ result: { items: [{ id: 'team-1' }], isPartial: true } })
+            })
+        });
+
+        expect(result).toEqual({ teams: [{ id: 'team-1' }], isPartial: true });
+    });
+
+    it('identifies a missing callable so a pre-rollout server can use rules-scoped discovery', async () => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({ status: 404, ok: false, json: async () => ({}) })
+        })).rejects.toMatchObject({ code: 'not_found' });
+
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status: 404,
+                ok: false,
+                json: async () => { throw new SyntaxError('non-callable response'); }
+            })
+        })).rejects.toMatchObject({ code: 'not_found' });
+    });
+
+    it.each([
+        ['callable domain NOT_FOUND', 404, { error: { status: 'NOT_FOUND', message: 'Domain object missing.' } }],
+        ['404 with an error marker', 404, { error: 'upstream route rejected the request' }],
+        ['unauthorized', 401, { error: { status: 'UNAUTHENTICATED' } }],
+        ['forbidden', 403, { error: { status: 'PERMISSION_DENIED' } }],
+        ['rate limited', 429, { error: { status: 'RESOURCE_EXHAUSTED' } }],
+        ['server failure', 500, { error: { status: 'INTERNAL' } }],
+        ['non-404 domain NOT_FOUND', 400, { error: { status: 'NOT_FOUND' } }]
+    ])('fails closed for %s managed-team responses', async (_label, status, payload) => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status,
+                ok: false,
+                json: async () => payload
+            })
+        })).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('fails closed for network failures and malformed successful responses', async () => {
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockRejectedValue(new Error('network down'))
+        })).rejects.toMatchObject({ code: 'unavailable' });
+
+        await expect(loadManagedTeamsFromCallable({
+            projectId: 'all-plays-prod',
+            idToken: 'user-id-token',
+            fetchImpl: vi.fn().mockResolvedValue({
+                status: 200,
+                ok: true,
+                json: async () => { throw new SyntaxError('malformed success'); }
+            })
+        })).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
     it('derives parent role and linked players from users/{uid}.parentOf', async () => {
         const context = await resolveUserContext(parentDb(), parentIdentity);
         expect(context.uid).toBe('parent-1');
@@ -109,7 +241,7 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                         adminEmailQueried = byAdmin.value;
                         return [{ id: 'team-adm', data: { name: 'Helped' } }];
                     }
-                    return [];
+                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
                 }
             }
         });
@@ -128,10 +260,10 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
                     const filter = filters[0];
                     queried.push([filter.field, filter.value]);
                     if (filter.field === 'ownerEmail' && filter.value === 'Coach@Example.com') {
-                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case' } }];
+                        return [{ id: 'team-legacy-case', data: { name: 'Legacy case', ownerEmail: 'Coach@Example.com' } }];
                     }
                     if (filter.field === 'ownerEmailLower') {
-                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower' } }];
+                        return [{ id: 'team-legacy-lower', data: { name: 'Legacy lower', ownerEmailLower: 'coach@example.com' } }];
                     }
                     return [];
                 }
@@ -145,6 +277,107 @@ describe('chatgpt-mcp core: resolveUserContext', () => {
         expect(queried).toContainEqual(['ownerEmailLower', 'coach@example.com']);
         expect([...context.teams.get('team-legacy-case').roles]).toEqual(['owner']);
         expect([...context.teams.get('team-legacy-lower').roles]).toEqual(['owner']);
+    });
+
+    it('rejects conflicting legacy owner aliases for an explicit authenticated email', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'conflicting-team',
+                            data: {
+                                ownerEmail: 'current@example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'former@example.com' });
+        expect(context.teams.has('conflicting-team')).toBe(false);
+    });
+
+    it('does not use a stale profile email when the authenticated email is absent', async () => {
+        const teamQuery = vi.fn(() => []);
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'former@example.com', profileEmail: 'former@example.com' } },
+            queries: { teams: teamQuery }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: '' });
+
+        expect(context.teams.size).toBe(0);
+        expect(teamQuery).not.toHaveBeenCalledWith(expect.arrayContaining([
+            expect.objectContaining({ field: 'ownerEmail' })
+        ]));
+    });
+
+    it('does not derive ownership from stale owner email aliases when a canonical owner exists', async () => {
+        const db = fakeDb({
+            docs: { 'users/former-owner': { email: 'Former@Example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerEmail' || filter.field === 'ownerEmailLower') {
+                        return [{
+                            id: 'reassigned-team',
+                            data: {
+                                name: 'Reassigned',
+                                ownerId: 'current-owner',
+                                ownerEmail: 'Former@Example.com',
+                                ownerEmailLower: 'former@example.com'
+                            }
+                        }];
+                    }
+                    return [];
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'former-owner', email: 'Former@Example.com' });
+
+        expect(context.teams.has('reassigned-team')).toBe(false);
+    });
+
+    it('keeps canonical and admin teams when legacy owner-email queries are denied by rules', async () => {
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: {
+                teams: (filters) => {
+                    const filter = filters[0];
+                    if (filter.field === 'ownerId') {
+                        return [{ id: 'owned-team', data: { ownerId: 'coach-1' } }];
+                    }
+                    if (filter.field === 'adminEmails') {
+                        return [{ id: 'admin-team', data: { ownerId: 'other-owner', adminEmails: ['coach@example.com'] } }];
+                    }
+                    throw new DomainError('permission_denied', 'Legacy owner lookup denied.');
+                }
+            }
+        });
+
+        const context = await resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' });
+
+        expect([...context.teams.get('owned-team').roles]).toEqual(['owner']);
+        expect([...context.teams.get('admin-team').roles]).toEqual(['admin']);
+    });
+
+    it('propagates transient legacy ownership query failures', async () => {
+        const db = fakeDb({
+            docs: { 'users/coach-1': { email: 'coach@example.com' } },
+            queries: { teams: (filters) => {
+                if (filters[0]?.field === 'ownerEmailLower') throw new Error('network unavailable');
+                return [];
+            } }
+        });
+        await expect(resolveUserContext(db, { uid: 'coach-1', email: 'coach@example.com' }))
+            .rejects.toThrow('network unavailable');
     });
 
     it('keeps private parent teams when direct team reads are denied by rules', async () => {
@@ -201,7 +434,11 @@ describe('chatgpt-mcp core: listMyTeams', () => {
 });
 
 describe('chatgpt-mcp core: getFamilySchedule', () => {
-    function scheduleDb() {
+    function scheduleDb(
+        calendarEventUid = 'teamsnap-tracked-game__2026-07-25T17:00:00.000Z',
+        trackedGameOverrides = {},
+        queryLog = []
+    ) {
         return parentDb({
             docs: {
                 'teams/team-a/games/game-1/rsvps/parent-1': {
@@ -212,15 +449,17 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
             },
             queries: {
                 teams: () => [],
-                'teams/team-a/games': (filters) => {
-                    const start = filters.find((f) => f.op === '>=').value;
-                    const end = filters.find((f) => f.op === '<=').value;
+                'teams/team-a/games': (filters, options) => {
+                    queryLog.push(options);
                     const all = [
-                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' } } },
+                        { id: 'game-1', data: { type: 'game', date: new Date('2026-07-25T17:00:00Z'), opponent: 'Hawks', location: 'Field 2', calendarEventUid, privateNotes: 'secret', rsvpSummary: { going: 5, notResponded: 3, coachOnly: 'x' }, ...trackedGameOverrides } },
                         { id: 'practice-1', data: { type: 'practice', date: new Date('2026-07-27T22:30:00Z') } },
                         { id: 'game-end-date', data: { type: 'game', date: new Date('2026-07-31T17:00:00Z') } },
                         { id: 'game-out-of-range', data: { type: 'game', date: new Date('2026-09-01T17:00:00Z') } }
                     ];
+                    if (!filters.length) return all;
+                    const start = filters.find((f) => f.op === '>=').value;
+                    const end = filters.find((f) => f.op === '<=').value;
                     return all.filter(({ data }) => data.date >= start && data.date <= end);
                 }
             }
@@ -252,11 +491,481 @@ describe('chatgpt-mcp core: getFamilySchedule', () => {
         expect(result.events[1].myRsvp).toEqual({ response: 'not_responded', playerIds: [] });
     });
 
+    it('includes a TeamSnap-only next game without leaking its source or advertising a game-summary id', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+        const loadCalendarProjection = vi.fn(async () => [{
+            id: 'teamsnap-next-game',
+            type: 'game',
+            startsAt: '2026-07-26T19:00:00.000Z',
+            endsAt: '2026-07-26T21:00:00.000Z',
+            opponent: 'Jr. Tigers',
+            location: 'Field 7',
+            status: 'scheduled',
+            calendarUrl: 'https://calendar.example.test/private-token',
+            calendarUidHash: 'SENTINEL_CALENDAR_UID_HASH',
+            eventKey: 'SENTINEL_INTERNAL_EVENT_KEY',
+            legacyOpaqueId: 'SENTINEL_LEGACY_OPAQUE_ID',
+            privateNotes: 'do not expose'
+        }]);
+
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection }
+        );
+
+        expect(loadCalendarProjection).toHaveBeenCalledWith({
+            teamId: 'team-a',
+            startDate: expect.any(Date),
+            endDate: expect.any(Date)
+        });
+        expect(result.events).toContainEqual(expect.objectContaining({
+            gameId: null,
+            calendarEventId: 'teamsnap-next-game',
+            gameSummaryAvailable: false,
+            type: 'game',
+            opponent: 'Jr. Tigers',
+            location: 'Field 7',
+            sourceType: 'calendar',
+            sourceLabel: 'Imported calendar',
+            isImported: true
+        }));
+        const importedEvent = result.events.find((event) => event.calendarEventId === 'teamsnap-next-game');
+        expect(importedEvent?.deepLink)
+            .toContain('/app/#/schedule/team-a/teamsnap-next-game');
+        expect(result.events.find((event) => event.gameId === 'game-1')).toMatchObject({
+            gameSummaryAvailable: true
+        });
+        expect(JSON.stringify(result)).not.toContain('private-token');
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_CALENDAR_UID_HASH');
+        expect(JSON.stringify(result)).not.toContain('calendarUidHash');
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_INTERNAL_EVENT_KEY');
+        expect(JSON.stringify(result)).not.toContain('eventKey');
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_LEGACY_OPAQUE_ID');
+        expect(JSON.stringify(result)).not.toContain('legacyOpaqueId');
+        expect(JSON.stringify(result)).not.toContain('do not expose');
+    });
+
+    it('deduplicates a projected TeamSnap event tracked by an ALL PLAYS game', async () => {
+        for (const trackedUid of [
+            'opaque-projected-id',
+            'opaque-projected-id__2026-07-25T17:00:00.000Z'
+        ]) {
+            const db = scheduleDb(trackedUid);
+            const context = await resolveUserContext(db, parentIdentity);
+            const result = await getFamilySchedule(
+                db,
+                context,
+                { startDate: '2026-07-24', endDate: '2026-07-31' },
+                new Date('2026-07-24T00:00:00.000Z'),
+                { loadCalendarProjection: async () => [{
+                    id: 'opaque-projected-id',
+                    type: 'game',
+                    startsAt: '2026-07-25T17:00:00.000Z',
+                    opponent: 'Duplicate Hawks'
+                }] }
+            );
+
+            expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+            expect(result.events.some((event) => event.calendarEventId === 'opaque-projected-id')).toBe(false);
+        }
+    });
+
+    it.each([
+        ['practice', 'legacy-practice-uid', { type: 'practice' }],
+        ['private game', 'legacy-private-uid__2026-07-25T17:00:00.000Z', { visibility: 'private' }],
+        ['deleted game', '7bca28b6105ee23830c3517602e276d3__2026-07-25T17:00:00.000Z', { deleted: true }]
+    ])('deduplicates a projected event materialized as an authorized %s record', async (_label, trackedUid, overrides) => {
+        const db = scheduleDb(trackedUid, overrides);
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: overrides.type === 'practice' ? 'practice' : 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Duplicate Hawks',
+                location: 'Field 2',
+                calendarUidHash: 'SENTINEL_PRIVATE_CORRELATION_HASH'
+            }] }
+        );
+
+        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
+        expect(JSON.stringify(result)).not.toContain('SENTINEL_PRIVATE_CORRELATION_HASH');
+        expect(JSON.stringify(result)).not.toContain('calendarUidHash');
+        expect(JSON.stringify(result)).not.toContain('calendarEventUid');
+    });
+
+    it('uses the embedded original occurrence time when a materialized event moves', async () => {
+        const trackedUid = 'legacy-moved-uid__2026-07-25T17:00:00.000Z';
+        const db = scheduleDb(trackedUid, { date: new Date('2026-07-26T20:00:00.000Z') });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Original Hawks',
+                location: 'FIELD 2'
+            }] }
+        );
+
+        expect(result.events.filter((event) => event.gameId === 'game-1')).toHaveLength(1);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
+    });
+
+    it.each([
+        ['practice', { type: 'practice' }],
+        ['private game', { visibility: 'private' }]
+    ])('uses an independent tracking scan when a materialized %s moves outside the requested window', async (_label, overrides) => {
+        const originalStartsAt = '2026-07-25T17:00:00.000Z';
+        const trackedUid = `legacy-moved-uid__${originalStartsAt}`;
+        const queryLog = [];
+        const db = scheduleDb(trackedUid, {
+            date: new Date('2026-08-05T20:00:00.000Z'),
+            ...overrides
+        }, queryLog);
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: overrides.type === 'practice' ? 'practice' : 'game',
+                startsAt: originalStartsAt,
+                title: overrides.type === 'practice' ? 'Practice' : null,
+                opponent: overrides.type === 'practice' ? null : 'Hawks',
+                location: 'Field 2'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(false);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
+        const trackingQuery = queryLog.find((options) => options.filters.length === 0);
+        expect(trackingQuery).toMatchObject({
+            orderBy: { field: '__name__', direction: 'asc' },
+            select: ['calendarEventUid', 'date', 'type', 'location', 'opponent', 'title'],
+            limit: 5001
+        });
+    });
+
+    it('fails closed when the independent tracking scan exceeds its cap', async () => {
+        const trackingRows = Array.from({ length: 5001 }, (_, index) => ({
+            id: `tracked-${index}`,
+            data: {
+                calendarEventUid: `legacy-uid-${index}`,
+                date: new Date('2026-08-05T20:00:00.000Z'),
+                type: 'game',
+                location: 'Field 2',
+                opponent: 'Hawks'
+            }
+        }));
+        const db = parentDb({
+            queries: {
+                'teams/team-a/games': (filters) => filters.length ? [] : trackingRows
+            }
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Hawks',
+                location: 'Field 2'
+            }] }
+        )).rejects.toMatchObject({
+            code: 'unavailable',
+            message: 'Calendar tracking scan exceeded its safe limit.'
+        });
+    });
+
+    it.each([
+        ['game', { opponent: 'Hawks', location: 'Field 2' }, { opponent: 'Tigers', location: 'Field 3' }],
+        ['practice', { title: 'Batting practice', location: 'Field 2' }, { title: 'Defense practice', location: 'Field 3' }]
+    ])('keeps a distinct same-time %s with different discriminators', async (type, overrides, projectedFields) => {
+        const db = scheduleDb('different-legacy-source-id', { type, ...overrides });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'distinct-opaque-projection-id',
+                type,
+                startsAt: '2026-07-25T17:00:00.000Z',
+                ...projectedFields
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'distinct-opaque-projection-id')).toBe(true);
+    });
+
+    it('deduplicates a same-time event with a meaningful case-insensitive location match', async () => {
+        const db = scheduleDb('different-legacy-source-id');
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'Different opponent',
+                location: '  FIELD   2  '
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(false);
+    });
+
+    it('keeps exact ID deduplication unconditional when event shape differs', async () => {
+        const db = scheduleDb('exact-projected-id');
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'exact-projected-id',
+                type: 'practice',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                title: 'Unrelated practice',
+                location: 'Different complex'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'exact-projected-id')).toBe(false);
+    });
+
+    it('does not collapse placeholder-only events that share a start time', async () => {
+        const db = scheduleDb('different-legacy-source-id', {
+            opponent: 'unknown',
+            location: 'TBD'
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'placeholder-opaque-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                opponent: 'TBD',
+                location: 'unknown'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'placeholder-opaque-projection-id')).toBe(true);
+    });
+
+    it('does not treat a generic practice title as a same-time discriminator', async () => {
+        const db = scheduleDb('different-legacy-source-id', {
+            type: 'practice',
+            title: 'Practice',
+            location: 'Field 2'
+        });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'distinct-practice-projection-id',
+                type: 'practice',
+                startsAt: '2026-07-25T17:00:00.000Z',
+                title: 'Practice',
+                location: 'Field 3'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'distinct-practice-projection-id')).toBe(true);
+    });
+
+    it('keeps a projected event at a different occurrence time', async () => {
+        const trackedUid = 'legacy-moved-uid__2026-07-25T17:00:00.000Z';
+        const db = scheduleDb(trackedUid, { date: new Date('2026-07-26T20:00:00.000Z') });
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            { loadCalendarProjection: async () => [{
+                id: 'opaque-safe-projection-id',
+                type: 'game',
+                startsAt: '2026-07-25T18:00:00.000Z',
+                opponent: 'Different Hawks'
+            }] }
+        );
+
+        expect(result.events.some((event) => event.gameId === 'game-1')).toBe(true);
+        expect(result.events.some((event) => event.calendarEventId === 'opaque-safe-projection-id')).toBe(true);
+        expect(JSON.stringify(result)).not.toContain(trackedUid);
+    });
+
+    it('fails explicitly when imported calendar projection is unavailable', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+
+        await expect(getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            {
+                loadCalendarProjection: async () => {
+                    throw new DomainError('unavailable', 'Imported calendar events are temporarily unavailable.');
+                }
+            }
+        )).rejects.toMatchObject({ code: 'unavailable' });
+    });
+
+    it('keeps Firestore games when a private team has no public calendar projection', async () => {
+        const db = scheduleDb();
+        const context = await resolveUserContext(db, parentIdentity);
+        const result = await getFamilySchedule(
+            db,
+            context,
+            { startDate: '2026-07-24', endDate: '2026-07-31' },
+            new Date('2026-07-24T00:00:00.000Z'),
+            {
+                loadCalendarProjection: async () => {
+                    throw new DomainError('not_found', 'Public team not found.');
+                }
+            }
+        );
+
+        expect(result.events.map((event) => event.gameId)).toEqual(['game-1', 'practice-1', 'game-end-date']);
+    });
+
     it('rejects an invalid date range', async () => {
         const db = scheduleDb();
         const context = await resolveUserContext(db, parentIdentity);
         await expect(getFamilySchedule(db, context, { startDate: '2026-07-31', endDate: '2026-07-01' }))
             .rejects.toMatchObject({ code: 'invalid_argument' });
+    });
+});
+
+describe('chatgpt-mcp public calendar projection transport', () => {
+    it('forwards the caller token and follows bounded callable pagination', async () => {
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [{ id: 'teamsnap-1' }],
+                        range: { truncated: true },
+                        nextCursor: 'calendar-page-2'
+                    }
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [{ id: 'teamsnap-2' }],
+                        range: { truncated: false },
+                        nextCursor: null
+                    }
+                })
+            });
+
+        const events = await loadPublicTeamCalendarProjection({
+            projectId: 'all-plays-prod',
+            idToken: 'caller-id-token',
+            teamId: 'team-a',
+            startDate: new Date('2026-07-24T00:00:00.000Z'),
+            endDate: new Date('2026-07-31T23:59:59.999Z'),
+            fetchImpl
+        });
+
+        expect(events).toEqual([{ id: 'teamsnap-1' }, { id: 'teamsnap-2' }]);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(fetchImpl.mock.calls[0][0]).toBe(
+            'https://us-central1-all-plays-prod.cloudfunctions.net/getPublicTeamCalendarProjection'
+        );
+        expect(fetchImpl.mock.calls[0][1]).toEqual(expect.objectContaining({
+            method: 'POST',
+            headers: expect.objectContaining({ Authorization: 'Bearer caller-id-token' })
+        }));
+        const firstRequest = JSON.parse(fetchImpl.mock.calls[0][1].body);
+        expect(firstRequest).toEqual({
+            data: {
+                teamId: 'team-a',
+                from: '2026-07-24',
+                to: '2026-07-31',
+                limit: 50
+            }
+        });
+        const parsedRange = parsePublicGamesQuery({
+            from: firstRequest.data.from,
+            to: firstRequest.data.to,
+            limit: firstRequest.data.limit
+        }, new Date('2026-07-24T12:00:00.000Z'));
+        expect(parsedRange).not.toHaveProperty('error');
+        expect(parsedRange).toMatchObject({
+            from: '2026-07-24',
+            to: '2026-07-31',
+            fromDate: new Date('2026-07-24T00:00:00.000Z'),
+            toDate: new Date('2026-07-31T23:59:59.999Z')
+        });
+        expect(JSON.parse(fetchImpl.mock.calls[1][1].body).data.cursor).toBe('calendar-page-2');
+    });
+
+    it('fails closed when any calendar source warning makes the projection partial', async () => {
+        await expect(loadPublicTeamCalendarProjection({
+            projectId: 'all-plays-prod',
+            idToken: 'caller-id-token',
+            teamId: 'team-a',
+            startDate: new Date('2026-07-24T00:00:00.000Z'),
+            endDate: new Date('2026-07-31T23:59:59.999Z'),
+            fetchImpl: vi.fn(async () => ({
+                ok: true,
+                json: async () => ({
+                    result: {
+                        events: [],
+                        warnings: ['Calendar source 1 could not be loaded.'],
+                        range: { truncated: false }
+                    }
+                })
+            }))
+        })).rejects.toMatchObject({
+            code: 'unavailable',
+            message: 'Imported calendar events could not be loaded completely.'
+        });
     });
 });
 
@@ -423,6 +1132,13 @@ describe('chatgpt-mcp server configuration', () => {
         expect(source).toContain('const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;');
         expect(source).toContain('const WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY;');
         expect(source).toContain('if (!PROJECT_ID || !WEB_API_KEY)');
+        expect(source).toContain('if (managedTeamResult.isPartial)');
+        expect(source).toContain("throw new DomainError('unavailable', 'Managed team discovery returned incomplete results.')");
+        expect(source).toContain('loadPublicTeamCalendarProjection');
+        expect(source).toContain('idToken: identity.idToken');
+        expect(source).toContain("error.code !== 'not_found'");
+        expect(source).toContain('managedTeamResult = { teams: null, isPartial: false }');
+        expect(source).toContain('Non-imported gameId from list_schedule. Imported calendar events have no gameId');
         expect(source).not.toMatch(/AIza[0-9A-Za-z_-]+/);
     });
 });
@@ -439,8 +1155,9 @@ describe('chatgpt-mcp firestore REST adapter', () => {
         expect(decodeValue(encodeValue({ a: [1, 'b'] }))).toEqual({ a: [1, 'b'] });
     });
 
-    it('builds structured queries with filters, order, and limit', () => {
+    it('builds structured queries with selected fields, filters, order, and limit', () => {
         const query = buildStructuredQuery('games', {
+            select: ['calendarEventUid', 'date', 'type'],
             filters: [
                 { field: 'date', op: '>=', value: new Date('2026-07-24T00:00:00Z') },
                 { field: 'date', op: '<=', value: new Date('2026-07-31T00:00:00Z') }
@@ -449,6 +1166,13 @@ describe('chatgpt-mcp firestore REST adapter', () => {
             limit: 50
         });
         expect(query.from).toEqual([{ collectionId: 'games' }]);
+        expect(query.select).toEqual({
+            fields: [
+                { fieldPath: 'calendarEventUid' },
+                { fieldPath: 'date' },
+                { fieldPath: 'type' }
+            ]
+        });
         expect(query.where.compositeFilter.op).toBe('AND');
         expect(query.where.compositeFilter.filters[0].fieldFilter.op).toBe('GREATER_THAN_OR_EQUAL');
         expect(query.orderBy).toEqual([{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]);
@@ -510,10 +1234,14 @@ describe('chatgpt-mcp firestore REST adapter', () => {
         const snap = await db.collection('teams/team-a/games')
             .where('date', '>=', new Date('2026-07-24T00:00:00Z'))
             .orderBy('date')
+            .select('opponent')
             .limit(10)
             .get();
         expect(captured.url).toContain('/documents/teams/team-a:runQuery');
         expect(captured.body.structuredQuery.from).toEqual([{ collectionId: 'games' }]);
+        expect(captured.body.structuredQuery.select).toEqual({
+            fields: [{ fieldPath: 'opponent' }]
+        });
         expect(snap.docs).toHaveLength(1);
         expect(snap.docs[0].id).toBe('game-1');
         expect(snap.docs[0].data()).toEqual({ opponent: 'Hawks' });

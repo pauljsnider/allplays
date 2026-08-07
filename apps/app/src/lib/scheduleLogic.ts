@@ -453,8 +453,23 @@ export function normalizeRsvpResponse(response: unknown): RsvpResponse {
   return 'not_responded';
 }
 
-export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked'>) {
-  return Boolean(event.isDbGame && !event.isCancelled && !event.availabilityLocked);
+export type ScheduleEventRsvpCapability = 'editable' | 'calendar_only' | 'locked' | 'cancelled' | 'untracked';
+
+export function getScheduleEventRsvpCapability(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType'>): ScheduleEventRsvpCapability {
+  if (event.isCancelled) return 'cancelled';
+  if (!event.isDbGame) {
+    return event.isImported && event.sourceType === 'calendar' ? 'calendar_only' : 'untracked';
+  }
+  if (event.availabilityLocked) return 'locked';
+  return 'editable';
+}
+
+export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType'>) {
+  return getScheduleEventRsvpCapability(event) === 'editable';
+}
+
+export function isScheduleEventAvailabilityNeeded(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'isImported' | 'sourceType' | 'myRsvp'>) {
+  return canSubmitScheduleEventRsvp(event) && normalizeRsvpResponse(event.myRsvp) === 'not_responded';
 }
 
 function compactString(value: unknown) {

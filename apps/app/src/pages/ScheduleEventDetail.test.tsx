@@ -12,6 +12,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   claimParentScheduleAssignmentSlot: vi.fn(),
   createScheduleAssignment: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
+  enableRsvpForImportedCalendarEvent: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
   loadStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
@@ -31,7 +32,9 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
+  hydrateParentScheduleEventOptionalDetails: vi.fn<(...args: any[]) => Promise<any>>((result) => Promise.resolve(result)),
   resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
+  resolveParentGameRoute: vi.fn(),
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
@@ -233,6 +236,11 @@ vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 
 import {
   ScheduleEventDetail,
+  loadScheduleGameHubSection,
+  parseGameHubPanel,
+  setScheduleGameHubSectionImporterForTest,
+} from './ScheduleEventDetail';
+import {
   createLiveGameChatScrollScheduler,
   isLiveGameChatNearBottom,
   loadGameDayLineupBuilderModule,
@@ -242,13 +250,15 @@ import {
   loadPracticeTimelineServiceModule,
   loadScheduleGameDayService,
   loadStatsheetImportServiceModule,
-  parseGameHubPanel,
   setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
   shouldShowLiveScoreControls,
   shouldPersistLineupDraft
-} from './ScheduleEventDetail';
+} from './schedule/ScheduleGameHubSection';
+import * as scheduleGameHubSectionModule from './schedule/ScheduleGameHubSection';
+import { GameDetail } from './GameDetail';
+import { clearScheduleEventDetailHandoffForTest } from '../lib/scheduleEventDetailHandoff';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
@@ -413,34 +423,42 @@ function buildLiveChatMessages(count: number) {
 }
 
 describe('ScheduleEventDetail deferred game hub loaders', () => {
-  it('keeps closed game hub implementation modules out of the route static imports', () => {
-    let source = '';
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    setScheduleGameHubSectionImporterForTest();
+    setScheduleGameDayServiceImporterForTest();
+  });
+
+  it('keeps the Game hub implementation behind a component-level async boundary', () => {
+    let routeSource = '';
+    let gameHubSource = '';
     try {
-      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      routeSource = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      gameHubSource = readFileSync('src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     } catch {
-      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      routeSource = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      gameHubSource = readFileSync('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     }
 
-    [
-      '../lib/gameDayLineupBuilder',
-      '../lib/gameWrapupService',
-      '../lib/practiceTimelineService',
-      '../lib/statsheetImportService',
-      '../lib/adapters/legacyScheduleHelpers',
-      '../components/schedule/GameReportSections',
-      '../lib/scheduleGameDayService',
-      '../lib/gameDayLineupPublish'
-    ].forEach((modulePath) => {
-      expect(source).not.toMatch(new RegExp(`import\\s+(?!type\\b)[^;]+from ['"]${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
-    });
+    expect(routeSource).toContain("import('./schedule/ScheduleGameHubSection')");
+    expect(routeSource).toContain('<ErrorBoundary name="schedule-game-hub"');
+    expect(routeSource).toContain('<GameHubSection');
+    expect(routeSource).not.toContain('function StatsheetImportPanel');
+    expect(routeSource).not.toContain('function GameHubLineupBuilderPanel');
+    expect(routeSource).not.toContain('function PracticeTimelineSection');
+    expect(gameHubSource).toContain('function StatsheetImportPanel');
+    expect(gameHubSource).toContain('function GameHubLineupBuilderPanel');
+    expect(gameHubSource).toContain('function PracticeTimelineSection');
   });
 
   it('keeps game-day panel reload scope bounded to event fields that change lineup data', () => {
     let source = '';
     try {
-      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+      source = readFileSync('src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     } catch {
-      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+      source = readFileSync('apps/app/src/pages/schedule/ScheduleGameHubSection.tsx', 'utf8');
     }
 
     expect(source).toMatch(/eventRef\.current = event;/);
@@ -496,6 +514,62 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     expect(importer).toHaveBeenCalledTimes(1);
     setScheduleGameDayServiceImporterForTest();
   });
+
+  it('reloads once when the deferred Game hub chunk is stale after a deployment', async () => {
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...window.location, reload }
+    });
+    window.sessionStorage.clear();
+    setScheduleGameHubSectionImporterForTest(vi.fn().mockRejectedValue(
+      new TypeError('Failed to fetch dynamically imported module: /ScheduleGameHubSection-old.js')
+    ));
+
+    loadScheduleGameHubSection();
+
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(window.sessionStorage.getItem('allplays:lazy-chunk-reload-attempted')).toBe('1');
+
+    if (locationDescriptor) Object.defineProperty(window, 'location', locationDescriptor);
+    window.sessionStorage.clear();
+  });
+
+  it('loads the Game hub only when selected and retries a rejected chunk import', async () => {
+    let resolveImporter!: (module: typeof scheduleGameHubSectionModule) => void;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const importer = vi.fn()
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockImplementationOnce(() => new Promise<typeof scheduleGameHubSectionModule>((resolve) => {
+        resolveImporter = resolve;
+      }));
+    setScheduleGameHubSectionImporterForTest(importer);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await screen.findByRole('heading', { name: 'Availability' });
+    expect(importer).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(await screen.findByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByTestId('schedule-game-hub-loading')).toHaveTextContent('Loading Game hub...');
+    await act(async () => resolveImporter(scheduleGameHubSectionModule));
+    expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    expect(importer).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Availability' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    expect(await screen.findByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    expect(importer).toHaveBeenCalledTimes(2);
+
+    expect(loadScheduleGameHubSection()).toBe(loadScheduleGameHubSection());
+  });
 });
 
 describe('ScheduleEventDetail live chat scroll helpers', () => {
@@ -541,8 +615,10 @@ describe('ScheduleEventDetail live chat scroll helpers', () => {
 describe('ScheduleEventDetail loading states', () => {
   afterEach(() => {
     cleanup();
+    clearScheduleEventDetailHandoffForTest();
     vi.clearAllMocks();
     scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockImplementation((result) => Promise.resolve(result));
   });
 
   it('shows the shared event skeleton while event details are loading', () => {
@@ -559,6 +635,42 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     expect(screen.queryByText('This event is not available for your account.')).toBeNull();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the game deep-link detail load without a destination skeleton', async () => {
+    const handedOffEvent = buildEvent({
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [{ id: 'assignment-1', role: 'Snacks', claimable: true }],
+      openAssignmentCount: 1
+    });
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-1',
+      eventId: 'game-1',
+      childId: 'player-1'
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [handedOffEvent],
+      children: []
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/games/game-1']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
+    });
+    expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
+    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
   });
 
   it('warm-starts from cached schedule events without a full-page skeleton (#2649)', () => {
@@ -623,6 +735,140 @@ describe('ScheduleEventDetail loading states', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/Refreshed Smith/).length).toBeGreaterThan(0);
     });
+  });
+
+  it('renders Availability while optional event hydration remains pending', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+      children: []
+    });
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockReturnValue(new Promise(() => {}));
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'vs. Wolves' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Going/ })).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an RSVP update completed while optional hydration is pending', async () => {
+    const detail = {
+      events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+      children: []
+    };
+    let resolveOptionalHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue(detail);
+    scheduleServiceMocks.submitParentScheduleRsvp.mockResolvedValue({
+      going: 1,
+      maybe: 2,
+      notGoing: 1,
+      notResponded: 0,
+      total: 4
+    });
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails.mockImplementation((result) => new Promise((resolve) => {
+      resolveOptionalHydration = () => {
+        result.events[0].rideshareSummary = { offerCount: 1, seatsLeft: 2, requests: 0, pending: 0, confirmed: 0, isFull: false };
+        resolve(result);
+      };
+    }));
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await screen.findByText('Availability needed');
+    fireEvent.click(screen.getByRole('button', { name: 'Maybe' }));
+    await screen.findByText('Avery Smith marked maybe.');
+    expect(screen.getByText('Availability saved')).toBeTruthy();
+
+    await act(async () => resolveOptionalHydration());
+
+    expect(screen.getByText('Availability saved')).toBeTruthy();
+    expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
+  });
+
+  it('ignores production-shaped in-place stale rideshare hydration when a newer refresh fails', async () => {
+    const baselineRideshareSummary = { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
+    const detail = {
+      events: [buildEvent({ rideshareSummary: baselineRideshareSummary })],
+      children: []
+    };
+    let resolveStaleHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockResolvedValueOnce(detail)
+      .mockRejectedValueOnce(new Error('Refreshed event load failed.'));
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue(detail.events);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
+      .mockImplementationOnce((result) => new Promise((resolve) => {
+        resolveStaleHydration = () => {
+          result.events[0].rideshareSummary = { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false };
+          resolve(result);
+        };
+      }));
+
+    const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+    await screen.findByText('Availability needed');
+
+    rendered.rerender(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1&section=availability']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={{ ...auth, user: { ...auth.user!, uid: 'coach-2' } as any }} />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await screen.findByText(/Unable to refresh this event/);
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveStaleHydration());
+
+    expect(screen.queryByText('Check rideshare')).toBeNull();
+  });
+
+  it('ignores production-shaped in-place stale assignment hydration when a newer refresh fails', async () => {
+    const baselineAssignments: any[] = [];
+    const detail = {
+      events: [buildEvent({
+        assignments: baselineAssignments,
+        openAssignmentCount: 0,
+        assignmentClaimsHydrated: false
+      })],
+      children: []
+    };
+    let resolveStaleHydration!: () => void;
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockResolvedValueOnce(detail)
+      .mockRejectedValueOnce(new Error('Refreshed event load failed.'));
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue(detail.events);
+    scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails
+      .mockImplementationOnce((result) => new Promise((resolve) => {
+        resolveStaleHydration = () => {
+          result.events[0].assignments = [{ role: 'Snacks', value: '', claimable: true, claim: null }];
+          result.events[0].openAssignmentCount = 1;
+          result.events[0].assignmentClaimsHydrated = true;
+          resolve(result);
+        };
+      }));
+
+    const rendered = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+    await screen.findByText('Availability needed');
+
+    rendered.rerender(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1&section=availability']}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={{ ...auth, user: { ...auth.user!, uid: 'coach-2' } as any }} />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+    await screen.findByText(/Unable to refresh this event/);
+    expect(scheduleServiceMocks.hydrateParentScheduleEventOptionalDetails).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveStaleHydration());
+
+    expect(screen.queryByText('Review assignments')).toBeNull();
   });
 
   it('shows a consistent fetch error and retries the primary event load', async () => {
@@ -1220,6 +1466,68 @@ describe('ScheduleEventDetail nav visibility', () => {
   });
 
   it.each([
+    ['game', { type: 'game', opponent: 'Wolves', title: null }],
+    ['practice', { type: 'practice', opponent: null, title: 'Skills practice' }]
+  ])('lets authorized staff enable RSVP for an imported calendar %s exactly once', async (_label, eventOverrides) => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        ...eventOverrides,
+        id: 'calendar-uid-1',
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        isTeamAdmin: true,
+        isTeamStaff: true
+      })],
+      children: []
+    });
+    scheduleServiceMocks.enableRsvpForImportedCalendarEvent.mockResolvedValue('tracked-event-1');
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/calendar-uid-1?childId=player-1&section=availability');
+
+    expect(await screen.findByText('Calendar-only event')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Enable RSVP' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('adds a tracked copy'));
+    await waitFor(() => {
+      expect(scheduleServiceMocks.enableRsvpForImportedCalendarEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'calendar-uid-1', type: eventOverrides.type }),
+        auth.user
+      );
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/tracked-event-1?childId=player-1&section=availability');
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it.each([
+    ['parents', { isTeamAdmin: false, isTeamStaff: false }],
+    ['coach-only staff', { isTeamAdmin: false, isTeamStaff: true }]
+  ])('explains calendar-only RSVP limits to %s without exposing the owner/admin mutation', async (_label, access) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'calendar-uid-1',
+        isDbGame: false,
+        isImported: true,
+        sourceType: 'calendar',
+        sourceLabel: 'Imported calendar',
+        ...access
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/calendar-uid-1?childId=player-1&section=availability');
+
+    expect(await screen.findByText('Calendar-only event')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+    expect(screen.getByText('Ask a team owner or admin to enable RSVP for this event.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Enable RSVP' })).toBeNull();
+    expect(scheduleServiceMocks.enableRsvpForImportedCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ['cancelled', { isCancelled: true }],
     ['availability-locked', { availabilityLocked: true, availabilityCutoffLabel: '2 hours before the event' }]
   ])('defaults %s events away from Availability', async (_state, eventOverrides) => {
@@ -1628,8 +1936,8 @@ describe('ScheduleEventDetail assignments', () => {
     expect(warning.className).toContain('text-amber-700');
     expect(warning.className).not.toContain('text-rose-700');
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Score saved but live play-by-play posting failed:',
-      publishError
+      '[schedule-event-detail] Score saved but live play-by-play posting failed.',
+      { error: { name: 'Error', message: publishError.message } }
     );
     consoleWarn.mockRestore();
   });
@@ -2038,8 +2346,8 @@ describe('ScheduleEventDetail assignments', () => {
 
     expect(scheduleServiceMocks.recordPlayerGameStat).not.toHaveBeenCalled();
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Unable to load foul tracker state:',
-      historyError
+      '[schedule-event-detail] Unable to load foul tracker state.',
+      { error: { name: 'Error', message: historyError.message } }
     );
     consoleWarn.mockRestore();
   });
@@ -4452,7 +4760,10 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
     });
-    expect(consoleWarn).toHaveBeenCalledWith('[schedule-event-detail] Wrap-up AI failed:', aiError);
+    expect(consoleWarn).toHaveBeenCalledWith(
+      '[schedule-event-detail] Wrap-up AI failed.',
+      { error: { name: 'Error', message: aiError.message } }
+    );
     consoleWarn.mockRestore();
   });
 
@@ -4486,8 +4797,8 @@ describe('ScheduleEventDetail wrap-up', () => {
     });
     expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalled();
     expect(consoleWarn).toHaveBeenCalledWith(
-      '[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:',
-      publishError
+      '[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed.',
+      { error: { name: 'Error', message: publishError.message } }
     );
     consoleWarn.mockRestore();
   });

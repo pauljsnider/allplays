@@ -130,4 +130,22 @@ describe('public RSVP function safeguards', () => {
         expect(source).toContain('for (const publicRsvpEmailBatch of batches) {');
         expect(source).toContain('await publicRsvpEmailBatch.commit();');
     });
+
+    it('bounds private-profile reads before creating public RSVP email deliveries', () => {
+        const deliverySource = getSourceSection(
+            'async function createPublicRsvpEmailDeliveries',
+            'exports.sendPublicRsvpEmails'
+        );
+        const hydrationSource = getSourceSection(
+            'async function hydratePublicRsvpPrivateProfileParents',
+            'function getPublicRsvpPlayerIds'
+        );
+
+        expect(source).toContain('const PUBLIC_RSVP_PRIVATE_PROFILE_BATCH_SIZE = 100;');
+        expect(hydrationSource).toContain('offset += batchSize');
+        expect(hydrationSource).toContain('playersNeedingPrivateContacts.slice(offset, offset + batchSize)');
+        expect(hydrationSource).toContain('await firestore.getAll(...privateProfileRefs)');
+        expect(deliverySource).toContain('await hydratePublicRsvpPrivateProfileParents({');
+        expect(deliverySource).not.toMatch(/playersSnap\.docs\.map\(async[\s\S]*private\/profile/);
+    });
 });

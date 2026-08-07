@@ -36,8 +36,15 @@ import {
 } from './firebase.js?v=23';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
-import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=3';
+import { createSecureUploadToken } from './secure-upload-token.js?v=1';
+import {
+    buildPlayerProfilePhotoPath,
+    buildTeamProfilePhotoPath,
+    buildUserProfilePhotoPath,
+    validateProfilePhotoFile
+} from './profile-photo-paths.js?v=3';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -111,12 +118,9 @@ import {
 } from './team-visibility.js?v=2';
 import {
     FRIEND_INVITE_TYPE,
-    buildAcceptedFriendshipData,
-    buildFriendInviteAccessCodeData,
-    buildFriendInviteInviterProfile,
-    buildFriendshipId,
-    getDisplayName
+    buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=1';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
@@ -228,7 +232,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=5';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=44338';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -239,7 +243,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -248,7 +252,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=2';
+} from './team-email-attachments.js?v=3';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -256,6 +260,7 @@ const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
 const MAX_PUBLIC_TEAM_ROSTER_COUNT = 200;
 export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
+export const DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
     { key: 'heart', emoji: '❤️' },
@@ -478,67 +483,107 @@ export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
     return mapSnapshot(await getDocs(q));
 }
 
-export async function uploadTeamPhoto(file) {
+async function getDownloadUrlOrDeleteUpload(storageRef) {
+    try {
+        return await getDownloadURL(storageRef);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+async function uploadStorageCandidateOrDelete(storageRef, file, metadata = {}) {
+    try {
+        return await uploadBytes(storageRef, file, metadata);
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
+    }
+}
+
+export async function deleteLegacyImageUpload(path) {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath) return;
+    if (normalizedPath.startsWith('profile-photos/')) {
+        await deleteObject(ref(storage, normalizedPath));
+        return;
+    }
+    if (!/^(team-photos|player-photos|user-photos)\//.test(normalizedPath)) {
+        throw new Error('Invalid legacy image upload path.');
+    }
+    await ensureImageAuth();
+    await deleteObject(ref(imageStorage, normalizedPath));
+}
+
+export async function uploadTeamPhoto(file, options = {}) {
     console.log('Starting photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
-
-    const path = `team-photos/${Date.now()}_${file.name}`;
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildTeamProfilePhotoPath(options?.teamId, file.name);
     console.log('Upload path:', path);
 
-    const storageRef = ref(imageStorage, path);
+    const storageRef = ref(storage, path);
     console.log('Storage reference created');
 
-    const snapshot = await uploadBytes(storageRef, file);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
     console.log('Upload complete, getting download URL...');
 
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Download URL obtained:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
-export async function uploadPlayerPhoto(file) {
+export async function uploadPlayerPhoto(file, options = {}) {
     console.log('Starting player photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    getRequiredSignedInUserId();
+    const path = buildPlayerProfilePhotoPath(options?.teamId, options?.playerId, file.name);
+    const storageRef = ref(storage, path);
 
-    const path = `player-photos/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
-export async function uploadUserPhoto(file, uid = '') {
+export async function uploadUserPhoto(file, uid = '', options = {}) {
     console.log('Starting user photo upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await ensureImageAuth();
+    validateProfilePhotoFile(file);
+    const userId = getRequiredSignedInUserId();
+    if (uid && String(uid).trim() !== userId) {
+        throw new Error('The signed-in account does not match this profile photo upload.');
+    }
+    const path = buildUserProfilePhotoPath(userId, file.name);
+    const storageRef = ref(storage, path);
 
-    const safeUid = String(uid || '').trim().replace(/[^\w.-]+/g, '_');
-    const path = `user-photos/${safeUid ? `${safeUid}/` : ''}${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadURL = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file, {
+        contentType: file.type || 'application/octet-stream'
+    });
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     console.log('User photo URL:', downloadURL);
 
-    return downloadURL;
+    return { url: downloadURL, path };
 }
 
 function getRequiredSignedInUserId() {
@@ -547,6 +592,16 @@ function getRequiredSignedInUserId() {
         throw new Error('You must be signed in to upload team media.');
     }
     return userId;
+}
+
+async function canUseLegacyImageStorage(label) {
+    try {
+        await requireImageAuth();
+        return true;
+    } catch (error) {
+        console.warn(`Image authentication unavailable for ${label}; using main storage:`, error?.message || error);
+        return false;
+    }
 }
 
 const CHAT_MEDIA_UPLOAD_TIMEOUT_MS = 25000;
@@ -575,9 +630,15 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
         storage.maxUploadRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
         storage.maxOperationRetryTime = CHAT_MEDIA_UPLOAD_TIMEOUT_MS;
     }
-    const snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
-        contentType: file.type || 'application/octet-stream'
-    }));
+    let snapshot;
+    try {
+        snapshot = await withChatMediaTimeout(uploadBytes(storageRef, file, {
+            contentType: file.type || 'application/octet-stream'
+        }));
+    } catch (error) {
+        await withChatMediaTimeout(deleteObject(storageRef)).catch(() => undefined);
+        throw error;
+    }
     let url;
     try {
         url = await withChatMediaTimeout(getDownloadURL(snapshot.ref));
@@ -599,12 +660,18 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
     };
 }
 
-export async function deleteUploadedChatAttachments(attachments = []) {
+export async function deleteUploadedMediaObjects(attachments = []) {
     const deletions = attachments
         .filter((attachment) => attachment?.path)
         .map(async (attachment) => {
-            const usesImageStorage = attachment.path.startsWith('team-photos/')
-                || attachment.path.startsWith('team-videos/');
+            const usesImageStorage = attachment.storage === 'image'
+                || (attachment.storage !== 'primary' && (
+                    attachment.path.startsWith('team-photos/')
+                    || attachment.path.startsWith('team-videos/')
+                    || attachment.path.startsWith('drill-diagrams/')
+                    || attachment.path.startsWith('player-photos/')
+                    || attachment.path.startsWith('user-photos/')
+                ));
             const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
             await deleteObject(storageRef);
         });
@@ -616,82 +683,92 @@ export async function deleteUploadedChatAttachments(attachments = []) {
     }
 }
 
-export async function uploadGameClip(teamId, gameId, file) {
-    await requireImageAuth();
+export async function deleteUploadedChatAttachments(attachments = []) {
+    return deleteUploadedMediaObjects(attachments);
+}
 
+export async function uploadGameClip(teamId, gameId, file) {
     const ts = Date.now();
+    const nonce = createSecureUploadToken();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
-    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+    const clipPath = `team-videos/${ts}_${nonce}_game-clip_${teamId}_${gameId}_${safeName}`;
 
-    try {
-        const storageRef = ref(imageStorage, clipPath);
-        const snapshot = await uploadBytes(storageRef, file);
-        const url = await getDownloadURL(snapshot.ref);
-        return {
-            url,
-            path: clipPath,
-            name: file.name || null,
-            type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null,
-            source: 'upload'
-        };
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
-            const fallbackRef = ref(storage, fallbackPath);
-            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
-            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+    if (await canUseLegacyImageStorage('game clip upload')) {
+        try {
+            const storageRef = ref(imageStorage, clipPath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
             return {
-                url: fallbackUrl,
-                path: fallbackPath,
+                url,
+                path: clipPath,
+                storage: 'image',
                 name: file.name || null,
                 type: file.type || null,
                 size: Number.isFinite(file.size) ? file.size : null,
                 source: 'upload'
             };
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
         }
-        throw error;
     }
+
+    const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
+    const fallbackRef = ref(storage, fallbackPath);
+    const fallbackSnapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const fallbackUrl = await getDownloadUrlOrDeleteUpload(fallbackSnapshot.ref);
+    return {
+        url: fallbackUrl,
+        path: fallbackPath,
+        storage: 'primary',
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null,
+        source: 'upload'
+    };
 }
 
-export async function uploadStatSheetPhoto(teamId, file) {
+export async function uploadStatSheetPhoto(teamId, file, options = {}) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type
     });
 
-    await requireImageAuth();
-
-    const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
-    try {
-        const storageRef = ref(imageStorage, path);
-        const snapshot = await uploadBytes(storageRef, file);
-        const downloadURL = await getDownloadURL(snapshot.ref);
-        console.log('Stat sheet URL (image storage):', downloadURL);
-        return downloadURL;
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+    const userId = getRequiredSignedInUserId();
+    if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
+    const ts = Date.now();
+    const nonce = createSecureUploadToken();
+    const path = `team-photos/${ts}_${nonce}_stat-sheet_${file.name}`;
+    if (await canUseLegacyImageStorage('stat sheet upload')) {
+        try {
+            const storageRef = ref(imageStorage, path);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            console.log('Stat sheet URL (image storage):', downloadURL);
+            return options?.returnUpload === true
+                ? { url: downloadURL, path, storage: 'image' }
+                : downloadURL;
+        } catch (error) {
+            const code = error?.code || '';
+            if (code !== 'storage/unauthorized' && code !== 'storage/unauthenticated') throw error;
             console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-            const userId = auth.currentUser?.uid;
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, buildStatSheetFallbackPath(teamId, userId, file.name, Date.now()));
-            const snapshot = await uploadBytes(fallbackRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
-            console.log('Stat sheet URL (main storage):', downloadURL);
-            return downloadURL;
         }
-        throw error;
     }
+
+    const fallbackPath = buildStatSheetFallbackPath(teamId, userId, file.name, ts, nonce);
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const downloadURL = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    console.log('Stat sheet URL (main storage):', downloadURL);
+    return options?.returnUpload === true
+        ? { url: downloadURL, path: fallbackPath, storage: 'primary' }
+        : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=21'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443336'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1435,7 +1512,7 @@ function buildMovedTeamMediaStoragePath(teamId, targetFolderId, item = {}) {
     const parsedPath = parseTeamMediaStoragePath(item.storagePath);
     const userId = parsedPath?.userId || String(item.uploadedBy || auth.currentUser?.uid || '').trim() || getRequiredSignedInUserId();
     const fileName = parsedPath?.fileName
-        || `${Date.now()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
+        || `${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
     return `team-media/${teamId}/${targetFolderId}/${userId}/${fileName}`;
 }
 
@@ -1521,45 +1598,49 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
     if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
-        type: 'photo',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type || 'image/jpeg',
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
+            type: 'photo',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type || 'image/jpeg',
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
@@ -1570,46 +1651,50 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
     if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
 
-    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${createSecureUploadToken()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
 
-    const snapshot = await new Promise((resolve, reject) => {
-        uploadTask.on('state_changed', (progressSnapshot) => {
-            if (typeof options.onProgress === 'function') {
-                const percent = progressSnapshot.totalBytes > 0
-                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
-                    : 0;
-                options.onProgress({
-                    bytesTransferred: progressSnapshot.bytesTransferred,
-                    totalBytes: progressSnapshot.totalBytes,
-                    percent
-                });
-            }
-        }, reject, () => resolve(uploadTask.snapshot));
-    });
-
-    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
-    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const mediaItem = {
-        folderId: cleanFolderId,
-        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
-        fileName: String(file.name || '').trim(),
-        type: 'file',
-        storagePath,
-        uploadedBy: currentUser.uid,
-        size: Number(file.size || 0),
-        mimeType: file.type,
-        order,
-        deleted: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+    try {
+        const snapshot = await new Promise((resolve, reject) => {
+            uploadTask.on('state_changed', (progressSnapshot) => {
+                if (typeof options.onProgress === 'function') {
+                    const percent = progressSnapshot.totalBytes > 0
+                        ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                        : 0;
+                    options.onProgress({
+                        bytesTransferred: progressSnapshot.bytesTransferred,
+                        totalBytes: progressSnapshot.totalBytes,
+                        percent
+                    });
+                }
+            }, reject, () => resolve(uploadTask.snapshot));
+        });
+        const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
+        const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
+        const mediaItem = {
+            folderId: cleanFolderId,
+            title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+            fileName: String(file.name || '').trim(),
+            type: 'file',
+            storagePath,
+            uploadedBy: currentUser.uid,
+            size: Number(file.size || 0),
+            mimeType: file.type,
+            order,
+            deleted: false,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+        const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+        if (options?.returnItem === true) {
+            return { id: docRef.id, ...mediaItem, url: runtimeUrl };
+        }
+        return docRef.id;
+    } catch (error) {
+        await deleteObject(storageRef).catch(() => undefined);
+        throw error;
     }
-    return docRef.id;
 }
 
 export async function deleteTeamMediaItem(teamId, item) {
@@ -1776,50 +1861,27 @@ export async function getUserTeams(userId, options = {}) {
 
 export async function getUserTeamsWithAccess(userId, email, options = {}) {
     const includeInactive = !!options.includeInactive;
-    const profileSnap = userId ? getDoc(doc(db, "users", userId)).catch(() => null) : Promise.resolve(null);
-    const profile = await profileSnap;
-    const ownerEmailCandidates = [
-        email,
-        profile?.exists?.() ? profile.data()?.email : null,
-        ...(Array.isArray(options.ownerEmailCandidates) ? options.ownerEmailCandidates : [])
-    ].map((value) => String(value || '').trim()).filter(Boolean);
-    const normalizedEmail = ownerEmailCandidates[0] ? ownerEmailCandidates[0].toLowerCase() : '';
-    const optionalTeamQuery = (queryPromise, label) => queryPromise.catch((error) => {
-        console.warn(`Optional team access query failed (${label}).`, error);
-        return { docs: [] };
-    });
-    const ownerEmailQueries = ownerEmailCandidates.length
-        ? [...new Set([...ownerEmailCandidates, ...ownerEmailCandidates.map((value) => value.toLowerCase())])]
-            .map((ownerEmail) => optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("ownerEmail", "==", ownerEmail))),
-                `ownerEmail:${ownerEmail}`
-            ))
-        : [];
-    const ownerEmailLowerQuery = normalizedEmail
-        ? optionalTeamQuery(
-            getDocs(query(collection(db, "teams"), where("ownerEmailLower", "==", normalizedEmail))),
-            `ownerEmailLower:${normalizedEmail}`
-        )
-        : Promise.resolve({ docs: [] });
-    const [ownedSnap, adminSnap, ...ownerEmailSnaps] = await Promise.all([
-        getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
-        normalizedEmail
-            ? optionalTeamQuery(
-                getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", normalizedEmail))),
-                `adminEmails:${normalizedEmail}`
-            )
-            : Promise.resolve({ docs: [] }),
-        ownerEmailLowerQuery,
-        ...ownerEmailQueries
-    ]);
-
-    const map = new Map();
-    ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
-    ownerEmailSnaps.forEach((snap) => snap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() })));
-
-    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    return filterTeamsByActive(teams, includeInactive);
+    if (!String(userId || '').trim()) return [];
+    // Firestore cannot authorize a legacy owner-email list query while also
+    // proving ownerId is absent on every possible result. Discover managed
+    // teams through the server, which evaluates each canonical document.
+    const callable = httpsCallable(functions, 'listManagedTeams');
+    const response = await callable({});
+    const items = response?.data?.items;
+    if (!Array.isArray(items)) {
+        throw new Error('Managed teams response is invalid.');
+    }
+    const teams = items
+        .filter((team) => team && typeof team === 'object' && !Array.isArray(team))
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    const activeTeams = filterTeamsByActive(teams, includeInactive);
+    if (response?.data?.isPartial === true) {
+        const error = new Error('Managed team discovery returned partial results.');
+        error.code = 'managed-team-discovery-partial';
+        error.partialTeams = activeTeams;
+        throw error;
+    }
+    return activeTeams;
 }
 
 /**
@@ -2680,7 +2742,8 @@ function assertNoSensitivePlayerFields(playerData) {
         'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
-        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation',
+        'photoPath'
     ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
@@ -2865,12 +2928,18 @@ export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) 
             const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
             return {
                 ...player,
+                // Cleanup paths can contain authorization-sensitive storage
+                // coordinates. Merge them only after this privileged read.
+                photoPath: privateProfile?.photoPath || player?.photoPath || null,
+                photoOwnershipLoaded: true,
                 privateProfileRosterFields: privateProfile?.rosterFields && typeof privateProfile.rosterFields === 'object' ? privateProfile.rosterFields : {},
                 privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
                 privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
             };
         } catch (error) {
-            if (error?.code === 'permission-denied') return player;
+            if (error?.code === 'permission-denied') {
+                return { ...player, photoOwnershipLoaded: false };
+            }
             throw error;
         }
     }));
@@ -2989,9 +3058,30 @@ export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTea
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
-    assertNoSensitivePlayerFields(playerData);
-    playerData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
+    const updatedAt = Timestamp.now();
+    if (!hasPhotoPath) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            ...publicPlayerData,
+            updatedAt
+        });
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
+        ...publicPlayerData,
+        photoPath: deleteField(),
+        updatedAt
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
@@ -3007,19 +3097,28 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
     if (Array.isArray(extraData?.contacts)) {
         privateProfileUpdate.contacts = extraData.contacts;
     }
+    if (Object.prototype.hasOwnProperty.call(extraData || {}, 'photoPath')) {
+        privateProfileUpdate.photoPath = extraData.photoPath || null;
+    }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
 export async function updatePlayerWithPrivateRosterProfileFields(teamId, playerId, playerData, rosterFields = null) {
-    assertNoSensitivePlayerFields(playerData);
+    const publicPlayerData = { ...(playerData || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicPlayerData, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicPlayerData.photoPath || null) : undefined;
+    delete publicPlayerData.photoPath;
+    assertNoSensitivePlayerFields(publicPlayerData);
     const updatedAt = Timestamp.now();
     const batch = writeBatch(db);
     batch.update(doc(db, `teams/${teamId}/players`, playerId), {
-        ...playerData,
+        ...publicPlayerData,
+        ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
         updatedAt
     });
     batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
         rosterFields: rosterFields || {},
+        ...(hasPhotoPath ? { photoPath } : {}),
         updatedAt
     }, { merge: true });
     await batch.commit();
@@ -3046,6 +3145,9 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             throw new Error('Roster import contains an unsupported operation.');
         }
         const payload = { ...(operation.payload || {}) };
+        const hasPhotoPath = Object.prototype.hasOwnProperty.call(payload, 'photoPath');
+        const photoPath = hasPhotoPath ? (payload.photoPath || null) : undefined;
+        delete payload.photoPath;
         assertNoSensitivePlayerFields(payload);
         const existingPlayerId = String(operation.playerId || '').trim();
         if (type !== 'add' && !existingPlayerId) {
@@ -3059,7 +3161,11 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
         if (!playerRef.id) throw new Error('Roster import player is required.');
 
         if (type === 'update') {
-            batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
+            batch.update(playerRef, {
+                ...payload,
+                ...(hasPhotoPath ? { photoPath: deleteField() } : {}),
+                updatedAt: Timestamp.now()
+            });
         } else if (type === 'add') {
             batch.set(playerRef, {
                 ...payload,
@@ -3081,10 +3187,13 @@ export async function applyRosterCsvImportOperations(teamId, operations = [], op
             });
         }
 
-        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts)) {
+        if ((type === 'add' || type === 'update') && (operation.privateRosterFields || operation.privateFamilyContacts || hasPhotoPath)) {
             const privateProfileUpdate = {
                 updatedAt: Timestamp.now()
             };
+            if (hasPhotoPath) {
+                privateProfileUpdate.photoPath = photoPath;
+            }
             if (operation.privateRosterFields && Object.keys(operation.privateRosterFields).length > 0) {
                 privateProfileUpdate.rosterFields = operation.privateRosterFields;
             }
@@ -3930,6 +4039,7 @@ export async function getPublicTeamCalendarEvents(teamId, options = {}) {
             return {
                 id: String(event?.id || ''),
                 uid: String(event?.id || ''),
+                type,
                 dtstart: startsAt,
                 dtend: endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null,
                 summary,
@@ -5090,14 +5200,19 @@ export async function validateAccessCode(code, options = {}) {
     if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
-    const nativeAuthToken = typeof options?.nativeAuthToken === 'string'
+    let authenticatedSessionToken = typeof options?.nativeAuthToken === 'string'
         ? options.nativeAuthToken.trim()
         : '';
+    if (!authenticatedSessionToken && typeof auth.currentUser?.getIdToken === 'function') {
+        authenticatedSessionToken = String(
+            await auth.currentUser.getIdToken().catch(() => '')
+        ).trim();
+    }
 
     const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
     const response = await callable({
         code: normalizedCode,
-        ...(nativeAuthToken ? { nativeAuthToken } : {})
+        ...(authenticatedSessionToken ? { nativeAuthToken: authenticatedSessionToken } : {})
     });
     const payload = response?.data || response;
     return payload && typeof payload === 'object'
@@ -5683,78 +5798,18 @@ export async function redeemFriendInvite(userId, code, fallbackEmail = null) {
         throw new Error('User and invite code are required');
     }
 
-    const codeRef = doc(db, "accessCodes", normalizedCode);
-    return runTransaction(db, async (transaction) => {
-        const codeSnapshot = await transaction.get(codeRef);
-        if (!codeSnapshot.exists()) {
-            throw new Error('Invalid or used friend invite');
-        }
+    const currentUserId = String(auth.currentUser?.uid || '').trim();
+    if (!currentUserId || currentUserId !== userId) {
+        throw new Error('Unable to redeem friend invite.');
+    }
 
-        const codeData = codeSnapshot.data() || {};
-        if (codeData.type !== FRIEND_INVITE_TYPE) {
-            throw new Error('Not a friend invite code');
-        }
-        if (codeData.used) {
-            throw new Error('Code already used');
-        }
-        if (isAccessCodeExpired(codeData.expiresAt)) {
-            throw new Error('Code has expired');
-        }
-
-        const inviterId = String(codeData.generatedBy || '').trim();
-        if (!inviterId) {
-            throw new Error('Friend invite is missing an inviter');
-        }
-        if (inviterId === userId) {
-            throw new Error('You cannot redeem your own friend invite');
-        }
-
-        const friendshipId = buildFriendshipId(inviterId, userId);
-        const friendshipRef = doc(db, "friendships", friendshipId);
-        const inviteeRef = doc(db, "users", userId);
-        const friendshipSnapshot = await transaction.get(friendshipRef);
-        const inviteeSnapshot = await transaction.get(inviteeRef);
-        const existingFriendship = friendshipSnapshot.exists() ? (friendshipSnapshot.data() || {}) : {};
-        if (existingFriendship.status === 'blocked' ||
-            (Array.isArray(existingFriendship.blockedBy) && existingFriendship.blockedBy.length > 0)) {
-            throw new Error('This friend invite cannot be redeemed for a blocked friendship');
-        }
-
-        const now = Timestamp.now();
-        const inviterProfile = buildFriendInviteInviterProfile(codeData.inviterProfile || {});
-        const inviteeProfile = inviteeSnapshot.exists() ? (inviteeSnapshot.data() || {}) : {};
-        const inviteeEmail = String(inviteeProfile.email || fallbackEmail || auth.currentUser?.email || '').trim();
-
-        const acceptedFriendshipData = buildAcceptedFriendshipData({
-            inviterId,
-            inviteeId: userId,
-            inviterProfile,
-            inviteeProfile: {
-                ...inviteeProfile,
-                email: inviteeProfile.email || inviteeEmail || null
-            },
-            existingFriendship,
-            now,
-            inviteCodeId: normalizedCode
-        });
-        if (friendshipSnapshot.exists()) {
-            transaction.update(friendshipRef, acceptedFriendshipData);
-        } else {
-            transaction.set(friendshipRef, acceptedFriendshipData);
-        }
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: now
-        });
-
-        return {
-            success: true,
-            friendshipId,
-            inviterId,
-            inviterName: getDisplayName(inviterProfile)
-        };
-    });
+    const callable = httpsCallable(functions, 'redeemFriendInvite');
+    const result = await callable({ code: normalizedCode });
+    const payload = result?.data || result || {};
+    if (payload.success !== true) {
+        throw new Error('Unable to redeem friend invite.');
+    }
+    return payload;
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {
@@ -6681,23 +6736,43 @@ export async function getParentDashboardData(userId) {
 export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents.
     // SECURITY: sensitive fields must never live on the public player doc.
-    assertNoSensitivePlayerFields(data || {});
+    const publicInput = { ...(data || {}) };
+    const hasPhotoPath = Object.prototype.hasOwnProperty.call(publicInput, 'photoPath');
+    const photoPath = hasPhotoPath ? (publicInput.photoPath || null) : undefined;
+    delete publicInput.photoPath;
+    assertNoSensitivePlayerFields(publicInput);
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    // Public player doc: allow the display URL and non-sensitive roster profile
+    // fields. The cleanup path is stored in the linked private profile because
+    // Firebase download URLs expose encoded object paths.
     const publicUpdate = {};
-    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
-        publicUpdate.photoUrl = data.photoUrl || null;
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'photoUrl')) {
+        publicUpdate.photoUrl = publicInput.photoUrl || null;
     }
-    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
-        publicUpdate.profile = data.profile || {};
+    if (Object.prototype.hasOwnProperty.call(publicInput, 'profile')) {
+        publicUpdate.profile = publicInput.profile || {};
     }
-    if (Object.keys(publicUpdate).length > 0) {
-        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+    if (!hasPhotoPath) {
+        if (Object.keys(publicUpdate).length > 0) {
+            await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+                ...publicUpdate,
+                updatedAt: now
+            });
+        }
+        return;
+    }
+    const batch = writeBatch(db);
+    batch.update(doc(db, `teams/${teamId}/players`, playerId), {
             ...publicUpdate,
+            photoPath: deleteField(),
             updatedAt: now
-        });
-    }
+    });
+    batch.set(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        photoPath,
+        updatedAt: now
+    }, { merge: true });
+    await batch.commit();
 }
 
 export async function updatePlayerPrivateProfile(teamId, playerId, data) {
@@ -6707,6 +6782,9 @@ export async function updatePlayerPrivateProfile(teamId, playerId, data) {
     }
     if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
         privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'photoPath')) {
+        privateUpdate.photoPath = data.photoPath || null;
     }
     if (Object.keys(privateUpdate).length > 0) {
         privateUpdate.updatedAt = Timestamp.now();
@@ -6892,10 +6970,10 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
 
     const safeName = sanitizeAthleteProfileMediaName(file.name);
     const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
-    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
+    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${createSecureUploadToken()}_${kind}_${safeName}`;
     const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
     const mimeType = String(file.type || '').trim();
     const mediaType = kind === 'profile-photo'
         ? 'image'
@@ -7049,7 +7127,10 @@ export function canAccessTeamChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7084,7 +7165,10 @@ export function canModerateChat(user, team) {
     // Team owner
     if (team.ownerId === user.uid) return true;
 
-    if (user.email && team.ownerEmail && team.ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    const legacyOwnerEmails = [...new Set([team.ownerEmailLower, team.ownerEmail]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean))];
+    if (!String(team.ownerId || '').trim() && legacyOwnerEmails.length === 1 && user.email && legacyOwnerEmails[0] === user.email.trim().toLowerCase()) {
         return true;
     }
 
@@ -7100,7 +7184,7 @@ export function canModerateChat(user, team) {
 }
 
 function getNormalizedCertificateEmail(user) {
-    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+    return String(user?.email || '').trim().toLowerCase();
 }
 
 function hasCertificateCoachAccess(user, team) {
@@ -7174,15 +7258,7 @@ export async function getCertificateDefaults(teamId) {
 }
 
 export async function setCertificateDefaults(teamId, defaults = {}) {
-    if (!teamId) throw new Error('Missing team for certificate defaults');
-    const actor = getCertificateActor();
-    const payload = {
-        ...defaults,
-        updatedAt: Timestamp.now(),
-        updatedBy: actor.actorId
-    };
-    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
-    return payload;
+    return commitCertificateDefaults(teamId, defaults);
 }
 
 export async function listCertificateAssets(teamId) {
@@ -7426,22 +7502,39 @@ function normalizeTeamEmailDraftPayload(draft = {}) {
     };
 }
 
-export async function getTeamEmailTemplates(teamId) {
-    if (!teamId) return [];
-    const templatesRef = getTeamEmailTemplatesRef(teamId);
-    try {
-        const snapshot = await getDocs(query(templatesRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(templatesRef);
-        return snapshot.docs
-            .map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
+function normalizeTeamEmailSavedPageSize(pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE) {
+    const numericPageSize = Number(pageSize);
+    if (!Number.isFinite(numericPageSize) || numericPageSize <= 0) {
+        return DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE;
     }
+    return Math.min(Math.max(Math.floor(numericPageSize), 1), 100);
+}
+
+async function getTeamEmailSavedPage(itemsRef, { pageSize = DEFAULT_TEAM_EMAIL_SAVED_PAGE_SIZE, cursor = null } = {}) {
+    const normalizedPageSize = normalizeTeamEmailSavedPageSize(pageSize);
+    const constraints = [
+        orderBy('updatedAt', 'desc'),
+        orderBy(documentId(), 'desc')
+    ];
+    if (cursor?.updatedAt && cursor?.id) {
+        constraints.push(startAfterQuery(cursor.updatedAt, cursor.id));
+    }
+    constraints.push(limitQuery(normalizedPageSize));
+
+    const snapshot = await getDocs(query(itemsRef, ...constraints));
+    const items = snapshot.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    const lastDoc = snapshot.docs.at(-1);
+    return {
+        items,
+        nextCursor: snapshot.docs.length === normalizedPageSize && lastDoc
+            ? { updatedAt: lastDoc.data()?.updatedAt || null, id: lastDoc.id }
+            : null
+    };
+}
+
+export async function getTeamEmailTemplates(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailTemplatesRef(teamId), options);
 }
 
 export async function saveTeamEmailTemplate(teamId, template, { templateId = null } = {}) {
@@ -7470,22 +7563,9 @@ export async function deleteTeamEmailTemplate(teamId, templateId) {
     await deleteDoc(doc(db, 'teams', teamId, 'emailTemplates', templateId));
 }
 
-export async function getTeamEmailDrafts(teamId) {
-    if (!teamId) return [];
-    const draftsRef = getTeamEmailDraftsRef(teamId);
-    try {
-        const snapshot = await getDocs(query(draftsRef, orderBy('updatedAt', 'desc')));
-        return snapshot.docs.map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }));
-    } catch (error) {
-        const snapshot = await getDocs(draftsRef);
-        return snapshot.docs
-            .map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }))
-            .sort((a, b) => {
-                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
-                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
-                return bTime - aTime;
-            });
-    }
+export async function getTeamEmailDrafts(teamId, options = {}) {
+    if (!teamId) return { items: [], nextCursor: null };
+    return getTeamEmailSavedPage(getTeamEmailDraftsRef(teamId), options);
 }
 
 export async function saveTeamEmailDraft(teamId, draft, { draftId = null } = {}) {
@@ -8240,13 +8320,63 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
  * @param {string[]} teamIds - Array of team IDs
  * @returns {Promise<Object>} Map of teamId to unread count
  */
+// One count job can issue two Firestore aggregation reads, so keep the global
+// ceiling low enough to protect large inboxes while still filling normal ones.
+export const UNREAD_CHAT_COUNT_CONCURRENCY = 6;
+
+const unreadChatCountJobQueue = [];
+let activeUnreadChatCountJobs = 0;
+
+function drainUnreadChatCountJobQueue() {
+    while (activeUnreadChatCountJobs < UNREAD_CHAT_COUNT_CONCURRENCY && unreadChatCountJobQueue.length > 0) {
+        const entry = unreadChatCountJobQueue.shift();
+        if (entry.deadlineTimer) clearTimeout(entry.deadlineTimer);
+        if (entry.deadlineAt !== null && Date.now() >= entry.deadlineAt) {
+            entry.resolve();
+            continue;
+        }
+
+        activeUnreadChatCountJobs += 1;
+        void Promise.resolve()
+            .then(entry.run)
+            .then(entry.resolve, entry.reject)
+            .finally(() => {
+                activeUnreadChatCountJobs -= 1;
+                drainUnreadChatCountJobQueue();
+            });
+    }
+}
+
+function enqueueUnreadChatCountJob(run, deadlineAt) {
+    return new Promise((resolve, reject) => {
+        const entry = { run, deadlineAt, resolve, reject, deadlineTimer: null };
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                resolve();
+                return;
+            }
+            entry.deadlineTimer = setTimeout(() => {
+                const queueIndex = unreadChatCountJobQueue.indexOf(entry);
+                if (queueIndex === -1) return;
+                unreadChatCountJobQueue.splice(queueIndex, 1);
+                resolve();
+            }, remainingMs);
+        }
+        unreadChatCountJobQueue.push(entry);
+        drainUnreadChatCountJobQueue();
+    });
+}
+
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
-    const counts = {};
+    const uniqueTeamIds = Array.from(new Set(teamIds));
+    const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0]));
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
     const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     const defaultConversationOnly = options?.defaultConversationOnly === true;
+    const deadlineAt = Number.isFinite(options?.deadlineAt) ? Number(options.deadlineAt) : null;
     let userData = {};
 
     try {
@@ -8254,59 +8384,129 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
         userData = userDoc.data() || {};
     } catch (err) {
         console.warn(`Failed to load chat state for user ${userId}:`, err);
-        teamIds.forEach((teamId) => {
-            counts[teamId] = 0;
-        });
         return counts;
     }
 
-    await Promise.all(teamIds.map(async (teamId) => {
-        try {
-            const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
-                ? conversationIdsByTeam[teamId]
-                : null;
-            const conversationLookup = conversationLookupByTeam?.[teamId] || {};
-            const loadedConversationIds = storedConversationIds || (defaultConversationOnly
-                ? [DEFAULT_TEAM_CONVERSATION_ID]
-                : (await getChatConversations(
-                    teamId,
-                    conversationLookup.user || null,
-                    {
-                        team: conversationLookup.team || null,
-                        canModerate: conversationLookup.canModerate === true
-                    }
-                )).map((conversation) => conversation?.id).filter(Boolean));
-            const conversationIds = Array.from(new Set([
-                DEFAULT_TEAM_CONVERSATION_ID,
-                ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
-            ]));
+    const teamStates = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, { pending: 0, total: 0 }]));
+    const jobs = [];
+    const conversationIdsForTeam = (loadedConversationIds) => Array.from(new Set([
+        DEFAULT_TEAM_CONVERSATION_ID,
+        ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
+    ]));
+    const addConversationJobs = (teamId, conversationIds) => {
+        teamStates[teamId].pending += conversationIds.length;
+        conversationIds.forEach((conversationId) => {
+            jobs.push({ type: 'count', teamId, conversationId });
+        });
+    };
 
-            const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
+    uniqueTeamIds.forEach((teamId) => {
+        const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
+            ? conversationIdsByTeam[teamId]
+            : null;
+        if (storedConversationIds || defaultConversationOnly) {
+            addConversationJobs(teamId, conversationIdsForTeam(storedConversationIds || [DEFAULT_TEAM_CONVERSATION_ID]));
+            return;
+        }
+
+        teamStates[teamId].pending = 1;
+        jobs.push({ type: 'discover', teamId });
+    });
+
+    return await new Promise((resolve) => {
+        let activeJobs = 0;
+        let nextJobIndex = 0;
+        let settled = false;
+        let deadlineTimer = null;
+
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            if (deadlineTimer) clearTimeout(deadlineTimer);
+            resolve({ ...counts });
+        };
+        const isExpired = () => deadlineAt !== null && Date.now() >= deadlineAt;
+        const completeTeamJob = (teamId, count = 0) => {
+            const state = teamStates[teamId];
+            state.total += Number(count || 0);
+            state.pending -= 1;
+            if (state.pending === 0) counts[teamId] = state.total;
+        };
+        const runJob = async (job) => {
+            if (job.type === 'discover') {
                 try {
-                    const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[teamId] || {};
-                    return await getUnreadChatCount(userId, teamId, {
-                        userData,
-                        conversationId,
-                        latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, conversationId)
-                            ? latestMessageAtByConversation[conversationId]
-                            : isDefaultTeamConversation(conversationId)
-                                && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
-                                ? latestMessageAtByTeam[teamId]
-                                : undefined
+                    const conversationLookup = conversationLookupByTeam?.[job.teamId] || {};
+                    const loadedConversationIds = (await getChatConversations(
+                        job.teamId,
+                        conversationLookup.user || null,
+                        {
+                            team: conversationLookup.team || null,
+                            canModerate: conversationLookup.canModerate === true
+                        }
+                    )).map((conversation) => conversation?.id).filter(Boolean);
+                    if (settled || isExpired()) return;
+                    const conversationIds = conversationIdsForTeam(loadedConversationIds);
+                    teamStates[job.teamId].pending += conversationIds.length - 1;
+                    conversationIds.forEach((conversationId) => {
+                        jobs.push({ type: 'count', teamId: job.teamId, conversationId });
                     });
                 } catch (err) {
-                    console.warn(`Failed to get unread count for team ${teamId} conversation ${conversationId}:`, err);
-                    return 0;
+                    console.warn(`Failed to get unread count for team ${job.teamId}:`, err);
+                    if (!settled) completeTeamJob(job.teamId);
                 }
-            }));
+                return;
+            }
 
-            counts[teamId] = unreadCounts.reduce((sum, count) => sum + Number(count || 0), 0);
-        } catch (err) {
-            console.warn(`Failed to get unread count for team ${teamId}:`, err);
-            counts[teamId] = 0;
+            try {
+                const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[job.teamId] || {};
+                const count = await getUnreadChatCount(userId, job.teamId, {
+                    userData,
+                    conversationId: job.conversationId,
+                    latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, job.conversationId)
+                        ? latestMessageAtByConversation[job.conversationId]
+                        : isDefaultTeamConversation(job.conversationId)
+                            && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, job.teamId)
+                            ? latestMessageAtByTeam[job.teamId]
+                            : undefined
+                });
+                if (!settled) completeTeamJob(job.teamId, count);
+            } catch (err) {
+                console.warn(`Failed to get unread count for team ${job.teamId} conversation ${job.conversationId}:`, err);
+                if (!settled) completeTeamJob(job.teamId);
+            }
+        };
+        const scheduleNext = () => {
+            if (settled) return;
+            if (isExpired()) {
+                finish();
+                return;
+            }
+            const job = jobs[nextJobIndex];
+            if (!job) {
+                if (activeJobs === 0) finish();
+                return;
+            }
+            nextJobIndex += 1;
+            activeJobs += 1;
+            void enqueueUnreadChatCountJob(() => runJob(job), deadlineAt).finally(() => {
+                activeJobs -= 1;
+                scheduleNext();
+            });
+        };
+
+        if (deadlineAt !== null) {
+            const remainingMs = deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+                finish();
+                return;
+            }
+            deadlineTimer = setTimeout(finish, remainingMs);
         }
-    }));
-    return counts;
+
+        const workerCount = Math.min(UNREAD_CHAT_COUNT_CONCURRENCY, jobs.length);
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) scheduleNext();
+        if (workerCount === 0) finish();
+    });
 }
 
 
@@ -8896,27 +9096,29 @@ export async function deleteDrill(drillId) {
 // Drill Diagrams
 // ============================================
 
-export async function uploadDrillDiagram(teamId, drillId, file) {
-    await ensureImageAuth();
+export async function uploadDrillDiagram(teamId, drillId, file, options = {}) {
     const userId = auth.currentUser?.uid;
-    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
-    try {
-        const storageRef = ref(imageStorage, imagePath);
-        const snapshot = await uploadBytes(storageRef, file);
-        return await getDownloadURL(snapshot.ref);
-    } catch (error) {
-        const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
-            // Match fallback behavior used by chat/stat-sheet uploads.
-            if (!teamId || !userId) {
-                throw new Error('Team-scoped drill fallback upload requires a signed-in team user.');
-            }
-            const fallbackRef = ref(storage, fallbackPath);
-            const snapshot = await uploadBytes(fallbackRef, file);
-            return await getDownloadURL(snapshot.ref);
-        }
-        throw error;
+    if (!teamId || !userId) {
+        throw new Error('Team-scoped drill upload requires a signed-in team user.');
     }
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
+    if (await canUseLegacyImageStorage('drill upload')) {
+        try {
+            const storageRef = ref(imageStorage, imagePath);
+            const snapshot = await uploadStorageCandidateOrDelete(storageRef, file);
+            const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+            return options?.returnUpload === true ? { url, path: imagePath, storage: 'image' } : url;
+        } catch (error) {
+            const code = error?.code || '';
+            if (!['storage/unauthorized', 'storage/unauthenticated', 'storage/unknown'].includes(code)) throw error;
+            console.warn('Image storage denied drill upload, falling back to main storage:', error?.message || error);
+        }
+    }
+
+    const fallbackRef = ref(storage, fallbackPath);
+    const snapshot = await uploadStorageCandidateOrDelete(fallbackRef, file);
+    const url = await getDownloadUrlOrDeleteUpload(snapshot.ref);
+    return options?.returnUpload === true ? { url, path: fallbackPath, storage: 'primary' } : url;
 }
 
 // ============================================
@@ -10017,18 +10219,59 @@ function normalizeRideEventIds(primaryGameId, fallbackGameIds = []) {
     )];
 }
 
-async function loadRideOffersForGameId(teamId, gameId) {
+function normalizeRideRequestReadOptions(options = {}) {
+    return {
+        requesterUserId: String(options?.requesterUserId || auth.currentUser?.uid || '').trim(),
+        childIds: [...new Set((Array.isArray(options?.childIds) ? options.childIds : [])
+            .map((childId) => String(childId || '').trim())
+            .filter(Boolean))],
+        canManageTeamRequests: options?.canManageTeamRequests === true
+    };
+}
+
+function isRideRequestPermissionDenied(error) {
+    const code = String(error?.code || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return code.includes('permission-denied') || message.includes('permission denied') || message.includes('missing or insufficient permissions');
+}
+
+async function loadRideRequestsForOffer(teamId, gameId, offerId, offerData, options = {}) {
+    const readOptions = normalizeRideRequestReadOptions(options);
+    const requestsPath = `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`;
+    let requestDocs = [];
+
+    if (readOptions.canManageTeamRequests || offerData?.driverUserId === readOptions.requesterUserId) {
+        const requestsSnap = await getDocs(collection(db, requestsPath));
+        requestDocs = requestsSnap.docs;
+    } else if (readOptions.requesterUserId && readOptions.childIds.length > 0) {
+        const requestSnaps = await Promise.all(readOptions.childIds.map(async (childId) => {
+            const requestId = `${readOptions.requesterUserId}__${childId}`;
+            try {
+                return await getDoc(doc(db, requestsPath, requestId));
+            } catch (error) {
+                // A stale or no-longer-linked child scope can be denied.
+                // Treat that exact probe as unavailable; never broaden to a list.
+                if (isRideRequestPermissionDenied(error)) return null;
+                throw error;
+            }
+        }));
+        requestDocs = requestSnaps.filter((requestSnap) => requestSnap?.exists?.());
+    }
+
+    return requestDocs
+        .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+        .sort((a, b) => {
+            const at = a?.requestedAt?.toMillis?.() || 0;
+            const bt = b?.requestedAt?.toMillis?.() || 0;
+            return at - bt;
+        });
+}
+
+async function loadRideOffersForGameId(teamId, gameId, options = {}) {
     const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
     const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
         const offerData = offerDoc.data() || {};
-        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
-        const requests = requestsSnap.docs
-            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-            .sort((a, b) => {
-                const at = a?.requestedAt?.toMillis?.() || 0;
-                const bt = b?.requestedAt?.toMillis?.() || 0;
-                return at - bt;
-            });
+        const requests = await loadRideRequestsForOffer(teamId, gameId, offerDoc.id, offerData, options);
         return {
             id: offerDoc.id,
             ...offerData,
@@ -10097,7 +10340,7 @@ export async function listRideOffersForEvent(teamId, gameId, options = {}) {
 
     for (let index = 0; index < candidateGameIds.length; index += 1) {
         const candidateGameId = candidateGameIds[index];
-        const offers = await loadRideOffersForGameId(teamId, candidateGameId);
+        const offers = await loadRideOffersForGameId(teamId, candidateGameId, options);
         if (offers.length > 0 || index === candidateGameIds.length - 1) {
             return offers;
         }

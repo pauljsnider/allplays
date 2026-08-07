@@ -26,6 +26,7 @@ const profileServiceMocks = vi.hoisted(() => ({
 
 const profilePhotoServiceMocks = vi.hoisted(() => ({
   acquireProfilePhoto: vi.fn(),
+  deleteProfilePhoto: vi.fn(),
   normalizeProfilePhoto: vi.fn(),
   uploadProfilePhoto: vi.fn()
 }));
@@ -183,7 +184,10 @@ describe('Profile invites', () => {
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
     profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
-    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue({
+      url: 'https://example.test/avatar.png',
+      path: 'profile-photos/users/user-1/avatar.png'
+    });
     profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.createProfileAccessCode.mockResolvedValue('NEWMVP42');
     profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([
@@ -209,7 +213,7 @@ describe('Profile invites', () => {
     publicActionsMocks.sharePublicUrl.mockResolvedValue('shared');
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Invites' }));
     fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'coach@example.com' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
@@ -229,7 +233,7 @@ describe('Profile invites', () => {
   it('requires an email or phone before generating a friend invite', async () => {
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Invites' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
 
     expect(await screen.findByText('Enter an email or phone number for the invite.')).toBeTruthy();
@@ -240,7 +244,7 @@ describe('Profile invites', () => {
     publicActionsMocks.sharePublicUrl.mockResolvedValueOnce('copied').mockResolvedValueOnce('cancelled');
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Invites' }));
 
     const shareButtons = await screen.findAllByRole('button', { name: /Share saved invite link/ });
     expect(shareButtons).toHaveLength(1);
@@ -286,7 +290,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Invites' }));
     fireEvent.click(await screen.findByRole('button', { name: /Share saved invite link for ACTIVE123/ }));
 
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
@@ -314,7 +318,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Invites' }));
 
     expect(await screen.findByLabelText('Copy saved invite code RECENT1')).toBeTruthy();
     expect(screen.queryByLabelText('Copy saved invite code OLDER4')).toBeNull();
@@ -384,7 +388,6 @@ describe('Profile invites', () => {
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
       fullName: 'Pat Parent Updated',
       phone: '555-0111',
-      email: 'parent@example.com',
       photoUrl: null
     }));
     await screen.findByText('Profile saved.');
@@ -426,7 +429,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1));
     expect(screen.getByText('Loading your alert teams…')).toBeTruthy();
@@ -455,7 +458,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     expect(await screen.findByText('No team alerts available yet')).toBeTruthy();
     expect(screen.getByText('Join or create a team first, then come back here to turn on game-day and team update alerts.')).toBeTruthy();
@@ -473,7 +476,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
     expect(screen.getByText('network offline')).toBeTruthy();
@@ -494,7 +497,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
@@ -521,7 +524,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
     const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
@@ -546,7 +549,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     const teamSelect = await screen.findByLabelText('Team');
@@ -588,16 +591,16 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
     const liveChatToggle = await screen.findByLabelText('Live Chat') as HTMLInputElement;
-    const saveButton = screen.getByRole('button', { name: 'Save preferences' });
     expect(liveChatToggle.checked).toBe(true);
 
     fireEvent.click(liveChatToggle);
-    fireEvent.click(saveButton);
+    const dirtyTray = screen.getByRole('region', { name: 'Blue Team notification preferences with unsaved changes' });
+    fireEvent.click(within(dirtyTray).getByRole('button', { name: 'Save preferences' }));
 
     await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
       liveChat: false,
@@ -631,7 +634,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     const teamSelect = await screen.findByLabelText('Team');
@@ -667,7 +670,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     fireEvent.change(await screen.findByLabelText('Team'), { target: { value: 'team-2' } });
@@ -705,7 +708,7 @@ describe('Profile invites', () => {
 
     renderProfile({ strictMode: true });
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
@@ -735,7 +738,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
 
     expect(await screen.findByText('Notifications are off in device settings')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button', { name: 'Open device settings' })[0]);
@@ -760,7 +763,7 @@ describe('Profile invites', () => {
 
     renderProfile();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    fireEvent.click(await screen.findByRole('link', { name: 'Notifications' }));
     await screen.findByText('Notifications are off in device settings');
 
     const openSettingsButton = await screen.findByRole('button', { name: 'Open device settings to finish alerts' });

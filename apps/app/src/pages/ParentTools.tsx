@@ -48,6 +48,16 @@ export function getHorizontalScrollTarget(
     return currentScrollLeft;
 }
 
+export function getParentToolAuthInvalidation(activeTool: ParentToolId | null, visitedTools: ParentToolId[]) {
+    const visitedToolIds = new Set(visitedTools);
+    return {
+        immediateToolIds: tools
+            .map((tool) => tool.id)
+            .filter((id) => id === activeTool || !visitedToolIds.has(id)),
+        staleToolIds: visitedTools.filter((id) => id !== activeTool)
+    };
+}
+
 function trackParentToolRender(toolId: ParentToolId) {
     completeParentCoreWorkflowTimer(toolId === 'fees' ? 'fees' : 'parent_tools', {
         targetPage: toolId === 'fees' ? 'fees' : 'parent_tools',
@@ -107,7 +117,9 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const parentUserFingerprint = getParentUserFingerprint(auth);
     const latestAuthRef = useRef(auth);
     latestAuthRef.current = auth;
-    const [panelAuth, setPanelAuth] = useState(auth);
+    const [panelAuthByTool, setPanelAuthByTool] = useState<Record<ParentToolId, AuthState>>(() => (
+        Object.fromEntries(tools.map((tool) => [tool.id, auth])) as Record<ParentToolId, AuthState>
+    ));
     const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');
     const visibleToolIds = new Set(visibleTools.map((tool) => tool.id));
     const isLockedDeepLink = Boolean(activeTool && !visibleToolIds.has(activeTool));
@@ -127,7 +139,25 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     }, [activeTool]);
 
     useEffect(() => {
-        setPanelAuth(latestAuthRef.current);
+        const latestAuth = latestAuthRef.current;
+        const { immediateToolIds, staleToolIds } = getParentToolAuthInvalidation(
+            activeToolRef.current,
+            visitedToolsRef.current
+        );
+
+        setPanelAuthByTool((current) => {
+            const next = { ...current };
+            immediateToolIds.forEach((id) => {
+                next[id] = latestAuth;
+            });
+            return next;
+        });
+        setStaleTools((current) => {
+            const next = new Set(current);
+            staleToolIds.forEach((id) => next.add(id));
+            if (activeToolRef.current) next.delete(activeToolRef.current);
+            return next;
+        });
     }, [parentUserFingerprint]);
 
     useEffect(() => {
@@ -164,6 +194,10 @@ export function ParentTools({ auth }: { auth: AuthState }) {
 
         if (!staleToolsRef.current.has(activeTool)) return;
 
+        setPanelAuthByTool((current) => ({
+            ...current,
+            [activeTool]: latestAuthRef.current
+        }));
         setStaleTools((current) => {
             if (!current.has(activeTool)) return current;
             const next = new Set(current);
@@ -239,7 +273,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                     <Suspense fallback={<ParentToolPanelFallback />}>
                         <ParentToolPanel
                             toolId={tool.id}
-                            auth={panelAuth}
+                            auth={panelAuthByTool[tool.id]}
                             refreshVersion={toolRefreshVersions[tool.id]}
                             onAccessChanged={handleAccessChanged}
                         />

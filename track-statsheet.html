@@ -198,12 +198,12 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto } from './js/db.js?v=136';
+    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433159';
     import { db } from './js/firebase.js?v=22';
     import { writeBatch, doc, setDoc } from './js/firebase.js?v=22';
-    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=21';
-    import { checkAuth } from './js/auth.js?v=141';
-    import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443336';
+    import { checkAuth } from './js/auth.js?v=4433162';
+    import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443318';
     import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=11';
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=5';
     import { getApp } from './js/vendor/firebase-app.js';
@@ -754,6 +754,8 @@ RETURN JSON:
       const applyStatus = document.getElementById('apply-status');
       const applyBtn = document.getElementById('apply-btn');
       applyStatus.textContent = '';
+      let newlyUploadedStatSheet = null;
+      let statSheetPersisted = false;
 
       const includedVisitor = visitorRows.filter(r => r.include);
       const validation = validateTrackStatsheetApplyRows(homeRows);
@@ -767,16 +769,6 @@ RETURN JSON:
         applyBtn.classList.add('opacity-60');
 
         let statSheetUrl = uploadedStatSheetUrl || currentGame.statSheetPhotoUrl || '';
-        if (statSheetFile && statSheetFile !== uploadedStatSheetFile) {
-          applyStatus.textContent = 'Uploading stat sheet…';
-          const uploadPromise = uploadStatSheetPhoto(currentTeamId, statSheetFile);
-          const uploadTimeout = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Stat sheet upload timed out. Please try again.')), 30000);
-          });
-          statSheetUrl = await Promise.race([uploadPromise, uploadTimeout]);
-          uploadedStatSheetFile = statSheetFile;
-          uploadedStatSheetUrl = statSheetUrl;
-        }
 
         const homeScore = Number(document.getElementById('home-score-input').value || 0);
         const visitorScore = Number(document.getElementById('visitor-score-input').value || 0);
@@ -796,6 +788,39 @@ RETURN JSON:
             applyStatus.textContent = 'Cancelled.';
             return;
           }
+        }
+
+        if (statSheetFile && statSheetFile !== uploadedStatSheetFile) {
+          applyStatus.textContent = 'Uploading stat sheet…';
+          const uploadPromise = uploadStatSheetPhoto(currentTeamId, statSheetFile, { returnUpload: true });
+          let uploadTimedOut = false;
+          let uploadTimeoutId;
+          const uploadTimeout = new Promise((_, reject) => {
+            uploadTimeoutId = setTimeout(() => {
+              uploadTimedOut = true;
+              reject(new Error('Stat sheet upload timed out. Please try again.'));
+            }, 30000);
+          });
+          uploadPromise.then((lateUpload) => {
+            if (uploadTimedOut && typeof lateUpload !== 'string' && lateUpload?.path) {
+              deleteUploadedMediaObjects([{
+                path: lateUpload.path,
+                storage: lateUpload.storage
+              }]).catch(() => undefined);
+            }
+          }).catch(() => undefined);
+          let upload;
+          try {
+            upload = await Promise.race([uploadPromise, uploadTimeout]);
+          } finally {
+            clearTimeout(uploadTimeoutId);
+          }
+          statSheetUrl = typeof upload === 'string' ? upload : upload.url;
+          newlyUploadedStatSheet = typeof upload === 'string'
+            ? null
+            : { path: upload.path, storage: upload.storage };
+          uploadedStatSheetFile = statSheetFile;
+          uploadedStatSheetUrl = statSheetUrl;
         }
 
         const applyPlan = buildTrackStatsheetApplyPlan({
@@ -831,9 +856,10 @@ RETURN JSON:
         applyStatus.textContent = 'Saving stats…';
         const commitPromise = batch.commit();
         const commitTimeout = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Save timed out. Please try again.')), 30000);
+          setTimeout(() => reject(Object.assign(new Error('Save timed out. Please try again.'), { commitStateUnknown: true })), 30000);
         });
         await Promise.race([commitPromise, commitTimeout]);
+        statSheetPersisted = true;
         currentGame = {
           ...currentGame,
           ...applyPlan.gameUpdate
@@ -848,6 +874,11 @@ RETURN JSON:
         // Keep the apply control available so coaches can correct and re-save stats before leaving.
 
       } catch (error) {
+        if (newlyUploadedStatSheet && !statSheetPersisted && error?.commitStateUnknown !== true) {
+          await deleteUploadedMediaObjects([newlyUploadedStatSheet]).catch(() => undefined);
+          uploadedStatSheetFile = null;
+          uploadedStatSheetUrl = currentGame.statSheetPhotoUrl || '';
+        }
         console.error('Failed to save stats:', error);
         alert('Failed to save stats: ' + error.message);
         applyStatus.textContent = `Error: ${error.message}`;
@@ -964,7 +995,7 @@ Write the match report now:`;
       try {
         if (summaryText) {
           status.textContent = 'Saving summary…';
-          const { updateGame } = await import('./js/db.js?v=136');
+          const { updateGame } = await import('./js/db.js?v=4433159');
           await updateGame(currentTeamId, currentGameId, { summary: summaryText });
           status.textContent = 'Summary saved!';
         }

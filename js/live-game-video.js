@@ -1,6 +1,6 @@
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
-import { hasStreamTeamAccess } from './team-access.js';
+import { hasStreamTeamAccess } from './team-access.js?v=44338';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({

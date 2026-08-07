@@ -1,7 +1,10 @@
 import { pathToFileURL } from 'node:url';
 import {
     createFirebaseRestSession,
+    findFirestoreDocumentsByStringArrayContains,
+    findFirestoreDocumentsByStringField,
     getFirestoreDocument,
+    getFirestoreDocumentPath,
     patchFirestoreDocumentFields
 } from '../tests/smoke/helpers/firebase-rest.js';
 import { assertSmokeFixtureIdentifier } from './maintain-production-smoke-official-fixture.mjs';
@@ -20,6 +23,12 @@ function getMapFields(value) {
 
 function getBooleanField(fields, fieldName) {
     return fields?.[fieldName]?.booleanValue;
+}
+
+function getStringArray(field) {
+    return getArrayValues(field)
+        .map((value) => String(value?.stringValue || '').trim().toLowerCase())
+        .filter(Boolean);
 }
 
 function hasStringValue(field, expected) {
@@ -74,6 +83,26 @@ export function inspectParentFixture(
         playerExists,
         playerActive
     };
+}
+
+export function assertUnprivilegedParentFixture(userDocument, teamDocument, { uid, email }) {
+    const userFields = userDocument?.fields || {};
+    const teamFields = teamDocument?.fields || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const privilegedRoles = new Set(['admin', 'platformadmin', 'staff', 'coach', 'manager', 'owner']);
+    const hasPrivilegedRole = getStringArray(userFields.roles).some((role) => privilegedRoles.has(role));
+    const ownsTeam = Boolean(uid) && getStringField(teamFields, 'ownerId') === uid;
+    const administersTeam = Boolean(normalizedEmail) && getStringArray(teamFields.adminEmails).includes(normalizedEmail);
+    if (
+        getBooleanField(userFields, 'isAdmin') === true ||
+        getBooleanField(userFields, 'isPlatformAdmin') === true ||
+        hasPrivilegedRole ||
+        ownsTeam ||
+        administersTeam
+    ) {
+        throw new Error('The parent smoke account has privileged access and cannot be used for parent-only coverage');
+    }
+    return true;
 }
 
 function buildStringArray(values) {
@@ -148,6 +177,83 @@ export function buildActiveTeamPatch() {
     };
 }
 
+export function inspectStaffTeamDiscovery(
+    teamDocument,
+    staffDocument,
+    { uid, email, teamId, ownerQueryFound = false, adminQueryFound = false }
+) {
+    const fields = teamDocument?.fields || {};
+    const staffFields = staffDocument?.fields || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const ownsTeam = Boolean(uid) && getStringField(fields, 'ownerId') === uid;
+    const hasCanonicalAdminEmail = Boolean(normalizedEmail) && getArrayValues(fields.adminEmails)
+        .some((value) => String(value?.stringValue || '') === normalizedEmail);
+    const hasCoachTeamId = Boolean(teamId) && hasStringValue(staffFields.coachOf, teamId);
+    const directCoachDiscovery = hasCoachTeamId && (ownsTeam || hasCanonicalAdminEmail);
+    return {
+        ready: ownerQueryFound || adminQueryFound || directCoachDiscovery,
+        ownsTeam,
+        hasCanonicalAdminEmail,
+        hasCoachTeamId,
+        ownerQueryFound,
+        adminQueryFound,
+        directCoachDiscovery
+    };
+}
+
+export function buildCanonicalStaffAccessPatch(teamDocument, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('Canonical staff email is required');
+    const adminEmails = getArrayValues(teamDocument?.fields?.adminEmails)
+        .map((value) => String(value?.stringValue || ''))
+        .filter((value) => value.trim().toLowerCase() !== normalizedEmail);
+    return {
+        fields: {
+            adminEmails: buildStringArray([...adminEmails, normalizedEmail])
+        }
+    };
+}
+
+export function buildCanonicalStaffProfilePatch(staffDocument, teamId) {
+    if (!teamId) throw new Error('Canonical staff team ID is required');
+    const coachTeamIds = getArrayValues(staffDocument?.fields?.coachOf)
+        .map((value) => String(value?.stringValue || ''))
+        .filter((value) => value.trim() !== teamId);
+    return {
+        fields: {
+            coachOf: buildStringArray([...coachTeamIds, teamId])
+        }
+    };
+}
+
+function queryContainsDocument(documents, documentPath) {
+    return documents.some((document) => getFirestoreDocumentPath(document) === documentPath);
+}
+
+async function queryStaffTeamDiscovery(session, teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const teamPath = `teams/${teamId}`;
+    const [ownerResult, adminResult] = await Promise.allSettled([
+        findFirestoreDocumentsByStringField(session, 'teams', 'ownerId', session.localId),
+        normalizedEmail
+            ? findFirestoreDocumentsByStringArrayContains(
+                session,
+                'teams',
+                'adminEmails',
+                normalizedEmail
+            )
+            : Promise.resolve([])
+    ]);
+    return {
+        ownerQueryFound: ownerResult.status === 'fulfilled' &&
+            queryContainsDocument(ownerResult.value, teamPath),
+        adminQueryFound: adminResult.status === 'fulfilled' &&
+            queryContainsDocument(adminResult.value, teamPath),
+        ownerQueryFailed: ownerResult.status === 'rejected',
+        adminQueryFailed: adminResult.status === 'rejected'
+    };
+}
+
 function isAuthorizedFixtureManager(teamDocument, session, staffEmail) {
     const fields = teamDocument?.fields || {};
     if (getStringField(fields, 'ownerId') === session.localId) return true;
@@ -212,15 +318,77 @@ async function main() {
         })
     ]);
 
-    let [adminDocument, teamDocument] = await Promise.all([
+    let [adminDocument, staffDocument, teamDocument] = await Promise.all([
         getFirestoreDocument(adminSession, `users/${adminSession.localId}`),
+        getFirestoreDocument(staffSession, `users/${staffSession.localId}`),
         getFirestoreDocument(staffSession, `teams/${teamId}`)
     ]);
     if (!adminDocument || !isGlobalAdmin(adminDocument)) {
         throw new Error('The admin smoke account is not authorized to maintain fixture membership');
     }
-    if (!teamDocument || !isAuthorizedFixtureManager(teamDocument, staffSession, staffEmail)) {
+    const canonicalStaffEmail = String(staffSession.email || staffEmail).trim().toLowerCase();
+    if (!teamDocument || !isAuthorizedFixtureManager(teamDocument, staffSession, canonicalStaffEmail)) {
         throw new Error('The staff smoke account is not an owner or administrator of the fixture team');
+    }
+    if (!staffDocument) {
+        throw new Error('The staff smoke user profile does not exist');
+    }
+    let staffQueryDiscovery = await queryStaffTeamDiscovery(
+        staffSession,
+        teamId,
+        canonicalStaffEmail
+    );
+    let staffDiscovery = inspectStaffTeamDiscovery(teamDocument, staffDocument, {
+        uid: staffSession.localId,
+        email: canonicalStaffEmail,
+        teamId,
+        ...staffQueryDiscovery
+    });
+    if (mode === 'repair' && (
+        !staffDiscovery.hasCanonicalAdminEmail ||
+        !staffDiscovery.hasCoachTeamId ||
+        !staffDiscovery.ready
+    )) {
+        if (!staffDiscovery.hasCanonicalAdminEmail) {
+            await patchFirestoreDocumentFields(
+                adminSession,
+                `teams/${teamId}`,
+                buildCanonicalStaffAccessPatch(teamDocument, canonicalStaffEmail).fields,
+                { updateTime: String(teamDocument.updateTime || '') }
+            );
+        }
+        if (!staffDiscovery.hasCoachTeamId) {
+            await patchFirestoreDocumentFields(
+                adminSession,
+                `users/${staffSession.localId}`,
+                buildCanonicalStaffProfilePatch(staffDocument, teamId).fields,
+                { updateTime: String(staffDocument.updateTime || '') }
+            );
+        }
+        [staffDocument, teamDocument] = await Promise.all([
+            getFirestoreDocument(staffSession, `users/${staffSession.localId}`),
+            getFirestoreDocument(staffSession, `teams/${teamId}`)
+        ]);
+        staffQueryDiscovery = await queryStaffTeamDiscovery(
+            staffSession,
+            teamId,
+            canonicalStaffEmail
+        );
+        staffDiscovery = inspectStaffTeamDiscovery(teamDocument, staffDocument, {
+            uid: staffSession.localId,
+            email: canonicalStaffEmail,
+            teamId,
+            ...staffQueryDiscovery
+        });
+    }
+    if (!staffDiscovery.ready) {
+        throw new Error(
+            `The staff smoke account is not discoverable by the app's team access paths ` +
+            `(owner=${staffDiscovery.ownsTeam}, canonical-admin=${staffDiscovery.hasCanonicalAdminEmail}, ` +
+            `coach-link=${staffDiscovery.hasCoachTeamId}, owner-query=${staffDiscovery.ownerQueryFound}, ` +
+            `admin-query=${staffDiscovery.adminQueryFound}, owner-query-failed=${staffQueryDiscovery.ownerQueryFailed}, ` +
+            `admin-query-failed=${staffQueryDiscovery.adminQueryFailed})`
+        );
     }
 
     const playerPath = `teams/${teamId}/players/${playerId}`;
@@ -234,6 +402,12 @@ async function main() {
     }
     if (!parentDocument) {
         throw new Error('The parent smoke user profile does not exist');
+    }
+    if (String(process.env.SMOKE_REQUIRE_UNPRIVILEGED_PARENT || '').trim().toLowerCase() === 'true') {
+        assertUnprivilegedParentFixture(parentDocument, teamDocument, {
+            uid: parentSession.localId,
+            email: parentEmail
+        });
     }
 
     let inspection = inspectParentFixture(
@@ -302,7 +476,11 @@ async function main() {
         );
     }
 
-    console.log(`Parent fixture ${mode} passed with a linked active player.`);
+    console.log(
+        `Parent fixture ${mode} passed with a linked active player and app-discoverable staff team ` +
+        `(owner-query=${staffDiscovery.ownerQueryFound}, admin-query=${staffDiscovery.adminQueryFound}, ` +
+        `coach-link=${staffDiscovery.hasCoachTeamId}).`
+    );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

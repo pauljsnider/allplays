@@ -198,8 +198,10 @@ async function installMocks(page, scenario) {
         }
 
         export async function uploadPlayerPhoto() {
-            return '';
+            return { url: '', path: '' };
         }
+
+        export async function deleteLegacyImageUpload() {}
     `;
 
     const firebaseModule = `
@@ -345,8 +347,8 @@ async function installMocks(page, scenario) {
     await page.route(/\/js\/firebase\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: firebaseModule }));
     await page.route(/\/js\/utils\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: utilsModule }));
     await page.route(/\/js\/auth\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: authModule }));
-    await page.route(/\/js\/team-admin-banner\.js$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
-    await page.route(/\/js\/team-access\.js$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule }));
+    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: bannerModule }));
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule }));
     await page.route(/\/js\/premium-entitlements\.js\?v=\d+$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: premiumModule }));
 }
 

@@ -1,4 +1,4 @@
-import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=21';
+import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js?v=443336';
 
 const VISIBILITY_VALUES = ['private', 'public'];
 const STATUS_VALUES = ['active', 'archived'];
@@ -13,7 +13,7 @@ export function isTrackingItemAdmin(team, user = {}, canModerateChat = null) {
     if (team.ownerId && user.uid && team.ownerId === user.uid) return true;
     if (typeof canModerateChat === 'function' && canModerateChat(team, user)) return true;
 
-    const email = normalizeString(user.email || user.profileEmail).toLowerCase();
+    const email = normalizeString(user.email).toLowerCase();
     if (!email) return false;
 
     return (team.adminEmails || [])
@@ -204,8 +204,8 @@ async function initTrackingItemsAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [dbModule, authModule, firebaseModule] = await Promise.all([
-        import('./db.js?v=136'),
-        import('./auth.js?v=141'),
+        import('./db.js?v=4433159'),
+        import('./auth.js?v=4433162'),
         import('./firebase.js?v=22')
     ]);
     const { getTeam, getUserProfile, canModerateChat } = dbModule;

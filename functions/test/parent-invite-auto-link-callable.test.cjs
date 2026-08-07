@@ -94,7 +94,13 @@ function createFirestore(initialDocs) {
   };
 }
 
-function createHarness({ actorUid = 'owner-1', actorEmail = 'owner@example.com', team = {}, includeParent = true } = {}) {
+function createHarness({
+  actorUid = 'owner-1',
+  actorEmail = 'owner@example.com',
+  authEmail = actorEmail,
+  team = {},
+  includeParent = true
+} = {}) {
   const initialDocs = {
     'accessCodes/code-1': {
       type: 'parent_invite',
@@ -152,7 +158,7 @@ function createHarness({ actorUid = 'owner-1', actorEmail = 'owner@example.com',
   return {
     ...store,
     handler,
-    context: { auth: { uid: actorUid, token: { email: actorEmail } } }
+    context: { auth: { uid: actorUid, token: { email: authEmail } } }
   };
 }
 
@@ -176,6 +182,26 @@ test('non-global adminEmails admin can execute the callable path', async () => {
 
   assert.deepEqual(result, { autoLinked: true, existingUser: true, userId: 'parent-1' });
   assert.equal(harness.calls.transactionCount, 1);
+});
+
+test('stale profile email cannot restore legacy owner authorization', async () => {
+  const harness = createHarness({
+    actorUid: 'stale-owner',
+    actorEmail: 'legacy-owner@example.com',
+    authEmail: null,
+    team: {
+      ownerId: 'current-owner',
+      ownerEmail: 'legacy-owner@example.com',
+      ownerEmailLower: 'legacy-owner@example.com',
+      adminEmails: ['legacy-owner@example.com']
+    }
+  });
+
+  await assert.rejects(
+    harness.handler({ codeId: 'code-1' }, harness.context),
+    (error) => error.code === 'permission-denied'
+  );
+  assert.equal(harness.calls.transactionCount, 0);
 });
 
 test('ordinary non-admin coach cannot auto-link another user', async () => {

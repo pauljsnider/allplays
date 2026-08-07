@@ -502,6 +502,51 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
   return nativeAuthToken ? { nativeAuthToken } : undefined;
 }
 
+type FriendInviteRedeemer = {
+  redeemFriendInvite: (userId: string, code: string, email?: string | null) => Promise<unknown>;
+};
+
+async function postNativeFriendInviteRedemption(userId: string, code: string) {
+  if (getNativeAuthUserId() !== userId) {
+    throw new Error('Unable to redeem friend invite.');
+  }
+
+  const idToken = await getNativeAuthIdToken(true).catch(() => null);
+  const projectId = String(auth.app?.options?.projectId || '').trim();
+  if (!idToken || !projectId) {
+    throw new Error('Unable to redeem friend invite.');
+  }
+
+  const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/redeemFriendInvite`;
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: await getPrimaryAppCheckHeaders({
+      Authorization: `Bearer ${idToken}`,
+      'Content-Type': 'application/json'
+    }, requestUrl),
+    body: JSON.stringify({ data: { code } })
+  });
+  const payload = await response.json().catch(() => ({}));
+  const result = payload?.result ?? payload?.data;
+  if (!response.ok || payload?.error || result?.success !== true) {
+    throw new Error('Unable to redeem friend invite.');
+  }
+  return result;
+}
+
+async function redeemFriendInviteForCurrentSession(
+  dbModule: FriendInviteRedeemer,
+  userId: string,
+  code: string,
+  email?: string | null
+) {
+  const normalizedCode = normalizeCode(code);
+  if (!isNativeRuntime()) {
+    return dbModule.redeemFriendInvite(userId, normalizedCode, email);
+  }
+  return postNativeFriendInviteRedemption(userId, normalizedCode);
+}
+
 function nativeMetadataToAuthMetadata(metadata: NativePluginUser['metadata'] = {}) {
   const creationTime = metadata.creationTime ? new Date(metadata.creationTime).toISOString() : undefined;
   const lastSignInTime = metadata.lastSignInTime ? new Date(metadata.lastSignInTime).toISOString() : undefined;
@@ -703,7 +748,9 @@ function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
 }
 
 function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthUser {
-  const email = String(user.email || profile.email || '');
+  // AuthUser.email is an authorization input throughout the app. Never fill
+  // it from a mutable profile document when Firebase Auth has no email.
+  const email = String(user.email || '');
   const displayName = String(user.displayName || profile.fullName || profile.displayName || email || 'ALL PLAYS User');
   const coachOf = Array.isArray(profile.coachOf) ? profile.coachOf.filter((teamId): teamId is string => typeof teamId === 'string') : [];
 
@@ -950,7 +997,8 @@ export async function signUpWithEmail(email: string, password: string, activatio
           }
         : createUserWithEmailAndPassword,
       redeemParentInvite: dbModule.redeemParentInvite,
-      redeemFriendInvite: dbModule.redeemFriendInvite,
+      redeemFriendInvite: (userId: string, code: string, email?: string | null) =>
+        redeemFriendInviteForCurrentSession(dbModule, userId, code, email),
       redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
       redeemCoParentInvite: dbModule.redeemCoParentInvite,
       rollbackParentInviteRedemption: dbModule.rollbackParentInviteRedemption,
@@ -1091,7 +1139,12 @@ async function processGoogleResult(
     } else if (validation.type === 'coparent_invite') {
       await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'friend_invite') {
-      await dbModule.redeemFriendInvite(result.user.uid, validation.data?.code || code, result.user.email);
+      await redeemFriendInviteForCurrentSession(
+        dbModule,
+        result.user.uid,
+        validation.data?.code || code,
+        result.user.email
+      );
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({
@@ -1362,9 +1415,18 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     loadLegacyInviteFlow()
   ]);
   const processInvite = createInviteProcessor({
-    validateAccessCode: dbModule.validateAccessCode,
+    validateAccessCode: async (inviteCode: string) => {
+      const nativeAuthToken = isNativeRuntime()
+        ? await getNativeAuthIdToken().catch((error: unknown) => {
+            logger.warn('Unable to attach native auth token for access code validation.', { error });
+            return null;
+          })
+        : null;
+      return dbModule.validateAccessCode(inviteCode, nativeAuthToken ? { nativeAuthToken } : undefined);
+    },
     redeemParentInvite: dbModule.redeemParentInvite,
-    redeemFriendInvite: dbModule.redeemFriendInvite,
+    redeemFriendInvite: (inviteUserId: string, inviteCode: string, email?: string | null) =>
+      redeemFriendInviteForCurrentSession(dbModule, inviteUserId, inviteCode, email),
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
     redeemCoParentInvite: dbModule.redeemCoParentInvite,
     redeemAdminInviteAtomically,

@@ -32,11 +32,15 @@ function makeFunctionsStub() {
         region() {
             return this;
         },
+        user() {
+            return this;
+        },
         object() {
             return this;
         }
     };
     triggerChain.https = triggerChain;
+    triggerChain.auth = triggerChain;
     triggerChain.firestore = triggerChain;
     triggerChain.pubsub = triggerChain;
     triggerChain.storage = triggerChain;
@@ -96,6 +100,9 @@ function buildNotificationTestEnv({
     parentUserIds = [],
     userDocs = {},
     authUsersByEmail = {},
+    authUsersByUid = {},
+    authGetUsersErrors = [],
+    onAuthGetUsersCall = null,
     playerDocs = {},
     privateProfileDocs = {},
     gameDocs = {},
@@ -109,18 +116,29 @@ function buildNotificationTestEnv({
     invalidTokenResponses = [],
     sendEachErrors = [],
     notificationInboxDocs = {},
+    docGetErrors = {},
     rejectedNotificationInboxUids = [],
     deferNotificationInboxOperations = false,
-    nowMillis = Date.parse('2026-06-28T12:00:00.000Z')
+    transactionErrors = [],
+    transactionPostCommitErrors = [],
+    nowMillis = Date.parse('2026-06-28T12:00:00.000Z'),
+    nowMillisProvider = null
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
     const inboxCleanupLimits = [];
     const auditWrites = [];
+    const pendingAuthGetUsersErrors = [...authGetUsersErrors];
+    const pendingTransactionErrors = [...transactionErrors];
+    const pendingTransactionPostCommitErrors = [...transactionPostCommitErrors];
+    const pendingDocGetErrors = new Map(
+        Object.entries(docGetErrors || {}).map(([path, errors]) => [path, [...(errors || [])]])
+    );
     const deletedPaths = [];
     const updatedDocs = [];
     const messagingCalls = [];
     const feeRecipientDocGetPaths = [];
+    const getAllCalls = [];
     const docStore = new Map();
     const rejectedInboxUids = new Set(rejectedNotificationInboxUids);
     let activeNotificationInboxPipelines = 0;
@@ -140,6 +158,7 @@ function buildNotificationTestEnv({
         inboxCleanupQueries: 0,
         inboxCleanupLimitQueries: 0,
         inboxCleanupOffsetQueries: 0,
+        authGetUsersCalls: 0,
         dedupTransactions: 0,
         deleteCalls: 0
     };
@@ -244,15 +263,15 @@ function buildNotificationTestEnv({
         if (filter.op === '==') {
             return actual === filter.value;
         }
-        if (filter.op === '>=' || filter.op === '<=') {
+        if (filter.op === '>' || filter.op === '>=' || filter.op === '<=') {
             const actualMillis = comparableMillis(actual);
             const expectedMillis = comparableMillis(filter.value);
             if (!Number.isFinite(actualMillis) || !Number.isFinite(expectedMillis)) {
                 return false;
             }
-            return filter.op === '>='
-                ? actualMillis >= expectedMillis
-                : actualMillis <= expectedMillis;
+            if (filter.op === '>') return actualMillis > expectedMillis;
+            if (filter.op === '>=') return actualMillis >= expectedMillis;
+            return actualMillis <= expectedMillis;
         }
         return false;
     }
@@ -328,13 +347,30 @@ function buildNotificationTestEnv({
             path,
             id: String(path).split('/').pop(),
             async get() {
+                const pathGetErrors = pendingDocGetErrors.get(path);
+                const pathGetError = pathGetErrors?.shift();
+                if (pathGetError) throw pathGetError;
                 if (path === `teams/${teamId}`) {
                     counts.teamDocGets += 1;
                     return makeDocSnapshot({ id: teamId, ref: this, data: teamDoc, exists: true });
                 }
                 if (path.startsWith('users/') && !path.includes('/notificationPreferences/') && !path.includes('/notificationDevices/') && path.split('/').length === 2) {
                     counts.userRecordGets += 1;
-                    const data = userDocs[this.id];
+                    const authEmail = String(authUsersByUid[this.id]?.email || '').trim().toLowerCase();
+                    const adminEmails = Array.isArray(teamDoc.adminEmails)
+                        ? teamDoc.adminEmails.map((email) => String(email || '').trim().toLowerCase())
+                        : [];
+                    const configuredUser = userDocs[this.id] !== undefined
+                        ? userDocs[this.id]
+                        : parentUserIds.includes(this.id)
+                            ? { parentTeamIds: [teamId] }
+                            : teamDoc.ownerId === this.id || (authEmail && adminEmails.includes(authEmail))
+                                ? {}
+                                : undefined;
+                    const data = configuredUser && parentUserIds.includes(this.id)
+                        && !Array.isArray(configuredUser.parentTeamIds)
+                        ? { ...configuredUser, parentTeamIds: [teamId] }
+                        : configuredUser;
                     return makeDocSnapshot({
                         id: this.id,
                         ref: this,
@@ -345,7 +381,16 @@ function buildNotificationTestEnv({
                 const playerMatch = path.match(/^teams\/([^/]+)\/players\/([^/]+)$/);
                 if (playerMatch) {
                     const playerId = playerMatch[2];
-                    const data = playerDocs[playerId];
+                    const hasExplicitPlayer = Object.prototype.hasOwnProperty.call(playerDocs, playerId);
+                    const linkedPlayerKey = `${playerMatch[1]}::${playerId}`;
+                    const hasLinkedParent = Object.values(userDocs).some((user) => (
+                        Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(linkedPlayerKey)
+                    ));
+                    const data = hasExplicitPlayer
+                        ? playerDocs[playerId]
+                        : hasLinkedParent
+                            ? { active: true }
+                            : undefined;
                     return makeDocSnapshot({
                         id: playerId,
                         ref: this,
@@ -796,15 +841,21 @@ function buildNotificationTestEnv({
                 })));
         },
         async getAll(...refs) {
+            getAllCalls.push(refs.map((ref) => ref.path));
             return Promise.all(refs.map((ref) => ref.get()));
         },
         async runTransaction(handler) {
             counts.dedupTransactions += 1;
-            return handler({
+            const transactionError = pendingTransactionErrors.shift();
+            if (transactionError) throw transactionError;
+            const result = await handler({
                 get: (ref) => ref.get(),
                 set: (ref, value) => ref.set(value),
                 update: (ref, value) => ref.update(value)
             });
+            const postCommitError = pendingTransactionPostCommitErrors.shift();
+            if (postCommitError) throw postCommitError;
+            return result;
         },
         batch() {
             return {
@@ -829,7 +880,9 @@ function buildNotificationTestEnv({
             delete: () => ({ __delete: true })
         },
         Timestamp: {
-            now: () => makeTimestamp(nowMillis),
+            now: () => makeTimestamp(
+                typeof nowMillisProvider === 'function' ? nowMillisProvider() : nowMillis
+            ),
             fromDate: (date) => makeTimestamp(new Date(date).getTime()),
             fromMillis: (millis) => makeTimestamp(millis)
         }
@@ -841,9 +894,59 @@ function buildNotificationTestEnv({
         firestore: firestoreFactory,
         auth: () => ({
             verifyIdToken: async () => null,
+            getUser: async (uid) => {
+                const configured = authUsersByUid[uid];
+                if (configured instanceof Error) throw configured;
+                if (configured) return { uid, ...configured };
+                if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
+                    return { uid, email: userDocs[uid]?.email || null, disabled: false };
+                }
+                const matchedEmail = Object.entries(authUsersByEmail)
+                    .find(([, mappedUid]) => mappedUid === uid)?.[0];
+                if (matchedEmail) return { uid, email: matchedEmail, disabled: false };
+                const error = new Error(`Missing auth user: ${uid}`);
+                error.code = 'auth/user-not-found';
+                throw error;
+            },
             getUserByEmail: async (email) => {
                 const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
-                return uid ? { uid } : { uid: '' };
+                const configured = uid ? authUsersByUid[uid] : null;
+                return uid
+                    ? { uid, ...(configured && !(configured instanceof Error) ? configured : {}) }
+                    : { uid: '' };
+            },
+            getUsers: async (identifiers) => {
+                counts.authGetUsersCalls += 1;
+                if (typeof onAuthGetUsersCall === 'function') {
+                    await onAuthGetUsersCall({
+                        callCount: counts.authGetUsersCalls,
+                        identifiers,
+                        authUsersByUid,
+                        teamDoc
+                    });
+                }
+                const getUsersError = pendingAuthGetUsersErrors.shift();
+                if (getUsersError) throw getUsersError;
+                const users = [];
+                for (const identifier of identifiers || []) {
+                    const uid = identifier?.uid
+                        || authUsersByEmail[String(identifier?.email || '').trim().toLowerCase()];
+                    if (!uid) continue;
+                    const configured = authUsersByUid[uid];
+                    if (configured instanceof Error) throw configured;
+                    if (configured) {
+                        users.push({ uid, ...configured });
+                        continue;
+                    }
+                    const matchedEmail = Object.entries(authUsersByEmail)
+                        .find(([, mappedUid]) => mappedUid === uid)?.[0];
+                    if (Object.prototype.hasOwnProperty.call(userDocs, uid)) {
+                        users.push({ uid, email: userDocs[uid]?.email || matchedEmail || null, disabled: false });
+                        continue;
+                    }
+                    users.push({ uid, email: matchedEmail || null, disabled: false });
+                }
+                return { users, notFound: [] };
             }
         }),
         messaging: () => ({
@@ -884,6 +987,10 @@ function buildNotificationTestEnv({
         }
     };
 
+    const resendStub = {
+        Resend: class ResendStub {}
+    };
+
     return {
         counts,
         dedupWrites,
@@ -894,6 +1001,7 @@ function buildNotificationTestEnv({
         updatedDocs,
         messagingCalls,
         feeRecipientDocGetPaths,
+        getAllCalls,
         get activeNotificationInboxPipelines() {
             return activeNotificationInboxPipelines;
         },
@@ -909,6 +1017,7 @@ function buildNotificationTestEnv({
         adminStub,
         firestoreState,
         functionsStub: makeFunctionsStub(),
+        resendStub,
         stripeStub
     };
 }
@@ -925,6 +1034,9 @@ function loadNotificationInternals(options = {}) {
         }
         if (request === 'stripe') {
             return env.stripeStub;
+        }
+        if (request === 'resend') {
+            return env.resendStub;
         }
         return originalModuleLoad(request, parent, isMain);
     };

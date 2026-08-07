@@ -37,6 +37,7 @@ import {
   blockFriend,
   commentOnSocialPost,
   createSocialPost,
+  discardSocialPostMediaUpload,
   hideSocialPost,
   loadSocialHome,
   removeFriend,
@@ -46,7 +47,8 @@ import {
   sendFriendRequest,
   reactToSocialPost,
   uploadSocialPostMedia,
-  type CreateSocialPostInput
+  type CreateSocialPostInput,
+  type SocialMediaUpload
 } from '../lib/socialService';
 import {
   getEventDetailPath,
@@ -135,6 +137,7 @@ const emptyHome = (): ParentHomeModel => ({
   players: [],
   teams: [],
   upcomingEvents: [],
+  feedGames: [],
   actionItems: [],
   fees: [],
   metrics: {
@@ -184,6 +187,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [previewHomeUserId, setPreviewHomeUserId] = useState<string | null>(null);
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
+  const [failedHomeDetailsUserId, setFailedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
@@ -233,6 +237,7 @@ export function Home({ auth }: { auth: AuthState }) {
             });
             setHome(secondaryHome);
             setLoadedHomeDetailsUserId(user.uid);
+            setFailedHomeDetailsUserId(null);
             setHomeLoadError(null);
             const socialHome = await loadSocialHome(user, secondaryHome);
             setSocial(socialHome);
@@ -261,9 +266,13 @@ export function Home({ auth }: { auth: AuthState }) {
                 feeCount: summary.home.fees.length,
                 error: appError.message
               });
+              setFailedHomeDetailsUserId(user.uid);
               if (!hasExistingHome) {
                 setHomeLoadError(appError);
-                setLoadedHomeDetailsUserId(null);
+                // The summary bootstrap is still useful even when a secondary
+                // permission or network request fails. Mark the attempt settled
+                // so Home does not present an infinite loading state.
+                setLoadedHomeDetailsUserId(user.uid);
                 setSocial(emptySocialHome());
                 setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
                 return;
@@ -373,6 +382,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
+  const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
   const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
 
   useViewLoadTimer({
@@ -471,6 +481,7 @@ export function Home({ auth }: { auth: AuthState }) {
       void refreshSocial(home, { preserveStatus: true });
     } catch (postError: any) {
       setSocialStatus({ tone: 'error', message: postError?.message || 'Unable to create post.' });
+      throw postError;
     }
   };
 
@@ -486,8 +497,8 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsRefreshFailed ? 'bg-rose-50 text-rose-700' : homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                {homeDetailsRefreshFailed ? 'Needs refresh' : homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Caught up'}
               </span>
             </div>
             <h1 className="mt-0.5 text-xl font-black leading-tight text-gray-950">Your day</h1>
@@ -1956,12 +1967,16 @@ function SocialComposerModal({
   onSubmit: (input: CreateSocialPostInput) => Promise<void> | void;
 }) {
   const initialPreset = getSocialPostPresetForType(initialType);
+  const initialTeamId = initialPreset.prefersPlayer
+    ? home.players[0]?.teamId || home.teams[0]?.teamId || ''
+    : home.teams[0]?.teamId || '';
   const [presetId, setPresetId] = useState(initialPreset.id);
   const activePreset = socialPostPresets.find((preset) => preset.id === presetId) || initialPreset;
   const type = activePreset.type;
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
-  const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
+  const [teamId, setTeamId] = useState(initialTeamId);
   const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
+  const [gameKey, setGameKey] = useState(() => getComposerGameKey(getComposerGamesForType(home.feedGames || [], initialTeamId, initialPreset.type)[0] || null));
   const [playerTaggingEnabled, setPlayerTaggingEnabled] = useState(initialPreset.prefersPlayer);
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
@@ -1971,21 +1986,27 @@ function SocialComposerModal({
   const [localError, setLocalError] = useState('');
 
   const supportsOptionalPlayerTagging = type === 'game_recap' || type === 'team_media' || type === 'practice_packet';
+  const supportsGameSelection = type === 'game_recap' || type === 'upcoming_game';
   const playerSelectionEnabled = activePreset.prefersPlayer || playerTaggingEnabled;
-  const fallbackPlayer = home.players.find((player) => player.teamId === teamId) || home.players[0] || null;
+  const selectedTeam = home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
+  const teamPlayers = home.players.filter((player) => player.teamId === selectedTeam?.teamId);
+  const fallbackPlayer = teamPlayers[0] || null;
   const selectedPlayer = playerSelectionEnabled
-    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
+    ? teamPlayers.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
     : null;
-  const selectedTeam = playerSelectionEnabled && selectedPlayer
-    ? home.teams.find((team) => team.teamId === selectedPlayer.teamId) || home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null
-    : home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
-  const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer);
+  const teamGames = getComposerGamesForType(home.feedGames || [], selectedTeam?.teamId || '', type);
+  const selectedGame = supportsGameSelection
+    ? teamGames.find((event) => getComposerGameKey(event) === gameKey) || teamGames[0] || null
+    : null;
+  const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer, selectedGame);
   const visibleUserIds = visibility === 'friends' || visibility === 'friends_and_team'
     ? social.friends.map((friend) => friend.userId)
     : [];
-  const subjectLabel = playerSelectionEnabled && selectedPlayer
-    ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
-    : selectedTeam?.teamName || 'Choose team';
+  const subjectLabel = selectedGame
+    ? getComposerGameLabel(selectedGame)
+    : playerSelectionEnabled && selectedPlayer
+      ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
+      : selectedTeam?.teamName || 'Choose team';
 
   const selectPreset = (nextPresetId: typeof presetId) => {
     const nextPreset = socialPostPresets.find((preset) => preset.id === nextPresetId);
@@ -2001,37 +2022,69 @@ function SocialComposerModal({
         setTeamId(nextPlayer.teamId);
       }
     }
+    if (nextPreset.type === 'game_recap' || nextPreset.type === 'upcoming_game') {
+      const nextTeamId = home.teams.find((team) => team.teamId === teamId)?.teamId || home.teams[0]?.teamId || '';
+      const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, nextPreset.type)[0] || null;
+      setGameKey(getComposerGameKey(nextGame));
+    }
+  };
+
+  const selectTeam = (nextTeamId: string) => {
+    setTeamId(nextTeamId);
+    const nextPlayer = home.players.find((player) => player.teamId === nextTeamId) || null;
+    setPlayerKey(playerSelectionEnabled && nextPlayer ? `${nextPlayer.teamId}::${nextPlayer.playerId}` : '');
+    const nextGame = getComposerGamesForType(home.feedGames || [], nextTeamId, type)[0] || null;
+    setGameKey(getComposerGameKey(nextGame));
   };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLocalError('');
     setSubmitting(true);
+    let uploadedMedia: SocialMediaUpload | null = null;
     try {
+      if (!selectedTeam) {
+        throw new Error('Choose a team for this post.');
+      }
+      if (activePreset.prefersPlayer && !selectedPlayer) {
+        throw new Error('Choose a player for this post.');
+      }
+      if (supportsGameSelection && !selectedGame) {
+        throw new Error(type === 'game_recap' ? 'Choose a completed game for this recap.' : 'Choose an upcoming game for this post.');
+      }
       if (activePreset.requiresMedia && !mediaFile) {
         throw new Error('Add a photo or video for this share.');
       }
       if (!caption.trim() && !mediaFile) {
         throw new Error('Add a short note or attach a photo/video.');
       }
-      const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
+      uploadedMedia = mediaFile ? await uploadSocialPostMedia(selectedTeam.teamId, mediaFile) : null;
+      const media = uploadedMedia ? [{
+        type: uploadedMedia.type,
+        url: uploadedMedia.url,
+        name: uploadedMedia.name,
+        thumbnailUrl: uploadedMedia.thumbnailUrl
+      }] : [];
       await onSubmit({
         type,
         visibility,
         title: suggestedTitle,
-        detail: getComposerDetail(type, selectedTeam, selectedPlayer),
+        detail: getComposerDetail(type, selectedTeam, selectedPlayer, selectedGame),
         caption: caption.trim(),
         teamId: selectedTeam?.teamId || teamId || null,
         teamName: selectedTeam?.teamName || null,
         playerIds: selectedPlayer ? [selectedPlayer.playerId] : [],
         playerNames: selectedPlayer ? [selectedPlayer.playerName] : [],
-        sourceType: selectedPlayer ? 'player' : selectedTeam ? 'team' : 'manual',
-        sourceId: selectedPlayer?.playerId || selectedTeam?.teamId || null,
-        route: getComposerRoute(type, selectedTeam, selectedPlayer),
+        sourceType: selectedGame ? 'game' : selectedPlayer ? 'player' : selectedTeam ? 'team' : 'manual',
+        sourceId: selectedGame?.id || selectedPlayer?.playerId || selectedTeam?.teamId || null,
+        route: getComposerRoute(type, selectedTeam, selectedPlayer, selectedGame),
         media,
         visibleUserIds
       });
     } catch (error: any) {
+      if (uploadedMedia) {
+        await discardSocialPostMediaUpload(uploadedMedia).catch(() => undefined);
+      }
       setLocalError(error?.message || 'Unable to create post.');
     } finally {
       setSubmitting(false);
@@ -2109,10 +2162,24 @@ function SocialComposerModal({
               </label>
               <label className="block">
                 <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team</span>
-                <select value={selectedTeam?.teamId || teamId} onChange={(event) => setTeamId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
+                <select value={selectedTeam?.teamId || teamId} onChange={(event) => selectTeam(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
                   {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
                 </select>
               </label>
+              {supportsGameSelection ? (
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Game</span>
+                  <select
+                    value={selectedGame ? getComposerGameKey(selectedGame) : ''}
+                    onChange={(event) => setGameKey(event.target.value)}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  >
+                    {teamGames.length
+                      ? teamGames.map((game) => <option key={getComposerGameKey(game)} value={getComposerGameKey(game)}>{getComposerGameLabel(game)}</option>)
+                      : <option value="">No games on this team</option>}
+                  </select>
+                </label>
+              ) : null}
               {supportsOptionalPlayerTagging ? (
                 <div className="block sm:col-span-2">
                   <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Optional</span>
@@ -2148,7 +2215,7 @@ function SocialComposerModal({
                 <label className="block sm:col-span-2">
                   <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
                   <select
-                    value={playerKey}
+                    value={selectedPlayer ? `${selectedPlayer.teamId}::${selectedPlayer.playerId}` : ''}
                     onChange={(event) => {
                       const nextKey = event.target.value;
                       setPlayerKey(nextKey);
@@ -2158,7 +2225,7 @@ function SocialComposerModal({
                     className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
                   >
                     {activePreset.prefersPlayer ? null : <option value="">Choose player</option>}
-                    {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
+                    {teamPlayers.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
                   </select>
                 </label>
               ) : null}
@@ -2233,23 +2300,47 @@ function SocialTypeIcon({ type }: { type: SocialPostType }) {
   return <Newspaper className="h-5 w-5" aria-hidden="true" />;
 }
 
-function getComposerSuggestedTitle(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerGameKey(event: ParentScheduleEvent | null) {
+  return event ? `${event.teamId}::${event.id}::${event.date.toISOString()}` : '';
+}
+
+function getComposerGamesForType(events: ParentScheduleEvent[], teamId: string, type: SocialPostType) {
+  const now = Date.now();
+  return events.filter((event) => {
+    if (event.teamId !== teamId) return false;
+    if (type === 'game_recap') {
+      const status = String(event.status || '').toLowerCase();
+      const liveStatus = String(event.liveStatus || '').toLowerCase();
+      return status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
+    }
+    if (type === 'upcoming_game') return event.date.getTime() >= now;
+    return true;
+  });
+}
+
+function getComposerGameLabel(event: ParentScheduleEvent) {
+  return `${formatEventDateLabel(event.date)} · ${getScheduleTitle(event)}`;
+}
+
+function getComposerSuggestedTitle(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
   if (type === 'player_moment') return player ? `${player.playerName} moment` : 'Player moment';
   if (type === 'achievement') return player ? `${player.playerName} achievement` : 'Player achievement';
-  if (type === 'game_recap') return team ? `${team.teamName} game recap` : 'Game recap';
+  if (type === 'game_recap') return game ? `${game.teamName} ${getScheduleTitle(game)} recap` : team ? `${team.teamName} game recap` : 'Game recap';
   if (type === 'team_media') return team ? `${team.teamName} team photo` : 'Team photo';
   if (type === 'practice_packet') return team ? `${team.teamName} practice packet` : 'Practice packet';
   if (type === 'upcoming_game') return team ? `${team.teamName} upcoming game` : 'Upcoming game';
   return team ? `${team.teamName} update` : 'ALL PLAYS update';
 }
 
-function getComposerDetail(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerDetail(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
   const subject = player?.playerName || team?.teamName || 'ALL PLAYS';
   const teamName = team?.teamName ? ` · ${team.teamName}` : '';
-  return `${getSocialTypeLabel(type)} · ${subject}${player ? teamName : ''}`;
+  const gameDetail = game ? ` · ${getComposerGameLabel(game)}` : '';
+  return `${getSocialTypeLabel(type)} · ${subject}${player ? teamName : ''}${gameDetail}`;
 }
 
-function getComposerRoute(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null) {
+function getComposerRoute(type: SocialPostType, team: ParentHomeTeam | null, player: ParentHomePlayer | null, game: ParentScheduleEvent | null) {
+  if (game) return getEventDetailPath({ ...game, childId: player?.playerId || game.childId });
   if (player) return getPlayerDetailPath(player.teamId, player.playerId);
   if (team && (type === 'team_media' || type === 'manual_post' || type === 'upcoming_game')) return getTeamHomePath(team.teamId);
   if (team && (type === 'game_recap' || type === 'practice_packet')) return `/schedule?teamId=${encodeURIComponent(team.teamId)}`;

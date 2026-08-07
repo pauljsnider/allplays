@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getComposeRecipientFromSearch, getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, getOpportunityInquiryIdFromSearch, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
+import { getComposeRecipientFromSearch, getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, getOpportunityInquiryIdFromSearch, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
+import { isSelectedConversation, mergeVisibleChatMessages, normalizeConversationId } from './messages/components/ChatWindow';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function resolveAppSourcePath(relativePath: string) {
@@ -227,12 +228,25 @@ describe('direct thread mount telemetry', () => {
     expect(source).not.toContain('mergeInboxPreview');
   });
 
+  it('keeps the team thread behind a dynamic import boundary', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
+
+    expect(source).toContain("await import('./messages/components/ChatWindow')");
+    expect(source).toContain('<Suspense fallback={<MessagesPageSkeleton');
+    expect(source).not.toMatch(/import\s+\{[^}]*ChatWindow[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
+    expect(source).not.toMatch(/export\s+\{[^}]*\}\s+from\s+['"]\.\/messages\/components\/ChatWindow['"]/s);
+  });
+
   it('keeps Team Email composer dispatches on the shared action creators', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/TeamEmailSheet.tsx'), 'utf8');
 
     expect(source).toContain("import { emailComposerActions, emailReducer, initialEmailComposerState } from '../state/emailReducer';");
-    expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));");
-    expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));");
+    expect(source).toContain("const page = await loadTeamEmailTemplates(teamId, { cursor: append ? templateNextCursor : null });");
+    expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(");
+    expect(source).toContain("append ? mergeTeamEmailSavedItems(emailState.templates, page.items) : page.items");
+    expect(source).toContain("const page = await loadTeamEmailDrafts(teamId, { cursor: append ? draftNextCursor : null });");
+    expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(");
+    expect(source).toContain("append ? mergeTeamEmailSavedItems(emailState.drafts, page.items) : page.items");
     expect(source).toContain("emailDispatch(emailComposerActions.clearSelectedDraft());");
     expect(source).toContain("emailDispatch(emailComposerActions.selectDraft(draft.id));");
     expect(source).toContain("emailDispatch(emailComposerActions.applyTemplate(template.id));");

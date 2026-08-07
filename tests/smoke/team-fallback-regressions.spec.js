@@ -195,6 +195,9 @@ export async function getPlayers() {
 export async function getPlayersWithPrivateRosterContacts() {
     return getPlayers();
 }
+export async function getPlayerPrivateProfile() {
+    return {};
+}
 export async function addPlayer() {}
 export async function applyRosterCsvImportOperations(_teamId, operations) {
     return operations.map((operation, index) => ({ ...operation, playerId: operation.playerId || 'player-' + (index + 1) }));
@@ -205,8 +208,9 @@ export async function getGames() {
     return [];
 }
 export async function uploadPlayerPhoto() {
-    return '';
+    return { url: '', path: '' };
 }
+export async function deleteLegacyImageUpload() {}
 export async function updatePlayer() {}
 export async function setPlayerPrivateRosterProfileFields() {}
 export async function inviteParent() {
@@ -294,11 +298,11 @@ export async function postChatMessage() {}
 export async function editChatMessage() {}
 export async function deleteChatMessage() {}
 export async function getTeamEmailDrafts() {
-    return [];
+    return { items: [], nextCursor: null };
 }
 export async function saveTeamEmailDraft() {}
 export async function getTeamEmailTemplates() {
-    return [];
+    return { items: [], nextCursor: null };
 }
 export async function saveTeamEmailTemplate() {}
 export async function deleteTeamEmailTemplate() {}
@@ -721,6 +725,7 @@ export async function updateGame(_teamId, _gameId, updates) {
 export async function uploadGameClip() {
     return { url: '' };
 }
+export async function deleteUploadedMediaObjects() {}
 `;
 
 const LIVE_GAME_STREAM_UTILS_STUB = `
@@ -1016,13 +1021,13 @@ test('edit roster renders players when optional registration and parent reads ar
 
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
+    expect(pageErrors).toEqual([]);
     await expect(page.locator('#team-name-display')).toHaveText('Roster Test Team');
     await expect(page.locator('#roster-list')).toContainText('Avery Carter');
     await expect(page.locator('#roster-list')).toContainText('Jordan Reed');
     await expect(page.locator('#export-registration-csv-btn')).toBeVisible();
     await expect(page.locator('#export-registration-csv-btn')).toBeDisabled();
     await expect(page.locator('#registration-review-list')).toContainText('No registration forms configured for this team.');
-    expect(pageErrors).toEqual([]);
 });
 
 test('team chat falls back to the team-wide channel when conversation listing is denied', async ({ page, baseURL }) => {
@@ -1070,7 +1075,17 @@ test('team chat scopes subscription, last-read, send, and reaction operations to
         text: 'Staff follow-up'
     });
 
-    await page.locator('#messages-container button').filter({ hasText: '👍' }).click();
+    const staffMessage = page.locator('[data-message-id="staff-message"]');
+    await expect(staffMessage.getByRole('button')).toHaveCount(2);
+    await expect.poll(() => staffMessage.locator('[data-message-actions-footer="true"]').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(28);
+    await staffMessage.getByRole('button', { name: /Open message actions for/i }).click();
+    await expect(staffMessage.getByRole('group', { name: /Message actions for/i })).toBeVisible();
+    await expect.poll(() => staffMessage.getByRole('group', { name: /Message actions for/i }).evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const containerBounds = document.getElementById('messages-container').getBoundingClientRect();
+        return bounds.left >= containerBounds.left && bounds.right <= containerBounds.right;
+    })).toBe(true);
+    await staffMessage.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.reactions.at(-1))).toEqual({
         teamId: 'team-1',
         messageId: 'staff-message',

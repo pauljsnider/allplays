@@ -65,6 +65,9 @@ const friendMessageMocks = vi.hoisted(() => ({
   canMessageAcceptedFriend: vi.fn(),
   sendAuthorizedDirectMessage: vi.fn()
 }));
+const nativeStorageMocks = vi.hoisted(() => ({
+  deleteNativePrimaryStorageFile: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -96,6 +99,7 @@ vi.mock('./uxTiming', () => ({
 }));
 
 vi.mock('./friendMessageService', () => friendMessageMocks);
+vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -151,6 +155,7 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   nativeRuntime.isNativePlatform = false;
+  nativeStorageMocks.deleteNativePrimaryStorageFile.mockResolvedValue(undefined);
   authServiceMocks.getNativeAuthIdToken.mockResolvedValue('main-user-id-token');
   authServiceMocks.getNativeAuthUserId.mockReturnValue('user-1');
   uxTimingMocks.startInteractionTimer.mockReturnValue({
@@ -166,6 +171,7 @@ beforeEach(() => {
   }));
   friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
   friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
+  vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
 });
 
 afterEach(() => {
@@ -408,6 +414,22 @@ describe('chat Firestore mappers', () => {
 });
 
 describe('sendTeamChatMessage attachment uploads', () => {
+  it('uses authenticated native Storage cleanup instead of the signed-out web SDK', async () => {
+    nativeRuntime.isNativePlatform = true;
+    const { deleteTeamChatAttachments } = await import('./chatService');
+
+    await deleteTeamChatAttachments([{
+      ...createUploadedAttachment(new File(['photo'], 'photo.jpg', { type: 'image/jpeg' })),
+      type: 'image' as const,
+      path: 'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    }]);
+
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      'stat-sheets/team-chat/team-1/team/user-1/photo.jpg'
+    );
+    expect(legacyChatServiceMocks.deleteUploadedChatAttachments).not.toHaveBeenCalled();
+  });
+
   it('rechecks friend access at send time and stores server-verifiable direct metadata', async () => {
     legacyChatServiceMocks.upsertChatConversation.mockImplementation(async (_teamId, conversation) => ({
       id: 'direct_user-1__user%3Afriend-1',
@@ -579,7 +601,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
       ok: true,
       status: 200,
       json: vi.fn().mockResolvedValue({
-        name: 'stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg',
+        name: 'stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg',
         downloadTokens: 'download-token'
       })
     });
@@ -593,13 +615,13 @@ describe('sendTeamChatMessage attachment uploads', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, request] = fetchMock.mock.calls[0];
     expect(url).toContain('/v0/b/primary-allplays-bucket/o?uploadType=media');
-    expect(decodeURIComponent(url)).toContain('name=stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(decodeURIComponent(url)).toContain('name=stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg');
     expect(request).toEqual(expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer main-user-id-token' }),
       body: photo
     }));
-    expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_arrival_photo.jpg');
+    expect(attachment.path).toBe('stat-sheets/team-chat/team-1/group_user%3Acoach-1/user-1/1700000000000_11111111111111111111111111111111_arrival_photo.jpg');
     expect(fetchMock.mock.calls.flatMap((call) => call.map(String)).join(' ')).not.toContain('identitytoolkit.googleapis.com');
   });
 
@@ -611,7 +633,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
       ok: true,
       status: 200,
       json: vi.fn().mockResolvedValue({
-        name: 'stat-sheets/team-chat/team-1/team/rest-session-user/1700000000000_photo.jpg',
+        name: 'stat-sheets/team-chat/team-1/team/rest-session-user/1700000000000_11111111111111111111111111111111_photo.jpg',
         downloadTokens: 'download-token'
       })
     });
@@ -646,6 +668,9 @@ describe('sendTeamChatMessage attachment uploads', () => {
     await vi.advanceTimersByTimeAsync(25000);
     await rejection;
     expect(uploadSignal?.aborted).toBe(true);
+    expect(nativeStorageMocks.deleteNativePrimaryStorageFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^stat-sheets\/team-chat\/team-1\/team\/user-1\/\d+_11111111111111111111111111111111_photo\.jpg$/)
+    );
   });
 
   it('starts multiple uploads before the first resolves and posts attachments in the original order', async () => {

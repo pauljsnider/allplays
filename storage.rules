@@ -23,14 +23,18 @@ service firebase.storage {
 
     function isTeamOwnerOrAdmin(teamId) {
       let team = firestore.get(/databases/(default)/documents/teams/$(teamId)).data;
+      let ownerEmail = team.get('ownerEmail', '');
+      let ownerEmailLower = team.get('ownerEmailLower', '');
       return isSignedIn() &&
         (team.ownerId == request.auth.uid ||
          (request.auth.token.email != null &&
-          team.get('ownerEmail', '') is string &&
-          team.get('ownerEmail', '').lower() == request.auth.token.email.lower()) ||
-         (request.auth.token.email != null &&
-          team.get('ownerEmailLower', '') is string &&
-          team.get('ownerEmailLower', '') == request.auth.token.email.lower()) ||
+          team.get('ownerId', '') == '' &&
+          ownerEmail is string &&
+          ownerEmailLower is string &&
+          (ownerEmail != '' || ownerEmailLower != '') &&
+          (ownerEmail == '' || ownerEmailLower == '' || ownerEmail.lower() == ownerEmailLower.lower()) &&
+          (ownerEmail.lower() == request.auth.token.email.lower() ||
+           ownerEmailLower.lower() == request.auth.token.email.lower())) ||
          (request.auth.token.email != null &&
           request.auth.token.email.lower() in team.get('adminEmails', [])) ||
          isGlobalAdmin());
@@ -58,6 +62,16 @@ service firebase.storage {
 
     function canAccessTeamMedia(teamId) {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+    }
+
+    function isParentForPlayer(teamId, playerId) {
+      let userPath = /databases/(default)/documents/users/$(request.auth.uid);
+      let playerPath = /databases/(default)/documents/teams/$(teamId)/players/$(playerId);
+      return isSignedIn() &&
+        firestore.exists(userPath) &&
+        ((teamId + '::' + playerId) in firestore.get(userPath).data.get('parentPlayerKeys', []) ||
+         (firestore.exists(playerPath) &&
+          request.auth.uid in firestore.get(playerPath).data.get('parentIds', [])));
     }
 
     function chatConversationPath(teamId, conversationId) {
@@ -152,11 +166,23 @@ service firebase.storage {
         contentType.matches('video/.*');
     }
 
+    function isAllowedProfilePhotoUpload(contentType, size) {
+      return size > 0 &&
+        size <= 10 * 1024 * 1024 &&
+        contentType.matches('image/.*');
+    }
+
     function isAllowedChatAttachmentUpload(contentType, size) {
       return size > 0 &&
         size <= 5 * 1024 * 1024 &&
         (contentType.matches('image/.*') ||
          contentType.matches('video/.*'));
+    }
+
+    function isAllowedCertificateImageUpload(contentType, size) {
+      return size > 0 &&
+        size <= 5 * 1024 * 1024 &&
+        contentType in ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
     }
 
     function athleteProfileMatchesPathOwner(userId, profileId) {
@@ -195,6 +221,37 @@ service firebase.storage {
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
+    match /certificate-assets/teams/{teamId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
+    match /certificate-signatures/users/{userId}/{fileName} {
+      // Legacy user-scoped signatures remain readable/deletable by their uploader.
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        request.auth.uid == userId &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /certificate-signatures/teams/{teamId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedCertificateImageUpload(request.resource.contentType, request.resource.size);
       allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
       allow update: if false;
     }
@@ -298,6 +355,40 @@ service firebase.storage {
       allow delete: if isVerifiedForSensitiveWrite() &&
         request.auth.uid == userId &&
         athleteProfileMatchesPathOwner(userId, profileId);
+      allow update: if false;
+    }
+
+    match /profile-photos/users/{userId}/{fileName} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    // Player and team photos use resource-scoped object names because Firebase
+    // download URLs expose the encoded Storage path. Authorization comes from
+    // the team/player relationship, never an uploader UID embedded in the URL.
+    match /profile-photos/teams/{teamId}/players/{playerId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId)) &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isSignedIn() &&
+        (isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId));
+      allow update: if false;
+    }
+
+    match /profile-photos/teams/{teamId}/team/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if isVerifiedForSensitiveWrite() &&
+        isTeamOwnerOrAdmin(teamId) &&
+        isAllowedProfilePhotoUpload(request.resource.contentType, request.resource.size);
+      allow delete: if isVerifiedForSensitiveWrite() && isTeamOwnerOrAdmin(teamId);
       allow update: if false;
     }
   }

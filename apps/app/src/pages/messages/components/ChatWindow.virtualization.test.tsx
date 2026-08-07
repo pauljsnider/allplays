@@ -681,6 +681,28 @@ describe('ChatWindow virtualization', () => {
     expect(bubbleCount).toBeLessThan(liveMessages.length);
   });
 
+  it('keeps reactions and message management behind one compact action trigger', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const firstBubble = container.querySelector('.message-bubble') as HTMLElement;
+    expect(firstBubble).toBeTruthy();
+    expect(within(firstBubble).queryByRole('button', { name: 'Add reaction' })).not.toBeInTheDocument();
+    expect(within(firstBubble).getAllByRole('button')).toHaveLength(1);
+
+    fireEvent.click(within(firstBubble).getByRole('button', { name: /Open message actions for/i }));
+
+    expect(within(firstBubble).getByRole('group', { name: /Message actions for/i })).toBeVisible();
+    expect(within(firstBubble).getByRole('button', { name: 'Like' })).toBeVisible();
+    expect(within(firstBubble).getByRole('button', { name: 'Delete' })).toBeVisible();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(within(firstBubble).queryByRole('group', { name: /Message actions for/i })).not.toBeInTheDocument();
+  });
+
   it('clears pending older-history layout state when switching teams on the default conversation', async () => {
     let releaseOlderLoad = () => {};
     olderLoadGate = {
