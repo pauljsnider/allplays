@@ -703,6 +703,7 @@ function TodaySection({
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
   const remainingActionCount = Math.max(0, home.actionItems.length - (topAction ? 1 : 0));
   const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
+  const multiRsvpTo = home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null;
 
   if (isFirstRunParent) {
     if (!hasLoadedHomeDetails || officialsAccess === null) {
@@ -716,13 +717,22 @@ function TodaySection({
 
   return (
     <div className="home-section-content space-y-3">
+      {multiRsvpTo ? (
+        <section className="flex items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50 px-3 py-2" aria-label="Availability summary actions">
+          <div>
+            <div className="app-label text-primary-700">Availability summary</div>
+            <p className="mt-0.5 text-xs font-semibold text-primary-800">{home.metrics.rsvpNeeded} responses due</p>
+          </div>
+          <MultiRsvpLink to={multiRsvpTo} />
+        </section>
+      ) : null}
+
       <TodayPriorityCard
         action={topAction}
         nextEvent={nextEvent}
         loading={!hasLoadedHomeDetails}
         remainingActions={remainingActions}
         remainingActionCount={remainingActionCount}
-        multiRsvpTo={home.metrics.rsvpNeeded > 1 ? '/schedule?bulkRsvp=1' : null}
       />
 
       <section className="home-signal-grid grid gap-2 sm:grid-cols-3">
@@ -819,13 +829,12 @@ function HomeDetailsLoadingState({ message }: { message: string }) {
   );
 }
 
-function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remainingActionCount, multiRsvpTo }: {
+function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remainingActionCount }: {
   action: ParentHomeAction | null;
   nextEvent: ParentScheduleEvent | null;
   loading: boolean;
   remainingActions: ParentHomeAction[];
   remainingActionCount: number;
-  multiRsvpTo: string | null;
 }) {
   if (!action) {
     if (loading) {
@@ -879,10 +888,7 @@ function TodayPriorityCard({ action, nextEvent, loading, remainingActions, remai
         <div className="border-t border-gray-100 px-4 pb-3 pt-2">
           <div className="flex items-center justify-between gap-3">
             <div className="app-label">Also to do</div>
-            <div className="flex items-center gap-2">
-              {multiRsvpTo ? <MultiRsvpLink to={multiRsvpTo} /> : null}
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
-            </div>
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-black text-gray-600">{remainingActionCount}</span>
           </div>
           <div className="mt-2 space-y-2">
             {remainingActions.slice(0, 3).map((item) => (
