@@ -4,7 +4,7 @@ import {
     getToken,
     initializeAppCheck
 } from './vendor/firebase-app-check.js';
-import { resolveAppCheckRuntimeConfig } from './firebase-runtime-config.js?v=16';
+import { resolveAppCheckRuntimeConfig } from './firebase-runtime-config.js?v=17';
 import { registerPrimaryAppCheckContext } from './firebase-app-check-rest.js?v=1';
 
 export {
