@@ -8,7 +8,8 @@ const badgeMocks = vi.hoisted(() => ({
 }));
 
 const capacitorCoreMock = vi.hoisted(() => ({
-    isNativePlatform: vi.fn(() => true)
+    isNativePlatform: vi.fn(() => true),
+    getPlatform: vi.fn(() => 'ios')
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -51,6 +52,7 @@ describe('updateAppIconBadge', () => {
         vi.clearAllMocks();
         // Default: native platform.
         capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+        capacitorCoreMock.getPlatform.mockReturnValue('ios');
         // Ensure protocol appears non-capacitor so only isNativePlatform governs.
         Object.defineProperty(window, 'location', {
             value: { protocol: 'https:' },
@@ -79,6 +81,7 @@ describe('updateAppIconBadge', () => {
 
     it('is a no-op on non-native (web) platforms', async () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('web');
 
         await updateAppIconBadge(3);
 
@@ -88,6 +91,7 @@ describe('updateAppIconBadge', () => {
 
     it('treats a capacitor:// protocol as a native runtime even if isNativePlatform is false', async () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('ios');
         Object.defineProperty(window, 'location', {
             value: { protocol: 'capacitor:' },
             writable: true,
