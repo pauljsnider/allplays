@@ -93,7 +93,8 @@
                 "tests/unit/app-help-portal.test.jsx",
                 "tests/unit/changelog-page.test.js",
                 "tests/unit/edit-config-access.test.js",
-                "tests/unit/help-page-reference-integrity.test.js"
+                "tests/unit/help-page-reference-integrity.test.js",
+                "tests/unit/marketing-pages.test.js"
             ],
             "integrationTests": [
                 "tests/unit/edit-config-schema-workflow.test.js"
