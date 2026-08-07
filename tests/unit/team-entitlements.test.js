@@ -35,6 +35,10 @@ describe('team entitlement helpers', () => {
 
         expect(isTeamEntitlementActive(active, { seasonId: '2026', now: '2026-05-05T00:00:00Z' })).toBe(true);
         expect(canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, { active: true })).toBe(true);
+        expect(canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, {
+            active: false,
+            access: { state: 'unlocked', reason: 'global-open' }
+        })).toBe(true);
         expect(isTeamEntitlementActive({ ...active, seasonId: '2025' }, { seasonId: '2026' })).toBe(false);
         expect(isTeamEntitlementActive({ ...active, status: 'cancelled' }, { seasonId: '2026' })).toBe(false);
         expect(isTeamEntitlementActive(active, { seasonId: '2026', now: '2027-01-01T00:00:00Z' })).toBe(false);
@@ -58,6 +62,7 @@ describe('team entitlement helpers', () => {
         expect(liveGame).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(liveGame).toContain('getTeamEntitlementStatus');
         expect(liveGame).toContain("TEAM_PASS_FEATURES.RECORDED_REPLAY");
+        expect(liveGame).toContain("state.videoPlayback?.mode === 'recorded'");
         expect(html).toContain('id="video-paywall"');
         expect(html).toContain('id="recorded-replay-video"');
         expect(html).toMatch(/id="recorded-replay-video"[\s\S]*?class="hidden /);
