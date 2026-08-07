@@ -6,6 +6,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const testDir = dirname(fileURLToPath(import.meta.url));
 const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '..', relativePath), 'utf8');
 
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'ios')
+}));
+
+vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
+
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
   const transactionGet = vi.fn();
@@ -3591,6 +3598,7 @@ describe('staff RSVP management', () => {
   });
 
   it('attributes native fallback staff RSVP rows through roster parent links', async () => {
+    capacitorCoreMock.getPlatform.mockReturnValue('android');
     Object.defineProperty(window, 'location', {
       value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
       writable: true,

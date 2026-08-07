@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const capacitorCoreMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => false),
+  getPlatform: vi.fn(() => 'web')
+}));
+
+vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
+
 const firebaseAuthSdk = vi.hoisted(() => {
   const resolvedConfig = {
     apiKey: 'api-key',
@@ -56,6 +63,8 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.initializePrimaryAppCheck.mockResolvedValue({ state: 'ready' });
     firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    capacitorCoreMock.getPlatform.mockReturnValue('web');
   });
 
   afterEach(() => {
@@ -64,6 +73,7 @@ describe('firebaseAuthRuntime', () => {
   });
 
   it('uses native auth persistence when Android boots from https://localhost', async () => {
+    capacitorCoreMock.getPlatform.mockReturnValue('android');
     Object.defineProperty(window, 'location', {
       value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
       writable: true,

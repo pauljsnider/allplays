@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const capacitorCoreMock = vi.hoisted(() => ({
-    isNativePlatform: vi.fn(() => false)
+    isNativePlatform: vi.fn(() => false),
+    getPlatform: vi.fn(() => 'web')
 }));
 
 vi.mock('@capacitor/core', () => ({
@@ -16,6 +17,7 @@ describe('isNativeRuntime', () => {
 
     beforeEach(() => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('web');
     });
 
     afterEach(() => {
@@ -29,6 +31,7 @@ describe('isNativeRuntime', () => {
 
     it('returns true when running under the capacitor: protocol even if Capacitor.isNativePlatform() misses it', () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('ios');
         Object.defineProperty(window, 'location', {
             value: { ...originalLocation, protocol: 'capacitor:' },
             writable: true,
@@ -38,8 +41,9 @@ describe('isNativeRuntime', () => {
         expect(isNativeRuntime()).toBe(true);
     });
 
-    it('returns true for Capacitor Android at https://localhost even if the bridge is not ready yet', () => {
+    it('returns true for Capacitor Android at https://localhost when the platform reports Android', () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('android');
         Object.defineProperty(window, 'location', {
             value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
             writable: true,
@@ -47,6 +51,18 @@ describe('isNativeRuntime', () => {
         });
 
         expect(isNativeRuntime()).toBe(true);
+    });
+
+    it('returns false for an ordinary HTTPS localhost browser without a native platform', () => {
+        capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+        capacitorCoreMock.getPlatform.mockReturnValue('web');
+        Object.defineProperty(window, 'location', {
+            value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
+            writable: true,
+            configurable: true
+        });
+
+        expect(isNativeRuntime()).toBe(false);
     });
 
     it('returns false in a regular web browser', () => {

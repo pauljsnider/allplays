@@ -12,7 +12,11 @@ export function isNativeRuntime(): boolean {
   if (typeof window === 'undefined') return false;
 
   const { protocol, hostname } = window.location;
-  return protocol === 'capacitor:'
+  const hasNativeOrigin = protocol === 'capacitor:'
     || protocol === 'ionic:'
     || (protocol === 'https:' && hostname === 'localhost');
+  if (!hasNativeOrigin) return false;
+
+  const platform = Capacitor.getPlatform?.();
+  return platform === 'ios' || platform === 'android';
 }
