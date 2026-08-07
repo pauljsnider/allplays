@@ -655,9 +655,56 @@ service cloud.firestore {
              );
     }
 
-    function keepsScorekeeperGameLifecycleVisible() {
-      return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
-             request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
+    function isDelegatedScorekeeperCompletionTransition() {
+      let existingStatus = resource.data.get('status', 'scheduled');
+      let nextStatus = request.resource.data.get('status', existingStatus);
+      let existingLiveStatus = resource.data.get('liveStatus', 'scheduled');
+      let nextLiveStatus = request.resource.data.get('liveStatus', existingLiveStatus);
+      return (existingStatus in ['scheduled', 'live'] && nextStatus == 'completed') ||
+             (existingLiveStatus in ['scheduled', 'live'] && nextLiveStatus == 'completed');
+    }
+
+    function isDelegatedScorekeeperLifecycleTransitionAllowed() {
+      let existingStatus = resource.data.get('status', 'scheduled');
+      let nextStatus = request.resource.data.get('status', existingStatus);
+      let existingLiveStatus = resource.data.get('liveStatus', 'scheduled');
+      let nextLiveStatus = request.resource.data.get('liveStatus', existingLiveStatus);
+      return (!resource.data.keys().hasAny(['status']) ||
+               request.resource.data.keys().hasAny(['status'])) &&
+             (!resource.data.keys().hasAny(['liveStatus']) ||
+               request.resource.data.keys().hasAny(['liveStatus'])) &&
+             existingStatus in ['scheduled', 'live', 'completed'] &&
+             nextStatus in ['scheduled', 'live', 'completed'] &&
+             existingLiveStatus in ['scheduled', 'live', 'completed'] &&
+             nextLiveStatus in ['scheduled', 'live', 'completed'] &&
+             (nextStatus == existingStatus ||
+              (existingStatus in ['scheduled', 'live'] && nextStatus == 'completed')) &&
+             (nextLiveStatus == existingLiveStatus ||
+              (existingLiveStatus == 'scheduled' && nextLiveStatus == 'live') ||
+              (existingLiveStatus == 'live' && nextLiveStatus == 'scheduled') ||
+              (existingLiveStatus in ['scheduled', 'live'] && nextLiveStatus == 'completed'));
+    }
+
+    function isDelegatedScorekeeperCompletionAttributionValid() {
+      let completionAlreadyRecorded = resource.data.get('status', 'scheduled') == 'completed' ||
+        resource.data.get('liveStatus', 'scheduled') == 'completed';
+      let completionFieldsChanged = request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['completedAt', 'completedBy', 'completedByName']);
+      let completedByNameChanged = request.resource.data.diff(resource.data).affectedKeys()
+        .hasAny(['completedByName']);
+      return isDelegatedScorekeeperCompletionTransition()
+        ? (completionAlreadyRecorded
+            ? !completionFieldsChanged &&
+              request.resource.data.completedBy is string &&
+              request.resource.data.completedBy.size() > 0 &&
+              request.resource.data.completedAt is timestamp
+            : request.resource.data.completedBy == request.auth.uid &&
+              request.resource.data.completedAt == request.time &&
+              (!completedByNameChanged ||
+               (request.resource.data.completedByName is string &&
+                request.resource.data.completedByName.size() > 0 &&
+                request.resource.data.completedByName.size() <= 120)))
+        : !completionFieldsChanged;
     }
 
     function isScoreMetadataAttributionValid() {
@@ -673,7 +720,8 @@ service cloud.firestore {
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
              isScoreMetadataAttributionValid() &&
-             keepsScorekeeperGameLifecycleVisible();
+             isDelegatedScorekeeperLifecycleTransitionAllowed() &&
+             isDelegatedScorekeeperCompletionAttributionValid();
     }
 
     function isVideographyGameUpdate(teamId, gameId) {
