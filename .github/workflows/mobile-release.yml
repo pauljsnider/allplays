@@ -15,6 +15,10 @@ on:
         description: Upload iOS archive to TestFlight
         type: boolean
         default: false
+      sync_android_listing:
+        description: Sync Google Play listing text and graphics
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +28,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  play-listing:
+    if: inputs.sync_android_listing
+    needs: android-release
+    runs-on: ubuntu-latest
+    environment: mobile-release
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - name: Validate Google Play listing
+        run: npm run store:play:validate
+      - name: Sync Google Play listing
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          ANDROID_PACKAGE_NAME: ai.allplays.lite
+        run: npm run store:play:sync
+
   android-release:
     runs-on: ubuntu-latest
     environment: mobile-release
