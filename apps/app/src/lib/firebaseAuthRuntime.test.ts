@@ -119,4 +119,14 @@ describe('firebaseAuthRuntime', () => {
     expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith(existingDefaultApp);
     expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
   });
+
+  it('does not block auth startup while native App Check attestation is pending', async () => {
+    firebaseAuthSdk.initializePrimaryAppCheck.mockReturnValue(new Promise(() => undefined));
+
+    const runtime = await import('./firebaseAuthRuntime');
+
+    expect(firebaseAuthSdk.initializePrimaryAppCheck).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, auth: true });
+  });
 });

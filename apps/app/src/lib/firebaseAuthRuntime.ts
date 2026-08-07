@@ -32,7 +32,13 @@ const firebaseConfig = await resolvePrimaryFirebaseConfig();
 // above is awaiting, and getApp() throws app/no-app when only they exist.
 const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
 const app = existingDefaultApp || initializeApp(firebaseConfig);
-await initializePrimaryAppCheck(app);
+// Native attestation can outlive a cold start while Play Integrity and the
+// Capacitor bridge initialize. App Check is deliberately fail-open during its
+// rollout, so it must not keep the React entry module suspended indefinitely.
+// Start it before auth, then let its own status/telemetry report completion.
+void initializePrimaryAppCheck(app).catch((error) => {
+  logger.warn('App Check initialization did not complete cleanly.', { error });
+});
 
 function initializeFirebaseAuth(appInstance: typeof app) {
   if (!isNativeRuntime()) {
