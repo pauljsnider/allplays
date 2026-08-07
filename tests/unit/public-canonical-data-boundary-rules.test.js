@@ -209,8 +209,26 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
     it('denies delegated scorekeepers destructive game lifecycle updates', async () => {
         const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
         for (const field of ['status', 'liveStatus']) {
-            for (const value of ['deleted', 'cancelled', 'canceled']) {
+            for (const value of ['deleted', 'cancelled', 'canceled', 'archived']) {
                 await assertFails(updateDoc(gameRef, { [field]: value }));
+            }
+        }
+    });
+
+    it('denies delegated score and lifecycle updates when an existing lifecycle value is unsupported', async () => {
+        const gameRef = doc(authedDb('scorekeeper-1'), 'teams/public-team/games/game-1');
+        for (const field of ['status', 'liveStatus']) {
+            const otherField = field === 'status' ? 'liveStatus' : 'status';
+            for (const value of ['deleted', 'cancelled', 'canceled', 'archived']) {
+                await testEnv.withSecurityRulesDisabled(async (context) => {
+                    await updateDoc(doc(context.firestore(), 'teams/public-team/games/game-1'), {
+                        status: field === 'status' ? value : 'scheduled',
+                        liveStatus: field === 'liveStatus' ? value : 'scheduled'
+                    });
+                });
+
+                await assertFails(updateDoc(gameRef, { homeScore: 9 }));
+                await assertFails(updateDoc(gameRef, { [otherField]: 'completed' }));
             }
         }
     });

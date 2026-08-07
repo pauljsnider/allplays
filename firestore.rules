@@ -669,7 +669,11 @@ service cloud.firestore {
       let nextStatus = request.resource.data.get('status', existingStatus);
       let existingLiveStatus = resource.data.get('liveStatus', 'scheduled');
       let nextLiveStatus = request.resource.data.get('liveStatus', existingLiveStatus);
-      return (nextStatus == existingStatus ||
+      return existingStatus in ['scheduled', 'live', 'completed'] &&
+             nextStatus in ['scheduled', 'live', 'completed'] &&
+             existingLiveStatus in ['scheduled', 'live', 'completed'] &&
+             nextLiveStatus in ['scheduled', 'live', 'completed'] &&
+             (nextStatus == existingStatus ||
               (existingStatus in ['scheduled', 'live'] && nextStatus == 'completed')) &&
              (nextLiveStatus == existingLiveStatus ||
               (existingLiveStatus == 'scheduled' && nextLiveStatus == 'live') ||
