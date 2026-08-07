@@ -20,9 +20,9 @@ const successfulHtmlByPath = {
     '/support.html': '<!doctype html><title>Support | ALL PLAYS</title><main><h1>Support</h1></main>',
     '/account-deletion.html': '<!doctype html><title>Delete Account | ALL PLAYS</title><main><h1>Delete account</h1></main>',
     '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>',
-    '/compare.html': '<!doctype html><title>ALL PLAYS — How we compare</title><div id="header-container"></div><footer></footer>',
-    '/about.html': '<!doctype html><title>ALL PLAYS — About &amp; Leadership</title><div id="header-container"></div><footer></footer>',
-    '/app.html': '<!doctype html><title>ALL PLAYS — Get the app</title><div id="header-container"></div><footer></footer>'
+    '/compare.html': '<!doctype html><title>ALL PLAYS — Explore the platform</title><div id="header-container"></div><footer></footer>',
+    '/about.html': '<!doctype html><title>ALL PLAYS — About</title><div id="header-container"></div><footer></footer>',
+    '/app.html': '<!doctype html><title>ALL PLAYS — Use the web app</title><div id="header-container"></div><footer></footer>'
 };
 
 function successfulResponse(path) {

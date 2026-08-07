@@ -1,308 +1,45 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Why we're building ALL PLAYS — the AI-native youth sports platform. Our mission, our values, and the team behind it.">
+  <meta name="description" content="About ALL PLAYS and the principles behind its youth sports platform.">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <link rel="canonical" href="https://allplays.ai/about.html">
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
   <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-3J13LHWFT3');</script>
   <script type="module" src="/js/telemetry.js?v=4"></script>
-  <title>ALL PLAYS — About &amp; Leadership</title>
+  <title>ALL PLAYS — About</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css">
-  <!-- MOCKUP NOTE: static content. LEADERSHIP = REAL PEOPLE ONLY. Founder card is Paul Snider
-       (creator of ALL PLAYS). Bio copy is placeholder — edit with confirmed details. Add more
-       leaders/advisors only when they are real; template cards are marked [ADD ...]. -->
-  <script>
-    tailwind.config = {
-      theme: { extend: { colors: { primary: {
-        50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',
-        500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' } } } }
-    }
-  </script>
-  <style>
-    html { scroll-behavior: smooth; }
-    .card-shadow { box-shadow: 0 1px 2px rgba(17,24,39,.04), 0 12px 32px -12px rgba(17,24,39,.18); }
-    .eyebrow { letter-spacing:.18em; text-transform:uppercase; }
-    @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
-  </style>
+  <script>tailwind.config={theme:{extend:{colors:{primary:{50:'#eef2ff',100:'#e0e7ff',600:'#4f46e5',700:'#4338ca',800:'#3730a3'}}}}}</script>
 </head>
-
 <body class="bg-white text-gray-900 antialiased">
-
   <div id="header-container"></div>
-
-  <!-- ============ HERO ============ -->
-  <section class="relative overflow-hidden bg-gradient-to-br from-primary-50 via-white to-primary-100">
-    <div class="absolute inset-0 opacity-40"><div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(99,102,241,0.12),transparent_50%)]"></div></div>
-    <div class="container relative mx-auto px-4 py-16 text-center md:py-24">
-      <p class="eyebrow mb-4 text-xs font-bold text-primary-600">Our story</p>
-      <h1 class="mx-auto max-w-4xl text-4xl font-extrabold leading-[1.05] tracking-tight text-gray-900 md:text-6xl">
-        We're giving youth sports<br class="hidden md:block">
-        <span class="bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">its time back.</span>
-      </h1>
-      <p class="mx-auto mt-6 max-w-2xl text-lg text-gray-700 md:text-xl">
-        The games matter. The growth matters. The memories matter. The logistics don't. ALL PLAYS exists to make the busywork disappear — so the adults can be present and the kids can just play.
-      </p>
-    </div>
-  </section>
-
-  <!-- ============ MISSION / VISION ============ -->
-  <section class="border-y border-gray-200 bg-white py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <div class="mx-auto grid max-w-5xl gap-8 md:grid-cols-2">
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-8">
-          <p class="eyebrow mb-3 text-xs font-bold text-primary-600">Mission</p>
-          <p class="text-xl font-semibold leading-relaxed text-gray-900">Give every family, coach, and league an AI teammate that runs the operational load of youth sports — so the only thing left to do is show up and be present.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-8">
-          <p class="eyebrow mb-3 text-xs font-bold text-primary-600">Vision</p>
-          <p class="text-xl font-semibold leading-relaxed text-gray-900">A world where a kid's whole season is captured, shared, and celebrated — while the adults around them spend zero hours on logistics.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ THE WHY (founder story) ============ -->
-  <section class="bg-gradient-to-br from-gray-50 to-gray-100 py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <p class="eyebrow mb-3 text-center text-xs font-bold text-primary-600">Why we built it</p>
-      <h2 class="mx-auto max-w-3xl text-center text-3xl font-bold tracking-tight text-gray-900 md:text-4xl">Founded in a minivan, between three huddles</h2>
-
-      <div class="mx-auto mt-12 grid max-w-5xl items-start gap-10 md:grid-cols-[320px_1fr]">
-        <!-- portrait (uses paulsnider.net photo, monogram fallback) -->
-        <div class="md:sticky md:top-24">
-          <div class="overflow-hidden rounded-2xl border border-gray-200 bg-white p-2 card-shadow">
-            <img src="https://paulsnider.net/images/profile.jpg" alt="Paul Snider — founder, dad, and coach"
-                 class="w-full rounded-xl object-cover"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden aspect-[4/5] w-full items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 text-6xl font-extrabold text-white">PS</div>
-          </div>
-          <p class="mt-4 text-center text-base font-bold text-gray-900">Paul Snider</p>
-          <p class="text-center text-sm text-primary-700">Founder · Head Coach · Chief Dad</p>
-        </div>
-
-        <!-- narrative — elaborate, on-brand -->
-        <div class="space-y-5 text-lg leading-relaxed text-gray-700">
-          <p>Meet <span class="font-semibold text-gray-900">Paul Snider</span> — full-time dad of three, Chief Technology Officer by trade, unrepentant AI enthusiast by night, and, when the whistle blows, the coach on the sideline for <em>all three</em> of his kids. For two decades he led engineering teams building platforms trusted to help run hospitals. Then he'd drive home and discover the most broken software in his life was the stuff running his kids' Saturdays.</p>
-          <p>Because the modern youth-sports weekend is a logistics gauntlet worthy of a war room: three kids, a half-dozen teams, game times colliding across town, a group-chat avalanche, a graveyard of forwarded screenshots, and four different apps that each solve <span class="font-semibold text-gray-900">60% of the problem and refuse to speak to one another</span>. He'd shipped systems entrusted with patient care — yet nothing could reliably answer <em>which field, what time, and who's driving.</em></p>
-          <p>So he stopped forwarding screenshots and started building. The conviction was simple, and frankly a little audacious: <span class="font-semibold text-gray-900">the software should do the work, not just store it.</span> The moment AI grew capable enough to understand what a frazzled parent or coach actually <em>wants</em>, ALL PLAYS was born — the first youth-sports platform you don't fill out. You just ask. Talk to it, and it runs the season.</p>
-          <p>Here's the part that makes it more than a company: Paul builds ALL PLAYS <span class="font-semibold text-gray-900">with his family.</span> His kids aren't just the inspiration — they're the focus group, the field-testers, and the first apprentices. Around one real product they're learning how a business actually works, how AI is genuinely built, and that the best answer to something broken is to make something better. It's a family company in the truest sense: the users, the testers, and the whole reason all sit at the same dinner table.</p>
-          <p>And yes — fittingly for an AI-native company — ALL PLAYS is built by an AI development factory, and even this page was written with AI. That's not a gimmick; it's the thesis. It's also a promise the whole family stands behind: <span class="font-semibold text-gray-900">with kids' data, powerful and careful have to be the same thing.</span> Bold enough to reinvent youth sports. Grounded enough to be trusted with it.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ VALUES ============ -->
-  <section class="bg-white py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <div class="mb-14 text-center">
-        <p class="eyebrow mb-3 text-xs font-bold text-primary-600">What we stand for</p>
-        <h2 class="text-3xl font-bold tracking-tight text-gray-900 md:text-4xl">Our values</h2>
-      </div>
-      <div class="mx-auto grid max-w-6xl gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-7">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg></div>
-          <h3 class="text-lg font-bold text-gray-900">Kids first</h3>
-          <p class="mt-2 text-sm text-gray-600">Every decision starts with what's best for the young athlete and their family — not engagement metrics.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-7">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>
-          <h3 class="text-lg font-bold text-gray-900">Privacy isn't optional</h3>
-          <p class="mt-2 text-sm text-gray-600">Youth data is handled with permission-aware access and strict boundaries — powerful and careful, always.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-7">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></div>
-          <h3 class="text-lg font-bold text-gray-900">AI that serves families</h3>
-          <p class="mt-2 text-sm text-gray-600">Technology should remove work, not add it. If it doesn't give someone their evening back, it doesn't ship.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-gray-50 p-7">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg></div>
-          <h3 class="text-lg font-bold text-gray-900">For the whole community</h3>
-          <p class="mt-2 text-sm text-gray-600">From the head coach to the grandparent watching from afar — everyone on the sideline belongs here.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ LEADERSHIP ============ -->
-  <section class="bg-gradient-to-br from-gray-50 to-gray-100 py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <div class="mb-14 text-center">
-        <p class="eyebrow mb-3 text-xs font-bold text-primary-600">Leadership</p>
-        <h2 class="text-3xl font-bold tracking-tight text-gray-900 md:text-4xl">Meet the Snider family</h2>
-        <p class="mx-auto mt-4 max-w-2xl text-gray-600">ALL PLAYS is a family company in the most literal sense — the founders, the operators, and the toughest testers all share a last name and a dinner table.</p>
-      </div>
-
-      <div class="mx-auto grid max-w-5xl gap-6 md:grid-cols-3">
-        <!-- FOUNDER (real) -->
-        <div class="rounded-2xl border border-gray-200 bg-white p-7 text-center card-shadow">
-          <div class="mx-auto mb-4 flex justify-center">
-            <img src="https://paulsnider.net/images/profile.jpg" alt="Paul Snider"
-                 class="h-28 w-28 rounded-full object-cover ring-4 ring-primary-100"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-3xl font-extrabold text-white">PS</div>
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">Paul Snider</h3>
-          <p class="text-sm font-semibold text-primary-700">Founder &amp; CEO · Head Coach · Dad of three</p>
-          <p class="mt-3 text-sm text-gray-600">Full-time dad, CTO, and AI enthusiast with two decades leading engineering and platform teams. He builds ALL PLAYS with his kids — so they learn business, AI, and the joy of making something people love.</p>
-          <div class="mt-4 flex justify-center gap-4 text-gray-400">
-            <a href="https://paulsnider.net" class="hover:text-primary-600" aria-label="Website"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM3.6 9h16.8M3.6 15h16.8M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg></a>
-            <a href="https://www.linkedin.com/in/paulsnider" class="hover:text-primary-600" aria-label="LinkedIn"><svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 110-4.13 2.06 2.06 0 010 4.13zM7.12 20.45H3.55V9h3.57v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg></a>
-            <a href="https://x.com/snidedogger" class="hover:text-primary-600" aria-label="X"><svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24h-6.66l-5.21-6.82-5.97 6.82H1.66l7.73-8.84L1.24 2.25h6.83l4.71 6.23 5.46-6.23zm-1.16 17.52h1.83L7.01 4.13H5.05l12.03 15.64z"/></svg></a>
-            <a href="https://github.com/pauljsnider" class="hover:text-primary-600" aria-label="GitHub"><svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .5A11.5 11.5 0 00.5 12a11.5 11.5 0 007.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.36-3.88-1.36-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.1-.76.41-1.27.74-1.56-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 015.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.82 1.19 3.08 0 4.42-2.69 5.39-5.25 5.68.42.36.8 1.08.8 2.18v3.23c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12 11.5 11.5 0 0012 .5z"/></svg></a>
-          </div>
-        </div>
-
-        <!-- ROBIN (real) -->
-        <div class="rounded-2xl border border-gray-200 bg-white p-7 text-center card-shadow">
-          <div class="mx-auto mb-4 flex justify-center">
-            <img src="img/family-robin.jpg" alt="Robin Snider"
-                 class="h-28 w-28 rounded-full object-cover ring-4 ring-primary-100"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-3xl font-extrabold text-white">RS</div>
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">Robin Snider</h3>
-          <p class="text-sm font-semibold text-primary-700">Co-Founder &amp; COO</p>
-          <p class="mt-3 text-sm text-gray-600">The operator who keeps both a family and a startup running. Robin turns big ideas into real routines and makes sure ALL PLAYS works for actual sports families — because she's raising one.</p>
-        </div>
-
-        <!-- MADISON (real) -->
-        <div class="rounded-2xl border border-gray-200 bg-white p-7 text-center card-shadow">
-          <div class="mx-auto mb-4 flex justify-center">
-            <img src="img/family-madison.jpg" alt="Madison Snider"
-                 class="h-28 w-28 rounded-full object-cover ring-4 ring-primary-100"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-3xl font-extrabold text-white">MD</div>
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">Madison Snider</h3>
-          <p class="text-sm font-semibold text-primary-700">VP, Player Experience</p>
-          <p class="mt-3 text-sm text-gray-600">The team's toughest product critic. If a feature isn't fun and obvious for a real young athlete, Madison sends it back — and she's usually right.</p>
-        </div>
-
-        <!-- WILL (real) -->
-        <div class="rounded-2xl border border-gray-200 bg-white p-7 text-center card-shadow">
-          <div class="mx-auto mb-4 flex justify-center">
-            <img src="img/family-will.jpg" alt="Will Snider"
-                 class="h-28 w-28 rounded-full object-cover ring-4 ring-primary-100"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-3xl font-extrabold text-white">WS</div>
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">Will Snider</h3>
-          <p class="text-sm font-semibold text-primary-700">Director of Game Day</p>
-          <p class="mt-3 text-sm text-gray-600">Chief tester of live tracking and replays. Will breaks things on purpose so no coach ever does by accident — and is learning how software really gets built along the way.</p>
-        </div>
-
-        <!-- MAX (real) -->
-        <div class="rounded-2xl border border-gray-200 bg-white p-7 text-center card-shadow">
-          <div class="mx-auto mb-4 flex justify-center">
-            <img src="img/family-max.jpg" alt="Max Snider"
-                 class="h-28 w-28 rounded-full object-cover ring-4 ring-primary-100"
-                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-            <div class="hidden h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-primary-500 to-primary-700 text-3xl font-extrabold text-white">MX</div>
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">Max Snider</h3>
-          <p class="text-sm font-semibold text-primary-700">Chief Vibes Officer</p>
-          <p class="mt-3 text-sm text-gray-600">Head of fun and first impressions. Max makes sure the app is something a kid actually wants to open — and is learning that building a business can be a blast.</p>
-        </div>
-
-        <!-- JOIN US -->
-        <div class="rounded-2xl border border-primary-200 bg-primary-50/60 p-7 text-center">
-          <div class="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-primary-100 text-primary-600"><svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg></div>
-          <h3 class="text-xl font-bold text-gray-900">We're growing</h3>
-          <p class="text-sm font-semibold text-primary-700">Join the team</p>
-          <p class="mt-3 text-sm text-gray-600">Want to help define the AI-native future of youth sports? We'd love to meet builders who care about kids and craft.</p>
-          <a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Careers" class="mt-4 inline-block rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-primary-700">Get in touch</a>
-        </div>
-      </div>
-      <p class="mx-auto mt-6 max-w-3xl text-center text-xs text-gray-400">Family photos are saved in <span class="font-mono">img/family-*.jpg</span>; Paul's pulls from paulsnider.net. If an image ever fails to load, a monogram initial shows as a fallback.</p>
-    </div>
-  </section>
-
-  <!-- ============ TRUST / YOUTH DATA ============ -->
-  <section class="bg-white py-16">
-    <div class="container mx-auto px-4">
-      <div class="mx-auto flex max-w-4xl flex-col items-center gap-6 rounded-2xl border border-gray-200 bg-gray-50 p-8 text-center md:flex-row md:text-left">
-        <div class="flex h-14 w-14 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-primary-600 to-primary-800 text-white"><svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></div>
-        <div>
-          <h3 class="text-xl font-bold text-gray-900">Trust is the product</h3>
-          <p class="mt-2 text-gray-600">We're asking families to bring AI into their kids' sports lives — a responsibility we don't take lightly. Every AI action is permission-aware and confirmed, private details never cross team boundaries, and they're never exposed to outside assistants.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ CTA ============ -->
-  <section class="relative overflow-hidden bg-gradient-to-br from-primary-600 to-primary-800 py-20 text-white md:py-24">
-    <div class="absolute inset-0 opacity-10"><div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.3),transparent_50%)]"></div></div>
-    <div class="container relative mx-auto px-4 text-center">
-      <h2 class="text-4xl font-extrabold tracking-tight md:text-5xl">Come build the future of the game with us</h2>
-      <p class="mx-auto mt-4 max-w-2xl text-lg text-primary-50">Whether you're a coach, a parent, or a league — start your season the AI-native way.</p>
-      <div class="mt-8 flex flex-col justify-center gap-4 sm:flex-row">
-        <a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request" class="rounded-xl bg-white px-10 py-4 text-lg font-bold text-primary-700 shadow-xl transition hover:bg-gray-50">Request Access</a>
-        <a href="compare.html" class="rounded-xl border-2 border-white/40 bg-white/10 px-10 py-4 text-lg font-bold text-white transition hover:bg-white/20">See how we compare</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ FOOTER ============ -->
-  <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
-    <div class="container mx-auto px-4">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-8 mb-8">
-        <div class="col-span-1 md:col-span-2">
-          <div class="flex items-center space-x-3 mb-4">
-            <div class="w-10 h-10 rounded-lg overflow-hidden border border-gray-700">
-              <img src="img/logo_small.png" alt="ALL PLAYS" class="w-full h-full object-cover">
-            </div>
-            <h3 class="text-xl font-bold text-white">ALL PLAYS</h3>
-          </div>
-          <p class="text-sm max-w-md">The AI-native youth sports platform. Talk to it, and it runs the season — from the app, ChatGPT, and Claude.</p>
-        </div>
-        <div>
-          <h4 class="text-white font-semibold mb-4">Platform</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="teams.html" class="hover:text-white transition">Browse Teams</a></li>
-            <li><a href="dashboard.html" class="hover:text-white transition">Dashboard</a></li>
-            <li><a href="/app/#/auth" class="hover:text-white transition">Sign In</a></li>
-          </ul>
-        </div>
-        <div>
-          <h4 class="text-white font-semibold mb-4">Company</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="about.html" class="hover:text-white transition">About</a></li>
-            <li><a href="compare.html" class="hover:text-white transition">Compare</a></li>
-            <li><a href="app.html" class="hover:text-white transition">Get the App</a></li>
-          </ul>
-        </div>
-
-        <div>
-          <h4 class="text-white font-semibold mb-4">Support</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
-            <li><a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support" class="hover:text-white transition">Contact</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="border-t border-gray-800 pt-8 text-center text-sm space-y-1">
-        <p>&copy; 2025 ALL PLAYS. Built with ❤️ for coaches everywhere.</p>
-        <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.</p>
-      </div>
-    </div>
-  </footer>
-
+  <main>
+    <section class="bg-gradient-to-br from-primary-50 via-white to-primary-100 py-20 text-center md:py-28">
+      <div class="container mx-auto px-4"><p class="text-xs font-bold uppercase tracking-widest text-primary-600">About ALL PLAYS</p><h1 class="mx-auto mt-4 max-w-4xl text-4xl font-extrabold tracking-tight md:text-6xl">Less coordination. More time for the game.</h1><p class="mx-auto mt-6 max-w-2xl text-lg text-gray-700">ALL PLAYS brings youth-sports planning, communication, and game-day workflows together so teams can spend less time moving information between tools.</p></div>
+    </section>
+    <section class="py-20">
+      <div class="container mx-auto px-4"><h2 class="text-center text-3xl font-bold">Principles we build around</h2><div class="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-2">
+        <article class="rounded-2xl border border-gray-200 bg-gray-50 p-7"><h3 class="text-lg font-bold">Kids and families first</h3><p class="mt-2 text-gray-600">Product choices should support the young athlete and the people helping them participate.</p></article>
+        <article class="rounded-2xl border border-gray-200 bg-gray-50 p-7"><h3 class="text-lg font-bold">Privacy by design</h3><p class="mt-2 text-gray-600">Access to team and family information is scoped by authenticated roles and product permissions.</p></article>
+        <article class="rounded-2xl border border-gray-200 bg-gray-50 p-7"><h3 class="text-lg font-bold">Useful automation</h3><p class="mt-2 text-gray-600">Automation should remove repetitive work while keeping people informed about consequential changes.</p></article>
+        <article class="rounded-2xl border border-gray-200 bg-gray-50 p-7"><h3 class="text-lg font-bold">Built for real workflows</h3><p class="mt-2 text-gray-600">Schedules change, families juggle teams, and game day moves quickly. The product is designed around those practical constraints.</p></article>
+      </div></div>
+    </section>
+    <section class="bg-gray-50 py-16 text-center"><div class="container mx-auto px-4"><h2 class="text-3xl font-bold">Want to learn more?</h2><p class="mx-auto mt-4 max-w-2xl text-gray-600">Tell us about your teams and the workflows you want to simplify.</p><a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request" class="mt-7 inline-block rounded-xl bg-primary-600 px-8 py-4 font-bold text-white hover:bg-primary-700">Request Access</a></div></section>
+  </main>
+  <footer class="bg-gray-900 py-12 text-gray-400"><div class="container mx-auto px-4"><div class="grid gap-8 md:grid-cols-4">
+    <div><h3 class="text-xl font-bold text-white">ALL PLAYS</h3><p class="mt-2 text-sm">Youth sports coordination, game-day tools, and AI-assisted workflows.</p></div>
+    <div><h4 class="font-semibold text-white">Platform</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="teams.html" class="hover:text-white">Browse Teams</a></li><li><a href="/app/#/auth" class="hover:text-white">Sign In</a></li></ul></div>
+    <div><h4 class="font-semibold text-white">Company</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="about.html" class="hover:text-white">About</a></li><li><a href="compare.html" class="hover:text-white">Compare</a></li><li><a href="app.html" class="hover:text-white">Use the Web App</a></li></ul></div>
+    <div><h4 class="font-semibold text-white">Support</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="help.html" class="hover:text-white transition">Help Center</a></li></ul></div>
+  </div></div></footer>
   <script type="module">
-    // Render the real site header immediately (renderHeader is Firebase-free, so it works on localhost too),
-    // then upgrade to the auth-aware version on the deployed site. Firebase is disabled on localhost.
     import { renderHeader } from './js/utils.js?v=443336';
     renderHeader(document.getElementById('header-container'), null);
-    import('./js/auth.js?v=4433162')
-      .then(({ checkAuth }) => checkAuth((user) => renderHeader(document.getElementById('header-container'), user)))
-      .catch(() => { /* Firebase unavailable locally; header already rendered */ });
+    import('./js/auth.js?v=4433162').then(({ checkAuth }) => checkAuth((user) => renderHeader(document.getElementById('header-container'), user))).catch(() => {});
   </script>
 </body>
-
 </html>

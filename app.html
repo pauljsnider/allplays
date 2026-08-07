@@ -1,298 +1,41 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Get the ALL PLAYS app — your whole youth sports season in your pocket. Talk to it and it runs the season: schedules, RSVPs, live stats, and streams. iOS & Android.">
+  <meta name="description" content="Use ALL PLAYS on the web for schedules, RSVPs, live stats, streams, and AI-assisted team workflows.">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <link rel="canonical" href="https://allplays.ai/app.html">
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
   <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-3J13LHWFT3');</script>
   <script type="module" src="/js/telemetry.js?v=4"></script>
-  <title>ALL PLAYS — Get the app</title>
+  <title>ALL PLAYS — Use the web app</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css">
-  <!-- MOCKUP NOTE: static content. App store badges are styled placeholders; swap for official
-       Apple/Google badge assets and real store URLs before publishing. -->
-  <script>
-    tailwind.config = {
-      theme: { extend: { colors: { primary: {
-        50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',
-        500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' } } } }
-    }
-  </script>
-  <style>
-    html { scroll-behavior: smooth; }
-    .card-shadow { box-shadow: 0 1px 2px rgba(17,24,39,.04), 0 12px 32px -12px rgba(17,24,39,.18); }
-    .eyebrow { letter-spacing:.18em; text-transform:uppercase; }
-    /* phone frame */
-    .phone { position:relative; width:100%; max-width:270px; aspect-ratio:9/19.2; background:#0f1115;
-      border-radius:2.4rem; padding:.5rem; box-shadow:0 30px 60px -20px rgba(17,24,39,.45), 0 0 0 1px rgba(0,0,0,.06); }
-    .phone .screen { position:relative; height:100%; width:100%; overflow:hidden; border-radius:1.9rem; background:#f7f7fb; }
-    .phone .notch { position:absolute; top:.5rem; left:50%; transform:translateX(-50%); width:34%; height:1.05rem;
-      background:#0f1115; border-radius:0 0 .8rem .8rem; z-index:30; }
-    .appbar { padding:1.6rem .85rem .6rem; }
-    @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} }
-  </style>
+  <script>tailwind.config={theme:{extend:{colors:{primary:{50:'#eef2ff',100:'#e0e7ff',600:'#4f46e5',700:'#4338ca',800:'#3730a3'}}}}}</script>
 </head>
-
 <body class="bg-white text-gray-900 antialiased">
-
   <div id="header-container"></div>
-
-  <!-- ============ HERO ============ -->
-  <section class="relative overflow-hidden bg-gradient-to-br from-primary-50 via-white to-primary-100">
-    <div class="absolute inset-0 opacity-40"><div class="absolute inset-0 bg-[radial-gradient(circle_at_25%_40%,rgba(99,102,241,0.14),transparent_50%)]"></div></div>
-    <div class="container relative mx-auto px-4 py-16 md:py-24">
-      <div class="grid items-center gap-12 lg:grid-cols-[1.02fr_.98fr]">
-        <!-- copy -->
-        <div id="get">
-          <p class="eyebrow mb-4 text-xs font-bold text-primary-600">The ALL PLAYS app</p>
-          <h1 class="text-4xl font-extrabold leading-[1.05] tracking-tight text-gray-900 md:text-6xl">
-            Your whole season.
-            <span class="mt-1 block bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">In your pocket.</span>
-          </h1>
-          <p class="mt-6 max-w-lg text-lg text-gray-700 md:text-xl">Schedules, RSVPs, live stats, streams, and an AI that does the busywork — one tap away, on the phone that's always with you. <span class="font-semibold text-gray-900">Talk to it, and it runs the season.</span></p>
-
-          <!-- store badges -->
-          <div class="mt-8 flex flex-wrap gap-3">
-            <a href="/app/#/auth?mode=signup" class="inline-flex items-center gap-3 rounded-xl bg-gray-900 px-5 py-3 text-white transition hover:bg-gray-800">
-              <svg class="h-7 w-7" fill="currentColor" viewBox="0 0 384 512"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
-              <span class="text-left leading-tight"><span class="block text-[10px] font-medium text-gray-300">Download on the</span><span class="block text-lg font-bold">App Store</span></span>
-            </a>
-            <a href="/app/#/auth?mode=signup" class="inline-flex items-center gap-3 rounded-xl bg-gray-900 px-5 py-3 text-white transition hover:bg-gray-800">
-              <svg class="h-7 w-7" fill="currentColor" viewBox="0 0 512 512"><path d="M325.3 234.3 104.6 13l280.8 161.2-60.1 60.1zM47 0C34 6.8 25.3 19.2 25.3 35.3v441.3c0 16.1 8.7 28.5 21.7 35.3l256.6-256L47 0zm425.2 225.6-58.9-34.1-65.7 64.5 65.7 64.5 60.1-34.1c18-14.3 18-46.5-1.2-60.8zM104.6 499l220.7-221.3 60.1 60.1L104.6 499z"/></svg>
-              <span class="text-left leading-tight"><span class="block text-[10px] font-medium text-gray-300">GET IT ON</span><span class="block text-lg font-bold">Google Play</span></span>
-            </a>
-          </div>
-
-          <!-- rating + QR -->
-          <div class="mt-8 flex items-center gap-6">
-            <div class="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-3 card-shadow">
-              <div class="grid h-16 w-16 flex-none grid-cols-4 grid-rows-4 gap-0.5 rounded-lg bg-white p-1.5" aria-hidden="true">
-                <span class="bg-gray-900"></span><span></span><span class="bg-gray-900"></span><span class="bg-gray-900"></span>
-                <span class="bg-gray-900"></span><span class="bg-gray-900"></span><span></span><span class="bg-gray-900"></span>
-                <span></span><span class="bg-gray-900"></span><span class="bg-gray-900"></span><span></span>
-                <span class="bg-gray-900"></span><span></span><span class="bg-gray-900"></span><span class="bg-gray-900"></span>
-              </div>
-              <div class="text-sm"><div class="font-bold text-gray-900">Get started free</div><div class="text-gray-500">Web today · iOS &amp; Android</div></div>
-            </div>
-            <div>
-              <div class="flex text-primary-600" aria-hidden="true">★★★★★</div>
-              <p class="mt-1 text-sm text-gray-500">Loved by coaches &amp; families</p>
-            </div>
-          </div>
-          <p class="mt-4 text-sm text-gray-500">Free to download · iOS &amp; Android · Baseball to soccer.</p>
-        </div>
-
-        <!-- hero phone -->
-        <div class="flex justify-center">
-          <div class="phone">
-            <div class="notch"></div>
-            <div class="screen">
-              <!-- app header -->
-              <div class="appbar bg-white">
-                <div class="flex items-center justify-between">
-                  <div><div class="text-[10px] font-bold uppercase tracking-wide text-primary-600">Home</div><div class="text-base font-extrabold text-gray-900">Your day</div></div>
-                  <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">PS</div>
-                </div>
-              </div>
-              <div class="space-y-2 px-2.5 pb-2">
-                <!-- next up card -->
-                <div class="rounded-xl border border-gray-200 bg-white p-3">
-                  <div class="text-[9px] font-bold uppercase tracking-wide text-primary-600">Next up · Sat 9:00a</div>
-                  <div class="mt-1 text-sm font-bold text-gray-900">Rockets vs. Hawks</div>
-                  <div class="text-[11px] text-gray-500">Lincoln Gym · Maya</div>
-                </div>
-                <!-- AI chat snippet -->
-                <div class="rounded-xl border border-gray-200 bg-gray-50 p-2.5">
-                  <div class="flex justify-end"><div class="max-w-[88%] rounded-2xl rounded-br-sm bg-primary-600 px-3 py-1.5 text-[11px] font-medium text-white">RSVP both kids for this weekend</div></div>
-                  <div class="mt-1.5 rounded-2xl rounded-bl-sm bg-white px-3 py-2 text-[11px] text-gray-700 ring-1 ring-gray-200">
-                    <div class="mb-1 flex items-center gap-1 text-[9px] font-bold text-primary-700">✦ Done</div>
-                    <div class="flex items-center gap-1.5"><span class="text-emerald-500">✓</span> Maya &amp; Leo — <span class="font-semibold text-emerald-600">Going</span></div>
-                  </div>
-                </div>
-              </div>
-              <!-- bottom tab bar -->
-              <div class="absolute inset-x-0 bottom-0 flex items-center justify-around border-t border-gray-200 bg-white/95 px-2 py-2 text-[9px] font-bold text-gray-400 backdrop-blur">
-                <span class="text-primary-600">● Home</span><span>Schedule</span><span class="rounded-full bg-primary-600 px-2 py-1 text-white">Ask AI</span><span>Messages</span><span>Teams</span>
-              </div>
-            </div>
-          </div>
-        </div>
+  <main>
+    <section class="bg-gradient-to-br from-primary-50 via-white to-primary-100 py-20 md:py-28">
+      <div class="container mx-auto grid items-center gap-12 px-4 lg:grid-cols-2">
+        <div><p class="text-xs font-bold uppercase tracking-widest text-primary-600">ALL PLAYS web app</p><h1 class="mt-4 text-4xl font-extrabold tracking-tight md:text-6xl">Your season, available from your browser</h1><p class="mt-6 max-w-xl text-lg text-gray-700">Open ALL PLAYS on your phone or computer to manage schedules, RSVPs, messages, and supported game-day workflows.</p><div class="mt-8 flex flex-wrap gap-3"><a data-web-signup href="/app/#/auth?mode=signup" class="rounded-xl bg-primary-600 px-7 py-4 font-bold text-white hover:bg-primary-700">Create a web account</a><a href="/app/#/auth" class="rounded-xl border border-gray-300 bg-white px-7 py-4 font-bold text-gray-700 hover:bg-gray-50">Sign in on the web</a></div><p class="mt-4 text-sm text-gray-500">These links open the ALL PLAYS web app. Store listings are not advertised on this page.</p></div>
+        <div class="rounded-3xl border border-primary-100 bg-white p-7 shadow-xl"><div class="rounded-2xl bg-gray-50 p-5"><p class="text-xs font-bold uppercase tracking-wide text-primary-600">Next up</p><h2 class="mt-2 text-xl font-bold">Rockets vs. Hawks</h2><p class="mt-1 text-gray-500">Saturday · 9:00 AM · Lincoln Gym</p></div><div class="mt-4 rounded-2xl bg-primary-600 p-5 text-white"><p class="text-sm font-semibold">Ask ALL PLAYS</p><p class="mt-2 rounded-xl bg-white/10 p-3">What does my family have this weekend?</p></div></div>
       </div>
-    </div>
-  </section>
-
-  <!-- ============ SCREENSHOT SHOWCASE ============ -->
-  <section class="bg-white py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <div class="mb-14 text-center">
-        <p class="eyebrow mb-3 text-xs font-bold text-primary-600">A tour in three taps</p>
-        <h2 class="text-3xl font-bold tracking-tight text-gray-900 md:text-4xl">Everything, one thumb away</h2>
-      </div>
-      <div class="mx-auto grid max-w-5xl gap-10 sm:grid-cols-3">
-
-        <!-- Phone: Ask AI -->
-        <div class="flex flex-col items-center">
-          <div class="phone"><div class="notch"></div><div class="screen bg-gray-50">
-            <div class="appbar bg-white"><div class="text-base font-extrabold text-gray-900">Ask AI</div></div>
-            <div class="space-y-2 px-2.5">
-              <div class="flex justify-end"><div class="max-w-[85%] rounded-2xl rounded-br-sm bg-primary-600 px-3 py-2 text-[11px] font-medium text-white">What does my family have this weekend?</div></div>
-              <div class="rounded-2xl rounded-bl-sm bg-white px-3 py-2 text-[11px] text-gray-700 ring-1 ring-gray-200">
-                <div class="rounded-lg bg-gray-50 px-2 py-1.5"><b>Sat 9a</b> — Maya · Basketball</div>
-                <div class="mt-1 rounded-lg bg-gray-50 px-2 py-1.5"><b>Sun 2p</b> — Leo · Soccer</div>
-              </div>
-            </div>
-          </div></div>
-          <h3 class="mt-6 font-bold text-gray-900">Just ask</h3>
-          <p class="mt-1 max-w-xs text-center text-sm text-gray-600">RSVPs, schedules, recaps — talk to it and it's done.</p>
-        </div>
-
-        <!-- Phone: Live game -->
-        <div class="flex flex-col items-center">
-          <div class="phone"><div class="notch"></div><div class="screen bg-gray-900">
-            <div class="relative aspect-[4/3] overflow-hidden bg-gray-900">
-              <img src="img/stock-live-soccer.jpg" alt="Live game" class="absolute inset-0 h-full w-full object-cover opacity-90">
-              <div class="absolute inset-0 bg-gradient-to-t from-black/70 to-black/10"></div>
-              <span class="absolute left-2 top-6 flex items-center gap-1 rounded bg-red-500 px-1.5 py-0.5 text-[8px] font-bold uppercase text-white"><span class="h-1 w-1 rounded-full bg-white"></span>Live</span>
-              <div class="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 text-white">
-                <span class="text-[10px] font-bold">Rockets <b class="text-sm">41</b></span><span class="text-[8px] text-white/70">Q3</span><span class="text-[10px] font-bold text-white/70"><b class="text-sm">38</b> Hawks</span>
-              </div>
-            </div>
-            <div class="space-y-1.5 p-2.5 text-[10px] text-gray-200">
-              <div class="rounded bg-white/10 px-2 py-1">#12 Maya — <b>3PT made</b></div>
-              <div class="rounded bg-white/10 px-2 py-1">#7 Jordan — <b>Rebound</b></div>
-              <div class="rounded bg-white/10 px-2 py-1">#4 Sam — <b>Assist</b></div>
-            </div>
-          </div></div>
-          <h3 class="mt-6 font-bold text-gray-900">Watch it live</h3>
-          <p class="mt-1 max-w-xs text-center text-sm text-gray-600">Real-time scores, plays, and streams for every fan.</p>
-        </div>
-
-        <!-- Phone: Schedule -->
-        <div class="flex flex-col items-center">
-          <div class="phone"><div class="notch"></div><div class="screen bg-gray-50">
-            <div class="appbar bg-white"><div class="text-base font-extrabold text-gray-900">Schedule</div></div>
-            <div class="space-y-2 px-2.5">
-              <div class="rounded-xl border border-gray-200 bg-white p-2.5"><div class="text-[9px] font-bold uppercase text-primary-600">Sat 9:00a</div><div class="text-[11px] font-bold text-gray-900">Rockets vs. Hawks</div><div class="mt-1 inline-block rounded bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold text-emerald-600">Going · 2 kids</div></div>
-              <div class="rounded-xl border border-gray-200 bg-white p-2.5"><div class="text-[9px] font-bold uppercase text-primary-600">Sun 2:00p</div><div class="text-[11px] font-bold text-gray-900">Soccer practice</div><div class="mt-1 inline-block rounded bg-amber-50 px-1.5 py-0.5 text-[8px] font-bold text-amber-600">RSVP needed</div></div>
-              <div class="rounded-xl border border-gray-200 bg-white p-2.5"><div class="text-[9px] font-bold uppercase text-primary-600">Tue 5:30p</div><div class="text-[11px] font-bold text-gray-900">Bulldogs vs. Titans</div></div>
-            </div>
-          </div></div>
-          <h3 class="mt-6 font-bold text-gray-900">One family calendar</h3>
-          <p class="mt-1 max-w-xs text-center text-sm text-gray-600">Every kid, every team — no more screenshot shuffle.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ MOBILE FEATURE STRIP ============ -->
-  <section class="bg-gradient-to-br from-gray-50 to-gray-100 py-20 md:py-24">
-    <div class="container mx-auto px-4">
-      <div class="mb-14 text-center">
-        <p class="eyebrow mb-3 text-xs font-bold text-primary-600">Built for the sideline</p>
-        <h2 class="text-3xl font-bold tracking-tight text-gray-900 md:text-4xl">Made for how sports families actually live</h2>
-      </div>
-      <div class="mx-auto grid max-w-6xl gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="rounded-2xl border border-gray-200 bg-white p-6 card-shadow">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.4-1.4A2 2 0 0118 14.2V11a6 6 0 00-4-5.7V5a2 2 0 10-4 0v.3A6 6 0 006 11v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0v1a3 3 0 11-6 0v-1"/></svg></div>
-          <h3 class="font-bold text-gray-900">Never miss a thing</h3>
-          <p class="mt-2 text-sm text-gray-600">Push alerts for time changes, field updates, and game reminders.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-white p-6 card-shadow">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.55-2.28A1 1 0 0121 8.6v6.8a1 1 0 01-1.45.89L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></div>
-          <h3 class="font-bold text-gray-900">Live game day</h3>
-          <p class="mt-2 text-sm text-gray-600">Track, stream, and follow the score from the stands or the couch.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-white p-6 card-shadow">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
-          <h3 class="font-bold text-gray-900">One-tap RSVP</h3>
-          <p class="mt-2 text-sm text-gray-600">Respond for the whole family in a single tap — or just ask.</p>
-        </div>
-        <div class="rounded-2xl border border-gray-200 bg-white p-6 card-shadow">
-          <div class="mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-primary-600 to-primary-700 text-white"><svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.9 9.9 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></div>
-          <h3 class="font-bold text-gray-900">Works with ChatGPT</h3>
-          <p class="mt-2 text-sm text-gray-600">Run your team from the app — or from the AI assistants you already use.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ FINAL CTA ============ -->
-  <section class="relative overflow-hidden bg-gradient-to-br from-primary-600 to-primary-800 py-20 text-white md:py-24">
-    <div class="absolute inset-0 opacity-10"><div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.3),transparent_50%)]"></div></div>
-    <div class="container relative mx-auto px-4 text-center">
-      <h2 class="text-4xl font-extrabold tracking-tight md:text-5xl">Get your season in your pocket</h2>
-      <p class="mx-auto mt-4 max-w-2xl text-lg text-primary-50">Free to download. Ready the moment you open it.</p>
-      <div class="mt-8 flex flex-wrap justify-center gap-3">
-        <a href="/app/#/auth?mode=signup" class="inline-flex items-center gap-3 rounded-xl bg-white px-5 py-3 text-gray-900 transition hover:bg-gray-50">
-          <svg class="h-7 w-7" fill="currentColor" viewBox="0 0 384 512"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
-          <span class="text-left leading-tight"><span class="block text-[10px] font-medium text-gray-500">Download on the</span><span class="block text-lg font-bold">App Store</span></span>
-        </a>
-        <a href="/app/#/auth?mode=signup" class="inline-flex items-center gap-3 rounded-xl bg-white px-5 py-3 text-gray-900 transition hover:bg-gray-50">
-          <svg class="h-7 w-7" fill="currentColor" viewBox="0 0 512 512"><path d="M325.3 234.3 104.6 13l280.8 161.2-60.1 60.1zM47 0C34 6.8 25.3 19.2 25.3 35.3v441.3c0 16.1 8.7 28.5 21.7 35.3l256.6-256L47 0zm425.2 225.6-58.9-34.1-65.7 64.5 65.7 64.5 60.1-34.1c18-14.3 18-46.5-1.2-60.8zM104.6 499l220.7-221.3 60.1 60.1L104.6 499z"/></svg>
-          <span class="text-left leading-tight"><span class="block text-[10px] font-medium text-gray-500">GET IT ON</span><span class="block text-lg font-bold">Google Play</span></span>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ FOOTER ============ -->
-  <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
-    <div class="container mx-auto px-4">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-8 mb-8">
-        <div class="col-span-1 md:col-span-2">
-          <div class="flex items-center space-x-3 mb-4">
-            <div class="w-10 h-10 rounded-lg overflow-hidden border border-gray-700">
-              <img src="img/logo_small.png" alt="ALL PLAYS" class="w-full h-full object-cover">
-            </div>
-            <h3 class="text-xl font-bold text-white">ALL PLAYS</h3>
-          </div>
-          <p class="text-sm max-w-md">The AI-native youth sports platform. Talk to it, and it runs the season — from the app, ChatGPT, and Claude.</p>
-        </div>
-        <div>
-          <h4 class="text-white font-semibold mb-4">Platform</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="teams.html" class="hover:text-white transition">Browse Teams</a></li>
-            <li><a href="dashboard.html" class="hover:text-white transition">Dashboard</a></li>
-            <li><a href="/app/#/auth" class="hover:text-white transition">Sign In</a></li>
-          </ul>
-        </div>
-        <div>
-          <h4 class="text-white font-semibold mb-4">Company</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="about.html" class="hover:text-white transition">About</a></li>
-            <li><a href="compare.html" class="hover:text-white transition">Compare</a></li>
-            <li><a href="app.html" class="hover:text-white transition">Get the App</a></li>
-          </ul>
-        </div>
-
-        <div>
-          <h4 class="text-white font-semibold mb-4">Support</h4>
-          <ul class="space-y-2 text-sm">
-            <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
-            <li><a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support" class="hover:text-white transition">Contact</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="border-t border-gray-800 pt-8 text-center text-sm space-y-1">
-        <p>&copy; 2025 ALL PLAYS. Built with ❤️ for coaches everywhere.</p>
-        <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.</p>
-      </div>
-    </div>
-  </footer>
-
+    </section>
+    <section class="py-20"><div class="container mx-auto px-4"><h2 class="text-center text-3xl font-bold">Built around the season</h2><div class="mx-auto mt-10 grid max-w-5xl gap-6 md:grid-cols-3"><article class="rounded-2xl border border-gray-200 p-7"><h3 class="font-bold">Plan</h3><p class="mt-2 text-gray-600">See schedules and respond to availability requests.</p></article><article class="rounded-2xl border border-gray-200 p-7"><h3 class="font-bold">Game day</h3><p class="mt-2 text-gray-600">Use supported tracking, live updates, and replay workflows.</p></article><article class="rounded-2xl border border-gray-200 p-7"><h3 class="font-bold">Stay connected</h3><p class="mt-2 text-gray-600">Keep team messages and family information together.</p></article></div></div></section>
+    <section class="bg-primary-700 py-16 text-center text-white"><div class="container mx-auto px-4"><h2 class="text-3xl font-bold">Start on the web</h2><p class="mx-auto mt-4 max-w-2xl text-primary-100">Create an account in the browser and continue there on any supported device.</p><a data-web-signup href="/app/#/auth?mode=signup" class="mt-7 inline-block rounded-xl bg-white px-8 py-4 font-bold text-primary-700 hover:bg-gray-50">Create a web account</a></div></section>
+  </main>
+  <footer class="bg-gray-900 py-12 text-gray-400"><div class="container mx-auto px-4"><div class="grid gap-8 md:grid-cols-4">
+    <div><h3 class="text-xl font-bold text-white">ALL PLAYS</h3><p class="mt-2 text-sm">Youth sports coordination, game-day tools, and AI-assisted workflows.</p></div>
+    <div><h4 class="font-semibold text-white">Platform</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="teams.html" class="hover:text-white">Browse Teams</a></li><li><a href="/app/#/auth" class="hover:text-white">Sign In</a></li></ul></div>
+    <div><h4 class="font-semibold text-white">Company</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="about.html" class="hover:text-white">About</a></li><li><a href="compare.html" class="hover:text-white">Compare</a></li><li><a href="app.html" class="hover:text-white">Use the Web App</a></li></ul></div>
+    <div><h4 class="font-semibold text-white">Support</h4><ul class="mt-3 space-y-2 text-sm"><li><a href="help.html" class="hover:text-white transition">Help Center</a></li></ul></div>
+  </div></div></footer>
   <script type="module">
-    // Render the real site header immediately (renderHeader is Firebase-free, so it works on localhost too),
-    // then upgrade to the auth-aware version on the deployed site. Firebase is disabled on localhost.
     import { renderHeader } from './js/utils.js?v=443336';
     renderHeader(document.getElementById('header-container'), null);
-    import('./js/auth.js?v=4433162')
-      .then(({ checkAuth }) => checkAuth((user) => renderHeader(document.getElementById('header-container'), user)))
-      .catch(() => { /* Firebase unavailable locally; header already rendered */ });
+    import('./js/auth.js?v=4433162').then(({ checkAuth }) => checkAuth((user) => renderHeader(document.getElementById('header-container'), user))).catch(() => {});
   </script>
 </body>
-
 </html>

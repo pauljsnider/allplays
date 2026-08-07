@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 function read(file) {
@@ -24,17 +24,26 @@ describe('marketing pages integration', () => {
             expect(html).toContain("renderHeader(document.getElementById('header-container'), null)");
             expect(html).toContain('./js/homepage.js?v=5');
             expect(html).toContain('./js/public-homepage-games.js?v=2');
-            expect(html).toContain('getHomepageGames: getPublicHomepageGames');
+            expect(html).toContain("import { bootHomepage } from './js/homepage-boot.js?v=1'");
+            expect(html).toContain('return { checkAuth, getRedirectUrl, getPublicHomepageGames, initHomepage }');
             // auth.js must be imported dynamically (not statically at the top of the module) so the header
             // still renders when Firebase is unavailable (e.g. localhost); a static import throws and blanks the page.
             expect(html).not.toMatch(/import\s+\{[^}]*checkAuth[^}]*\}\s+from\s+'\.\/js\/auth\.js/);
             expect(html).toMatch(/import\('\.\/js\/auth\.js\?v=\d+'\)/);
         });
 
-        it('uses marketing-friendly language and the updated AI-actions stat', () => {
+        it('uses marketing-friendly language without unsupported quantitative or exclusivity claims', () => {
             expect(html).not.toMatch(/competitor/i);
-            expect(html).toContain('>100+</div>');
+            expect(html).not.toMatch(/100\+|10K\+|The only youth sports platform|>1st|in seconds|in minutes|minutes after|every stat, every sport|every court|any phone, any sport|coordinate themselves|update themselves|tracked automatically/i);
+            expect(html).toContain('AI assisted');
             expect(html).toContain('ALL PLAYS connected');
+        });
+
+        it('does not publish the uncleared stock photography', () => {
+            expect(html).not.toMatch(/img\/stock-(highlight|live-basketball|live-soccer)\.jpg/);
+            expect(existsSync(resolve(process.cwd(), 'img/stock-highlight.jpg'))).toBe(false);
+            expect(existsSync(resolve(process.cwd(), 'img/stock-live-basketball.jpg'))).toBe(false);
+            expect(existsSync(resolve(process.cwd(), 'img/stock-live-soccer.jpg'))).toBe(false);
         });
 
         it('links to the compare and app pages from the page body', () => {
@@ -67,5 +76,28 @@ describe('marketing pages integration', () => {
         it('has no dead placeholder links', () => {
             expect(html).not.toContain('href="#"');
         });
+    });
+
+    it('presents app CTAs accurately as web signup links', () => {
+        const html = read('app.html');
+        const signupTargets = html.match(/data-web-signup href="\/app\/#\/auth\?mode=signup"/g) || [];
+
+        expect(signupTargets).toHaveLength(2);
+        expect(html).not.toMatch(/App Store|Google Play|Free to download|iOS\s*&amp;\s*Android|QR/i);
+        expect(html).toContain('These links open the ALL PLAYS web app');
+    });
+
+    it('does not publish unverified named-product comparisons', () => {
+        const html = read('compare.html');
+
+        expect(html).not.toMatch(/TeamSnap|GameChanger|SportsEngine|Spond|only platform|No one else|MUST be fact-checked/i);
+        expect(html).not.toContain('<table');
+    });
+
+    it('does not publish unconfirmed biographies, family identities, titles, or photos', () => {
+        const html = read('about.html');
+
+        expect(html).not.toMatch(/Paul Snider|Robin Snider|Madison Snider|Will Snider|Max Snider|\bFounder\b|\bCEO\b|\bCOO\b|Chief Dad|family-[a-z]+\.jpg|paulsnider\.net\/images/i);
+        expect(html).not.toContain('<img');
     });
 });
