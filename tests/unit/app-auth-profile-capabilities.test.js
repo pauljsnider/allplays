@@ -285,7 +285,8 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(nativeRuntime, [
             'Capacitor.isNativePlatform()',
-            "window.location.protocol === 'capacitor:'"
+            "protocol === 'capacitor:'",
+            "protocol === 'https:' && hostname === 'localhost'"
         ]);
         expectContains(profilePage, [
             "handleNativePhotoChoice('camera')",

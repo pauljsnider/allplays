@@ -35,4 +35,20 @@ describe('mobile release workflow', () => {
         expect(workflowSource).not.toContain('pull_request_target:');
         expect(workflowSource).not.toContain('permissions: write-all');
     });
+
+    it('verifies the signed Android release in an emulator before uploading it', () => {
+        const androidSteps = workflow.jobs['android-release'].steps;
+        const buildStep = androidSteps.find((step) => step.name === 'Build signed Android release artifacts');
+        const artifactStep = androidSteps.find((step) => step.name === 'Upload signed Android artifacts');
+        const verifyIndex = androidSteps.findIndex((step) => step.name === 'Verify signed release APK in emulator');
+        const uploadIndex = androidSteps.findIndex((step) => step.name === 'Upload to Play internal testing');
+
+        expect(buildStep.run).toContain(':app:bundleRelease :app:assembleRelease');
+        expect(artifactStep.with.path).toContain('app-release.aab');
+        expect(artifactStep.with.path).toContain('app-release.apk');
+        expect(androidSteps[verifyIndex].run).toContain(':app:connectedReleaseAndroidTest');
+        expect(verifyIndex).toBeGreaterThan(-1);
+        expect(uploadIndex).toBeGreaterThan(verifyIndex);
+        expect(androidSteps[uploadIndex].if).toBe('inputs.upload_android');
+    });
 });
