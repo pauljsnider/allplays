@@ -56,19 +56,19 @@ export function validatePng(info, kind, label) {
     }
     return;
   }
-  if (info.colorType === 4 || info.colorType === 6) {
-    throw new Error(`${label} must not contain an alpha channel.`);
+  if (info.colorType !== 2) {
+    throw new Error(`${label} must be a 24-bit RGB PNG without alpha.`);
   }
   if (kind === 'featureGraphic') {
-    if (info.width !== 1024 || info.height !== 500) {
-      throw new Error(`${label} must be exactly 1024x500.`);
+    if (info.width !== 1024 || info.height !== 500 || info.byteLength > 15 * 1024 * 1024) {
+      throw new Error(`${label} must be exactly 1024x500 and no larger than 15MB.`);
     }
     return;
   }
   const minimum = Math.min(info.width, info.height);
   const maximum = Math.max(info.width, info.height);
-  if (minimum < 320 || maximum > 3840 || maximum > minimum * 2) {
-    throw new Error(`${label} must be 320-3840px with a longest side no more than twice its shortest side.`);
+  if (minimum < 320 || maximum > 3840 || maximum > minimum * 2 || info.byteLength > 8 * 1024 * 1024) {
+    throw new Error(`${label} must be 320-3840px, no larger than 8MB, with a longest side no more than twice its shortest side.`);
   }
 }
 

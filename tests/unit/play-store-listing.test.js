@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 
 import {
   loadListingPackage,
@@ -8,6 +9,7 @@ import {
   validateListing,
   validatePng
 } from '../../scripts/sync-play-listing.mjs';
+import { generateAssets } from '../../scripts/generate-play-store-assets.mjs';
 
 describe('Google Play listing package', () => {
   it('contains valid copy and every required launch graphic', async () => {
@@ -40,6 +42,24 @@ describe('Google Play listing package', () => {
       colorType: 2,
       byteLength: 1000
     }, 'phoneScreenshot', 'too-tall.png')).toThrow(/longest side/);
+  });
+
+  it.each([
+    ['featureGraphic', { width: 1024, height: 500, bitDepth: 8, colorType: 0, byteLength: 1000 }, /24-bit RGB/],
+    ['featureGraphic', { width: 1024, height: 500, bitDepth: 8, colorType: 2, byteLength: 15 * 1024 * 1024 + 1 }, /15MB/],
+    ['phoneScreenshot', { width: 1080, height: 1920, bitDepth: 8, colorType: 3, byteLength: 1000 }, /24-bit RGB/],
+    ['phoneScreenshot', { width: 1080, height: 1920, bitDepth: 8, colorType: 2, byteLength: 8 * 1024 * 1024 + 1 }, /8MB/]
+  ])('rejects unsupported or oversized %s PNGs', (kind, info, message) => {
+    expect(() => validatePng(info, kind, 'asset.png')).toThrow(message);
+  });
+
+  it('generates the committed feature graphic with the pinned font', async () => {
+    await generateAssets();
+    const bytes = await readFile('store/google-play/en-US/graphics/feature-graphic.png');
+
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      '7d0de226974e8a5ca9e948e893805bd7d4299837edf9f9c93310c202850da0ac'
+    );
   });
 
   it('reads committed PNG dimensions without image-library dependencies', async () => {

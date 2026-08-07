@@ -1,12 +1,14 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import sharp from 'sharp';
+import * as fontkit from 'fontkit';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'store/google-play/en-US/graphics');
 const iconSource = path.join(root, 'ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png');
+const featureFont = path.join(root, 'node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2');
 const screenshotSources = [
   ['01-my-teams.png', path.join(root, 'tests/smoke/app-teams.spec.js-snapshots/my-teams-mobile.png')],
   ['02-messages.png', path.join(root, 'tests/smoke/app-messages.spec.js-snapshots/messages-inbox-mobile.png')]
@@ -23,6 +25,18 @@ async function generateIcon() {
 }
 
 async function generateFeatureGraphic(icon) {
+  const font = fontkit.openSync(featureFont);
+  const textPath = (text, x, baseline, size) => {
+    const run = font.layout(text);
+    const scale = size / font.unitsPerEm;
+    let cursor = 0;
+    return run.glyphs.map((glyph, index) => {
+      const position = run.positions[index];
+      const transform = `translate(${x + (cursor + position.xOffset) * scale} ${baseline - position.yOffset * scale}) scale(${scale} ${-scale})`;
+      cursor += position.xAdvance;
+      return `<path d="${glyph.path.toSVG()}" transform="${transform}"/>`;
+    }).join('');
+  };
   const backdrop = Buffer.from(`
     <svg width="1024" height="500" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -33,9 +47,9 @@ async function generateFeatureGraphic(icon) {
       </defs>
       <rect width="1024" height="500" fill="url(#background)"/>
       <rect x="54" y="65" width="324" height="370" rx="56" fill="#f8fafc"/>
-      <text x="430" y="188" fill="#ffffff" font-family="Arial, sans-serif" font-size="54" font-weight="700">One place for</text>
-      <text x="430" y="250" fill="#ffffff" font-family="Arial, sans-serif" font-size="54" font-weight="700">every play.</text>
-      <text x="434" y="323" fill="#e8e7ff" font-family="Arial, sans-serif" font-size="25">Schedules  •  Teams  •  Game day</text>
+      <g fill="#ffffff">${textPath('One place for', 430, 188, 54)}</g>
+      <g fill="#ffffff">${textPath('every play.', 430, 250, 54)}</g>
+      <g fill="#e8e7ff">${textPath('Schedules  •  Teams  •  Game day', 434, 323, 25)}</g>
     </svg>
   `);
   const mark = await sharp(icon).resize(285, 285, { fit: 'contain' }).png().toBuffer();
@@ -59,11 +73,17 @@ async function generateScreenshot(name, source) {
     .toFile(path.join(output, name));
 }
 
-await mkdir(output, { recursive: true });
-const icon = await generateIcon();
-await generateFeatureGraphic(icon);
-for (const [name, source] of screenshotSources) {
-  await generateScreenshot(name, source);
+export async function generateAssets() {
+  await mkdir(output, { recursive: true });
+  const icon = await generateIcon();
+  await generateFeatureGraphic(icon);
+  for (const [name, source] of screenshotSources) {
+    await generateScreenshot(name, source);
+  }
 }
 
-process.stdout.write(`Generated Google Play assets in ${output}\n`);
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+if (isMain) {
+  await generateAssets();
+  process.stdout.write(`Generated Google Play assets in ${output}\n`);
+}

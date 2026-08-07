@@ -57,6 +57,7 @@
     "@testing-library/react": "^16.3.2",
     "firebase-admin": "^14.2.0",
     "firebase-tools": "^15.24.0",
+    "fontkit": "2.0.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
