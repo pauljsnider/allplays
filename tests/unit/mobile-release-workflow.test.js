@@ -49,6 +49,9 @@ describe('mobile release workflow', () => {
         expect(artifactStep.with.path).toContain('app-release.aab');
         expect(artifactStep.with.path).toContain('app-release.apk');
         expect(startStep.run).toContain('"$ANDROID_SDK_ROOT/emulator/emulator"');
+        expect(startStep.run).toContain('export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"');
+        expect(startStep.run).toContain('--device "pixel_2"');
+        expect(startStep.run).toContain('test -f "$ANDROID_AVD_HOME/allplays-release.ini"');
         expect(startStep.run).not.toContain('adb wait-for-device');
         expect(startStep.run).toContain('kill -0 "$emulator_pid"');
         expect(startStep.run).toContain('boot_deadline=$((SECONDS + 180))');
