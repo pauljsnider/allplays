@@ -56,5 +56,21 @@ describe('global premium access Firestore rules', () => {
       await assertFails(setDoc(doc(adminDb, 'platformConfig/other'), { openToAll: false }));
       await assertFails(deleteDoc(premiumRef));
     });
+
+    it('allows a global admin to persist the first off value when the default-open document is absent', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await deleteDoc(doc(context.firestore(), 'platformConfig/premium'));
+      });
+
+      const adminDb = testEnv.authenticatedContext('admin-1').firestore();
+      const premiumRef = doc(adminDb, 'platformConfig/premium');
+      await assertSucceeds(setDoc(premiumRef, {
+        openToAll: false,
+        updatedAt: Timestamp.now()
+      }));
+      const snapshot = await getDoc(premiumRef);
+      expect(snapshot.exists()).toBe(true);
+      expect(snapshot.data()).toMatchObject({ openToAll: false });
+    });
   });
 });
