@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { AvatarImage } from '../../components/AvatarImage';
+import { PremiumGate } from '../../components/PremiumGate';
+import type { PremiumAccessResult } from '../../lib/premiumAccessService';
 import type { TeamDetailAnalytics, TeamDetailAnalyticsSnapshot, TeamDetailModel } from '../../lib/teamDetailService';
 
 const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
@@ -18,10 +20,12 @@ const EMPTY_TEAM_ANALYTICS: TeamDetailAnalytics = {
   seasons: []
 };
 
-export function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loading: boolean; error: string }) {
+export function InsightsTab({ model, loading, error, premiumAccess }: { model: TeamDetailModel; loading: boolean; error: string; premiumAccess: PremiumAccessResult }) {
   return (
     <div className="space-y-4">
-      <TeamPerformanceCard model={model} loading={loading} error={error} />
+      <PremiumGate access={premiumAccess} label="team performance analytics">
+        <TeamPerformanceCard model={model} loading={loading} error={error} />
+      </PremiumGate>
 
       <section className="app-card p-4">
         <div className="text-sm font-black text-gray-950">Player checklist</div>
@@ -68,40 +72,42 @@ export function InsightsTab({ model, loading, error }: { model: TeamDetailModel;
         </div>
       </section>
 
-      <section className="app-card p-4">
-        <div className="text-sm font-black text-gray-950">Leaderboards</div>
-        <div className="mt-0.5 text-xs font-semibold text-gray-500">Public top stats from completed tracked games.</div>
-        <div className="mt-3 grid gap-2 lg:grid-cols-2">
-          {loading ? <InlineDeferredLoading copy="Loading leaderboards…" /> : null}
-          {!loading && error ? <InlineDeferredError title="Leaderboards unavailable" message={error} /> : null}
-          {model.leaderboards.length ? (
-            model.leaderboards.map((leaderboard) => (
-              <div key={leaderboard.id} className="rounded-xl border border-gray-200 bg-white p-3">
-                <div className="text-sm font-black text-gray-950">{leaderboard.label}</div>
-                <div className="mt-3 space-y-2">
-                  {leaderboard.leaders.map((leader) => (
-                    <div key={`${leaderboard.id}-${leader.playerId}`} className="flex items-center gap-3 rounded-lg bg-gray-50 px-3 py-2">
-                      <div className="w-6 text-xs font-black text-gray-500">#{leader.rank}</div>
-                      <PlayerPhoto name={leader.playerName} photoUrl={leader.photoUrl} small />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-black text-gray-950">
-                          {leader.playerNumber ? `#${leader.playerNumber} ` : ''}
-                          {leader.playerName}
+      <PremiumGate access={premiumAccess} label="team leaderboards">
+        <section className="app-card p-4">
+          <div className="text-sm font-black text-gray-950">Leaderboards</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Public top stats from completed tracked games.</div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-2">
+            {loading ? <InlineDeferredLoading copy="Loading leaderboards…" /> : null}
+            {!loading && error ? <InlineDeferredError title="Leaderboards unavailable" message={error} /> : null}
+            {model.leaderboards.length ? (
+              model.leaderboards.map((leaderboard) => (
+                <div key={leaderboard.id} className="rounded-xl border border-gray-200 bg-white p-3">
+                  <div className="text-sm font-black text-gray-950">{leaderboard.label}</div>
+                  <div className="mt-3 space-y-2">
+                    {leaderboard.leaders.map((leader) => (
+                      <div key={`${leaderboard.id}-${leader.playerId}`} className="flex items-center gap-3 rounded-lg bg-gray-50 px-3 py-2">
+                        <div className="w-6 text-xs font-black text-gray-500">#{leader.rank}</div>
+                        <PlayerPhoto name={leader.playerName} photoUrl={leader.photoUrl} small />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-black text-gray-950">
+                            {leader.playerNumber ? `#${leader.playerNumber} ` : ''}
+                            {leader.playerName}
+                          </div>
                         </div>
+                        <div className="text-primary-700 text-sm font-black">{leader.formattedValue}</div>
                       </div>
-                      <div className="text-primary-700 text-sm font-black">{leader.formattedValue}</div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
+              ))
+            ) : !loading && !error ? (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+                Leaderboards appear after public stat configs and completed tracked games exist.
               </div>
-            ))
-          ) : !loading && !error ? (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">
-              Leaderboards appear after public stat configs and completed tracked games exist.
-            </div>
-          ) : null}
-        </div>
-      </section>
+            ) : null}
+          </div>
+        </section>
+      </PremiumGate>
     </div>
   );
 }
