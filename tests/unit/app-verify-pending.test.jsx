@@ -6,18 +6,19 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getRouteForUser: vi.fn(() => '/home'),
+    readPendingInvite: vi.fn(() => ({ code: '', type: 'parent' })),
     reloadCurrentUser: vi.fn(),
     resendVerificationEmail: vi.fn()
 }));
 
-import { reloadCurrentUser, resendVerificationEmail } from '../../apps/app/src/lib/authService.ts';
+import { readPendingInvite, reloadCurrentUser, resendVerificationEmail } from '../../apps/app/src/lib/authService.ts';
 import { VerifyPending } from '../../apps/app/src/pages/VerifyPending.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function LocationMarker() {
     const location = useLocation();
-    return React.createElement('div', { 'data-testid': 'location' }, location.pathname);
+    return React.createElement('div', { 'data-testid': 'location' }, `${location.pathname}${location.search}`);
 }
 
 function createAuth(overrides = {}) {
@@ -58,6 +59,7 @@ async function renderVerifyPending(auth) {
                 null,
                 React.createElement(Route, { path: '/verify-pending', element: React.createElement(VerifyPending, { auth }) }),
                 React.createElement(Route, { path: '/home', element: React.createElement('div', null, 'Home dashboard') }),
+                React.createElement(Route, { path: '/accept-invite', element: React.createElement('div', null, 'Pending invite') }),
                 React.createElement(Route, { path: '/auth', element: React.createElement('div', null, 'Auth page') })
             )
         ));
@@ -78,6 +80,7 @@ function buttonByText(container, text) {
 afterEach(() => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    readPendingInvite.mockReturnValue({ code: '', type: 'parent' });
 });
 
 describe('VerifyPending verification return flow', () => {
@@ -129,6 +132,26 @@ describe('VerifyPending verification return flow', () => {
         expect(container.textContent).toContain('Home dashboard');
         expect(container.querySelector('[data-testid="location"]').textContent).toBe('/home');
         expect(container.textContent).not.toContain('We could not confirm verification yet.');
+
+        await act(async () => root.unmount());
+    });
+
+    it('returns a newly verified user to the preserved family invite', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'household' });
+        const auth = createAuth();
+        auth.refresh.mockResolvedValueOnce({
+            ...auth.user,
+            emailVerified: true
+        });
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        const { container, root } = await renderVerifyPending(auth);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FAMILY01&type=household');
+        expect(container.textContent).toContain('Pending invite');
 
         await act(async () => root.unmount());
     });

@@ -67,6 +67,7 @@ export async function executeEmailPasswordSignup({
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const userId = userCredential.user.uid;
     let validation = preAuthValidation;
+    let pendingFamilyInvite = null;
 
     if (shouldValidateAfterSignup) {
         try {
@@ -94,17 +95,40 @@ export async function executeEmailPasswordSignup({
         }
     }
 
+    function isEmailVerificationRequired(error) {
+        return error?.details?.reason === 'email-verification-required';
+    }
+
+    function preservePendingFamilyInvite(type, code) {
+        const pendingCode = String(code || activationCode).trim().toUpperCase();
+        pendingFamilyInvite = { code: pendingCode, type };
+        try {
+            globalThis.localStorage?.setItem('inviteCode', pendingCode);
+            globalThis.localStorage?.setItem('inviteType', type);
+        } catch (_storageError) {
+            // The returned credential still carries the pending invite for callers
+            // when browser storage is unavailable.
+        }
+    }
+
     if (validation.type === 'parent_invite') {
         try {
             await redeemParentInvite(userId, activationCode, email);
         } catch (e) {
             console.error('Error linking parent:', e);
-            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
-            throw e;
+            if (isEmailVerificationRequired(e)) {
+                preservePendingFamilyInvite('parent', validation.data?.code || activationCode);
+                await writeSignupProfile({ email });
+            } else {
+                await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+                throw e;
+            }
         }
 
         // Best-effort profile write after invite redemption.
-        await writeSignupProfile({ email });
+        if (!pendingFamilyInvite) {
+            await writeSignupProfile({ email });
+        }
     } else if (validation.type === 'friend_invite') {
         try {
             if (typeof redeemFriendInvite !== 'function') {
@@ -141,8 +165,13 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming household invite:', e);
-            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
-            throw e;
+            if (isEmailVerificationRequired(e)) {
+                preservePendingFamilyInvite('household', validation.data?.code || activationCode);
+                await writeSignupProfile({ email });
+            } else {
+                await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+                throw e;
+            }
         }
     } else if (validation.type === 'coparent_invite') {
         try {
@@ -153,8 +182,13 @@ export async function executeEmailPasswordSignup({
             await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming co-parent invite:', e);
-            await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
-            throw e;
+            if (isEmailVerificationRequired(e)) {
+                preservePendingFamilyInvite('coparent', validation.data?.code || activationCode);
+                await writeSignupProfile({ email });
+            } else {
+                await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
+                throw e;
+            }
         }
     } else {
         try {
@@ -192,5 +226,8 @@ export async function executeEmailPasswordSignup({
         console.error('SIGNUP ERROR:', e.code, e.message);
     }
 
+    if (pendingFamilyInvite) {
+        userCredential.pendingFamilyInvite = pendingFamilyInvite;
+    }
     return userCredential;
 }

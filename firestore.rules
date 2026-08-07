@@ -120,12 +120,26 @@ service cloud.firestore {
                  isTeamOwnerOrAdmin(data.get('teamId', ''))))));
     }
 
+    function isFamilyInviteAccessCode(data) {
+      return data.get('type', null) in ['parent_invite', 'household_invite', 'coparent_invite'];
+    }
+
+    function verifiedAuthEmailMatches(email) {
+      return isSignedIn() &&
+             request.auth.token.get('email_verified', false) == true &&
+             request.auth.token.email is string &&
+             email is string &&
+             request.auth.token.email.lower() == email.lower();
+    }
+
     function canReadAccessCode(data) {
       return isSignedIn() &&
              (data.generatedBy == request.auth.uid ||
-              (request.auth.token.email != null &&
+              (!isFamilyInviteAccessCode(data) &&
+               request.auth.token.email != null &&
                data.email is string &&
                request.auth.token.email.lower() == data.email.lower()) ||
+              (isFamilyInviteAccessCode(data) && verifiedAuthEmailMatches(data.get('email', null))) ||
               (request.auth.token.phone_number != null &&
                data.phone is string &&
                request.auth.token.phone_number == data.phone) ||
@@ -270,9 +284,7 @@ service cloud.firestore {
              (!('email' in resource.data) ||
               resource.data.email == null ||
               resource.data.email == '' ||
-              (resource.data.email is string &&
-               request.auth.token.email is string &&
-               request.auth.token.email.lower() == resource.data.email.lower())) &&
+              verifiedAuthEmailMatches(resource.data.get('email', null))) &&
              request.resource.data.used == true &&
              request.resource.data.usedBy == request.auth.uid &&
              request.resource.data.usedAt is timestamp;
@@ -369,9 +381,8 @@ service cloud.firestore {
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
              resource.data.used == false &&
              resource.data.revoked != true &&
-             request.auth.token.email is string &&
              resource.data.email is string &&
-             request.auth.token.email.lower() == resource.data.email.lower() &&
+             verifiedAuthEmailMatches(resource.data.email) &&
              request.resource.data.used == true &&
              request.resource.data.usedBy == request.auth.uid &&
              request.resource.data.usedAt is timestamp;
@@ -1108,8 +1119,7 @@ service cloud.firestore {
       return isSignedIn() &&
              resource.data.status == 'pending' &&
              resource.data.email is string &&
-             request.auth.token.email is string &&
-             resource.data.email == request.auth.token.email.lower() &&
+             verifiedAuthEmailMatches(resource.data.email) &&
              data.status == 'active' &&
              data.userId == request.auth.uid &&
              data.diff(resource.data).affectedKeys().hasOnly(['status', 'userId', 'acceptedAt', 'updatedAt']);
@@ -3021,7 +3031,7 @@ service cloud.firestore {
 
       match /familyMemberships/{memberId} {
         allow read: if isOwner(userId) || isGlobalAdmin() ||
-                       (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
+                       (resource.data.email is string && verifiedAuthEmailMatches(resource.data.email));
         allow create: if isVerifiedForSensitiveWrite() && isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
                       isFamilyMembershipAcceptance(request.resource.data);
