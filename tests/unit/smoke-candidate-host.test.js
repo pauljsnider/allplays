@@ -19,7 +19,10 @@ const successfulHtmlByPath = {
     '/terms.html': '<!doctype html><title>Terms of Use | ALL PLAYS</title><main><h1>Terms of Use</h1></main>',
     '/support.html': '<!doctype html><title>Support | ALL PLAYS</title><main><h1>Support</h1></main>',
     '/account-deletion.html': '<!doctype html><title>Delete Account | ALL PLAYS</title><main><h1>Delete account</h1></main>',
-    '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>'
+    '/widget-scoreboard.html': '<!doctype html><title>ALL PLAYS Scoreboard Widget</title><main id="scoreboard-widget"></main>',
+    '/compare.html': '<!doctype html><title>ALL PLAYS — Explore the platform</title><div id="header-container"></div><footer></footer>',
+    '/about.html': '<!doctype html><title>ALL PLAYS — About</title><div id="header-container"></div><footer></footer>',
+    '/app.html': '<!doctype html><title>ALL PLAYS — Use the web app</title><div id="header-container"></div><footer></footer>'
 };
 
 function successfulResponse(path) {
@@ -107,6 +110,9 @@ describe('candidate host public smoke', () => {
             `${candidateOrigin}/terms.html`,
             `${candidateOrigin}/support.html`,
             `${candidateOrigin}/account-deletion.html`,
+            `${candidateOrigin}/compare.html`,
+            `${candidateOrigin}/about.html`,
+            `${candidateOrigin}/app.html`,
             `${candidateOrigin}/.well-known/allplays-runtime-config.json`
         ]);
         expect(fetchImpl.mock.calls.every(([url]) => new URL(url).origin === candidateOrigin)).toBe(true);
@@ -138,7 +144,7 @@ describe('candidate host public smoke', () => {
             }
         });
 
-        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(9);
+        await expect(smokeCandidateHost(candidateOrigin, { fetchImpl })).resolves.toHaveLength(12);
     });
 
     it('rejects an HSTS policy below the configured max-age', async () => {
