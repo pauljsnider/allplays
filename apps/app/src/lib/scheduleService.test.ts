@@ -3598,7 +3598,7 @@ describe('staff RSVP management', () => {
   });
 
   it('attributes native fallback staff RSVP rows through roster parent links', async () => {
-    capacitorCoreMock.getPlatform.mockReturnValue('android');
+    (window as any).androidBridge = {};
     Object.defineProperty(window, 'location', {
       value: { ...window.location, protocol: 'https:', hostname: 'localhost' },
       writable: true,

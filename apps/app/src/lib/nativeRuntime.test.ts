@@ -14,14 +14,18 @@ import { isNativeRuntime } from './nativeRuntime';
 
 describe('isNativeRuntime', () => {
     const originalLocation = window.location;
+    const originalAndroidBridge = (window as any).androidBridge;
 
     beforeEach(() => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
         capacitorCoreMock.getPlatform.mockReturnValue('web');
+        delete (window as any).androidBridge;
     });
 
     afterEach(() => {
         Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
+        if (originalAndroidBridge === undefined) delete (window as any).androidBridge;
+        else (window as any).androidBridge = originalAndroidBridge;
     });
 
     it('returns true when Capacitor reports a native platform', () => {
@@ -41,9 +45,10 @@ describe('isNativeRuntime', () => {
         expect(isNativeRuntime()).toBe(true);
     });
 
-    it('returns true for Capacitor Android at https://localhost when the platform reports Android', () => {
+    it('returns true for Capacitor Android at https://localhost when its native bridge is injected', () => {
         capacitorCoreMock.isNativePlatform.mockReturnValue(false);
-        capacitorCoreMock.getPlatform.mockReturnValue('android');
+        capacitorCoreMock.getPlatform.mockReturnValue('web');
+        (window as any).androidBridge = {};
         Object.defineProperty(window, 'location', {
             value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
             writable: true,

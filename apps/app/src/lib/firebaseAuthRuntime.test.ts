@@ -54,6 +54,7 @@ vi.mock('./logger', () => ({
 describe('firebaseAuthRuntime', () => {
   const originalLocation = window.location;
   const originalIndexedDb = window.indexedDB;
+  const originalAndroidBridge = (window as any).androidBridge;
 
   beforeEach(() => {
     vi.resetModules();
@@ -65,15 +66,18 @@ describe('firebaseAuthRuntime', () => {
     firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
     capacitorCoreMock.isNativePlatform.mockReturnValue(false);
     capacitorCoreMock.getPlatform.mockReturnValue('web');
+    delete (window as any).androidBridge;
   });
 
   afterEach(() => {
     Object.defineProperty(window, 'location', { value: originalLocation, writable: true, configurable: true });
     Object.defineProperty(window, 'indexedDB', { value: originalIndexedDb, writable: true, configurable: true });
+    if (originalAndroidBridge === undefined) delete (window as any).androidBridge;
+    else (window as any).androidBridge = originalAndroidBridge;
   });
 
   it('uses native auth persistence when Android boots from https://localhost', async () => {
-    capacitorCoreMock.getPlatform.mockReturnValue('android');
+    (window as any).androidBridge = {};
     Object.defineProperty(window, 'location', {
       value: { ...originalLocation, protocol: 'https:', hostname: 'localhost' },
       writable: true,

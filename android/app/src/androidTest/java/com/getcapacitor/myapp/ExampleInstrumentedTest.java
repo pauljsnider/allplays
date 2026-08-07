@@ -38,6 +38,7 @@ public class ExampleInstrumentedTest {
         long deadline = SystemClock.elapsedRealtime() + TimeUnit.SECONDS.toMillis(30);
         String lastUrl = null;
         String lastRootResult = null;
+        String lastBridgeResult = null;
 
         while (SystemClock.elapsedRealtime() < deadline) {
             AtomicReference<String> urlReference = new AtomicReference<>();
@@ -49,10 +50,15 @@ public class ExampleInstrumentedTest {
                 webView,
                 "Boolean(document.querySelector('#root')?.childElementCount)"
             );
+            lastBridgeResult = evaluateJavascript(
+                webView,
+                "Boolean(window.androidBridge) && window.Capacitor?.getPlatform?.() === 'android'"
+            );
 
             if (lastUrl != null
                 && lastUrl.startsWith("https://localhost")
-                && "true".equals(lastRootResult)) {
+                && "true".equals(lastRootResult)
+                && "true".equals(lastBridgeResult)) {
                 return;
             }
             SystemClock.sleep(250);
@@ -60,7 +66,7 @@ public class ExampleInstrumentedTest {
 
         assertTrue(
             "Release WebView did not render from https://localhost; url="
-                + lastUrl + ", root=" + lastRootResult,
+                + lastUrl + ", root=" + lastRootResult + ", bridge=" + lastBridgeResult,
             false
         );
     }
