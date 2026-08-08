@@ -29,9 +29,24 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Build React app bundle
+        env:
+          ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
+        run: npm run app:build
+
+      - name: Stage pages bundle
+        env:
+          ALLPLAYS_FIREBASE_RUNTIME_TARGET: preview-smoke
+        run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
+
       - name: Start visual fixture servers
         run: |
-          python3 -m http.server 4173 >/tmp/allplays-visual-static.log 2>&1 &
+          # The React dev server needs the staged non-production runtime config to
+          # boot, matching how preview-smoke serves the visual fixtures.
+          mkdir -p apps/app/public/.well-known
+          cp "$RUNNER_TEMP/allplays-pages/.well-known/allplays-runtime-config.json" \
+            apps/app/public/.well-known/allplays-runtime-config.json
+          python3 -m http.server 4173 --directory "$RUNNER_TEMP/allplays-pages" >/tmp/allplays-visual-static.log 2>&1 &
           npm --prefix apps/app run dev -- --host 127.0.0.1 --port 5174 >/tmp/allplays-visual-app.log 2>&1 &
 
       - name: Wait for visual fixture servers

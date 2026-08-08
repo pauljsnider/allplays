@@ -153,6 +153,7 @@ describe('chatgpt-mcp oauth: registration', () => {
                     client_id: client.client_id,
                     redirect_uri: REDIRECT,
                     code_challenge: s256Challenge(VERIFIER),
+                    terms_agree: 'yes',
                     refresh_token: 'attacker-controlled-unverified-token'
                 })
             });
@@ -162,6 +163,101 @@ describe('chatgpt-mcp oauth: registration', () => {
             expect(response.headers.get('location')).toBeNull();
         } finally {
             globalThis.fetch = realFetch;
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
+    });
+
+    it('blocks authorization and never checks credentials when terms are not agreed', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        const realFetch = globalThis.fetch;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const registration = await realFetch(`http://127.0.0.1:${port}/oauth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [REDIRECT] })
+            });
+            const client = await registration.json();
+            let signInCalls = 0;
+            globalThis.fetch = async (url, options) => {
+                if (String(url).startsWith('https://identitytoolkit.googleapis.com/')) {
+                    signInCalls += 1;
+                    return { ok: true, json: async () => ({ refreshToken: 'rt' }) };
+                }
+                return realFetch(url, options);
+            };
+
+            const response = await realFetch(`http://127.0.0.1:${port}/oauth/authorize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    client_id: client.client_id,
+                    redirect_uri: REDIRECT,
+                    code_challenge: s256Challenge(VERIFIER),
+                    email: 'coach@example.com',
+                    password: 'correct-horse'
+                })
+            });
+            const body = await response.text();
+
+            expect(response.status).toBe(400);
+            expect(signInCalls).toBe(0);
+            expect(response.headers.get('location')).toBeNull();
+            expect(body).toContain('agree to the Terms and Privacy Policy');
+        } finally {
+            globalThis.fetch = realFetch;
+            await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+            if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
+            else process.env.FIREBASE_PROJECT_ID = previousProjectId;
+            if (previousApiKey === undefined) delete process.env.FIREBASE_WEB_API_KEY;
+            else process.env.FIREBASE_WEB_API_KEY = previousApiKey;
+        }
+    });
+
+    it('renders a required terms checkbox linking to the public policies on the sign-in page', async () => {
+        const previousProjectId = process.env.FIREBASE_PROJECT_ID;
+        const previousApiKey = process.env.FIREBASE_WEB_API_KEY;
+        process.env.FIREBASE_PROJECT_ID = 'test-project';
+        process.env.FIREBASE_WEB_API_KEY = 'test-api-key';
+        const { app } = await import('../../services/chatgpt-mcp/src/server.js');
+        const server = createServer(app);
+        await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+        try {
+            const { port } = server.address();
+            const registration = await globalThis.fetch(`http://127.0.0.1:${port}/oauth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ client_name: 'ChatGPT', redirect_uris: [REDIRECT] })
+            });
+            const client = await registration.json();
+            const query = new URLSearchParams({
+                client_id: client.client_id,
+                redirect_uri: REDIRECT,
+                response_type: 'code',
+                code_challenge: s256Challenge(VERIFIER),
+                code_challenge_method: 'S256'
+            });
+            const response = await globalThis.fetch(`http://127.0.0.1:${port}/oauth/authorize?${query}`);
+            const html = await response.text();
+
+            expect(response.status).toBe(200);
+            expect(html).toContain('name="terms_agree"');
+            expect(html).toContain('required');
+            expect(html).toContain('https://allplays.ai/terms.html');
+            expect(html).toContain('https://allplays.ai/privacy.html');
+        } finally {
             await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
             if (previousProjectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
             else process.env.FIREBASE_PROJECT_ID = previousProjectId;
