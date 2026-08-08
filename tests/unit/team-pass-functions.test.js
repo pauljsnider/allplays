@@ -7,6 +7,7 @@ const {
     isEligibleTeamPassPurchaser,
     buildTeamPassCheckoutAttemptId,
     buildTeamPassCheckoutIdempotencyKey,
+    isTeamPassEntitlementActive,
     shouldUnlockTeamPassFromEvent,
     buildTeamPassEntitlement
 } = require('../../functions/team-pass-core.cjs');
@@ -111,6 +112,31 @@ describe('team pass function helpers', () => {
         expect(shouldUnlockTeamPassFromEvent({
             type: 'checkout.session.expired',
             data: { object: teamPassSession }
+        })).toBe(false);
+    });
+
+    it('exposes only current exact-scope Team Pass entitlements as active', () => {
+        const active = {
+            status: 'active',
+            tier: 'team-pass',
+            teamId: 'team_123',
+            seasonId: '2026',
+            startsAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2026-12-31T23:59:59.000Z'
+        };
+
+        expect(isTeamPassEntitlementActive(active, {
+            teamId: 'team_123',
+            seasonId: '2026',
+            now: '2026-05-05T00:00:00.000Z'
+        })).toBe(true);
+        expect(isTeamPassEntitlementActive({ ...active, teamId: 'other' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive({ ...active, seasonId: '2025' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive({ ...active, status: 'revoked' }, { teamId: 'team_123', seasonId: '2026' })).toBe(false);
+        expect(isTeamPassEntitlementActive(active, {
+            teamId: 'team_123',
+            seasonId: '2026',
+            now: '2027-01-01T00:00:00.000Z'
         })).toBe(false);
     });
 

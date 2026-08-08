@@ -52,6 +52,7 @@ import {
     buildTelemetryPerformanceSummary,
     formatPerformanceDuration
 } from './telemetry-performance.js?v=3';
+import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
@@ -306,7 +307,11 @@ checkAuth(async (user) => {
     renderFooter(document.getElementById('footer-container'));
     document.getElementById('admin-email').textContent = user.email;
 
-    await loadData();
+    const premiumAccessControl = createAdminPremiumAccessControl();
+    await Promise.all([
+        loadData(),
+        premiumAccessControl.load()
+    ]);
     setupTabs();
     setupSearch();
 });

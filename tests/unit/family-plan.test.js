@@ -97,7 +97,8 @@ describe('family plan helpers', () => {
             relation: 'Guardian'
         }, {
             deps: { firebase },
-            existingMembers: []
+            existingMembers: [],
+            entitlementReader: async () => ({ state: 'unlocked', reason: 'global-open' })
         });
 
         expect(firebase.collection).toHaveBeenCalledWith({}, 'users/user-1/familyMemberships');
@@ -216,7 +217,8 @@ describe('family plan helpers', () => {
             teamAccessIntent: true
         }, {
             deps: { firebase },
-            linkedPlayers: [{ teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam' }]
+            linkedPlayers: [{ teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam' }],
+            entitlementReader: async () => ({ state: 'unlocked', reason: 'global-open' })
         });
 
         expect(firebase.collection).toHaveBeenCalledWith({}, 'users/user-1/householdInvites');
@@ -233,6 +235,37 @@ describe('family plan helpers', () => {
             teamName: 'Tigers',
             playerKey: 'team-1::player-1'
         }));
+    });
+
+    it('rechecks premium access before creating family or household invite documents', async () => {
+        const addDoc = vi.fn();
+        const firebase = {
+            db: {},
+            collection: vi.fn((_db, path) => ({ path })),
+            addDoc,
+            serverTimestamp: () => 'server-now'
+        };
+        const entitlementReader = vi.fn().mockResolvedValue({ state: 'locked', reason: 'missing-valid-entitlement' });
+
+        await expect(addPendingFamilyMember('user-1', {
+            email: 'new@example.com',
+            teamId: 'team-1',
+            playerId: 'player-1'
+        }, { deps: { firebase }, existingMembers: [], entitlementReader })).rejects.toThrow('Premium access is required');
+
+        await expect(addPendingHouseholdInvite('user-1', {
+            playerKey: 'team-1::player-1',
+            contactName: 'Alex Contact',
+            email: 'alex@example.com',
+            relation: 'Grandparent'
+        }, {
+            deps: { firebase },
+            linkedPlayers: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam' }],
+            entitlementReader
+        })).rejects.toThrow('Premium access is required');
+
+        expect(entitlementReader).toHaveBeenCalledTimes(2);
+        expect(addDoc).not.toHaveBeenCalled();
     });
 
     it('combines Family Plan slots and household player-access invites in one section', () => {

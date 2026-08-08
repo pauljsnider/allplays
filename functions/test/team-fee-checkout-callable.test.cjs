@@ -56,7 +56,12 @@ function makeFirestore(seed = {}, metrics = {}, options = {}) {
         return {
             path,
             id: path.split('/').pop(),
-            get: async () => snapshot(path),
+            get: async () => {
+                if (options.failDocumentGetWhen?.(path)) {
+                    throw new Error('Forced Firestore document read failure.');
+                }
+                return snapshot(path);
+            },
             collection: (name) => collection(`${path}/${name}`),
             set: async (value, options = {}) => write(path, value, options),
             update: async (value) => write(path, value, { merge: true })
@@ -162,6 +167,9 @@ function makeFunctionsStub() {
 
 function baseSeed(recipientOverrides = {}) {
     return {
+        'platformConfig/premium': {
+            openToAll: false
+        },
         'teams/team-1': {
             ownerId: 'owner-1',
             adminEmails: []
@@ -297,6 +305,7 @@ function loadCallable({ seed, retrieve, create, expire, firestoreOptions, webhoo
     return {
         callable: exports.createStripeTeamFeeCheckout,
         teamPassCallable: exports.createStripeTeamPassCheckout,
+        publicTeamPassStatus: exports.getPublicTeamPassStatus,
         teamPassWebhook: exports.stripeTeamPassWebhook,
         firestore,
         metrics
@@ -898,6 +907,100 @@ test('clears an exact team-fee creation request after a definitive Stripe reject
     );
 });
 
+test('defaults premium access open and suppresses an unnecessary team-pass checkout', async () => {
+    const seed = baseSeed();
+    delete seed['platformConfig/premium'];
+    const loaded = loadCallable({ seed });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'failed-precondition' && /open to everyone/i.test(error?.message || '')
+    );
+    assert.equal(loaded.metrics.createCalls.length, 0);
+    assert.equal(
+        [...loaded.firestore._state.keys()].some((path) => path.includes('/teamPassCheckoutAttempts/')),
+        false
+    );
+});
+
+test('suppresses team-pass checkout when the global premium flag is explicitly on', async () => {
+    const seed = baseSeed();
+    seed['platformConfig/premium'] = { openToAll: true };
+    const loaded = loadCallable({ seed });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'failed-precondition' && /purchase is not needed/i.test(error?.message || '')
+    );
+    assert.equal(loaded.metrics.createCalls.length, 0);
+});
+
+test('fails closed before Stripe when the global premium flag cannot be read', async () => {
+    const loaded = loadCallable({
+        firestoreOptions: {
+            failDocumentGetWhen: (path) => path === 'platformConfig/premium'
+        }
+    });
+
+    await assert.rejects(
+        loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context),
+        (error) => error?.code === 'unavailable'
+    );
+    assert.equal(loaded.metrics.createCalls.length, 0);
+});
+
+test('returns only sanitized public Team Pass status from a raw entitlement', async () => {
+    const seed = baseSeed();
+    seed['teams/team-1/entitlements/2026_team-pass'] = {
+        teamId: 'team-1',
+        seasonId: '2026',
+        tier: 'team-pass',
+        status: 'active',
+        purchasedByUid: 'owner-1',
+        stripeCustomerId: 'cus_private',
+        stripePaymentIntentId: 'pi_private'
+    };
+    const loaded = loadCallable({ seed });
+
+    const result = await loaded.publicTeamPassStatus({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context);
+    assert.deepEqual(result, {
+        active: true,
+        reason: 'active',
+        seasonId: '2026',
+        tier: 'team-pass'
+    });
+    assert.equal(JSON.stringify(result).includes('cus_private'), false);
+    assert.equal(JSON.stringify(result).includes('pi_private'), false);
+});
+
+test('denies unauthenticated Team Pass status reads before Firestore access', async () => {
+    const loaded = loadCallable();
+
+    await assert.rejects(
+        loaded.publicTeamPassStatus({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, {}),
+        (error) => error?.code === 'unauthenticated'
+    );
+});
+
+test('denies Team Pass status reads from unrelated users', async () => {
+    const seed = baseSeed();
+    seed['users/other-1'] = { parentTeamIds: [] };
+    const loaded = loadCallable({
+        seed,
+        firestoreOptions: {
+            failDocumentGetWhen: (path) => path.includes('/entitlements/')
+        }
+    });
+
+    await assert.rejects(
+        loaded.publicTeamPassStatus(
+            { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' },
+            { auth: { uid: 'other-1', token: { email: 'other@example.com' } } }
+        ),
+        (error) => error?.code === 'permission-denied'
+    );
+});
+
 test('uses a stable idempotency key for repeated team-pass checkout creation', async () => {
     const loaded = loadCallable({
         create: async (params) => ({
@@ -1235,6 +1338,7 @@ test('activates the team pass and removes the private exact request after paid w
     });
 
     await loaded.teamPassCallable({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context);
+    loaded.firestore._state.set('platformConfig/premium', { openToAll: true });
     const response = makeWebhookResponse();
     await loaded.teamPassWebhook({
         method: 'POST',
