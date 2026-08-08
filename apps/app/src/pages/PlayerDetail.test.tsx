@@ -43,6 +43,9 @@ const profilePhotoServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/playerService', () => playerServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => ({
+  usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 vi.mock('../lib/parentWorkflowTiming', () => ({
   completeParentCoreWorkflowTimer: vi.fn()
 }));

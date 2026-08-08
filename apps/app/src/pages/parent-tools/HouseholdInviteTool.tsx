@@ -2,10 +2,20 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { CheckCircle2, Copy, Loader2, RefreshCw, Users } from 'lucide-react';
 import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyContact, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
+import { PremiumGate } from '../../components/PremiumGate';
+import { PREMIUM_FEATURES, PREMIUM_SCOPES } from '../../lib/premiumAccessService';
+import { usePremiumFeatureAccess } from '../../lib/usePremiumFeatureAccess';
 import type { AuthState } from '../../lib/types';
 import { copyText, EmptyState, InviteResultCard, LoadingBlock, RetryableStatus, Status, ToolHeader, useParentToolAsyncOperation } from './shared';
 
 export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
+    const premiumAccess = usePremiumFeatureAccess({
+        scope: PREMIUM_SCOPES.ACCOUNT,
+        feature: PREMIUM_FEATURES.FAMILY_PLAN,
+        user: auth.user,
+        normalAccess: Boolean(auth.user?.uid)
+    });
+    const canCreateInvite = premiumAccess.state === 'unlocked';
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
     const [members, setMembers] = useState<ParentHouseholdFamilyMember[]>([]);
     const [linkedContacts, setLinkedContacts] = useState<ParentHouseholdFamilyContact[]>([]);
@@ -52,6 +62,10 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        if (!canCreateInvite) {
+            setSubmitError(toAppServiceError(new Error('Premium access is required to create a household invite.'), 'Premium access is required to create a household invite.'));
+            return;
+        }
         const trimmedEmail = email.trim();
         const trimmedRelation = relation.trim();
         if (!playerKey) {
@@ -116,22 +130,23 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                         onStatus={setMessage}
                     />
                 ) : null}
+                {!canCreateInvite ? <PremiumGate access={premiumAccess} label="new parent and caregiver invitations"><span /></PremiumGate> : null}
                 {loading ? <LoadingBlock label="Loading household invites" /> : (
                     <form className="mt-3 grid gap-3" onSubmit={submit}>
                         <label>
                             <span className="app-label">Linked player</span>
-                            <select className="auth-input mt-1" value={playerKey} onChange={(event) => setPlayerKey(event.target.value)} disabled={!linkedPlayers.length || saving}>
+                            <select className="auth-input mt-1" value={playerKey} onChange={(event) => setPlayerKey(event.target.value)} disabled={!linkedPlayers.length || saving || !canCreateInvite}>
                                 {linkedPlayers.length ? linkedPlayers.map((player) => (
                                     <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName || 'Player'}{player.playerNumber ? ` #${player.playerNumber}` : ''}{player.teamName ? ` - ${player.teamName}` : ''}</option>
                                 )) : <option value="">No linked players</option>}
                             </select>
                         </label>
                         <div className="grid gap-3 sm:grid-cols-2">
-                            <input aria-label="Name" className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
-                            <input aria-label="Email" className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" disabled={saving || !linkedPlayers.length} />
+                            <input aria-label="Name" className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length || !canCreateInvite} />
+                            <input aria-label="Email" className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Recipient email" disabled={saving || !linkedPlayers.length || !canCreateInvite} />
                         </div>
-                        <input aria-label="Relation" className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
-                        <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
+                        <input aria-label="Relation" className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length || !canCreateInvite} />
+                        <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length || !canCreateInvite}>
                             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
                             {saving ? 'Creating invite...' : 'Create invite'}
                         </button>

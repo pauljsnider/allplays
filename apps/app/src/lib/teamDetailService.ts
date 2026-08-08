@@ -379,6 +379,7 @@ export type UpsertStatTrackerConfigForAppInput = {
 export type TeamDetailModel = {
   team: {
     id: string;
+    currentSeasonId: string;
     ownerId: string;
     name: string;
     sport: string;
@@ -2321,6 +2322,7 @@ export function buildTeamDetailModel({
   return {
     team: {
       id: teamId,
+      currentSeasonId: cleanString(team?.currentSeasonId),
       ownerId: cleanString(team?.ownerId),
       name: cleanString(team?.name) || 'Team',
       sport: cleanString(team?.sport) || 'Sport not set',

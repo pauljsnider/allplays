@@ -438,6 +438,7 @@
             "cloudFunctions": [
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
+                "getPublicTeamPassStatus",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
                 "refundStripeTeamFeePayment",
@@ -445,6 +446,7 @@
                 "stripeTeamPassWebhook"
             ],
             "unitTests": [
+                "functions/test/team-fee-checkout-callable.test.cjs",
                 "tests/unit/app-team-fees-service.test.ts",
                 "tests/unit/db-team-fee-recipient-list.test.js",
                 "tests/unit/db-team-fee-recipient-updates.test.js",
