@@ -156,13 +156,13 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
 
-        expect(appPackage.devDependencies.vite).toBe('^8.1.5');
-        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.1.5');
-        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.1.5');
-        expect(appPnpmLock).toContain('vite@8.1.5:');
+        expect(appPackage.devDependencies.vite).toBe('^8.2.0');
+        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.2.0');
+        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.2.0');
+        expect(appPnpmLock).toContain('vite@8.2.0:');
         const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
         expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
-        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.5`);
+        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.2.0`);
     });
 
     it('keeps app dependency maintenance updates aligned across the manifest and lockfiles', () => {
@@ -170,11 +170,11 @@ describe('Capacitor native config', () => {
         const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
         const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const expectedDependencies = {
-            'lucide-react': { group: 'dependencies', specifier: '^1.27.0', version: '1.27.0' },
+            'lucide-react': { group: 'dependencies', specifier: '^1.28.0', version: '1.28.0' },
             'react-router-dom': { group: 'dependencies', specifier: '7.18.2', version: '7.18.2' },
             'web-vitals': { group: 'dependencies', specifier: '^6.0.1', version: '6.1.0' },
-            globals: { group: 'devDependencies', specifier: '^17.8.0', version: '17.8.0' },
-            postcss: { group: 'devDependencies', specifier: '^8.5.24', version: '8.5.24' }
+            globals: { group: 'devDependencies', specifier: '^17.9.0', version: '17.9.0' },
+            postcss: { group: 'devDependencies', specifier: '^8.5.25', version: '8.5.25' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
@@ -189,15 +189,15 @@ describe('Capacitor native config', () => {
         });
     });
 
-    it('does not refresh the unrelated pnpm jsdom dependency graph', () => {
+    it('keeps the pnpm jsdom dependency graph aligned with the app update', () => {
         const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const jsdomDependency = appPnpmLock.importers['.'].devDependencies.jsdom;
 
-        expect(jsdomDependency).toEqual({ specifier: '^29.1.1', version: '29.1.1' });
-        expect(appPnpmLock.packages['jsdom@29.1.1']).toBeDefined();
-        expect(appPnpmLock.packages['jsdom@30.0.1']).toBeUndefined();
-        expect(appPnpmLock.packages['undici@7.28.0'].engines.node).toBe('>=20.18.1');
-        expect(appPnpmLock.packages['undici@8.9.0']).toBeUndefined();
+        expect(jsdomDependency).toEqual({ specifier: '^30.0.1', version: '30.0.1' });
+        expect(appPnpmLock.packages['jsdom@30.0.1']).toBeDefined();
+        expect(appPnpmLock.packages['jsdom@29.1.1']).toBeUndefined();
+        expect(appPnpmLock.packages['undici@8.10.0'].engines.node).toBe('>=22.19.0');
+        expect(appPnpmLock.packages['undici@7.28.0']).toBeUndefined();
     });
 
     it('forces patched glob dependency versions throughout the app npm lockfile', () => {
