@@ -689,6 +689,7 @@ test('@visual app auth screen exposes sign in, sign up, Google, activation code,
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
     await page.getByRole('tab', { name: 'Sign up' }).click();
+    await page.getByRole('checkbox', { name: /I agree/ }).check();
     await page.getByRole('button', { name: 'Continue with Google' }).click();
     expect(await page.evaluate(() => window.__appAuthCalls.signInWithGoogleAccount)).toEqual([{ activationCode: 'AB12CD34' }]);
 });
