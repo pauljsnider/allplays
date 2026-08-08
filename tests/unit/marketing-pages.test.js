@@ -83,4 +83,17 @@ describe('marketing pages integration', () => {
         expect(html).not.toContain('href="#"');
         expect(html).toContain('/app/#/auth?mode=signup');
     });
+
+    it('routes signed-in visitors from the static page into the app at /app/', () => {
+        // GitHub Pages serves this page at /app (extension-less resolution to app.html),
+        // which shadows the React app at /app/. Signed-in users must be pushed into the
+        // app so the static page remains the logged-out UX only.
+        const html = read('app.html');
+
+        expect(html).toContain("checkAuth((user) => {");
+        expect(html).toContain("window.location.replace('/app/' + window.location.search + window.location.hash)");
+        expect(html).not.toContain("location.replace('/app')");
+        expect(html).toContain("renderHeader(document.getElementById('header-container'), null);");
+        expect(html).toContain('.catch(() => {');
+    });
 });

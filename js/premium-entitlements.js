@@ -1,76 +1,12 @@
-function normalizeString(value) {
-    return typeof value === 'string' ? value.trim() : '';
-}
+import {
+    PREMIUM_FEATURES,
+    PREMIUM_SCOPES,
+    isValidPremiumEntitlementRecord,
+    resolvePremiumAccess
+} from './premium-access-core.js?v=1';
+import { readPremiumAccessConfig } from './premium-access.js?v=1';
 
-function normalizeStatus(value) {
-    return normalizeString(value).toLowerCase();
-}
-
-function normalizeDateValue(value) {
-    if (!value) return null;
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
-    if (typeof value.toDate === 'function') {
-        const date = value.toDate();
-        return date instanceof Date && !Number.isNaN(date.getTime()) ? date : undefined;
-    }
-    if (typeof value.seconds === 'number') {
-        const date = new Date(value.seconds * 1000);
-        return Number.isNaN(date.getTime()) ? undefined : date;
-    }
-    if (typeof value === 'number' || typeof value === 'string') {
-        const date = new Date(value);
-        return Number.isNaN(date.getTime()) ? undefined : date;
-    }
-    return undefined;
-}
-
-function getExpiryDate(data) {
-    if (!data || typeof data !== 'object') return null;
-    const expiryFields = ['expiresAt', 'validUntil', 'endsAt', 'endAt'];
-    for (const field of expiryFields) {
-        if (Object.prototype.hasOwnProperty.call(data, field)) {
-            return normalizeDateValue(data[field]);
-        }
-    }
-    return null;
-}
-
-function getDefaultSeasonId(now) {
-    const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-    return String(date.getUTCFullYear());
-}
-
-export function isValidPremiumEntitlementRecord(data, { scope, teamId = '', userId = '', currentSeasonId = '', now = new Date() } = {}) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
-    if (normalizeStatus(data.status) !== 'active') return false;
-    if (data.revoked === true || data.isRevoked === true || data.deleted === true) return false;
-
-    const revokedAt = normalizeDateValue(data.revokedAt);
-    if (revokedAt) return false;
-
-    const expiryDate = getExpiryDate(data);
-    if (expiryDate === undefined) return false;
-    if (expiryDate && expiryDate <= now) return false;
-
-    if (scope === 'team') {
-        const entitlementTeamId = normalizeString(data.teamId);
-        if (entitlementTeamId && entitlementTeamId !== teamId) return false;
-        const tier = normalizeString(data.tier);
-        if (tier && tier !== 'team-pass') return false;
-        const entitlementSeasonId = normalizeString(data.seasonId);
-        const requiredSeasonId = normalizeString(currentSeasonId) || getDefaultSeasonId(now);
-        if (!entitlementSeasonId || entitlementSeasonId !== requiredSeasonId) return false;
-        return true;
-    }
-
-    if (scope === 'account') {
-        const entitlementUserId = normalizeString(data.userId || data.accountUserId || data.uid || data.purchasedByUid);
-        if (entitlementUserId && entitlementUserId !== userId) return false;
-        return true;
-    }
-
-    return false;
-}
+export { isValidPremiumEntitlementRecord } from './premium-access-core.js?v=1';
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
@@ -81,7 +17,7 @@ function dataFromSnapshot(docSnap) {
     return typeof docSnap?.data === 'function' ? docSnap.data() : null;
 }
 
-export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo, currentSeasonId = '', deps = {} } = {}) {
+export async function readTeamEntitlementState({ teamId, user, teamAccessInfo, currentSeasonId = '', deps = {} } = {}) {
     if (!teamId || !user?.uid || !teamAccessInfo?.hasAccess) {
         return { state: 'locked', reason: 'missing-linked-team-access' };
     }
@@ -91,7 +27,7 @@ export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo,
         const snapshot = await getDocs(collection(db, `teams/${teamId}/entitlements`));
         const hasValidEntitlement = snapshot.docs.some((docSnap) => isValidPremiumEntitlementRecord(
             dataFromSnapshot(docSnap),
-            { scope: 'team', teamId, currentSeasonId }
+            { scope: PREMIUM_SCOPES.TEAM, teamId, currentSeasonId }
         ));
         return hasValidEntitlement
             ? { state: 'unlocked', reason: 'valid-team-entitlement' }
@@ -102,7 +38,7 @@ export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo,
     }
 }
 
-export async function readAccountPremiumEntitlement({ user, deps = {} } = {}) {
+export async function readAccountEntitlementState({ user, deps = {} } = {}) {
     if (!user?.uid) {
         return { state: 'locked', reason: 'missing-user' };
     }
@@ -112,7 +48,7 @@ export async function readAccountPremiumEntitlement({ user, deps = {} } = {}) {
         const snapshot = await getDocs(collection(db, `users/${user.uid}/entitlements`));
         const hasValidEntitlement = snapshot.docs.some((docSnap) => isValidPremiumEntitlementRecord(
             dataFromSnapshot(docSnap),
-            { scope: 'account', userId: user.uid }
+            { scope: PREMIUM_SCOPES.ACCOUNT, userId: user.uid }
         ));
         return hasValidEntitlement
             ? { state: 'unlocked', reason: 'valid-account-entitlement' }
@@ -123,15 +59,58 @@ export async function readAccountPremiumEntitlement({ user, deps = {} } = {}) {
     }
 }
 
-export function renderPremiumGateState(container, { state, scope = 'team' } = {}) {
+export async function readTeamPremiumEntitlement({
+    teamId,
+    user,
+    teamAccessInfo,
+    normalAccess = Boolean(teamId && user?.uid && teamAccessInfo?.hasAccess),
+    currentSeasonId = '',
+    feature = PREMIUM_FEATURES.TEAM_ANALYTICS,
+    deps = {},
+    configReader = readPremiumAccessConfig
+} = {}) {
+    const authorized = normalAccess === true && Boolean(teamId && user?.uid && teamAccessInfo?.hasAccess);
+    if (!authorized) return resolvePremiumAccess({ feature, normalAccess: false });
+
+    const config = await configReader({ deps });
+    const configAccess = resolvePremiumAccess({ feature, normalAccess: authorized, config });
+    if (configAccess.state !== 'locked') return configAccess;
+
+    const entitlement = await readTeamEntitlementState({ teamId, user, teamAccessInfo, currentSeasonId, deps });
+    return resolvePremiumAccess({ feature, normalAccess: authorized, config, entitlement });
+}
+
+export async function readAccountPremiumEntitlement({
+    user,
+    normalAccess = Boolean(user?.uid),
+    feature = PREMIUM_FEATURES.PLAYER_ANALYTICS,
+    deps = {},
+    configReader = readPremiumAccessConfig
+} = {}) {
+    const authorized = normalAccess === true && Boolean(user?.uid);
+    if (!authorized) return resolvePremiumAccess({ feature, normalAccess: false });
+
+    const config = await configReader({ deps });
+    const configAccess = resolvePremiumAccess({ feature, normalAccess: authorized, config });
+    if (configAccess.state !== 'locked') return configAccess;
+
+    const entitlement = await readAccountEntitlementState({ user, deps });
+    return resolvePremiumAccess({ feature, normalAccess: authorized, config, entitlement });
+}
+
+export function renderPremiumGateState(container, { state, scope = 'team', feature = '' } = {}) {
     if (!container || state === 'unlocked') return false;
 
-    const isUnavailable = state === 'unavailable';
-    const title = isUnavailable ? 'Premium unavailable' : 'Premium preview locked';
-    const noun = scope === 'account' ? 'player analytics' : 'team analytics';
-    const message = isUnavailable
-        ? `We could not verify premium access for ${noun} right now. Try again later.`
-        : `Premium access is required to unlock ${noun}. This preview stays visible so you know what is available when access is active.`;
+    const isUnavailable = state === 'unavailable' || state === 'loading';
+    const title = state === 'loading' ? 'Checking premium access' : isUnavailable ? 'Premium unavailable' : 'Premium preview locked';
+    const noun = feature === PREMIUM_FEATURES.FAMILY_PLAN
+        ? 'parent and caregiver invitations'
+        : scope === PREMIUM_SCOPES.ACCOUNT ? 'player analytics' : 'team analytics';
+    const message = state === 'loading'
+        ? `We are checking premium access for ${noun}.`
+        : isUnavailable
+            ? `We could not verify premium access for ${noun} right now. Try again later.`
+            : `Premium access is required to unlock ${noun}. This preview stays visible so you know what is available when access is active.`;
     const accentClass = isUnavailable ? 'from-gray-400 to-gray-500' : 'from-amber-400 to-amber-500';
 
     container.innerHTML = `

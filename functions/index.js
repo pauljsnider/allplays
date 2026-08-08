@@ -49,6 +49,7 @@ const {
   buildTeamPassCheckoutIdempotencyKey,
   hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,
+  isTeamPassEntitlementActive,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
 const {
@@ -396,6 +397,36 @@ const firestore = admin.firestore();
 function assertPaymentsEnabled() {
   if (process.env.PAYMENTS_ENABLED !== 'true') {
     throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
+  }
+}
+
+const PREMIUM_ACCESS_CONFIG_PATH = 'platformConfig/premium';
+
+async function readPremiumOpenToAll() {
+  let snapshot;
+  try {
+    snapshot = await firestore.doc(PREMIUM_ACCESS_CONFIG_PATH).get();
+  } catch (error) {
+    functions.logger.error('Unable to read the global premium access flag.', {
+      error: error?.message || error
+    });
+    throw new functions.https.HttpsError('unavailable', 'Premium access configuration could not be verified.');
+  }
+
+  if (!snapshot.exists) return true;
+  const value = snapshot.data()?.openToAll;
+  if (typeof value !== 'boolean') {
+    throw new functions.https.HttpsError('unavailable', 'Premium access configuration is invalid.');
+  }
+  return value;
+}
+
+async function assertTeamPassCheckoutAvailable() {
+  if (await readPremiumOpenToAll()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Premium features are currently open to everyone, so a Team Pass purchase is not needed.'
+    );
   }
 }
 const assertSensitiveEmailVerified = createVerifiedEmailSensitiveActionGuard({
@@ -5618,12 +5649,52 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
   }
 });
 
+exports.getPublicTeamPassStatus = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team pass status.');
+  }
+
+  let input;
+  try {
+    input = normalizeTeamPassCheckoutInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid Team Pass status request.');
+  }
+
+  const { teamId, seasonId, tier } = input;
+  const [teamSnap, user] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    getUserForEligibility(context.auth.uid)
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasCurrentTeamAccess({ team, user, userId: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team.');
+  }
+
+  const entitlementSnap = await firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`).get();
+  const active = entitlementSnap.exists && isTeamPassEntitlementActive(
+    entitlementSnap.data(),
+    { teamId, seasonId, tier }
+  );
+  return {
+    active,
+    reason: active ? 'active' : 'not-active',
+    seasonId,
+    tier
+  };
+});
+
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
   assertPaymentsEnabled();
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
   }
   await assertSensitiveEmailVerified(context, 'create-team-pass-checkout');
+  await assertTeamPassCheckoutAvailable();
 
   const input = normalizeTeamPassCheckoutInput(data || {});
   const { teamId, seasonId, tier } = input;

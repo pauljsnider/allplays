@@ -99,6 +99,18 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
         });
     });
 
+    await page.route(/\/src\/lib\/usePremiumFeatureAccess\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function usePremiumFeatureAccess() {
+                    return { state: 'unlocked', reason: 'global-open' };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/homeService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -376,6 +388,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                         return {
                             team: {
                                 id: 'team-empty',
+                                currentSeasonId: 'summer-2100',
                                 ownerId: 'owner-empty',
                                 name: 'Empty Team',
                                 sport: 'Soccer',
@@ -422,6 +435,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                     return {
                         team: {
                             id: 'team-1',
+                            currentSeasonId: 'summer-2100',
                             ownerId: 'owner-1',
                             name: 'Bears',
                             sport: 'Basketball',

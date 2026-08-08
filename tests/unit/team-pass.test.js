@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     buildTeamPassMarkup,
     getCanonicalStripeCheckoutUrl,
@@ -25,6 +25,9 @@ function mockFirebaseForDocs(docs) {
         })
     };
 }
+
+const premiumClosed = async () => ({ state: 'ready', openToAll: false, reason: 'entitlement-required' });
+const premiumOpen = async () => ({ state: 'ready', openToAll: true, reason: 'global-open' });
 
 describe('team pass UI helpers', () => {
     it('accepts only canonical Stripe Checkout destinations before navigation', () => {
@@ -110,14 +113,39 @@ describe('team pass UI helpers', () => {
         await expect(readTeamPassStatus({
             team: TEAM,
             access: { canReadStatus: true },
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1', seasonId: '2026' }]) }
         })).resolves.toMatchObject({ status: 'active' });
 
         await expect(readTeamPassStatus({
             team: TEAM,
             access: { canReadStatus: false },
+            configReader: premiumClosed,
             deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1' }]) }
         })).resolves.toMatchObject({ status: 'readonly' });
+    });
+
+    it('shows the global-open state without reading private Team Pass records', async () => {
+        const getDocs = vi.fn(() => {
+            throw new Error('private entitlement records should not be read');
+        });
+        const pass = await readTeamPassStatus({
+            team: TEAM,
+            access: { canReadStatus: false },
+            configReader: premiumOpen,
+            deps: { firebase: { db: {}, collection: vi.fn(), getDocs } }
+        });
+        const markup = buildTeamPassMarkup({
+            team: TEAM,
+            access: { isStaff: false, label: 'Team member access' },
+            pass
+        });
+
+        expect(pass).toMatchObject({ status: 'open', label: 'Open to everyone' });
+        expect(getDocs).not.toHaveBeenCalled();
+        expect(markup).toContain('Premium features are currently open to everyone');
+        expect(markup).toContain('Global premium access is on');
+        expect(markup).not.toContain('Checkout is not available yet');
     });
 
     it('renders staff status metadata and missing checkout callout without checkout controls', () => {

@@ -1,4 +1,5 @@
-import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=1';
+import { readAccountPremiumEntitlement } from './premium-entitlements.js?v=2';
+import { PREMIUM_FEATURES } from './premium-access-core.js?v=1';
 import { buildAppJoinUrl, generateJoinCode } from './join-code.js?v=2';
 
 export const MAX_FAMILY_PLAN_SLOTS = 4;
@@ -143,6 +144,8 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
     const normalizedPlayerLinks = normalizePlayerLinks(playerLinks);
     const counts = getFamilySlotCounts(normalized);
     const slotsFull = counts.used >= counts.max;
+    const premiumLocked = entitlementState !== 'unlocked';
+    const creationDisabled = slotsFull || premiumLocked;
     const rows = normalized.length
         ? normalized.map((member) => {
             const label = member.displayName || member.email || 'Family member';
@@ -190,17 +193,17 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
             </div>
             <div class="space-y-2">${rows}</div>
             <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
-                ${normalizedPlayerLinks.length ? `<select id="family-plan-player-link" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                ${normalizedPlayerLinks.length ? `<select id="family-plan-player-link" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationDisabled ? 'disabled' : ''}>
                     <option value="">Select player access to share</option>
                     ${normalizedPlayerLinks.map((link) => `<option value="${escapeHtml(`${link.teamId}::${link.playerId}`)}">${escapeHtml(`${link.playerName || 'Player'}${link.playerNumber ? ` #${link.playerNumber}` : ''}${link.teamName ? `, ${link.teamName}` : ''}`)}</option>`).join('')}
                 </select>` : ''}
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input id="family-plan-member-name" type="text" placeholder="Name (optional)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
-                    <input id="family-plan-member-email" type="email" placeholder="Email for pending invite" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                    <input id="family-plan-member-name" type="text" placeholder="Name (optional)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationDisabled ? 'disabled' : ''}>
+                    <input id="family-plan-member-email" type="email" placeholder="Email for pending invite" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationDisabled ? 'disabled' : ''}>
                 </div>
-                <input id="family-plan-member-relation" type="text" placeholder="Relation (for example: guardian, step-parent)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
-                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${slotsFull ? 'disabled' : ''}>Email parent invite</button>
-                <div id="family-plan-validation" class="${validationMessage || slotsFull ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 ${validationMessage ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">${escapeHtml(validationMessage || `Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`)}</div>
+                <input id="family-plan-member-relation" type="text" placeholder="Relation (for example: guardian, step-parent)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationDisabled ? 'disabled' : ''}>
+                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${creationDisabled ? 'disabled' : ''}>Email parent invite</button>
+                <div id="family-plan-validation" class="${validationMessage || creationDisabled ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 ${validationMessage ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">${escapeHtml(validationMessage || (premiumLocked ? 'Premium access is required to create new parent or caregiver invitations.' : `Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`))}</div>
             </div>
         </div>
     `;
@@ -239,9 +242,10 @@ function normalizeLinkedPlayers(players = []) {
     }));
 }
 
-export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], validationMessage = '' } = {}) {
+export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], entitlementState = 'locked', validationMessage = '' } = {}) {
     const normalizedInvites = normalizeHouseholdInvites(invites).filter((invite) => invite.status === 'pending');
     const normalizedPlayers = normalizeLinkedPlayers(linkedPlayers);
+    const creationEnabled = normalizedPlayers.length > 0 && entitlementState === 'unlocked';
     const playerOptions = normalizedPlayers.length
         ? normalizedPlayers.map((player) => `<option value="${escapeHtml(player.teamId)}::${escapeHtml(player.playerId)}">${escapeHtml(player.playerName)}${player.teamName ? ` — ${escapeHtml(player.teamName)}` : ''}</option>`).join('')
         : '<option value="">No linked players available</option>';
@@ -271,21 +275,21 @@ export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], v
                 <p class="text-xs text-gray-500 mt-1">Create pending invites for contacts who should share access to a specific linked player. Access is not granted until invite acceptance is built.</p>
             </div>
             <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
-                <select id="household-invite-player" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                <select id="household-invite-player" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationEnabled ? '' : 'disabled'}>
                     <option value="">Select linked player</option>
                     ${playerOptions}
                 </select>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input id="household-invite-name" type="text" placeholder="Contact name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
-                    <input id="household-invite-email" type="email" placeholder="Contact email" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                    <input id="household-invite-name" type="text" placeholder="Contact name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationEnabled ? '' : 'disabled'}>
+                    <input id="household-invite-email" type="email" placeholder="Contact email" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationEnabled ? '' : 'disabled'}>
                 </div>
-                <input id="household-invite-relation" type="text" placeholder="Relation, e.g. grandparent, step-parent" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                <input id="household-invite-relation" type="text" placeholder="Relation, e.g. grandparent, step-parent" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${creationEnabled ? '' : 'disabled'}>
                 <label class="flex items-start gap-2 text-xs text-gray-600">
-                    <input id="household-invite-team-access" type="checkbox" class="mt-0.5 rounded border-gray-300 text-primary-600" ${normalizedPlayers.length ? '' : 'disabled'}>
+                    <input id="household-invite-team-access" type="checkbox" class="mt-0.5 rounded border-gray-300 text-primary-600" ${creationEnabled ? '' : 'disabled'}>
                     <span>Intend to share team access when household invite acceptance is supported</span>
                 </label>
-                <button id="household-invite-add-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${normalizedPlayers.length ? '' : 'disabled'}>Create pending household invite</button>
-                <div id="household-invite-validation" class="${validationMessage ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200">${escapeHtml(validationMessage)}</div>
+                <button id="household-invite-add-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${creationEnabled ? '' : 'disabled'}>Create pending household invite</button>
+                <div id="household-invite-validation" class="${validationMessage || (!creationEnabled && normalizedPlayers.length) ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200">${escapeHtml(validationMessage || (normalizedPlayers.length ? 'Premium access is required to create new household invitations.' : ''))}</div>
             </div>
             <div class="space-y-2">
                 <div class="text-sm font-semibold text-gray-900">Pending household invites</div>
@@ -313,7 +317,7 @@ export async function readHouseholdInvites(userId, { deps = {} } = {}) {
     return normalizeHouseholdInvites(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...dataFromSnapshot(docSnap) })));
 }
 
-export async function addPendingHouseholdInvite(userId, invite, { deps = {}, linkedPlayers = [] } = {}) {
+export async function addPendingHouseholdInvite(userId, invite, { deps = {}, linkedPlayers = [], entitlementReader = readAccountPremiumEntitlement } = {}) {
     if (!userId) throw new Error('Missing signed-in user.');
     const normalizedPlayers = normalizeLinkedPlayers(linkedPlayers);
     const selectedKey = normalizeString(invite?.playerKey || `${normalizeString(invite?.teamId)}::${normalizeString(invite?.playerId)}`);
@@ -326,6 +330,15 @@ export async function addPendingHouseholdInvite(userId, invite, { deps = {}, lin
     if (!contactName) throw new Error('Enter the household contact name.');
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email for the household contact.');
     if (!relation) throw new Error('Enter the household contact relation.');
+
+    const premiumAccess = await entitlementReader({
+        user: { uid: userId },
+        feature: PREMIUM_FEATURES.FAMILY_PLAN,
+        deps
+    });
+    if (premiumAccess?.state !== 'unlocked') {
+        throw new Error('Premium access is required to create a household invite.');
+    }
 
     const { db, collection, addDoc, serverTimestamp } = await loadFirebase(deps);
     const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
@@ -352,7 +365,7 @@ export async function removePendingHouseholdInvite(userId, inviteId, { deps = {}
     await deleteDoc(doc(db, `users/${userId}/householdInvites/${inviteId}`));
 }
 
-export async function addPendingFamilyMember(userId, member, { deps = {}, existingMembers = [] } = {}) {
+export async function addPendingFamilyMember(userId, member, { deps = {}, existingMembers = [], entitlementReader = readAccountPremiumEntitlement } = {}) {
     if (!userId) throw new Error('Missing signed-in user.');
     if (!canAddFamilyMember(existingMembers)) {
         throw new Error(`Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`);
@@ -372,6 +385,15 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
     const teamId = normalizeString(member?.teamId);
     if (!teamId || !playerId) {
         throw new Error('Select the player access to share with this household contact.');
+    }
+
+    const premiumAccess = await entitlementReader({
+        user: { uid: userId },
+        feature: PREMIUM_FEATURES.FAMILY_PLAN,
+        deps
+    });
+    if (premiumAccess?.state !== 'unlocked') {
+        throw new Error('Premium access is required to create a parent or caregiver invite.');
     }
 
     const { db, collection, addDoc, updateDoc, doc, runTransaction, serverTimestamp, Timestamp } = await loadFirebase(deps);
@@ -494,6 +516,7 @@ export async function loadFamilyPlanState(user, { deps = {}, entitlementReader =
         members,
         invites,
         entitlementState: entitlement?.state || 'locked',
+        entitlementReason: entitlement?.reason || 'missing-valid-entitlement',
     };
 }
 
@@ -545,7 +568,7 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                     displayName: nameEl?.value,
                     relation: container.querySelector('#family-plan-member-relation')?.value,
                     ...selectedPlayer,
-                }, { deps, existingMembers: state.members });
+                }, { deps, existingMembers: state.members, entitlementReader });
                 await renderFamilyPlanSection(container, user, options);
             } catch (error) {
                 if (validationEl) {
@@ -589,7 +612,7 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                     email: container.querySelector('#household-invite-email')?.value,
                     relation: container.querySelector('#household-invite-relation')?.value,
                     teamAccessIntent: container.querySelector('#household-invite-team-access')?.checked === true,
-                }, { deps, linkedPlayers: state.linkedPlayers });
+                }, { deps, linkedPlayers: state.linkedPlayers, entitlementReader });
                 await renderFamilyPlanSection(container, user, options);
             } catch (error) {
                 if (householdValidationEl) {
