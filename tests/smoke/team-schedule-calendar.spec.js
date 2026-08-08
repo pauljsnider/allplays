@@ -474,7 +474,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: LOCAL_ATTRACTIONS_STUB
     }));
-    await page.route('**/js/premium-entitlements.js?v=1', (route) => route.fulfill({
+    await page.route('**/js/premium-entitlements.js*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'

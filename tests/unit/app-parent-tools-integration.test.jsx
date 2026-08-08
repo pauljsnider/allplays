@@ -95,6 +95,9 @@ vi.mock('../../apps/app/src/lib/parentCertificatesService.ts', () => ({
 vi.mock('../../apps/app/src/lib/parentToolsAccessService.ts', () => accessServiceMocks);
 vi.mock('../../apps/app/src/lib/inviteRedemption.ts', () => inviteRedemptionMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/usePremiumFeatureAccess.ts', () => ({
+    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 
 import { ParentTools } from '../../apps/app/src/pages/ParentTools.tsx';
 import { TeamMedia } from '../../apps/app/src/pages/TeamMedia.tsx';

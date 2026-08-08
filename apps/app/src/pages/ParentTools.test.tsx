@@ -56,6 +56,9 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => ({
+    usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+}));
 vi.mock('../lib/parentCalendarService', () => ({
     buildParentScheduleIcs: parentToolsServiceMocks.buildParentScheduleIcs,
     getAppleCalendarFeedUrl: parentToolsServiceMocks.getAppleCalendarFeedUrl,
@@ -107,6 +110,7 @@ vi.mock('lucide-react', () => {
         ExternalLink: Icon,
         KeyRound: Icon,
         Link2: Icon,
+        LockKeyhole: Icon,
         Loader2: Icon,
         RefreshCw: Icon,
         Search: Icon,

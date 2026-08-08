@@ -1412,6 +1412,15 @@ describe('buildTeamDetailModel registration provider', () => {
     vi.clearAllMocks();
   });
 
+  it('preserves the authoritative non-calendar current season id', () => {
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Bears', currentSeasonId: 'summer-2026' }
+    });
+
+    expect(built.team.currentSeasonId).toBe('summer-2026');
+  });
+
   it('returns no registration provider rows when the team has no registration source', () => {
     const built = buildTeamDetailModel({
       teamId: 'team-1',
