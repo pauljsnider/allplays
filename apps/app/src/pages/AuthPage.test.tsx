@@ -277,6 +277,7 @@ describe('AuthPage signup validation', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'p@paulsnider' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Enter a valid email address.')).toBeTruthy();
@@ -293,6 +294,7 @@ describe('AuthPage signup validation', () => {
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' Coach@Example.COM ' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('coach@example.com', 'secret1', '6WSSSW9V'));
@@ -309,6 +311,7 @@ describe('AuthPage signup validation', () => {
     fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
     fireEvent.change(passwordInput, { target: { value: 'secret1' } });
     fireEvent.change(confirmPasswordInput, { target: { value: 'secret2' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Passwords do not match.')).toBeTruthy();
@@ -324,12 +327,117 @@ describe('AuthPage signup validation', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Join code'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     expect(await screen.findByText('Activation code is required.')).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Join code'), { target: { value: 'abc123' } });
     expect(screen.queryByText('Activation code is required.')).toBeNull();
+  });
+
+  it('requires agreeing to the terms before any signup path is enabled', () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    const createButton = screen.getByRole('button', { name: 'Create account' });
+    const googleButton = screen.getByRole('button', { name: 'Continue with Google' });
+    const appleButton = screen.getByRole('button', { name: 'Continue with Apple' });
+    const agree = screen.getByRole('checkbox', { name: /I agree/ });
+
+    expect(createButton).toBeDisabled();
+    expect(googleButton).toBeDisabled();
+    expect(appleButton).toBeDisabled();
+
+    fireEvent.click(agree);
+
+    expect(createButton).not.toBeDisabled();
+    expect(googleButton).not.toBeDisabled();
+    expect(appleButton).not.toBeDisabled();
+  });
+
+  it('links the terms checkbox to the public Terms and Privacy pages', () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', 'https://allplays.ai/terms.html');
+    expect(screen.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', 'https://allplays.ai/privacy.html');
+  });
+
+  // Anti-lockout guards: agreeing to the terms must actually let a user through
+  // every signup path. If any of these regress, new users are locked out of signup.
+  it('re-disables every signup path when the terms box is unchecked again', () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    const createButton = screen.getByRole('button', { name: 'Create account' });
+    const googleButton = screen.getByRole('button', { name: 'Continue with Google' });
+    const appleButton = screen.getByRole('button', { name: 'Continue with Apple' });
+    const agree = screen.getByRole('checkbox', { name: /I agree/ });
+
+    fireEvent.click(agree);
+    expect(createButton).not.toBeDisabled();
+
+    fireEvent.click(agree);
+    expect(agree).not.toBeChecked();
+    expect(createButton).toBeDisabled();
+    expect(googleButton).toBeDisabled();
+    expect(appleButton).toBeDisabled();
+  });
+
+  it('lets a user complete email signup after agreeing to the terms', async () => {
+    authServiceMocks.signUpWithEmail.mockResolvedValue({ user: { uid: 'new-user', email: 'coach@example.com' } });
+
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('coach@example.com', 'secret1', '6WSSSW9V'));
+  });
+
+  it('lets a user complete Google signup after agreeing to the terms', async () => {
+    authServiceMocks.signInWithGoogleAccount.mockResolvedValue(null);
+
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+
+    await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith('6WSSSW9V'));
+  });
+
+  it('lets a user complete Apple signup after agreeing to the terms', async () => {
+    authServiceMocks.signInWithAppleAccount.mockResolvedValue(null);
+
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
+
+    await waitFor(() => expect(authServiceMocks.signInWithAppleAccount).toHaveBeenCalledWith('6WSSSW9V'));
+  });
+
+  it('blocks every signup path until the terms box is checked', () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
+
+    expect(authServiceMocks.signUpWithEmail).not.toHaveBeenCalled();
+    expect(authServiceMocks.signInWithGoogleAccount).not.toHaveBeenCalled();
+    expect(authServiceMocks.signInWithAppleAccount).not.toHaveBeenCalled();
+  });
+
+  it('does not show the terms checkbox in login mode', () => {
+    renderAuthPage('/auth?mode=login');
+
+    expect(screen.queryByRole('checkbox', { name: /I agree/ })).toBeNull();
   });
 });
 
