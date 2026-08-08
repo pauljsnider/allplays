@@ -425,7 +425,7 @@ describe('Teams launcher navigation', () => {
     expect(selectedRow).not.toBeNull();
 
     expect(within(selectedRow!).getByText('1 player')).toBeTruthy();
-    expect(within(selectedRow!).getByText('2 events')).toBeTruthy();
+    expect(within(selectedRow!).getByText('2 upcoming')).toBeTruthy();
     expect(within(selectedRow!).getByText('1 unread')).toBeTruthy();
     expect(within(selectedRow!).getAllByRole('link')).toEqual([fastFalcons]);
   });
