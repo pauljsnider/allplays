@@ -16,7 +16,9 @@ function listRootPages(prefix) {
 }
 
 function extractHrefTargets(html) {
-    return [...html.matchAll(/href="([^"#?]+\.html)(?:[?#][^"]*)?"/g)].map((match) => match[1]);
+    return [...html.matchAll(/href="([^"#?]+\.html)(?:[?#][^"]*)?"/g)]
+        .map((match) => match[1])
+        .filter((target) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(target));
 }
 
 function extractHeadingIds(html) {
