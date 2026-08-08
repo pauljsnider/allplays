@@ -962,7 +962,7 @@ test('returns only sanitized public Team Pass status from a raw entitlement', as
     };
     const loaded = loadCallable({ seed });
 
-    const result = await loaded.publicTeamPassStatus({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' });
+    const result = await loaded.publicTeamPassStatus({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, context);
     assert.deepEqual(result, {
         active: true,
         reason: 'active',
@@ -971,6 +971,34 @@ test('returns only sanitized public Team Pass status from a raw entitlement', as
     });
     assert.equal(JSON.stringify(result).includes('cus_private'), false);
     assert.equal(JSON.stringify(result).includes('pi_private'), false);
+});
+
+test('denies unauthenticated Team Pass status reads before Firestore access', async () => {
+    const loaded = loadCallable();
+
+    await assert.rejects(
+        loaded.publicTeamPassStatus({ teamId: 'team-1', seasonId: '2026', tier: 'team-pass' }, {}),
+        (error) => error?.code === 'unauthenticated'
+    );
+});
+
+test('denies Team Pass status reads from unrelated users', async () => {
+    const seed = baseSeed();
+    seed['users/other-1'] = { parentTeamIds: [] };
+    const loaded = loadCallable({
+        seed,
+        firestoreOptions: {
+            failDocumentGetWhen: (path) => path.includes('/entitlements/')
+        }
+    });
+
+    await assert.rejects(
+        loaded.publicTeamPassStatus(
+            { teamId: 'team-1', seasonId: '2026', tier: 'team-pass' },
+            { auth: { uid: 'other-1', token: { email: 'other@example.com' } } }
+        ),
+        (error) => error?.code === 'permission-denied'
+    );
 });
 
 test('uses a stable idempotency key for repeated team-pass checkout creation', async () => {

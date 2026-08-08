@@ -22,10 +22,12 @@ describe('premiumAccessService', () => {
     await expect(loadPremiumFeatureAccess({
       scope: PREMIUM_SCOPES.ACCOUNT,
       feature: PREMIUM_FEATURES.PLAYER_ANALYTICS,
-      user
+      user,
+      normalAccess: true
     })).resolves.toMatchObject({ state: 'unlocked', reason: 'global-open' });
     expect(runtimeMocks.readAccountPremiumEntitlement).toHaveBeenCalledWith({
       user,
+      normalAccess: true,
       feature: PREMIUM_FEATURES.PLAYER_ANALYTICS
     });
   });
@@ -38,6 +40,7 @@ describe('premiumAccessService', () => {
       scope: PREMIUM_SCOPES.TEAM,
       feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
       user,
+      normalAccess: true,
       teamId: 'team-1',
       currentSeasonId: '2026'
     })).resolves.toMatchObject({ state: 'locked' });
@@ -45,8 +48,27 @@ describe('premiumAccessService', () => {
       teamId: 'team-1',
       user,
       teamAccessInfo: { hasAccess: true },
+      normalAccess: true,
       currentSeasonId: '2026',
       feature: PREMIUM_FEATURES.TEAM_ANALYTICS
     });
+  });
+
+  it('denies unauthorized resources without invoking an entitlement reader', async () => {
+    await expect(loadPremiumFeatureAccess({
+      scope: PREMIUM_SCOPES.ACCOUNT,
+      feature: PREMIUM_FEATURES.PLAYER_ANALYTICS,
+      user: null,
+      normalAccess: false
+    })).resolves.toMatchObject({ state: 'locked', reason: 'missing-resource-access' });
+    await expect(loadPremiumFeatureAccess({
+      scope: PREMIUM_SCOPES.TEAM,
+      feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
+      user: { uid: 'user-1' } as any,
+      normalAccess: false,
+      teamId: 'team-1'
+    })).resolves.toMatchObject({ state: 'locked', reason: 'missing-resource-access' });
+    expect(runtimeMocks.readAccountPremiumEntitlement).not.toHaveBeenCalled();
+    expect(runtimeMocks.readTeamPremiumEntitlement).not.toHaveBeenCalled();
   });
 });

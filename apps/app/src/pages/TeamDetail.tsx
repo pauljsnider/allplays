@@ -97,13 +97,21 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const location = useLocation();
   const navigate = useNavigate();
   const authUserId = auth.user?.uid || '';
+  const [model, setModel] = useState<TeamDetailModel | null>(null);
+  const parentTeamIds = [auth.user?.parentTeamIds, auth.profile?.parentTeamIds]
+    .flatMap((values) => Array.isArray(values) ? values : []);
+  const hasLoadedTeamAccess = model?.team.id === teamId && Boolean(
+    model.canManageTeam ||
+    model.linkedPlayers.length ||
+    parentTeamIds.includes(teamId)
+  );
   const teamPremiumAccess = usePremiumFeatureAccess({
     scope: PREMIUM_SCOPES.TEAM,
     feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
     user: auth.user,
+    normalAccess: hasLoadedTeamAccess,
     teamId
   });
-  const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppServiceError | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);

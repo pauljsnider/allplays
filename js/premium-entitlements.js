@@ -63,35 +63,39 @@ export async function readTeamPremiumEntitlement({
     teamId,
     user,
     teamAccessInfo,
+    normalAccess = Boolean(teamId && user?.uid && teamAccessInfo?.hasAccess),
     currentSeasonId = '',
     feature = PREMIUM_FEATURES.TEAM_ANALYTICS,
     deps = {},
     configReader = readPremiumAccessConfig
 } = {}) {
-    if (!teamId) {
-        return { state: 'locked', reason: 'missing-team', feature };
-    }
+    const authorized = normalAccess === true && Boolean(teamId && user?.uid && teamAccessInfo?.hasAccess);
+    if (!authorized) return resolvePremiumAccess({ feature, normalAccess: false });
 
     const config = await configReader({ deps });
-    const configAccess = resolvePremiumAccess({ feature, normalAccess: true, config });
+    const configAccess = resolvePremiumAccess({ feature, normalAccess: authorized, config });
     if (configAccess.state !== 'locked') return configAccess;
 
     const entitlement = await readTeamEntitlementState({ teamId, user, teamAccessInfo, currentSeasonId, deps });
-    return resolvePremiumAccess({ feature, normalAccess: true, config, entitlement });
+    return resolvePremiumAccess({ feature, normalAccess: authorized, config, entitlement });
 }
 
 export async function readAccountPremiumEntitlement({
     user,
+    normalAccess = Boolean(user?.uid),
     feature = PREMIUM_FEATURES.PLAYER_ANALYTICS,
     deps = {},
     configReader = readPremiumAccessConfig
 } = {}) {
+    const authorized = normalAccess === true && Boolean(user?.uid);
+    if (!authorized) return resolvePremiumAccess({ feature, normalAccess: false });
+
     const config = await configReader({ deps });
-    const configAccess = resolvePremiumAccess({ feature, normalAccess: true, config });
+    const configAccess = resolvePremiumAccess({ feature, normalAccess: authorized, config });
     if (configAccess.state !== 'locked') return configAccess;
 
     const entitlement = await readAccountEntitlementState({ user, deps });
-    return resolvePremiumAccess({ feature, normalAccess: true, config, entitlement });
+    return resolvePremiumAccess({ feature, normalAccess: authorized, config, entitlement });
 }
 
 export function renderPremiumGateState(container, { state, scope = 'team', feature = '' } = {}) {

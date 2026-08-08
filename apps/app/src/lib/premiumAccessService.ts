@@ -1,6 +1,7 @@
 import {
   PREMIUM_FEATURES,
   PREMIUM_SCOPES,
+  resolvePremiumAccess,
   type PremiumAccessResult
 } from './adapters/legacyPremiumAccessCore';
 import type { AuthUser } from './types';
@@ -19,24 +20,30 @@ export async function loadPremiumFeatureAccess({
   scope,
   feature,
   user,
+  normalAccess,
   teamId = '',
   currentSeasonId = ''
 }: {
   scope: 'account' | 'team';
   feature: string;
   user: PremiumAccessUser | null;
+  normalAccess: boolean;
   teamId?: string;
   currentSeasonId?: string;
 }): Promise<PremiumAccessResult> {
+  const authorized = normalAccess === true && Boolean(user?.uid);
+  if (!authorized) return resolvePremiumAccess({ feature, normalAccess: false });
+
   const runtime = await import('./adapters/legacyPremiumAccessRuntime');
   if (scope === PREMIUM_SCOPES.TEAM) {
     return runtime.readTeamPremiumEntitlement({
       teamId,
       user,
-      teamAccessInfo: { hasAccess: true },
+      teamAccessInfo: { hasAccess: authorized },
+      normalAccess: authorized,
       currentSeasonId,
       feature
     });
   }
-  return runtime.readAccountPremiumEntitlement({ user, feature });
+  return runtime.readAccountPremiumEntitlement({ user, normalAccess: authorized, feature });
 }

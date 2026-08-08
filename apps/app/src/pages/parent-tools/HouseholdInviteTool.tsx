@@ -12,7 +12,8 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const premiumAccess = usePremiumFeatureAccess({
         scope: PREMIUM_SCOPES.ACCOUNT,
         feature: PREMIUM_FEATURES.FAMILY_PLAN,
-        user: auth.user
+        user: auth.user,
+        normalAccess: Boolean(auth.user?.uid)
     });
     const canCreateInvite = premiumAccess.state === 'unlocked';
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);

@@ -118,7 +118,7 @@ describe('premium entitlement helpers', () => {
         })).resolves.toMatchObject({ state: 'locked' });
     });
 
-    it('unlocks account and team premium globally without reading entitlement collections', async () => {
+    it('does not let global premium access bypass account or team authorization', async () => {
         const getDocs = vi.fn(() => {
             throw new Error('entitlements should not be read while global access is open');
         });
@@ -132,11 +132,33 @@ describe('premium entitlement helpers', () => {
             user: null,
             configReader: premiumOpen,
             deps: { firebase }
-        })).resolves.toMatchObject({ state: 'unlocked', reason: 'global-open' });
+        })).resolves.toMatchObject({ state: 'locked', reason: 'missing-resource-access' });
         await expect(readTeamPremiumEntitlement({
             teamId: 'team_123',
             user: null,
             teamAccessInfo: { hasAccess: false },
+            currentSeasonId: '2026',
+            configReader: premiumOpen,
+            deps: { firebase }
+        })).resolves.toMatchObject({ state: 'locked', reason: 'missing-resource-access' });
+        expect(getDocs).not.toHaveBeenCalled();
+    });
+
+    it('unlocks authorized account and team resources globally without reading entitlements', async () => {
+        const getDocs = vi.fn();
+        const firebase = { db: {}, collection: vi.fn(), getDocs };
+
+        await expect(readAccountPremiumEntitlement({
+            user: { uid: 'user_123' },
+            normalAccess: true,
+            configReader: premiumOpen,
+            deps: { firebase }
+        })).resolves.toMatchObject({ state: 'unlocked', reason: 'global-open' });
+        await expect(readTeamPremiumEntitlement({
+            teamId: 'team_123',
+            user: { uid: 'user_123' },
+            teamAccessInfo: { hasAccess: true },
+            normalAccess: true,
             currentSeasonId: '2026',
             configReader: premiumOpen,
             deps: { firebase }

@@ -385,13 +385,15 @@ function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[])
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const playerAuthUser = useMemo(() => mergePlayerAuthUser(auth.user, auth.profile), [auth.profile, auth.user]);
+  const [data, setData] = useState<ParentPlayerDetailData | null>(null);
+  const hasLoadedPlayerAccess = data?.child.teamId === teamId && data.child.playerId === playerId;
   const playerPremiumAccess = usePremiumFeatureAccess({
     scope: PREMIUM_SCOPES.ACCOUNT,
     feature: PREMIUM_FEATURES.PLAYER_ANALYTICS,
-    user: playerAuthUser
+    user: playerAuthUser,
+    normalAccess: hasLoadedPlayerAccess
   });
   const [searchParams, setSearchParams] = useSearchParams();
-  const [data, setData] = useState<ParentPlayerDetailData | null>(null);
   const [activeSection, setActiveSection] = useState<PlayerSectionId>(() => getPlayerSectionFromSearch(searchParams));
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

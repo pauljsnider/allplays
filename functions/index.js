@@ -5649,7 +5649,11 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
   }
 });
 
-exports.getPublicTeamPassStatus = functions.https.onCall(async (data) => {
+exports.getPublicTeamPassStatus = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team pass status.');
+  }
+
   let input;
   try {
     input = normalizeTeamPassCheckoutInput(data || {});
@@ -5658,6 +5662,19 @@ exports.getPublicTeamPassStatus = functions.https.onCall(async (data) => {
   }
 
   const { teamId, seasonId, tier } = input;
+  const [teamSnap, user] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    getUserForEligibility(context.auth.uid)
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const email = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasCurrentTeamAccess({ team, user, userId: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team.');
+  }
+
   const entitlementSnap = await firestore.doc(`teams/${teamId}/entitlements/${seasonId}_${tier}`).get();
   const active = entitlementSnap.exists && isTeamPassEntitlementActive(
     entitlementSnap.data(),

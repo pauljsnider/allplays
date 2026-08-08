@@ -25,7 +25,8 @@ describe('usePremiumFeatureAccess', () => {
     const { result } = renderHook(() => usePremiumFeatureAccess({
       scope: PREMIUM_SCOPES.ACCOUNT,
       feature: PREMIUM_FEATURES.FAMILY_PLAN,
-      user
+      user,
+      normalAccess: true
     }));
 
     expect(result.current.state).toBe('loading');
@@ -41,6 +42,7 @@ describe('usePremiumFeatureAccess', () => {
       scope: PREMIUM_SCOPES.TEAM,
       feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
       user: { uid: 'user-1' } as any,
+      normalAccess: true,
       teamId: 'team-1'
     }));
 
@@ -55,7 +57,8 @@ describe('usePremiumFeatureAccess', () => {
       ({ userId }) => usePremiumFeatureAccess({
         scope: PREMIUM_SCOPES.ACCOUNT,
         feature: PREMIUM_FEATURES.FAMILY_PLAN,
-        user: { uid: userId } as AuthUser
+        user: { uid: userId } as AuthUser,
+        normalAccess: true
       }),
       { initialProps: { userId: 'user-1' } }
     );

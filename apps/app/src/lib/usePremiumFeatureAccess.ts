@@ -10,12 +10,14 @@ export function usePremiumFeatureAccess({
   scope,
   feature,
   user,
+  normalAccess,
   teamId = '',
   currentSeasonId = ''
 }: {
   scope: 'account' | 'team';
   feature: string;
   user: AuthUser | null;
+  normalAccess: boolean;
   teamId?: string;
   currentSeasonId?: string;
 }): PremiumAccessResult {
@@ -31,6 +33,7 @@ export function usePremiumFeatureAccess({
           scope,
           feature,
           user: userId ? { uid: userId } : null,
+          normalAccess,
           teamId,
           currentSeasonId
         });
@@ -45,7 +48,7 @@ export function usePremiumFeatureAccess({
     return () => {
       cancelled = true;
     };
-  }, [currentSeasonId, feature, scope, teamId, userId]);
+  }, [currentSeasonId, feature, normalAccess, scope, teamId, userId]);
 
   return access;
 }
