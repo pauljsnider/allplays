@@ -25,6 +25,8 @@ import { Capacitor } from '@capacitor/core';
 
 type AuthMode = 'login' | 'signup';
 
+const TERMS_AGREEMENT_REQUIRED = 'Please agree to the Terms and Privacy Policy to continue.';
+
 export function AuthPage({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -45,12 +47,14 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [showReset, setShowReset] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const signupTabRef = useRef<HTMLButtonElement>(null);
 
+  const signupBlockedByTerms = mode === 'signup' && !agreedToTerms;
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
   const subtitle = mode === 'signup'
     ? 'A team or family join code is required. Then verify your email.'
@@ -145,6 +149,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         if (!code) {
           throw new Error('Activation code is required.');
         }
+        if (!agreedToTerms) {
+          throw new Error(TERMS_AGREEMENT_REQUIRED);
+        }
         if (password !== confirmPassword) {
           throw new Error('Passwords do not match.');
         }
@@ -185,6 +192,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       if (mode === 'signup' && !code) {
         throw new Error('Activation code is required for new Google accounts.');
       }
+      if (mode === 'signup' && !agreedToTerms) {
+        throw new Error(TERMS_AGREEMENT_REQUIRED);
+      }
       if (inviteCode) {
         rememberPendingInvite(inviteCode, inviteType);
       }
@@ -221,6 +231,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const code = mode === 'signup' ? activationCode.trim().toUpperCase() : '';
       if (mode === 'signup' && !code) {
         throw new Error('Activation code is required for new Apple accounts.');
+      }
+      if (mode === 'signup' && !agreedToTerms) {
+        throw new Error(TERMS_AGREEMENT_REQUIRED);
       }
       if (inviteCode) {
         rememberPendingInvite(inviteCode, inviteType);
@@ -375,6 +388,21 @@ export function AuthPage({ auth }: { auth: AuthState }) {
                 maxLength={12}
               />
             </Field>
+            <label htmlFor="auth-terms-agree" className="flex items-start gap-2.5 text-sm font-semibold leading-5 text-gray-600">
+              <input
+                id="auth-terms-agree"
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 flex-none rounded border-gray-300 text-primary-700 focus:ring-primary-600"
+                checked={agreedToTerms}
+                onChange={(event) => {
+                  setAgreedToTerms(event.target.checked);
+                  clearStatus();
+                }}
+              />
+              <span>
+                I agree to the <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
+              </span>
+            </label>
           </>
         ) : null}
 
@@ -382,16 +410,16 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         {message ? <div role="status" aria-live="polite" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-700">{message}</div> : null}
         {busy ? <div role="status" aria-live="polite" className="sr-only">Authentication in progress.</div> : null}
 
-        <button type="submit" className="primary-button w-full" disabled={busy}>
+        <button type="submit" className="primary-button w-full" disabled={busy || signupBlockedByTerms}>
           {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
         </button>
       </form>
 
-      <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy}>
+      <button type="button" className="secondary-button mt-3 w-full" onClick={handleGoogle} disabled={busy || signupBlockedByTerms}>
         Continue with Google
       </button>
       {isNativeRuntime() && Capacitor.getPlatform() === 'ios' ? (
-        <button type="button" className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-black px-4 text-sm font-black text-white" onClick={handleApple} disabled={busy}>
+        <button type="button" className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-black px-4 text-sm font-black text-white disabled:opacity-60" onClick={handleApple} disabled={busy || signupBlockedByTerms}>
           Continue with Apple
         </button>
       ) : null}
@@ -428,9 +456,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           </button>
         </form>
       ) : null}
-      <p className="mt-4 text-center text-xs font-semibold leading-5 text-gray-500">
-        By continuing, you agree to our <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
-      </p>
+      {mode === 'login' ? (
+        <p className="mt-4 text-center text-xs font-semibold leading-5 text-gray-500">
+          By continuing, you agree to our <a className="font-black text-primary-700" href="https://allplays.ai/terms.html" target="_blank" rel="noreferrer">Terms</a> and acknowledge our <a className="font-black text-primary-700" href="https://allplays.ai/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a>.
+        </p>
+      ) : null}
       </div>
       <div
         id={`auth-panel-${mode === 'login' ? 'signup' : 'login'}`}

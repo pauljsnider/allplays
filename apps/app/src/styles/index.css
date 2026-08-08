@@ -299,6 +299,12 @@
   box-shadow: 0 10px 20px rgba(79, 70, 229, 0.22);
 }
 
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  box-shadow: none;
+}
+
 .secondary-button {
   display: inline-flex;
   min-height: 40px;
@@ -312,6 +318,11 @@
   color: #4338ca;
   font-size: 0.9rem;
   font-weight: 800;
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .ghost-button {

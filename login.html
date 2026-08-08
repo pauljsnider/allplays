@@ -64,6 +64,16 @@
                         placeholder="Enter your 8-character code" maxlength="8">
                     <p class="mt-1 text-xs text-gray-500">Enter the activation code provided to you</p>
                 </div>
+                <div id="terms-agree-field" class="hidden">
+                    <label class="flex items-start gap-2 text-sm text-gray-600">
+                        <input type="checkbox" id="terms-agree"
+                            class="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <span>I agree to the <a href="/terms.html" target="_blank" rel="noreferrer"
+                                class="text-indigo-600 hover:underline font-medium">Terms</a> and <a href="/privacy.html"
+                                target="_blank" rel="noreferrer"
+                                class="text-indigo-600 hover:underline font-medium">Privacy Policy</a>.</span>
+                    </label>
+                </div>
                 <div id="error-message" class="text-red-500 text-sm hidden"></div>
                 <button type="submit" id="submit-btn"
                     class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Sign
@@ -208,6 +218,8 @@
                 activationCodeField.classList.remove('hidden');
             }
 
+            document.getElementById('terms-agree-field').classList.remove('hidden');
+
             if (showInviteBanner) {
                 const formTitle = document.getElementById('form-title');
                 const banner = document.createElement('div');
@@ -240,18 +252,23 @@
             const activationCodeField = document.getElementById('activation-code-field');
             const activationCodeInput = document.getElementById('activation-code');
             const forgotPasswordLink = document.getElementById('forgot-password-link');
+            const termsAgreeField = document.getElementById('terms-agree-field');
+            const termsAgreeInput = document.getElementById('terms-agree');
+            termsAgreeInput.checked = false;
 
             if (isLogin) {
                 confirmPasswordField.classList.add('hidden');
                 confirmPasswordInput.removeAttribute('required');
                 activationCodeField.classList.add('hidden');
                 activationCodeInput.removeAttribute('required');
+                termsAgreeField.classList.add('hidden');
                 forgotPasswordLink.classList.remove('hidden');
             } else {
                 pendingLoginInviteCode = null;
                 window.sessionStorage.removeItem(pendingLoginInviteCodeStorageKey);
                 confirmPasswordField.classList.remove('hidden');
                 confirmPasswordInput.setAttribute('required', 'required');
+                termsAgreeField.classList.remove('hidden');
                 if (!isActivationCodeInitiallyHidden) {
                     activationCodeField.classList.remove('hidden');
                     activationCodeInput.setAttribute('required', 'required');
@@ -345,6 +362,9 @@
                     if (!activationCode) {
                         throw new Error('Activation code is required');
                     }
+                    if (!document.getElementById('terms-agree').checked) {
+                        throw new Error('Please agree to the Terms and Privacy Policy to continue.');
+                    }
                     await signup(email, password, activationCode);
                     // Signup - redirect to email verification page
                     window.location.href = '/app/#/verify-pending';
@@ -390,6 +410,9 @@
                     activationCode = document.getElementById('activation-code').value.trim().toUpperCase();
                     if (!activationCode) {
                         throw new Error('Activation code is required for new accounts');
+                    }
+                    if (!document.getElementById('terms-agree').checked) {
+                        throw new Error('Please agree to the Terms and Privacy Policy to continue.');
                     }
                 }
                 const storedPendingLoginInviteCode = window.sessionStorage.getItem(pendingLoginInviteCodeStorageKey);
