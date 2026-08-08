@@ -12,6 +12,7 @@ vi.mock('./premiumAccessService', async (importOriginal) => {
 });
 
 import { PREMIUM_FEATURES, PREMIUM_SCOPES } from './premiumAccessService';
+import type { AuthUser } from './types';
 import { usePremiumFeatureAccess } from './usePremiumFeatureAccess';
 
 describe('usePremiumFeatureAccess', () => {
@@ -44,5 +45,26 @@ describe('usePremiumFeatureAccess', () => {
     }));
 
     await waitFor(() => expect(result.current).toMatchObject({ state: 'unavailable', reason: 'global-config-read-failed' }));
+  });
+
+  it('reloads access for a different authenticated user', async () => {
+    serviceMocks.loadPremiumFeatureAccess
+      .mockResolvedValueOnce({ state: 'unlocked', reason: 'valid-account-entitlement' })
+      .mockResolvedValueOnce({ state: 'locked', reason: 'missing-valid-account-entitlement' });
+    const { result, rerender } = renderHook(
+      ({ userId }) => usePremiumFeatureAccess({
+        scope: PREMIUM_SCOPES.ACCOUNT,
+        feature: PREMIUM_FEATURES.FAMILY_PLAN,
+        user: { uid: userId } as AuthUser
+      }),
+      { initialProps: { userId: 'user-1' } }
+    );
+
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'unlocked' }));
+    rerender({ userId: 'user-2' });
+    await waitFor(() => expect(result.current).toMatchObject({ state: 'locked' }));
+    expect(serviceMocks.loadPremiumFeatureAccess).toHaveBeenLastCalledWith(expect.objectContaining({
+      user: { uid: 'user-2' }
+    }));
   });
 });

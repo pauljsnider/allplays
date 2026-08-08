@@ -5,6 +5,8 @@ import {
 } from './adapters/legacyPremiumAccessCore';
 import type { AuthUser } from './types';
 
+type PremiumAccessUser = Pick<AuthUser, 'uid'>;
+
 export { PREMIUM_FEATURES, PREMIUM_SCOPES };
 export type { PremiumAccessResult };
 
@@ -22,7 +24,7 @@ export async function loadPremiumFeatureAccess({
 }: {
   scope: 'account' | 'team';
   feature: string;
-  user: AuthUser | null;
+  user: PremiumAccessUser | null;
   teamId?: string;
   currentSeasonId?: string;
 }): Promise<PremiumAccessResult> {

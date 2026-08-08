@@ -27,7 +27,13 @@ export function usePremiumFeatureAccess({
     setAccess(PREMIUM_ACCESS_LOADING);
     const loadAccess = async () => {
       try {
-        const nextAccess = await loadPremiumFeatureAccess({ scope, feature, user, teamId, currentSeasonId });
+        const nextAccess = await loadPremiumFeatureAccess({
+          scope,
+          feature,
+          user: userId ? { uid: userId } : null,
+          teamId,
+          currentSeasonId
+        });
         if (!cancelled) setAccess(nextAccess);
       } catch {
         if (!cancelled) {
