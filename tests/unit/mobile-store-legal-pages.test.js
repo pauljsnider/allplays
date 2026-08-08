@@ -38,6 +38,14 @@ describe('mobile store legal and support pages', () => {
         expect(terms).toContain('/support.html');
     });
 
+    it('does not publish unapproved privacy policy expansion language', () => {
+        const privacy = readPage('privacy.html');
+
+        expect(privacy).not.toContain('LEGAL REVIEW REQUIRED');
+        expect(privacy).not.toContain('Product development, de-identified data, and marketing');
+        expect(privacy).not.toContain("adult account holder's contact information");
+    });
+
     it('uses hosted legal pages from the Capacitor app', () => {
         const authPage = readPage('apps/app/src/pages/AuthPage.tsx');
         const profilePage = readPage('apps/app/src/pages/Profile.tsx');
