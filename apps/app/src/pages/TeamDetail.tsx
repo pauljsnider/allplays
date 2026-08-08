@@ -110,7 +110,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     feature: PREMIUM_FEATURES.TEAM_ANALYTICS,
     user: auth.user,
     normalAccess: hasLoadedTeamAccess,
-    teamId
+    teamId,
+    currentSeasonId: model?.team.currentSeasonId || ''
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppServiceError | null>(null);

@@ -77,10 +77,12 @@ const moreTabRenderMocks = vi.hoisted(() => ({
   render: vi.fn()
 }));
 
-vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
-vi.mock('../lib/usePremiumFeatureAccess', () => ({
-  usePremiumFeatureAccess: () => ({ state: 'unlocked', reason: 'global-open' })
+const premiumAccessMocks = vi.hoisted(() => ({
+  usePremiumFeatureAccess: vi.fn(() => ({ state: 'unlocked', reason: 'global-open' }))
 }));
+
+vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
+vi.mock('../lib/usePremiumFeatureAccess', () => premiumAccessMocks);
 vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('./team-detail/insightsTabLoader', () => insightsTabLoaderMocks);
 vi.mock('./team-detail/moreTabLoader', () => moreTabLoaderMocks);
@@ -171,6 +173,7 @@ const auth: AuthState = {
 const model = {
   team: {
     id: 'team-1',
+    currentSeasonId: 'summer-2100',
     ownerId: 'owner-1',
     name: 'Bears',
     sport: 'Basketball',
@@ -414,6 +417,25 @@ describe('TeamDetail', () => {
 
     expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
     expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
+  });
+
+  it('uses the loaded team current season for premium entitlement lookup', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await waitFor(() => expect(premiumAccessMocks.usePremiumFeatureAccess).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        teamId: 'team-1',
+        currentSeasonId: 'summer-2100',
+        normalAccess: true
+      })
+    ));
   });
 
   it('loads the extracted MoreTab module once, only after More is selected', async () => {
