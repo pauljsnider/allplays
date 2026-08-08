@@ -105,6 +105,33 @@ function shouldUnlockTeamPassFromEvent(event = {}) {
   return isPaidCheckoutSession(session) && hasTeamPassMetadata(session);
 }
 
+function timestampToMillis(value) {
+  if (!value) return null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.toDate === 'function') return value.toDate().getTime();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function isTeamPassEntitlementActive(entitlement, { teamId = '', seasonId = '', tier = TEAM_PASS_TIER, now = new Date() } = {}) {
+  if (!entitlement || typeof entitlement !== 'object' || Array.isArray(entitlement)) return false;
+  if (asTrimmedString(entitlement.teamId) !== asTrimmedString(teamId)) return false;
+  if (asTrimmedString(entitlement.seasonId) !== asTrimmedString(seasonId)) return false;
+  if ((asTrimmedString(entitlement.tier) || TEAM_PASS_TIER) !== tier) return false;
+  if (asTrimmedString(entitlement.status).toLowerCase() !== 'active') return false;
+  if (entitlement.active === false || entitlement.isActive === false || entitlement.revoked === true || entitlement.isRevoked === true) return false;
+  if (entitlement.revokedAt) return false;
+
+  const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const startsAtMs = timestampToMillis(entitlement.startsAt || entitlement.activeFrom);
+  const expiresAtMs = timestampToMillis(entitlement.expiresAt || entitlement.activeUntil || entitlement.endsAt || entitlement.endAt);
+  if (startsAtMs === undefined || expiresAtMs === undefined) return false;
+  if (Number.isFinite(startsAtMs) && startsAtMs > nowMs) return false;
+  if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) return false;
+  return true;
+}
+
 function buildTeamPassEntitlement({ session = {}, eventId = '', receivedAt = null } = {}) {
   const metadata = session.metadata || {};
   const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(metadata);
@@ -140,5 +167,6 @@ module.exports = {
   isPaidCheckoutSession,
   hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,
+  isTeamPassEntitlementActive,
   buildTeamPassEntitlement
 };
