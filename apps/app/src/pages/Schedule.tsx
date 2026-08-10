@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
@@ -337,7 +337,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(mergedEvents);
   };
 
-  const hydrateScheduleRsvpsInBackground = (
+  const hydrateScheduleRsvpsInBackground = useCallback((
     result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
     hydrateAll = false,
     visibleGroupLimit = upcomingListPageSize
@@ -410,7 +410,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     rsvpHydrationPromisesRef.current.add(hydrationPromise);
     void hydrationPromise.finally(() => rsvpHydrationPromisesRef.current.delete(hydrationPromise));
     return hydrationPromise;
-  };
+  }, [auth.user, filter, selectedPlayerId, selectedTeamId, timeRange]);
 
   const buildPastScheduleRangeByTeam = () => {
     const cutoff = new Date(Date.now() - pastScheduleCutoffMs);
@@ -802,6 +802,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
 
+  const handleOpenBulkRsvp = useCallback(async () => {
+    if (rsvpHydrationPending || scheduleReadLoading) return;
+    setRsvpHydrationPending(true);
+    await hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    }, true);
+    await Promise.all([...rsvpHydrationPromisesRef.current]);
+    setBulkRsvpResult(null);
+    setBulkRsvpOpen(true);
+  }, [hydrateScheduleRsvpsInBackground, rsvpHydrationPending, scheduleReadLoading]);
+
   useEffect(() => {
     if (searchParams.get('bulkRsvp') !== '1') {
       bulkRsvpQueryHandledRef.current = false;
@@ -811,7 +823,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     bulkRsvpQueryHandledRef.current = true;
     if (allBulkRsvpCandidates.length < 2) return;
     void handleOpenBulkRsvp();
-  }, [allBulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
+  }, [allBulkRsvpCandidates.length, handleOpenBulkRsvp, rsvpHydrationPending, scheduleReadLoading, searchParams]);
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
@@ -1036,18 +1048,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
     } catch {
       setStatusMessage('Copy is not available in this browser.');
     }
-  };
-
-  const handleOpenBulkRsvp = async () => {
-    if (rsvpHydrationPending || scheduleReadLoading) return;
-    setRsvpHydrationPending(true);
-    await hydrateScheduleRsvpsInBackground({
-      children: childrenRef.current,
-      events: eventsRef.current
-    }, true);
-    await Promise.all([...rsvpHydrationPromisesRef.current]);
-    setBulkRsvpResult(null);
-    setBulkRsvpOpen(true);
   };
 
   const handleBulkRsvp = async (
