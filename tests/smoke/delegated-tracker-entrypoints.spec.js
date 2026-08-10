@@ -77,7 +77,16 @@ export function writeBatch() { return { set() {}, update() {}, delete() {}, comm
 export function doc(_db, path) { return { path }; }
 export async function setDoc() {}
 export async function addDoc() { return { id: 'event-1' }; }
-export function onSnapshot(_ref, callback) { callback({ docs: [], empty: true, data() { return {}; }, forEach() {} }); return () => {}; }
+export function onSnapshot(_ref, callback) {
+    queueMicrotask(() => callback({
+        docs: [],
+        empty: true,
+        exists() { return true; },
+        data() { return { liveViewerCount: 2 }; },
+        forEach() {}
+    }));
+    return () => {};
+}
 export function orderBy() { return {}; }
 `;
 
@@ -109,6 +118,9 @@ for (const [label, path] of [
         await page.goto(`${baseURL}${path}`, { waitUntil: 'domcontentloaded' });
 
         await expect(page.locator('#game-title')).toHaveText('vs. Rockets');
+        if (label === 'live tracker') {
+            await expect(page.locator('#chat-viewer-count')).toHaveText('2 watching');
+        }
         expect(pageErrors).toEqual([]);
         await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
         await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
