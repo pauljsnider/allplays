@@ -520,15 +520,19 @@ describe('Schedule', () => {
     renderSchedule();
 
     await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
-    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events).toHaveLength(50);
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events).toHaveLength(10);
     expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events.every(
       (event: ParentScheduleEvent) => event.teamId === 'team-1'
     )).toBe(true);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 10 more' }));
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events).toHaveLength(10);
+
     fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
 
-    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
-    const scopedEvents = (scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events;
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(3));
+    const scopedEvents = (scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[2]?.[0] as any).events;
     expect(scopedEvents).toHaveLength(2);
     expect(scopedEvents.every((event: ParentScheduleEvent) => event.teamId === 'team-2')).toBe(true);
   });
