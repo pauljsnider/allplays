@@ -184,9 +184,18 @@ describe('fallback media paths and Storage rules', () => {
         })).toBe(false);
     });
 
-    it('denies unrelated signed-in users from scoped game clip reads and deletes', () => {
+    it('requires active-game videography authorization for bounded game clip creates', () => {
         expect(clipFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
+        expect(rules).toContain('function canVideographStorageGame(teamId, gameId)');
+        expect(rules).toContain('isScorekeeperVisibleStorageGame(teamId, gameId)');
+        expect(rules).toContain("request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', [])");
+        expect(clipFallbackRules).toContain('canVideographStorageGame(teamId, gameId)');
+        expect(clipFallbackRules).toContain('request.auth.uid == userId');
+        expect(clipFallbackRules).toContain('request.resource.size > 0');
+        expect(clipFallbackRules).toContain('request.resource.size <= 50 * 1024 * 1024');
+        expect(clipFallbackRules).not.toContain('request.resource.size <= 100 * 1024 * 1024');
         expect(clipFallbackRules).toContain("request.resource.contentType.matches('video/.*')");
+        expect(clipFallbackRules).not.toContain('canAccessTeamMedia(teamId) &&\n        request.auth.uid == userId');
         expect(clipFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');
         expect(clipFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
