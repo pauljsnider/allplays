@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+    assertFails,
+    assertSucceeds,
+    initializeTestEnvironment
+} from '@firebase/rules-unit-testing';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -38,6 +44,7 @@ const liveChatBlock = extractMatchBlock(rulesSource, 'match /liveChat/{messageId
 const liveReactionsBlock = extractMatchBlock(rulesSource, 'match /liveReactions/{reactionId}');
 const liveChatValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveChatCreate(data)');
 const liveReactionValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveReactionCreate(data)');
+const liveInteractionLifecycleBlock = extractMatchBlock(rulesSource, 'function canCreateLiveGameInteraction(teamId, gameId)');
 
 describe('firestore rules — live game read visibility helpers', () => {
     it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
@@ -132,5 +139,171 @@ describe('firestore rules — liveReactions authentication requirements', () => 
         expect(liveReactionValidatorBlock).toContain('data.createdAt == request.time');
         expect(liveReactionValidatorBlock).toContain("data.type in ['fire', 'clap', 'wow', 'heart', 'hundred']");
         expect(liveReactionValidatorBlock).not.toContain("'metadata'");
+    });
+});
+
+describe('firestore rules — live interaction lifecycle requirements', () => {
+    it('uses one shared parent-game lifecycle helper for chat and reaction creates', () => {
+        expect(liveInteractionLifecycleBlock).not.toBeNull();
+        expect(liveChatBlock).toContain('canCreateLiveGameInteraction(teamId, gameId)');
+        expect(liveReactionsBlock).toContain('canCreateLiveGameInteraction(teamId, gameId)');
+    });
+
+    it('fails closed for every terminal status and liveStatus value', () => {
+        expect(liveInteractionLifecycleBlock).toContain(
+            "gameData.get('status', '') in ['completed', 'final', 'cancelled', 'canceled', 'deleted']"
+        );
+        expect(liveInteractionLifecycleBlock).toContain(
+            "gameData.get('liveStatus', '') in ['completed', 'final', 'cancelled', 'canceled', 'deleted']"
+        );
+    });
+});
+
+describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('live interaction lifecycle rules-engine coverage', () => {
+    const terminalStates = ['completed', 'final', 'cancelled', 'canceled', 'deleted'];
+    let testEnv;
+
+    beforeAll(async () => {
+        testEnv = await initializeTestEnvironment({
+            projectId: 'demo-allplays',
+            firestore: { rules: rulesSource }
+        });
+    }, 30_000);
+
+    beforeEach(async () => {
+        await testEnv.clearFirestore();
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(doc(firestore, 'teams/shareable-team'), {
+                ownerId: 'shareable-owner',
+                adminEmails: [],
+                active: true
+            });
+            await setDoc(doc(firestore, 'teams/private-team'), {
+                ownerId: 'private-owner',
+                adminEmails: [],
+                active: true
+            });
+            await setDoc(doc(firestore, 'teams/cross-tenant-team'), {
+                ownerId: 'cross-tenant-owner',
+                adminEmails: [],
+                active: true
+            });
+            await setDoc(doc(firestore, 'users/fan-1'), {
+                isAdmin: false,
+                parentTeamIds: ['private-team'],
+                parentPlayerKeys: []
+            });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/active-game'), {
+                type: 'game',
+                visibility: 'public',
+                shareable: true,
+                status: 'scheduled',
+                liveStatus: 'live'
+            });
+            await setDoc(doc(firestore, 'teams/private-team/games/active-game'), {
+                type: 'game',
+                visibility: 'private',
+                status: 'scheduled',
+                liveStatus: 'live'
+            });
+            await setDoc(doc(firestore, 'teams/cross-tenant-team/games/active-game'), {
+                type: 'game',
+                visibility: 'private',
+                status: 'scheduled',
+                liveStatus: 'live'
+            });
+
+            for (const state of terminalStates) {
+                await setDoc(doc(firestore, `teams/shareable-team/games/status-${state}`), {
+                    type: 'game',
+                    visibility: 'public',
+                    shareable: true,
+                    status: state,
+                    liveStatus: 'live'
+                });
+                await setDoc(doc(firestore, `teams/shareable-team/games/live-status-${state}`), {
+                    type: 'game',
+                    visibility: 'public',
+                    shareable: true,
+                    status: 'scheduled',
+                    liveStatus: state
+                });
+            }
+
+            await setDoc(doc(firestore, 'teams/shareable-team/games/status-completed/liveChat/historical-chat'), {
+                text: 'Historical message',
+                senderId: 'fan-1',
+                createdAt: new Date(0)
+            });
+            await setDoc(doc(firestore, 'teams/shareable-team/games/status-completed/liveReactions/historical-reaction'), {
+                type: 'clap',
+                senderId: 'fan-1',
+                createdAt: new Date(0)
+            });
+        });
+    });
+
+    afterAll(async () => {
+        await testEnv?.cleanup();
+    });
+
+    function fanDb() {
+        return testEnv.authenticatedContext('fan-1', {
+            email: 'fan@example.com',
+            email_verified: true
+        }).firestore();
+    }
+
+    function chatWrite(firestore, teamId, gameId, messageId) {
+        return setDoc(doc(firestore, `teams/${teamId}/games/${gameId}/liveChat/${messageId}`), {
+            text: 'Go team',
+            senderId: 'fan-1',
+            createdAt: serverTimestamp()
+        });
+    }
+
+    function reactionWrite(firestore, teamId, gameId, reactionId) {
+        return setDoc(doc(firestore, `teams/${teamId}/games/${gameId}/liveReactions/${reactionId}`), {
+            type: 'clap',
+            senderId: 'fan-1',
+            createdAt: serverTimestamp()
+        });
+    }
+
+    it('allows a verified fan to create chat and reactions for active authorized games', async () => {
+        const firestore = fanDb();
+        await assertSucceeds(chatWrite(firestore, 'shareable-team', 'active-game', 'shareable-chat'));
+        await assertSucceeds(reactionWrite(firestore, 'shareable-team', 'active-game', 'shareable-reaction'));
+        await assertSucceeds(chatWrite(firestore, 'private-team', 'active-game', 'private-chat'));
+        await assertSucceeds(reactionWrite(firestore, 'private-team', 'active-game', 'private-reaction'));
+    });
+
+    it('denies cross-tenant chat and reaction creates for an unauthorized private game', async () => {
+        const firestore = fanDb();
+        await assertFails(chatWrite(firestore, 'cross-tenant-team', 'active-game', 'cross-tenant-chat'));
+        await assertFails(reactionWrite(firestore, 'cross-tenant-team', 'active-game', 'cross-tenant-reaction'));
+    });
+
+    it('denies chat and reaction creates for every terminal status and liveStatus', async () => {
+        const firestore = fanDb();
+        for (const state of terminalStates) {
+            for (const gameId of [`status-${state}`, `live-status-${state}`]) {
+                await assertFails(chatWrite(firestore, 'shareable-team', gameId, `chat-${state}`));
+                await assertFails(reactionWrite(firestore, 'shareable-team', gameId, `reaction-${state}`));
+            }
+        }
+    });
+
+    it('keeps completed-game historical chat and reactions readable', async () => {
+        const firestore = fanDb();
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/status-completed/liveChat/historical-chat'
+        )));
+        await assertSucceeds(getDoc(doc(
+            firestore,
+            'teams/shareable-team/games/status-completed/liveReactions/historical-reaction'
+        )));
     });
 });
