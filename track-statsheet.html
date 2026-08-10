@@ -198,7 +198,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433163';
+    import { getGameDayTeamContext, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433163';
     import { db } from './js/firebase.js?v=22';
     import { writeBatch, doc, setDoc } from './js/firebase.js?v=22';
     import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443339';
@@ -249,7 +249,7 @@
       currentGameId = gameId;
 
       const [team, game, players] = await Promise.all([
-        getTeam(teamId),
+        getGameDayTeamContext(teamId, gameId),
         getGame(teamId, gameId),
         getPlayers(teamId)
       ]);

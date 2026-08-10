@@ -1,6 +1,6 @@
 import { checkAuth } from './auth.js?v=4433165';
 import {
-    getTeam,
+    getDelegatedTeamContext,
     getTeamMediaFolders,
     getTeamMediaItemsPage,
     createTeamMediaFolder,
@@ -808,7 +808,7 @@ checkAuth(async (user) => {
     }
 
     try {
-        state.team = await getTeam(state.teamId, { includeInactive: true });
+        state.team = await getDelegatedTeamContext(state.teamId, null, { includeInactive: true });
         state.team.id = state.team.id || state.teamId;
         state.canManage = canManageTeamMedia(user, state.team);
         state.canContribute = canContributeTeamMedia(user, state.team);

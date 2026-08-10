@@ -274,7 +274,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433163';
+        import { getGameDayTeamContext, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=4433163';
         import { db } from './js/firebase.js?v=22';
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=22';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=443339';
@@ -347,7 +347,7 @@
 
             try {
                 const [team, game, playersList] = await Promise.all([
-                    getTeam(teamId),
+                    getGameDayTeamContext(teamId, gameId),
                     getGame(teamId, gameId),
                     getPlayers(teamId)
                 ]);

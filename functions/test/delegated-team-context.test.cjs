@@ -145,6 +145,24 @@ test('requires a current game and RSVP for all-confirmed capability modes', asyn
   assert.deepEqual(result.item.teamPermissions.scorekeeping, { mode: 'all_confirmed', memberIds: [] });
 });
 
+test('returns a bounded private-team projection for a current parent', async () => {
+  const handler = createHarness({
+    users: { 'parent-1': { parentTeamIds: ['team-1'] } },
+    games: { 'team-1/game-live': { status: 'scheduled', liveStatus: 'live' } }
+  });
+
+  const liveResult = await handler({ teamId: 'team-1', gameId: 'game-live' }, context('parent-1'));
+  const replayResult = await handler({ teamId: 'team-1' }, context('parent-1'));
+
+  for (const result of [liveResult, replayResult]) {
+    assert.equal(result.item.id, 'team-1');
+    assert.equal(result.item.delegatedAccess.parent, true);
+    assert.equal(result.item.delegatedAccess.full, false);
+    assert.deepEqual(result.item.teamPermissions, {});
+    assertNoProhibitedFields(result);
+  }
+});
+
 test('serializer never spreads canonical fields or unrelated permission members', () => {
   const result = serializeDelegatedTeamContext('team-1', productionTeam(), 'scorekeeper-1', {
     full: false,

@@ -84,8 +84,9 @@ function hasFullTeamAccess({ uid, email, user }, team) {
   return !ownerId && legacyOwnerEmails.length === 1 && legacyOwnerEmails[0] === email;
 }
 
-function resolveDelegatedAccess({ uid, email, user, team, game, rsvp }) {
+function resolveDelegatedAccess({ uid, email, user, teamId, team, game, rsvp }) {
   const full = hasFullTeamAccess({ uid, email, user }, team);
+  const parent = normalizeStringList(user?.parentTeamIds).includes(teamId);
   const scorekeeping = full
     || hasSelectedGrant(team, DELEGATED_PERMISSION_KEYS.scorekeeping, uid)
     || hasAllConfirmedGrant(team, DELEGATED_PERMISSION_KEYS.scorekeeping, rsvp, game);
@@ -111,6 +112,7 @@ function resolveDelegatedAccess({ uid, email, user, team, game, rsvp }) {
 
   return {
     full,
+    parent,
     scorekeeping,
     videography,
     streaming,
@@ -154,6 +156,7 @@ function serializeDelegatedTeamContext(teamId, team, uid, access) {
     isDelegatedTeamContext: true,
     delegatedAccess: {
       full: access.full === true,
+      parent: access.parent === true,
       scorekeeping: access.scorekeeping === true,
       videography: access.videography === true,
       streaming: access.streaming === true,
@@ -195,8 +198,8 @@ function createDelegatedTeamContextHandler({ loadTeam, loadUser, loadGame, loadR
     if (gameId && !game) throw makeError('not-found', 'Game not found.');
 
     const email = normalizeEmail(context?.auth?.token?.email);
-    const access = resolveDelegatedAccess({ uid, email, user: user || {}, team, game, rsvp });
-    if (!access.full && !access.scorekeeping && !access.videography && !access.streaming && !access.media) {
+    const access = resolveDelegatedAccess({ uid, email, user: user || {}, teamId, team, game, rsvp });
+    if (!access.full && !access.parent && !access.scorekeeping && !access.videography && !access.streaming && !access.media) {
       throw makeError('permission-denied', 'No current delegated team access was found.');
     }
     return { item: serializeDelegatedTeamContext(teamId, team, uid, access) };
