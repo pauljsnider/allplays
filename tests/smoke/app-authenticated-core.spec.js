@@ -83,7 +83,24 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
             forbidden: [/Unable to load/i, /Team not found/i, /No players have been added yet/i],
             requiredHref: `/players/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.playerId)}`
         });
+        await page.setViewportSize({ width: 390, height: 844 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `${teamPath}/edit`, { heading: /Team settings|Edit team/ });
+        const teamNameInput = page.getByPlaceholder('Team name');
+        const loadedTeamName = await teamNameInput.inputValue();
+        await teamNameInput.fill(`${loadedTeamName} `);
+        const saveTray = page.getByRole('region', { name: /Team settings with unsaved changes/i });
+        await expect(saveTray).toBeVisible();
+        await page.getByRole('checkbox', { name: /Public team/i }).scrollIntoViewIfNeeded();
+        await expect(saveTray).toBeVisible();
+        const [trayBox, navBox] = await Promise.all([
+            saveTray.boundingBox(),
+            page.getByRole('navigation', { name: 'Primary navigation' }).boundingBox()
+        ]);
+        expect(trayBox).not.toBeNull();
+        expect(navBox).not.toBeNull();
+        expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navBox.y);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await expect(page.getByRole('heading', { name: /Team settings|Edit team/ })).toBeVisible({ timeout: 20_000 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
             heading: /Schedule|Your team calendar/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`
