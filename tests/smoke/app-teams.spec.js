@@ -205,6 +205,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 ],
                                 nextEvent: bearsNext,
                                 eventCount: 5,
+                                upcomingEventCount: 1,
                                 unreadCount: 12,
                                 openActions: 2
                             },
@@ -217,6 +218,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 players: [],
                                 nextEvent: null,
                                 eventCount: 0,
+                                upcomingEventCount: 0,
                                 unreadCount: 3,
                                 openActions: 0
                             },
@@ -229,6 +231,7 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
                                 players: [{ teamId: 'team-single', teamName: 'Rockets', playerId: 'player-9', playerName: 'Riley Guard' }],
                                 nextEvent: rocketsNext,
                                 eventCount: 1,
+                                upcomingEventCount: 1,
                                 unreadCount: 0,
                                 openActions: 0
                             }
@@ -547,6 +550,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
@@ -565,6 +569,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Atlanta, GA',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
@@ -581,6 +586,7 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         location: 'Kansas City, MO',
                         players: [],
                         eventCount: 0,
+                        upcomingEventCount: 0,
                         unreadCount: 0,
                         openActions: 0,
                         nextEvent: null,
