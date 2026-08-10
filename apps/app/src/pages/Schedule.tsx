@@ -258,7 +258,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
   const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
-  const rsvpHydrationPromisesRef = useRef(new Set<Promise<unknown>>());
+  const activeRsvpScopeRef = useRef('');
+  activeRsvpScopeRef.current = `${auth.user?.uid || ''}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}`;
   const exportPendingRef = useRef(false);
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
@@ -345,9 +346,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const user = auth.user;
     if (!user) {
       setRsvpHydrationPending(false);
-      return;
+      return Promise.resolve(false);
     }
-    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}::${hydrateAll ? 'all' : visibleGroupLimit}`;
+    const activeScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}`;
+    const hydrationScopeKey = `${activeScopeKey}::${hydrateAll ? 'all' : visibleGroupLimit}`;
     lastRsvpHydrationScopeRef.current = hydrationScopeKey;
     const hydrationVersion = ++rsvpHydrationVersionRef.current;
     const scopedEvents = filterParentScheduleEvents(result.events, {
@@ -364,18 +366,22 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     const rsvpEvents = getScheduleRsvpHydrationTargets(
       scopedEvents,
-      hydrateAll ? scopedEvents : visibleEvents,
+      hydrateAll ? getBulkRsvpCandidates(scopedEvents) : visibleEvents,
       hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
       hydratedRsvpGroupKeysRef.current
     );
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
       setRsvpHydrationPending(false);
-      return;
+      return Promise.resolve(activeRsvpScopeRef.current === activeScopeKey);
     }
 
     const mergeHydratedEvents = (hydratedEvents: ParentScheduleEvent[]) => {
-      if (hydrationVersion !== rsvpHydrationVersionRef.current || auth.user?.uid !== user.uid) return false;
+      if (
+        hydrationVersion !== rsvpHydrationVersionRef.current
+        || auth.user?.uid !== user.uid
+        || activeRsvpScopeRef.current !== activeScopeKey
+      ) return false;
       const hydratedByKey = new Map(hydratedEvents.map((event) => [event.eventKey, event]));
       updateScheduleEvents((current) => current.map((event) => {
         if (pendingRsvpEventKeysRef.current.has(event.eventKey)) return event;
@@ -397,20 +403,24 @@ export function Schedule({ auth }: { auth: AuthState }) {
       user,
       { onProgress: mergeHydratedEvents }
     ).then((hydrated) => {
-      if (mergeHydratedEvents(hydrated.events)) {
-        rsvpEvents.forEach((event) => hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`));
-      }
+      const accepted = mergeHydratedEvents(hydrated.events);
+      const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
+      const fullyHydrated = rsvpEvents.every((event) => (
+        hydratedByKey.get(event.eventKey)?.myRsvpNoteHydrated === true
+      ));
+      if (!accepted || !fullyHydrated) return false;
+      rsvpEvents.forEach((event) => hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`));
+      return true;
     })
       .catch((error) => {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
+        return false;
       })
       .finally(() => {
         if (hydrationVersion === rsvpHydrationVersionRef.current && auth.user?.uid === user.uid) {
           setRsvpHydrationPending(false);
         }
       });
-    rsvpHydrationPromisesRef.current.add(hydrationPromise);
-    void hydrationPromise.finally(() => rsvpHydrationPromisesRef.current.delete(hydrationPromise));
     return hydrationPromise;
   }, [auth.user, filter, selectedPlayerId, selectedTeamId, timeRange]);
 
@@ -806,12 +816,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const handleOpenBulkRsvp = useCallback(async () => {
     if (rsvpHydrationPending || scheduleReadLoading) return;
+    const openingScopeKey = activeRsvpScopeRef.current;
     setRsvpHydrationPending(true);
-    await hydrateScheduleRsvpsInBackground({
+    const hydrationAccepted = await hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
     }, true);
-    await Promise.all([...rsvpHydrationPromisesRef.current]);
+    if (!hydrationAccepted || activeRsvpScopeRef.current !== openingScopeKey) return;
     setBulkRsvpResult(null);
     setBulkRsvpOpen(true);
   }, [hydrateScheduleRsvpsInBackground, rsvpHydrationPending, scheduleReadLoading]);

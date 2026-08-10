@@ -13,7 +13,7 @@ function getRsvpGroupKey(event: ParentScheduleEvent) {
   return `${event.teamId}::${event.id}`;
 }
 
-export function getBulkRsvpCandidates(
+function getEligibleBulkRsvpCandidates(
   events: ParentScheduleEvent[],
   now = new Date()
 ) {
@@ -31,8 +31,14 @@ export function getBulkRsvpCandidates(
       if (seenEventKeys.has(event.eventKey)) return false;
       seenEventKeys.add(event.eventKey);
       return true;
-    })
-    .slice(0, maxBulkRsvpEvents);
+    });
+}
+
+export function getBulkRsvpCandidates(
+  events: ParentScheduleEvent[],
+  now = new Date()
+) {
+  return getEligibleBulkRsvpCandidates(events, now).slice(0, maxBulkRsvpEvents);
 }
 
 export function getScheduleRsvpHydrationTargets(
@@ -49,10 +55,10 @@ export function getScheduleRsvpHydrationTargets(
       visibleGroupKeys.add(getRsvpGroupKey(event));
     });
 
-  return getBulkRsvpCandidates(events).filter((event) => (
+  return getEligibleBulkRsvpCandidates(events.filter((event) => (
     visibleGroupKeys.has(getRsvpGroupKey(event))
     && !hydratedGroupKeys.has(getRsvpGroupKey(event))
-  ));
+  )));
 }
 
 export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {

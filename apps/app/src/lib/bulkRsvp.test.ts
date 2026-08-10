@@ -86,6 +86,43 @@ describe('bulk RSVP helpers', () => {
     ).map((row) => row.eventKey)).toEqual([second.eventKey]);
   });
 
+  it('selects visible groups before applying the hydration row bound', () => {
+    const crowdedEvents = Array.from({ length: maxBulkRsvpEvents }, (_, index) => event(index + 1));
+    const visiblePractice = event(maxBulkRsvpEvents + 1, {
+      id: 'visible-practice',
+      eventKey: 'team-1::visible-practice::player-1',
+      type: 'practice',
+      opponent: null,
+      title: 'Visible practice'
+    });
+
+    expect(getScheduleRsvpHydrationTargets(
+      [...crowdedEvents, visiblePractice],
+      [visiblePractice],
+      1
+    )).toEqual([visiblePractice]);
+  });
+
+  it('hydrates every sibling row when a visible group crosses the global candidate boundary', () => {
+    const earlierEvents = Array.from({ length: maxBulkRsvpEvents - 1 }, (_, index) => event(index + 1));
+    const firstSibling = event(maxBulkRsvpEvents, {
+      id: 'boundary-game',
+      eventKey: 'team-1::boundary-game::player-1'
+    });
+    const secondSibling = event(maxBulkRsvpEvents, {
+      id: 'boundary-game',
+      eventKey: 'team-1::boundary-game::player-2',
+      childId: 'player-2',
+      childName: 'Player 2'
+    });
+
+    expect(getScheduleRsvpHydrationTargets(
+      [...earlierEvents, firstSibling, secondSibling],
+      [firstSibling],
+      1
+    ).map((row) => row.eventKey)).toEqual([firstSibling.eventKey, secondSibling.eventKey]);
+  });
+
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
     const knownEmptyNote = event(1, { myRsvpNote: null, myRsvpNoteHydrated: true });
     const unknownNote = event(2, { myRsvpNote: null, myRsvpNoteHydrated: false });
