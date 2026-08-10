@@ -1017,11 +1017,6 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
     );
   }
 
-  const rsvpPlayers = players.filter((player) => player.rsvpNeeded > 0);
-  const multiRsvpRoute = rsvpPlayers.length === 1
-    ? `/schedule?playerId=${encodeURIComponent(rsvpPlayers[0].playerId)}&bulkRsvp=1`
-    : '/schedule?bulkRsvp=1';
-
   return (
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -1029,9 +1024,7 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
           <div className="app-label">Players</div>
           <h2 className="mt-1 app-section-title">My players</h2>
         </div>
-        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
-          ? <MultiRsvpLink to={multiRsvpRoute} />
-          : <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+        <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {players.map((player) => (
@@ -1059,11 +1052,6 @@ function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: Pa
     );
   }
 
-  const rsvpTeamIds = [...new Set(players.filter((player) => player.rsvpNeeded > 0).map((player) => player.teamId))];
-  const multiRsvpRoute = rsvpTeamIds.length === 1
-    ? `/schedule?teamId=${encodeURIComponent(rsvpTeamIds[0])}&bulkRsvp=1`
-    : '/schedule?bulkRsvp=1';
-
   return (
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -1071,22 +1059,26 @@ function TeamsSection({ teams, players }: { teams: ParentHomeTeam[]; players: Pa
           <div className="app-label">My teams</div>
           <h2 className="mt-1 app-section-title">Teams</h2>
         </div>
-        {players.reduce((total, player) => total + player.rsvpNeeded, 0) > 1
-          ? <MultiRsvpLink to={multiRsvpRoute} />
-          : <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+        <Users className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         {teams.map((team) => (
-          <TeamCard key={team.teamId} team={team} />
+          <TeamCard
+            key={team.teamId}
+            team={team}
+            rsvpNeeded={players
+              .filter((player) => player.teamId === team.teamId)
+              .reduce((total, player) => total + player.rsvpNeeded, 0)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function MultiRsvpLink({ to }: { to: string }) {
+function MultiRsvpLink({ to, scopeLabel }: { to: string; scopeLabel?: string }) {
   return (
-    <Link to={to} className="ghost-button !min-h-9 !px-3 text-xs">
+    <Link to={to} className="ghost-button !min-h-9 !px-3 text-xs" aria-label={scopeLabel ? `Multi RSVP for ${scopeLabel}` : undefined}>
       <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
       Multi RSVP
     </Link>
@@ -2446,58 +2438,74 @@ function PlayerCard({ player }: { player: ParentHomePlayer }) {
   const actionCount = player.rsvpNeeded + player.packetsReady + player.openAssignments + (player.unreadCount > 0 ? 1 : 0);
   const playerPath = getPlayerDetailPath(player.teamId, player.playerId);
   return (
-    <Link
-      to={playerPath}
-      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      onClick={(event) => handleParentCoreDrillInClick(event, playerPath, {
-        trigger: 'player_card',
-        actionKind: 'player',
-        teamId: player.teamId,
-        playerId: player.playerId
-      })}
-    >
-      <PlayerAvatar name={player.playerName} />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-black text-gray-950">{player.playerName}</div>
-          {actionCount > 0 ? <span className="flex-none rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">{actionCount}</span> : null}
+    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <Link
+        to={playerPath}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        onClick={(event) => handleParentCoreDrillInClick(event, playerPath, {
+          trigger: 'player_card',
+          actionKind: 'player',
+          teamId: player.teamId,
+          playerId: player.playerId
+        })}
+      >
+        <PlayerAvatar name={player.playerName} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="truncate text-sm font-black text-gray-950">{player.playerName}</div>
+            {actionCount > 0 ? <span className="flex-none rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">{actionCount}</span> : null}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{player.teamName || 'Team'}</div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{player.nextEvent ? `${formatEventDateLabel(player.nextEvent.date)} · ${getScheduleTitle(player.nextEvent)}` : 'No upcoming events'}</div>
         </div>
-        <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{player.teamName || 'Team'}</div>
-        <div className="mt-1 truncate text-xs font-bold text-gray-600">{player.nextEvent ? `${formatEventDateLabel(player.nextEvent.date)} · ${getScheduleTitle(player.nextEvent)}` : 'No upcoming events'}</div>
-      </div>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-    </Link>
+        <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      </Link>
+      {player.rsvpNeeded > 1 ? (
+        <MultiRsvpLink
+          to={`/schedule?playerId=${encodeURIComponent(player.playerId)}&bulkRsvp=1`}
+          scopeLabel={player.playerName}
+        />
+      ) : null}
+    </div>
   );
 }
 
-function TeamCard({ team }: { team: ParentHomeTeam }) {
+function TeamCard({ team, rsvpNeeded }: { team: ParentHomeTeam; rsvpNeeded: number }) {
   const teamPath = getTeamHomePath(team.teamId);
   return (
-    <Link
-      to={teamPath}
-      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
-      aria-label={`Open ${team.teamName} team page`}
-      onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
-        trigger: 'team_card',
-        actionKind: 'team',
-        teamId: team.teamId
-      })}
-    >
-      <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-        <Trophy className="h-5 w-5" aria-hidden="true" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
-          {team.unreadCount > 0 ? <span className="flex-none rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">{team.unreadCount}</span> : null}
+    <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <Link
+        to={teamPath}
+        className="flex min-w-0 flex-1 items-center gap-3"
+        aria-label={`Open ${team.teamName} team page`}
+        onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
+          trigger: 'team_card',
+          actionKind: 'team',
+          teamId: team.teamId
+        })}
+      >
+        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <Trophy className="h-5 w-5" aria-hidden="true" />
         </div>
-        <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
-          {team.players.length ? team.players.map((player) => player.playerName).join(', ') : `${team.role}${team.sport ? ` · ${team.sport}` : ''}`}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className="truncate text-sm font-black text-gray-950">{team.teamName}</div>
+            {team.unreadCount > 0 ? <span className="flex-none rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">{team.unreadCount}</span> : null}
+          </div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">
+            {team.players.length ? team.players.map((player) => player.playerName).join(', ') : `${team.role}${team.sport ? ` · ${team.sport}` : ''}`}
+          </div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.role} · ${team.eventCount} events`}</div>
         </div>
-        <div className="mt-1 truncate text-xs font-bold text-gray-600">{team.nextEvent ? `${formatEventDateLabel(team.nextEvent.date)} · ${getScheduleTitle(team.nextEvent)}` : `${team.role} · ${team.eventCount} events`}</div>
-      </div>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
-    </Link>
+        <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      </Link>
+      {rsvpNeeded > 1 ? (
+        <MultiRsvpLink
+          to={`/schedule?teamId=${encodeURIComponent(team.teamId)}&bulkRsvp=1`}
+          scopeLabel={team.teamName}
+        />
+      ) : null}
+    </div>
   );
 }
 

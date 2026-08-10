@@ -592,6 +592,39 @@ describe('Home', () => {
     expect(screen.getByRole('link', { name: /Requests1/ }).getAttribute('href')).toBe('/home?section=friends');
   });
 
+  it('shows player-scoped Multi RSVP only for players with at least two due responses', async () => {
+    const scopedHome = buildLargeHomeModel();
+    scopedHome.players[0].rsvpNeeded = 2;
+    scopedHome.players[1].rsvpNeeded = 1;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: scopedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(scopedHome);
+
+    renderHome(signedInAuth, '/home?section=players');
+
+    expect(await screen.findByRole('heading', { name: 'My players' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Multi RSVP for Player 1' }).getAttribute('href'))
+      .toBe('/schedule?playerId=player-1&bulkRsvp=1');
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Player 2' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Player 3' })).toBeNull();
+  });
+
+  it('shows team-scoped Multi RSVP only for teams with at least two due responses', async () => {
+    const scopedHome = buildLargeHomeModel();
+    scopedHome.players[0].rsvpNeeded = 1;
+    scopedHome.players[1].rsvpNeeded = 1;
+    scopedHome.players[2].rsvpNeeded = 1;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: scopedHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(scopedHome);
+
+    renderHome(signedInAuth, '/home?section=teams');
+
+    expect(await screen.findByRole('heading', { name: 'Teams' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Multi RSVP for Bears' }).getAttribute('href'))
+      .toBe('/schedule?teamId=team-1&bulkRsvp=1');
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Storm' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Multi RSVP for Falcons' })).toBeNull();
+  });
+
   it('shows a section-level Multi RSVP action for two due responses with the bulk query contract', async () => {
     const multiRsvpHome = buildHomeWithRsvpNeeded(2);
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: multiRsvpHome, schedule: [] });
