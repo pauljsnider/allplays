@@ -68,7 +68,8 @@ import {
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
-  groupBulkRsvpSubmissions
+  groupBulkRsvpSubmissions,
+  getScheduleRsvpHydrationTargets
 } from '../lib/bulkRsvp';
 
 const logger = createLogger('schedule');
@@ -256,6 +257,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
+  const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
+  const rsvpHydrationPromisesRef = useRef(new Set<Promise<unknown>>());
   const exportPendingRef = useRef(false);
   const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
@@ -334,13 +337,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(mergedEvents);
   };
 
-  const hydrateScheduleRsvpsInBackground = (result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] }) => {
+  const hydrateScheduleRsvpsInBackground = (
+    result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
+    hydrateAll = false,
+    visibleGroupLimit = upcomingListPageSize
+  ) => {
     const user = auth.user;
     if (!user) {
       setRsvpHydrationPending(false);
       return;
     }
-    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${hydrateAll ? 'all' : visibleGroupLimit}`;
     lastRsvpHydrationScopeRef.current = hydrationScopeKey;
     const hydrationVersion = ++rsvpHydrationVersionRef.current;
     const scopedEvents = filterParentScheduleEvents(result.events, {
@@ -349,7 +356,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
       teamId: selectedTeamId,
       timeRange: 'all'
     });
-    const rsvpEvents = getBulkRsvpCandidates(scopedEvents);
+    const visibleEvents = filterParentScheduleEvents(result.events, {
+      filter,
+      playerId: selectedPlayerId,
+      teamId: selectedTeamId,
+      timeRange
+    });
+    const rsvpEvents = getScheduleRsvpHydrationTargets(
+      scopedEvents,
+      hydrateAll ? scopedEvents : visibleEvents,
+      hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
+      hydratedRsvpGroupKeysRef.current
+    );
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
       setRsvpHydrationPending(false);
@@ -373,11 +391,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }));
     };
 
-    void hydrateParentScheduleRsvps(
+    const hydrationPromise = hydrateParentScheduleRsvps(
       { children: result.children, events: rsvpEvents },
       user,
       { onProgress: mergeHydratedEvents }
-    ).then((hydrated) => mergeHydratedEvents(hydrated.events))
+    ).then((hydrated) => {
+      mergeHydratedEvents(hydrated.events);
+      rsvpEvents.forEach((event) => hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`));
+    })
       .catch((error) => {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
       })
@@ -386,6 +407,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setRsvpHydrationPending(false);
         }
       });
+    rsvpHydrationPromisesRef.current.add(hydrationPromise);
+    void hydrationPromise.finally(() => rsvpHydrationPromisesRef.current.delete(hydrationPromise));
+    return hydrationPromise;
   };
 
   const buildPastScheduleRangeByTeam = () => {
@@ -718,12 +742,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     const user = auth.user;
     if (!user?.uid || !hasLoadedSchedule || scheduleReadLoading) return;
-    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}`;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${upcomingListPageSize}`;
     if (lastRsvpHydrationScopeRef.current === hydrationScopeKey) return;
     hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
-    });
+    }, false, upcomingListPageSize);
     // The hydration helper intentionally reads the latest refs and owns its
     // stale-request guard. Filter changes are the only trigger needed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -785,10 +809,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
     if (bulkRsvpQueryHandledRef.current || rsvpHydrationPending || scheduleReadLoading) return;
     bulkRsvpQueryHandledRef.current = true;
-    if (bulkRsvpCandidates.length < 2) return;
-    setBulkRsvpResult(null);
-    setBulkRsvpOpen(true);
-  }, [bulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
+    if (allBulkRsvpCandidates.length < 2) return;
+    void handleOpenBulkRsvp();
+  }, [allBulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
@@ -852,7 +875,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const handleShowMore = async () => {
     if (visibleListCount < windowedListEntries.totalCount) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, windowedListEntries.totalCount));
+      const nextVisibleCount = Math.min(visibleListCount + listPageSize, windowedListEntries.totalCount);
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -865,7 +893,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
   const handleShowMorePackets = async () => {
     if (visibleListCount < packetWindow.totalCount) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, packetWindow.totalCount));
+      const nextVisibleCount = Math.min(visibleListCount + listPageSize, packetWindow.totalCount);
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -1003,6 +1036,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
     } catch {
       setStatusMessage('Copy is not available in this browser.');
     }
+  };
+
+  const handleOpenBulkRsvp = async () => {
+    if (rsvpHydrationPending || scheduleReadLoading) return;
+    setRsvpHydrationPending(true);
+    await hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    }, true);
+    await Promise.all([...rsvpHydrationPromisesRef.current]);
+    setBulkRsvpResult(null);
+    setBulkRsvpOpen(true);
   };
 
   const handleBulkRsvp = async (
@@ -1261,16 +1306,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <Status tone="error" message={`${unavailableBulkRsvpCount} ${unavailableBulkRsvpCount === 1 ? 'RSVP is' : 'RSVPs are'} waiting for private note data. Refresh before updating ${unavailableBulkRsvpCount === 1 ? 'it' : 'them'}.`} />
           ) : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
-          {bulkRsvpCandidates.length > 1 ? (
+          {allBulkRsvpCandidates.length > 1 ? (
             <BulkRsvpLauncher
-              eventCount={bulkRsvpCandidates.length}
+              eventCount={allBulkRsvpCandidates.length}
               neededCount={getNeededBulkRsvpEventKeys(bulkRsvpCandidates).length}
               hydrating={rsvpHydrationPending}
-              onOpen={() => {
-                if (rsvpHydrationPending) return;
-                setBulkRsvpResult(null);
-                setBulkRsvpOpen(true);
-              }}
+              onOpen={() => { void handleOpenBulkRsvp(); }}
             />
           ) : null}
           {!isDesktopWeb && !scheduleReadLoading && !isInitialScheduleLoad ? (

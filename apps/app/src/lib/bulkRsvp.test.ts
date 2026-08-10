@@ -6,6 +6,7 @@ import {
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
+  getScheduleRsvpHydrationTargets,
   groupBulkRsvpEvents,
   groupBulkRsvpSubmissions,
   maxBulkRsvpEvents,
@@ -60,6 +61,29 @@ describe('bulk RSVP helpers', () => {
 
     expect(candidates).toHaveLength(maxBulkRsvpEvents);
     expect(getNeededBulkRsvpEventKeys(withResponse)).toHaveLength(maxBulkRsvpEvents - 1);
+  });
+
+  it('selects visible RSVP groups, keeps sibling rows together, and returns the next delta', () => {
+    const first = event(1);
+    const firstSibling = event(1, {
+      eventKey: 'team-1::game-1::player-2',
+      childId: 'player-2',
+      childName: 'Player 2'
+    });
+    const second = event(2);
+    const third = event(3);
+    const events = [first, firstSibling, second, third];
+
+    expect(getScheduleRsvpHydrationTargets(events, [first, second, third], 1).map((row) => row.eventKey)).toEqual([
+      first.eventKey,
+      firstSibling.eventKey
+    ]);
+    expect(getScheduleRsvpHydrationTargets(
+      events,
+      [first, second, third],
+      2,
+      new Set([`${first.teamId}::${first.id}`])
+    ).map((row) => row.eventKey)).toEqual([second.eventKey]);
   });
 
   it('excludes rows whose private RSVP note did not finish hydrating', () => {

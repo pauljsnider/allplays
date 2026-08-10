@@ -9,6 +9,10 @@ export const maxBulkRsvpEvents = 50;
 export const maxGroupedRsvpPlayerIds = 10;
 const recentlyStartedEventWindowMs = 3 * 60 * 60 * 1000;
 
+function getRsvpGroupKey(event: ParentScheduleEvent) {
+  return `${event.teamId}::${event.id}`;
+}
+
 export function getBulkRsvpCandidates(
   events: ParentScheduleEvent[],
   now = new Date()
@@ -29,6 +33,26 @@ export function getBulkRsvpCandidates(
       return true;
     })
     .slice(0, maxBulkRsvpEvents);
+}
+
+export function getScheduleRsvpHydrationTargets(
+  events: ParentScheduleEvent[],
+  visibleEvents: ParentScheduleEvent[],
+  visibleGroupLimit: number,
+  hydratedGroupKeys: ReadonlySet<string> = new Set()
+) {
+  const visibleGroupKeys = new Set<string>();
+  [...visibleEvents]
+    .sort((left, right) => left.date.getTime() - right.date.getTime())
+    .forEach((event) => {
+      if (visibleGroupKeys.size >= visibleGroupLimit) return;
+      visibleGroupKeys.add(getRsvpGroupKey(event));
+    });
+
+  return getBulkRsvpCandidates(events).filter((event) => (
+    visibleGroupKeys.has(getRsvpGroupKey(event))
+    && !hydratedGroupKeys.has(getRsvpGroupKey(event))
+  ));
 }
 
 export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {
