@@ -924,6 +924,72 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
     });
 
+    it('keeps existing family share actions responsive and preserves token-state workflows', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
+            tokens: [
+                {
+                    id: 'token-active',
+                    label: 'Grandma',
+                    url: 'https://allplays.ai/app/#/family/token-active',
+                    childCount: 1,
+                    extraCalendarUrls: ['https://calendar.example.test/active.ics']
+                },
+                {
+                    id: 'token-expired',
+                    label: 'Expired caregiver',
+                    url: 'https://allplays.ai/app/#/family/token-expired',
+                    childCount: 1,
+                    extraCalendarUrls: [],
+                    expired: true
+                },
+                {
+                    id: 'token-revoked',
+                    label: 'Revoked caregiver',
+                    url: 'https://allplays.ai/app/#/family/token-revoked',
+                    childCount: 1,
+                    extraCalendarUrls: [],
+                    revoked: true
+                }
+            ]
+        });
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        const activeCard = (await screen.findByText('Grandma')).closest('section') as HTMLElement;
+        const expiredCard = screen.getByText('Expired caregiver').closest('section') as HTMLElement;
+        const revokedCard = screen.getByText('Revoked caregiver').closest('section') as HTMLElement;
+        const activeActions = within(activeCard).getByRole('button', { name: 'Copy' }).parentElement as HTMLElement;
+
+        expect(activeActions).toHaveClass('grid-cols-2', 'sm:grid-cols-4');
+        for (const action of within(activeActions).getAllByRole('button')) {
+            expect(action).toHaveClass('!min-h-11');
+            expect(action).toBeEnabled();
+        }
+
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Copy' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://allplays.ai/app/#/family/token-active'));
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Share' }));
+        expect(sharePublicUrl).toHaveBeenCalledWith({
+            title: 'ALL PLAYS family page',
+            text: 'Grandma',
+            url: 'https://allplays.ai/app/#/family/token-active'
+        });
+        fireEvent.click(within(activeCard).getByRole('button', { name: 'Feeds' }));
+        expect(within(activeCard).getByDisplayValue('https://calendar.example.test/active.ics')).toBeTruthy();
+        fireEvent.click(within(expiredCard).getByRole('button', { name: 'Revoke' }));
+        expect(await screen.findByRole('dialog', { name: 'Revoke this share link?' })).toBeTruthy();
+
+        expect(within(expiredCard).getByRole('button', { name: 'Copy' })).toBeDisabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Share' })).toBeDisabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Feeds' })).toBeEnabled();
+        expect(within(expiredCard).getByRole('button', { name: 'Revoke' })).toBeEnabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Copy' })).toBeDisabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Share' })).toBeDisabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Feeds' })).toBeEnabled();
+        expect(within(revokedCard).getByRole('button', { name: 'Revoke' })).toBeDisabled();
+    });
+
     it('dismisses family share revocation on native Back without leaving Share', async () => {
         parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam Player' }],
