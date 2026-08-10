@@ -1,5 +1,5 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433162';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433163';
 import { db } from './firebase.js?v=22';
 import { getUrlParams, escapeHtml } from './utils.js?v=443338';
 import { checkAuth } from './auth.js?v=4433164';
@@ -2901,7 +2901,7 @@ async function init() {
 
   try {
     const [team, game, playersList] = await Promise.all([
-      getTeam(teamId, { includeInactive: true }),
+      getGameDayTeamContext(teamId, gameId, { includeInactive: true }),
       getGame(teamId, gameId),
       getPlayers(teamId)
     ]);

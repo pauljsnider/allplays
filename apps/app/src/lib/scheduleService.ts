@@ -14,6 +14,7 @@ import {
   getRsvps,
   getRsvpBreakdownByPlayer,
   getTeam,
+  getDelegatedTeamContext,
   getStaffTeams,
   addGame,
   addPractice,
@@ -442,6 +443,8 @@ export type ParentScheduleLoadOptions = {
   expandStaffPlayers?: boolean;
   /** Restrict access resolution and event loading to one explicitly requested team. */
   targetTeamId?: string;
+  /** Internal game scope used to verify a delegated all-confirmed grant. */
+  delegatedGameId?: string;
   /** Load the team's full game history instead of the default recent window (#2034). */
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
@@ -4118,10 +4121,16 @@ export async function loadTeamOverviewSchedule(teamId: string, teamName: string,
   }], user);
 }
 
-async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
+async function buildTargetedTeamScheduleEvent(
+  teamId: string,
+  eventId: string,
+  teamChildren: ParentScheduleChild[],
+  user: AuthUser,
+  delegatedTeamContext: Record<string, unknown> | null = null
+) {
   const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
   const [team, initialGame] = await Promise.all([
-    loadTeam(teamId),
+    delegatedTeamContext ? Promise.resolve(delegatedTeamContext) : loadTeam(teamId),
     loadGameById(teamId, eventId)
   ]);
   if (!team) return [];
@@ -4565,6 +4574,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     : await resolveParentScheduleChildren(user, profile as Record<string, unknown>, { targetTeamId });
   const children = childResult.children;
   const byTeam = new Map<string, ParentScheduleChild[]>();
+  const delegatedTeamContexts = new Map<string, Record<string, unknown>>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
     byTeam.get(child.teamId)?.push(child);
@@ -4608,9 +4618,28 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     }
   });
 
-  const targetAccessVerified = !targetTeamId
+  const hasParentOrStaffTargetAccess = !targetTeamId
     || children.some((child) => child.teamId === targetTeamId)
     || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId);
+  if (targetTeamId && !hasParentOrStaffTargetAccess) {
+    const delegatedTeam = await getDelegatedTeamContext(targetTeamId, options.delegatedGameId).catch(() => null);
+    if (delegatedTeam) {
+      delegatedTeamContexts.set(targetTeamId, delegatedTeam);
+      const teamName = compactString(delegatedTeam.name || delegatedTeam.teamName) || targetTeamId;
+      byTeam.set(targetTeamId, [{
+        teamId: targetTeamId,
+        teamName,
+        playerId: `delegated-team-${targetTeamId}`,
+        playerName: 'Game Day',
+        isLinkedParentChild: false
+      }]);
+    }
+  }
+
+  const targetAccessVerified = !targetTeamId
+    || children.some((child) => child.teamId === targetTeamId)
+    || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId)
+    || delegatedTeamContexts.has(targetTeamId);
   if (targetTeamId && !targetAccessVerified && childResult.isPartial !== true && staffTeamResult.isPartial !== true) {
     throw new Error('You do not have permission to load this team schedule.');
   }
@@ -4618,6 +4647,7 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
     children,
     byTeam,
     staffTeams,
+    delegatedTeamContexts,
     targetAccessVerified,
     isParentScopePartial: targetTeamId && targetAccessVerified
       ? false
@@ -4664,7 +4694,11 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const { children, byTeam, staffTeams, delegatedTeamContexts } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      expandStaffPlayers,
+      targetTeamId: requestedTeamId,
+      delegatedGameId: requestedEventId
+    });
     const teamChildren = byTeam.get(requestedTeamId) || [];
 
     if (!teamChildren.length) {
@@ -4675,8 +4709,15 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     let fallback = false;
     let sourcePartial = false;
     let teamEventRows: number | undefined;
-    let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
-    if (!events.length) {
+    const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;
+    let events = await buildTargetedTeamScheduleEvent(
+      requestedTeamId,
+      requestedEventId,
+      teamChildren,
+      user,
+      delegatedTeamContext
+    );
+    if (!events.length && !delegatedTeamContext) {
       fallback = true;
       // Full history here so a deep-linked past event outside the default window is still found.
       const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {

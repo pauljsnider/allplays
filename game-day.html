@@ -493,12 +493,12 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import {
-            getTeam, getGame, subscribeGame, getPlayers,
+            getGameDayTeamContext, getGame, subscribeGame, getPlayers,
             getRsvpBreakdownByPlayer, getMyRsvp, getGames, getAggregatedStatsForGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=4433162';
+        } from './js/db.js?v=4433163';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=443338';
         import { checkAuth } from './js/auth.js?v=4433164';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=443320';
@@ -996,7 +996,7 @@
 
             try {
                 const [team, players, configs, games] = await Promise.all([
-                    getTeam(teamId),
+                    getGameDayTeamContext(teamId, gameId),
                     getPlayers(teamId),
                     getConfigs(teamId),
                     getGames(teamId)
@@ -1034,7 +1034,9 @@
                 const scopedRsvp = needsRsvpForScopedAccess
                     ? await getMyRsvp(teamId, resolvedGameId, state.user.uid).catch(() => null)
                     : null;
-                const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId }, { game, rsvp: scopedRsvp });
+                const accessInfo = team.delegatedAccess?.full === true
+                    ? { hasAccess: true, accessLevel: 'full', exitUrl: 'dashboard.html' }
+                    : getTeamAccessInfo(state.user, { ...team, id: teamId }, { game, rsvp: scopedRsvp });
                 if (!accessInfo.hasAccess || !['full', 'scorekeep', 'stream', 'stream-score', 'videographer'].includes(accessInfo.accessLevel)) {
                     window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches,+admins,+approved+scorekeepers,+streaming+volunteers,+and+approved+videographers+only`;
                     return;

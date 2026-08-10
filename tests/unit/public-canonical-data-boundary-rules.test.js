@@ -40,7 +40,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
                 active: true,
                 ownerId: 'owner-1',
                 ownerEmail: 'owner@example.com',
-                adminEmails: ['owner@example.com'],
+                adminEmails: ['owner@example.com', 'team-admin@example.com'],
                 notificationEmail: 'private-notifications@example.com',
                 streamAccessMode: 'selected_volunteers',
                 streamVolunteerEmails: ['legacy-streamer@example.com'],
@@ -93,6 +93,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
             });
             for (const uid of [
                 'owner-1',
+                'team-admin-1',
                 'scorekeeper-1',
                 'scorekeeper-2',
                 'videographer-1',
@@ -131,10 +132,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
         await assertFails(getDocs(query(collection(anonymousDb, 'teams'), where('isPublic', '==', true))));
     });
 
-    it('preserves canonical reads for managers, parents, scoped helpers, and assigned officials', async () => {
+    it('preserves canonical team reads for managers and parents while denying scoped helpers', async () => {
         for (const [uid, email] of [
             ['owner-1', 'owner@example.com'],
+            ['team-admin-1', 'team-admin@example.com'],
             ['parent-1', 'parent@example.com'],
+            ['admin-1', 'admin-1@example.com']
+        ]) {
+            try {
+                await assertSucceeds(getDoc(doc(authedDb(uid, email), 'teams/public-team')));
+            } catch (error) {
+                throw new Error(`Expected ${uid} to read the team document: ${error.message}`);
+            }
+        }
+
+        for (const [uid, email] of [
             ['scorekeeper-1', 'scorekeeper-1@example.com'],
             ['videographer-1', 'videographer-1@example.com'],
             ['streamer-1', 'streamer-1@example.com'],
@@ -142,9 +154,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
             ['legacy-streamer', 'legacy-streamer@example.com']
         ]) {
             try {
-                await assertSucceeds(getDoc(doc(authedDb(uid, email), 'teams/public-team')));
+                await assertFails(getDoc(doc(authedDb(uid, email), 'teams/public-team')));
             } catch (error) {
-                throw new Error(`Expected ${uid} to read the team document: ${error.message}`);
+                throw new Error(`Expected ${uid} to be denied the team document: ${error.message}`);
             }
         }
 

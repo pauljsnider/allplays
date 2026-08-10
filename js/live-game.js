@@ -1,5 +1,5 @@
 import {
-  getTeam,
+  getGameDayTeamContext,
   getGame,
   getPlayers,
   subscribeLiveEvents,
@@ -17,7 +17,7 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433162';
+} from './db.js?v=4433163';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443338';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
@@ -2826,7 +2826,7 @@ async function init() {
     });
     [team, game, players, configs] = await Promise.all([
       // Replay/live links should still load team metadata for inactive teams.
-      getTeam(state.teamId, { includeInactive: true }),
+      getGameDayTeamContext(state.teamId, state.gameId, { includeInactive: true }),
       getGame(state.teamId, state.gameId),
       playersPromise,
       getConfigs(state.teamId)

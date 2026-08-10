@@ -793,6 +793,7 @@
                 "closePublicOpportunity",
                 "createOpportunityInquiry",
                 "createPublicOpportunity",
+                "getDelegatedTeamContext",
                 "getOpportunityInquiry",
                 "getPublicOpportunity",
                 "getPublicTeamCalendarProjection",

@@ -26,7 +26,7 @@ function canReadTeamDocumentRule() {
 
 function canReadManagedTeamDocumentRule() {
     const start = rules.indexOf('function canReadManagedTeamDocument(data) {');
-    const end = rules.indexOf('function canReadTeamMediaManagerTeamDocument(data) {', start);
+    const end = rules.indexOf('function canListManagedTeamDocument(data) {', start);
 
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
@@ -68,13 +68,6 @@ function hasTeamMediaUploadGrant(profile, teamId) {
         (profile.mediaUploadTeamIds ?? []).includes(teamId);
 }
 
-function teamMediaManagerTeamReadWouldBeAllowed(data, userId) {
-    const permission = data.teamPermissions?.teamMediaManagement ?? {};
-    return permission.mode === 'selected' &&
-        Array.isArray(permission.memberIds) &&
-        permission.memberIds.includes(userId);
-}
-
 describe('team media Firestore rules', () => {
     it('defines team media folders and items under teams', () => {
         expect(rules).toContain('match /mediaFolders/{folderId}');
@@ -100,17 +93,14 @@ describe('team media Firestore rules', () => {
         expect(ownerProfileUpdateWouldBeAllowed({ displayName: 'Old', teamMediaUploadTeamIds: ['team-a'] }, { displayName: 'Old' })).toBe(false);
     });
 
-    it('allows selected team media managers to get private team documents without opening team lists', () => {
+    it('denies selected team media managers canonical team documents without changing media controls', () => {
         const readRule = canReadTeamDocumentRule();
         const managedReadRule = canReadManagedTeamDocumentRule();
         const listRule = canListManagedTeamDocumentRule();
 
-        expect(rules).toContain('function canReadTeamMediaManagerTeamDocument(data) {');
-        expect(rules).toContain("data.get('teamPermissions', {}).get('teamMediaManagement', {})");
-        expect(rules).toContain("permission.get('mode', '') == 'selected'");
-        expect(rules).toContain("request.auth.uid in permission.get('memberIds', [])");
-        expect(readRule).toContain('canReadTeamMediaManagerTeamDocument(data)');
-        expect(listRule).not.toContain('canReadTeamMediaManagerTeamDocument(data)');
+        expect(rules).not.toContain('function canReadTeamMediaManagerTeamDocument(data) {');
+        expect(readRule).not.toContain('canReadTeamMediaManagerTeamDocument(data)');
+        expect(readRule).not.toContain('canReadScopedTeamHelperDocument(data)');
         expect(managedReadRule).toContain('hasTeamOwnerOrAdminAccess(data)');
         expect(listRule).not.toContain('currentAuthEmailMatchesTeamOwner(data)');
         expect(rules).toContain("team.get('ownerId', '') == ''");
@@ -120,33 +110,8 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain('allow get: if canReadTeamDocument(teamId, resource.data);');
         expect(rules).toContain('canListManagedTeamDocument(resource.data);');
 
-        expect(teamMediaManagerTeamReadWouldBeAllowed({
-            isPublic: false,
-            teamPermissions: {
-                teamMediaManagement: {
-                    mode: 'selected',
-                    memberIds: ['media-manager']
-                }
-            }
-        }, 'media-manager')).toBe(true);
-        expect(teamMediaManagerTeamReadWouldBeAllowed({
-            isPublic: false,
-            teamPermissions: {
-                teamMediaManagement: {
-                    mode: 'selected',
-                    memberIds: ['other-user']
-                }
-            }
-        }, 'media-manager')).toBe(false);
-        expect(teamMediaManagerTeamReadWouldBeAllowed({
-            isPublic: false,
-            teamPermissions: {
-                teamMediaManagement: {
-                    mode: 'all',
-                    memberIds: ['media-manager']
-                }
-            }
-        }, 'media-manager')).toBe(false);
+        expect(readRule).toContain('canReadManagedTeamDocument(data)');
+        expect(readRule).toContain('isParentForTeam(teamId)');
     });
 
     it('models denied self-grants as unable to unlock team media creates', () => {

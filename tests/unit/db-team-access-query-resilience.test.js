@@ -9,6 +9,7 @@ const firebaseMocks = vi.hoisted(() => ({
   listManagedTeams: vi.fn(),
   listPublicTeams: vi.fn(),
   getPublicTeamProfile: vi.fn(),
+  getDelegatedTeamContext: vi.fn(),
   getPublicTeamGamesProjection: vi.fn(),
   getPublicTeamCalendarProjection: vi.fn(),
   getPublicGameProjection: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('../../js/firebase.js?v=23', () => ({
     if (name === 'listPublicTeams') return firebaseMocks.listPublicTeams;
     if (name === 'listManagedTeams') return firebaseMocks.listManagedTeams;
     if (name === 'getPublicTeamProfile') return firebaseMocks.getPublicTeamProfile;
+    if (name === 'getDelegatedTeamContext') return firebaseMocks.getDelegatedTeamContext;
     if (name === 'getPublicTeamGamesProjection') return firebaseMocks.getPublicTeamGamesProjection;
     if (name === 'getPublicTeamCalendarProjection') return firebaseMocks.getPublicTeamCalendarProjection;
     if (name === 'getPublicGameProjection') return firebaseMocks.getPublicGameProjection;
@@ -88,9 +90,10 @@ const {
   getOfficiatingGames,
   subscribeGame,
   getTeam,
+  getGameDayTeamContext,
   getTeams,
   getUserTeamsWithAccess
-} = await import('../../js/db.js?v=4433162');
+} = await import('../../js/db.js?v=4433163');
 
 describe('team access query resilience', () => {
   beforeEach(() => {
@@ -190,6 +193,44 @@ describe('team access query resilience', () => {
       active: true
     });
     expect(firebaseMocks.getPublicTeamProfile).toHaveBeenCalledWith({ teamId: 'public-1' });
+  });
+
+  it('loads delegated Game Day context without attempting a canonical team document read', async () => {
+    firebaseMocks.getDelegatedTeamContext.mockResolvedValue({
+      data: {
+        item: {
+          id: 'private-1',
+          name: 'Falcons',
+          active: true,
+          delegatedAccess: { scorekeeping: true }
+        }
+      }
+    });
+
+    await expect(getGameDayTeamContext('private-1', 'game-1')).resolves.toEqual({
+      id: 'private-1',
+      name: 'Falcons',
+      active: true,
+      delegatedAccess: { scorekeeping: true }
+    });
+    expect(firebaseMocks.getDelegatedTeamContext).toHaveBeenCalledWith({
+      teamId: 'private-1',
+      gameId: 'game-1'
+    });
+    expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+    expect(firebaseMocks.getPublicTeamProfile).not.toHaveBeenCalled();
+  });
+
+  it('propagates delegated projection failures without falling back to a canonical read', async () => {
+    firebaseMocks.getDelegatedTeamContext.mockRejectedValue(Object.assign(new Error('offline'), {
+      code: 'functions/unavailable'
+    }));
+
+    await expect(getGameDayTeamContext('private-1', 'game-1')).rejects.toMatchObject({
+      code: 'functions/unavailable'
+    });
+    expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+    expect(firebaseMocks.getPublicTeamProfile).not.toHaveBeenCalled();
   });
 });
 
