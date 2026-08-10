@@ -61,8 +61,8 @@ function isGameDayEligible(game) {
   if (!game || typeof game !== 'object') return false;
   const status = cleanText(game.status || 'scheduled', 32).toLowerCase();
   const liveStatus = cleanText(game.liveStatus, 32).toLowerCase();
-  return !['cancelled', 'canceled', 'completed', 'final', 'deleted'].includes(status)
-    && !['cancelled', 'canceled', 'completed', 'final', 'deleted'].includes(liveStatus);
+  const terminalStatuses = ['cancelled', 'canceled', 'completed', 'finished', 'final', 'deleted'];
+  return !terminalStatuses.includes(status) && !terminalStatuses.includes(liveStatus);
 }
 
 function hasAllConfirmedGrant(team, permissionName, rsvp, game) {

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   createDelegatedTeamContextHandler,
+  resolveDelegatedAccess,
   serializeDelegatedTeamContext
 } = require('../delegated-team-context-core.cjs');
 
@@ -147,6 +148,43 @@ test('requires a current game and RSVP for all-confirmed capability modes', asyn
   await assert.rejects(handler({ teamId: 'team-1', gameId: 'game-1' }, context('missing-rsvp')), { code: 'permission-denied' });
   const result = await handler({ teamId: 'team-1', gameId: 'game-1' }, context('confirmed-1'));
   assert.deepEqual(result.item.teamPermissions.scorekeeping, { mode: 'all_confirmed', memberIds: [] });
+});
+
+test('terminal game statuses revoke every confirmed-member grant', () => {
+  const team = productionTeam({
+    teamPermissions: {
+      scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'all_confirmed', memberIds: [] },
+      streaming: { mode: 'all_confirmed', memberIds: [] },
+      teamMediaManagement: { mode: 'selected', memberIds: [] }
+    },
+    streamAccessMode: 'confirmed_members',
+    streamVolunteerEmails: []
+  });
+
+  for (const terminalStatus of ['cancelled', 'canceled', 'completed', 'finished', 'final', 'deleted']) {
+    for (const statusField of ['status', 'liveStatus']) {
+      const access = resolveDelegatedAccess({
+        uid: 'confirmed-1',
+        email: 'confirmed-1@example.com',
+        user: {},
+        teamId: 'team-1',
+        team,
+        game: { status: 'scheduled', liveStatus: 'scheduled', [statusField]: terminalStatus },
+        rsvp: { response: 'confirmed' }
+      });
+
+      assert.deepEqual({
+        scorekeeping: access.scorekeeping,
+        videography: access.videography,
+        streaming: access.streaming
+      }, {
+        scorekeeping: false,
+        videography: false,
+        streaming: false
+      }, `${statusField}=${terminalStatus}`);
+    }
+  }
 });
 
 test('returns a bounded private-team projection for a current parent', async () => {
