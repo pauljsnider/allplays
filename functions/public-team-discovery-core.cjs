@@ -58,8 +58,14 @@ function buildPublicTeamSearchStrategies(searchText = '') {
   const legacyCity = toTitleCase(cityPart || rawSearch);
   const state = statePart.toUpperCase();
   strategies.push(
-    { field: 'publicSearchCity', start: city, end: `${city}\uf8ff`, state },
-    { field: 'city', start: legacyCity, end: `${legacyCity}\uf8ff`, state }
+    {
+      field: 'publicSearchCity', start: city, end: `${city}\uf8ff`, state,
+      ...(state ? { stateField: 'publicSearchState' } : {})
+    },
+    {
+      field: 'city', start: legacyCity, end: `${legacyCity}\uf8ff`, state,
+      ...(state ? { stateField: 'state' } : {})
+    }
   );
   return strategies;
 }

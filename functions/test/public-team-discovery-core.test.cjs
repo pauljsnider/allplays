@@ -103,9 +103,10 @@ test('public team discovery remains available beyond the per-request scan bounda
 
 function makeIndexedSearchLoader(teams, calls) {
   return async ({ strategy, cursor, limit }) => {
-    calls.push({ field: strategy.field, cursor, limit });
+    calls.push({ field: strategy.field, stateField: strategy.stateField, state: strategy.state, cursor, limit });
     const matches = teams
-      .filter((team) => String(team[strategy.field] || '') >= strategy.start &&
+      .filter((team) => (!strategy.stateField || team[strategy.stateField] === strategy.state) &&
+        String(team[strategy.field] || '') >= strategy.start &&
         String(team[strategy.field] || '') <= strategy.end)
       .sort((left, right) => {
         const fieldResult = String(left[strategy.field]).localeCompare(String(right[strategy.field]));
@@ -158,8 +159,11 @@ test('indexed search builds bounded name, city/state, state, and ZIP strategies'
     { field: 'city', start: 'Fal', end: 'Fal\uf8ff', state: '' }
   ]);
   assert.deepEqual(buildPublicTeamSearchStrategies('Austin, tx').slice(2), [
-    { field: 'publicSearchCity', start: 'austin', end: 'austin\uf8ff', state: 'TX' },
-    { field: 'city', start: 'Austin', end: 'Austin\uf8ff', state: 'TX' }
+    {
+      field: 'publicSearchCity', start: 'austin', end: 'austin\uf8ff',
+      state: 'TX', stateField: 'publicSearchState'
+    },
+    { field: 'city', start: 'Austin', end: 'Austin\uf8ff', state: 'TX', stateField: 'state' }
   ]);
   assert.deepEqual(buildPublicTeamSearchStrategies('tx').slice(2).map(({ field }) => field), [
     'publicSearchState', 'state'
@@ -208,6 +212,39 @@ test('indexed city/state, state, and ZIP searches return matches with advancing 
     const decoded = decodeSearchCursor(page.nextCursor, searchCase.searchText, 4);
     assert.equal(decoded.strategyCursors.every((cursor) => cursor?.done || cursor?.id), true);
   }
+});
+
+test('indexed city/state searches constrain state before consuming each strategy budget', async () => {
+  const wrongStateTeams = Array.from({ length: 10 }, (_, index) => ({
+    id: `a-wrong-state-${index}`,
+    name: `Bears ${index}`,
+    publicSearchName: `bears ${index}`,
+    city: 'Austin',
+    publicSearchCity: 'austin',
+    state: 'CA',
+    publicSearchState: 'CA'
+  }));
+  const requestedStateTeam = {
+    id: 'z-requested-state',
+    name: 'Bears Texas',
+    publicSearchName: 'bears texas',
+    city: 'Austin',
+    publicSearchCity: 'austin',
+    state: 'TX',
+    publicSearchState: 'TX'
+  };
+  const calls = [];
+
+  const page = await searchDatastorePublicTeamPage(
+    makeIndexedSearchLoader([...wrongStateTeams, requestedStateTeam], calls),
+    { searchText: 'Austin, tx', pageSize: 4 }
+  );
+
+  assert.deepEqual(page.items.map((team) => team.id), ['z-requested-state']);
+  assert.deepEqual(calls.slice(2).map(({ field, stateField, state }) => ({ field, stateField, state })), [
+    { field: 'publicSearchCity', stateField: 'publicSearchState', state: 'TX' },
+    { field: 'city', stateField: 'state', state: 'TX' }
+  ]);
 });
 
 test('indexed search deduplicates strategies and advances every strategy cursor', async () => {

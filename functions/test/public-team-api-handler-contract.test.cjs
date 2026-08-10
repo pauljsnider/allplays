@@ -187,6 +187,7 @@ test('listPublicTeams uses limited indexed ranges for search and preserves bound
   const handlerSource = source.slice(start, end);
 
   assert.match(handlerSource, /searchDatastorePublicTeamPage\(loadSearchPage/);
+  assert.match(handlerSource, /query = query\.where\(strategy\.stateField, '==', strategy\.state\)/);
   assert.match(handlerSource, /\.where\(strategy\.field, '>=', strategy\.start\)/);
   assert.match(handlerSource, /\.where\(strategy\.field, '<=', strategy\.end\)/);
   assert.match(handlerSource, /\.orderBy\(strategy\.field\)/);
@@ -198,10 +199,11 @@ test('listPublicTeams uses limited indexed ranges for search and preserves bound
   const indexedFields = firestoreIndexes.indexes
     .filter((index) => index.collectionGroup === 'teams' &&
       index.fields?.[0]?.fieldPath === 'isPublic')
-    .map((index) => index.fields?.[1]?.fieldPath);
+    .map((index) => index.fields.slice(1).map((field) => field.fieldPath).join(','));
   assert.deepEqual(new Set(indexedFields), new Set([
     'publicSearchName', 'name',
     'publicSearchCity', 'city',
+    'publicSearchState,publicSearchCity', 'state,city',
     'publicSearchState', 'state',
     'publicSearchZip', 'zip'
   ]));

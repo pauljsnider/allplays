@@ -18360,7 +18360,11 @@ exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
   };
   const loadSearchPage = async ({ strategy, cursor, limit: queryLimit }) => {
     let query = firestore.collection('teams')
-      .where('isPublic', '==', true)
+      .where('isPublic', '==', true);
+    if (strategy.state && strategy.stateField) {
+      query = query.where(strategy.stateField, '==', strategy.state);
+    }
+    query = query
       .where(strategy.field, '>=', strategy.start)
       .where(strategy.field, '<=', strategy.end)
       .orderBy(strategy.field)
