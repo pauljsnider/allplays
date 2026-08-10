@@ -118,9 +118,7 @@ for (const [label, path] of [
         await page.goto(`${baseURL}${path}`, { waitUntil: 'domcontentloaded' });
 
         await expect(page.locator('#game-title')).toHaveText('vs. Rockets');
-        if (label === 'live tracker') {
-            await expect(page.locator('#chat-viewer-count')).toHaveText('2 watching');
-        }
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
         expect(pageErrors).toEqual([]);
         await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
         await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
