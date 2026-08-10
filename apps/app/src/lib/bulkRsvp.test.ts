@@ -102,6 +102,15 @@ describe('bulk RSVP helpers', () => {
     ).map((row) => row.eventKey)).toEqual([sibling.eventKey]);
   });
 
+  it('selects visible past RSVP rows for hydration without expanding the bulk RSVP window', () => {
+    const pastEvent = event(1, {
+      date: new Date('2000-06-01T18:00:00Z')
+    });
+
+    expect(getBulkRsvpCandidates([pastEvent], new Date('2100-01-01T00:00:00Z'))).toEqual([]);
+    expect(getScheduleRsvpHydrationTargets([pastEvent], [pastEvent], 1)).toEqual([pastEvent]);
+  });
+
   it('selects visible groups before applying the hydration row bound', () => {
     const crowdedEvents = Array.from({ length: maxBulkRsvpEvents }, (_, index) => event(index + 1));
     const visiblePractice = event(maxBulkRsvpEvents + 1, {

@@ -2213,6 +2213,50 @@ describe('Schedule', () => {
     expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
   });
 
+  it.each([
+    ['list', '', (index: number) => buildScheduleEvent(index, {
+      date: new Date(Date.now() - (index * 24 * 60 * 60 * 1000)),
+      myRsvpNoteHydrated: false
+    })],
+    ['packets', '&view=packets', (index: number) => buildPracticePacketEvent(index, {
+      date: new Date(Date.now() - (index * 24 * 60 * 60 * 1000)),
+      isDbGame: true,
+      myRsvpNoteHydrated: false
+    })]
+  ])('hydrates the newly fetched past-history window in the %s view', async (_view, viewQuery, buildEvent) => {
+    const page = (start: number) => Array.from({ length: 10 }, (_, index) => buildEvent(start + index));
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+        events: page(1)
+      })
+      .mockResolvedValueOnce({ children: [], events: page(11) })
+      .mockResolvedValueOnce({ children: [], events: page(21) });
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementation(async (result: any) => {
+      result.events.forEach((event: ParentScheduleEvent) => {
+        event.myRsvpNoteHydrated = true;
+      });
+      return result;
+    });
+
+    renderSchedule(`/schedule?filter=past-all${viewQuery}`);
+
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Show 10 more' }));
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 10 more' }));
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(3));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[2]?.[0] as any).events.map(
+      (event: ParentScheduleEvent) => event.id
+    )).toEqual(Array.from({ length: 10 }, (_, index) => (
+      `${_view === 'packets' ? 'practice' : 'event'}-${30 - index}`
+    )));
+  });
+
   it('resets expanded rows and hides the coach AI manager when switching to family scope', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [

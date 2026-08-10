@@ -373,8 +373,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
       teamId: selectedTeamId,
       timeRange
     });
+    const scopedHydrationEvents = result.events.filter((event) => (
+      (!selectedPlayerId || event.childId === selectedPlayerId)
+      && (!selectedTeamId || event.teamId === selectedTeamId)
+    ));
     const rsvpEvents = getScheduleRsvpHydrationTargets(
-      scopedEvents,
+      hydrateAll ? scopedEvents : scopedHydrationEvents,
       hydrateAll ? getBulkRsvpCandidates(scopedEvents) : visibleEvents,
       hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
       hydratedRsvpRowsRef.current.eventKeys
@@ -931,7 +935,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
     const loaded = await loadPastSchedulePage();
     if (loaded) {
-      setVisibleListCount((current) => current + listPageSize);
+      const nextVisibleCount = visibleListCount + listPageSize;
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
     }
   };
   const handleShowMorePackets = async () => {
@@ -949,7 +958,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
     const loaded = await loadPastSchedulePage();
     if (loaded) {
-      setVisibleListCount((current) => current + listPageSize);
+      const nextVisibleCount = visibleListCount + listPageSize;
+      setVisibleListCount(nextVisibleCount);
+      hydrateScheduleRsvpsInBackground({
+        children: childrenRef.current,
+        events: eventsRef.current
+      }, false, nextVisibleCount);
     }
   };
   const teamOptions = useMemo(

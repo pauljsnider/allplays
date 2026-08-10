@@ -34,6 +34,23 @@ function getEligibleBulkRsvpCandidates(
     });
 }
 
+function getEligibleScheduleRsvpHydrationCandidates(events: ParentScheduleEvent[]) {
+  const seenEventKeys = new Set<string>();
+  return [...events]
+    .filter((event) => (
+      event.isLinkedParentChild === true
+      && Boolean(event.childId)
+      && !event.childId.startsWith('staff-team-')
+      && canSubmitScheduleEventRsvp(event)
+    ))
+    .sort((left, right) => left.date.getTime() - right.date.getTime())
+    .filter((event) => {
+      if (seenEventKeys.has(event.eventKey)) return false;
+      seenEventKeys.add(event.eventKey);
+      return true;
+    });
+}
+
 export function getBulkRsvpCandidates(
   events: ParentScheduleEvent[],
   now = new Date()
@@ -55,7 +72,7 @@ export function getScheduleRsvpHydrationTargets(
       visibleGroupKeys.add(getRsvpGroupKey(event));
     });
 
-  return getEligibleBulkRsvpCandidates(events.filter((event) => (
+  return getEligibleScheduleRsvpHydrationCandidates(events.filter((event) => (
     visibleGroupKeys.has(getRsvpGroupKey(event))
   ))).filter((event) => !hydratedEventKeys.has(event.eventKey));
 }
