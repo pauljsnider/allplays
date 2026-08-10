@@ -78,6 +78,7 @@
         import { auth } from './js/firebase.js?v=22';
         import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433164';
         import { renderHeader, renderFooter } from './js/utils.js?v=443338';
+        import { getPendingVerificationRedirectUrl } from './js/verify-pending-flow.js?v=1';
 
         renderHeader(document.getElementById('header-container'), null);
         renderFooter(document.getElementById('footer-container'));
@@ -102,7 +103,7 @@
             }
 
             userEmailEl.textContent = user.email;
-            const redirectUrl = getRedirectUrl(user);
+            const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);
             continueBtn.href = redirectUrl;
             continueBtn.removeAttribute('aria-disabled');
             continueBtn.removeAttribute('tabindex');
