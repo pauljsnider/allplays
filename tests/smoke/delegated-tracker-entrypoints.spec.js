@@ -135,6 +135,11 @@ test.beforeEach(async ({ page }) => {
         contentType: 'application/javascript',
         body: 'export function getApp() { return {}; }'
     }));
+    await page.route(/\/js\/vendor\/firebase-firestore\.js$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: "export function serverTimestamp() { return 'server-timestamp'; }"
+    }));
     await page.route(/\/js\/vendor\/firebase-ai\.js$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
@@ -158,8 +163,8 @@ for (const tracker of TRACKERS) {
 
         await page.goto(`${baseURL}${tracker.path}`, { waitUntil: 'domcontentloaded' });
 
-        await expect(page.locator(tracker.ready)).toHaveText(tracker.readyText);
         expect(pageErrors).toEqual([]);
+        await expect(page.locator(tracker.ready)).toHaveText(tracker.readyText);
         await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
         await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     });
