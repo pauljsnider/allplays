@@ -263,6 +263,24 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function normalizeChatMessageRevisionValue(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(normalizeChatMessageRevisionValue);
+  if (!value || typeof value !== 'object') return value;
+
+  return Object.keys(value as Record<string, unknown>)
+    .filter((key) => key !== '_doc' && (value as Record<string, unknown>)[key] !== undefined)
+    .sort()
+    .reduce<Record<string, unknown>>((normalized, key) => {
+      normalized[key] = normalizeChatMessageRevisionValue((value as Record<string, unknown>)[key]);
+      return normalized;
+    }, {});
+}
+
+function getChatMessageListRevision(messages: ChatMessage[]) {
+  return JSON.stringify(normalizeChatMessageRevisionValue(messages));
+}
+
 function getProjectId() {
   const projectId = firebaseAuth.app?.options?.projectId;
   if (!projectId) {
@@ -1205,6 +1223,7 @@ export function subscribeToTeamChatMessages(
   let cancelled = false;
   let unsubscribe: (() => void) | null = null;
   let pollTimer: number | undefined;
+  let lastNativeMessageRevision: string | null = null;
 
   const startPollingFallback = async () => {
     const load = async () => {
@@ -1214,10 +1233,14 @@ export function subscribeToTeamChatMessages(
           orderBy: 'createdAt desc',
           pageSize: 50
         });
+        if (cancelled) return;
         const mappedMessages = mapChatMessageRecords(messages);
+        const messageRevision = getChatMessageListRevision(mappedMessages);
+        if (messageRevision === lastNativeMessageRevision) return;
+        lastNativeMessageRevision = messageRevision;
         onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
       } catch (error: any) {
-        onError?.(error);
+        if (!cancelled) onError?.(error);
       }
     };
     await load();
@@ -1244,7 +1267,7 @@ export function subscribeToTeamChatMessages(
   return {
     unsubscribe: () => {
       cancelled = true;
-      if (pollTimer) window.clearInterval(pollTimer);
+      if (pollTimer !== undefined) window.clearInterval(pollTimer);
       unsubscribe?.();
     }
   };
