@@ -13,7 +13,8 @@ function createScenario(overrides = {}) {
         team: {
             id: 'team-1',
             name: 'Comets',
-            sport: 'Basketball'
+            sport: 'Basketball',
+            delegatedAccess: { scorekeeping: true }
         },
         game: {
             id: 'game-1',
