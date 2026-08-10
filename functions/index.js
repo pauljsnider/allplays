@@ -4734,6 +4734,19 @@ const createCoParentInviteCallableHandler = createCoParentInviteHandler({
 
 exports.createCoParentInvite = functions.https.onCall(createCoParentInviteCallableHandler);
 
+function assertFamilyInviteRecipientEmail(codeData, signedInEmail) {
+  const invitedEmail = normalizeParentInviteEmail(codeData?.email);
+  if (invitedEmail && !signedInEmail) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'Verify your email before accepting this family invite.',
+      { reason: 'email-verification-required' }
+    );
+  }
+  if (invitedEmail && invitedEmail !== signedInEmail) {
+    throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+  }
+}
 
 exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -4761,6 +4774,7 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -4780,10 +4794,7 @@ exports.redeemParentInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Parent invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -4887,6 +4898,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -4906,10 +4918,7 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
       throw new functions.https.HttpsError('failed-precondition', 'Household invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
@@ -5185,6 +5194,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
   }
 
   const codeRef = codeQuerySnap.docs[0].ref;
+  assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail);
   let responsePayload = null;
 
   await firestore.runTransaction(async (transaction) => {
@@ -5204,10 +5214,7 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError('failed-precondition', 'Co-parent invite has expired.');
     }
 
-    const invitedEmail = normalizeParentInviteEmail(codeData.email);
-    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
-      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
+    assertFamilyInviteRecipientEmail(codeData, signedInEmail);
 
     const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
     const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');

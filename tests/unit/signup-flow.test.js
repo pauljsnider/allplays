@@ -33,6 +33,53 @@ function createDependencies(overrides = {}) {
 
 describe('executeEmailPasswordSignup', () => {
 
+    it.each([
+        ['parent_invite', 'redeemParentInvite', 'parent'],
+        ['household_invite', 'redeemHouseholdInvite', 'household'],
+        ['coparent_invite', 'redeemCoParentInvite', 'coparent']
+    ])('preserves an email-targeted %s invite until verification', async (type, redeemMethod, pendingType) => {
+        const verificationError = Object.assign(new Error('Verify your email before accepting this family invite.'), {
+            code: 'functions/permission-denied',
+            details: { reason: 'email-verification-required' }
+        });
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type,
+                data: { code: 'FAMILY01' }
+            }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            [redeemMethod]: vi.fn().mockRejectedValue(verificationError)
+        });
+        const auth = {
+            currentUser: {
+                email: 'family@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        const result = await executeEmailPasswordSignup({
+            email: 'family@example.com',
+            password: 'password123',
+            activationCode: 'FAMILY01',
+            auth,
+            dependencies
+        });
+
+        expect(result.pendingFamilyInvite).toEqual({ code: 'FAMILY01', type: pendingType });
+        expect(deleteAuthUser).not.toHaveBeenCalled();
+        expect(dependencies.rollbackParentInviteRedemption).not.toHaveBeenCalled();
+        expect(dependencies.signOut).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
+    });
+
 
     it('redeems household invites during email signup instead of generically consuming the code', async () => {
         const dependencies = createDependencies({

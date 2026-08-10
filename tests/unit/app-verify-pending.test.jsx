@@ -6,18 +6,19 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getRouteForUser: vi.fn(() => '/home'),
+    readPendingInvite: vi.fn(() => ({ code: '', type: 'parent' })),
     reloadCurrentUser: vi.fn(),
     resendVerificationEmail: vi.fn()
 }));
 
-import { reloadCurrentUser, resendVerificationEmail } from '../../apps/app/src/lib/authService.ts';
+import { readPendingInvite, reloadCurrentUser, resendVerificationEmail } from '../../apps/app/src/lib/authService.ts';
 import { VerifyPending } from '../../apps/app/src/pages/VerifyPending.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function LocationMarker() {
     const location = useLocation();
-    return React.createElement('div', { 'data-testid': 'location' }, location.pathname);
+    return React.createElement('div', { 'data-testid': 'location' }, `${location.pathname}${location.search}`);
 }
 
 function createAuth(overrides = {}) {
@@ -58,6 +59,7 @@ async function renderVerifyPending(auth) {
                 null,
                 React.createElement(Route, { path: '/verify-pending', element: React.createElement(VerifyPending, { auth }) }),
                 React.createElement(Route, { path: '/home', element: React.createElement('div', null, 'Home dashboard') }),
+                React.createElement(Route, { path: '/accept-invite', element: React.createElement('div', null, 'Pending invite') }),
                 React.createElement(Route, { path: '/auth', element: React.createElement('div', null, 'Auth page') })
             )
         ));
@@ -78,6 +80,7 @@ function buttonByText(container, text) {
 afterEach(() => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    readPendingInvite.mockReturnValue({ code: '', type: 'parent' });
 });
 
 describe('VerifyPending verification return flow', () => {
@@ -133,6 +136,52 @@ describe('VerifyPending verification return flow', () => {
         await act(async () => root.unmount());
     });
 
+    it('returns a newly verified user to the preserved family invite', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'household' });
+        const auth = createAuth();
+        auth.refresh.mockResolvedValueOnce({
+            ...auth.user,
+            emailVerified: true
+        });
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        const { container, root } = await renderVerifyPending(auth);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FAMILY01&type=household');
+        expect(container.textContent).toContain('Pending invite');
+
+        await act(async () => root.unmount());
+    });
+
+    it('keeps the unverified secondary path on the fallback when a family invite is pending', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'household' });
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Example',
+                emailVerified: false,
+                roles: []
+            })
+        });
+        reloadCurrentUser.mockResolvedValueOnce(false);
+        const { container, root } = await renderVerifyPending(auth);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+
+        const continueWithoutVerifying = Array.from(container.querySelectorAll('a'))
+            .find((candidate) => candidate.textContent.includes('Continue without verifying'));
+        expect(continueWithoutVerifying?.getAttribute('href')).toBe('/home');
+        expect(readPendingInvite).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+    });
+
     it('stays on verify pending and exposes secondary options when refreshed state is still unverified', async () => {
         const auth = createAuth({
             refresh: vi.fn().mockResolvedValueOnce({
@@ -182,6 +231,45 @@ describe('VerifyPending verification return flow', () => {
         expect(container.textContent).not.toContain("I've verified, continue");
         expect(container.textContent).not.toContain('Resend verification email');
         expect(container.textContent).not.toContain('Refresh status');
+
+        auth.refresh.mockResolvedValueOnce(auth.user);
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        await act(async () => {
+            buttonByText(container, 'Continue to dashboard').click();
+        });
+
+        expect(reloadCurrentUser).toHaveBeenCalledTimes(1);
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/home');
+
+        await act(async () => root.unmount());
+    });
+
+    it('force-refreshes an already verified session before resuming a pending invite', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'coparent' });
+        const verifiedUser = {
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Example',
+            emailVerified: true,
+            roles: []
+        };
+        const auth = createAuth({
+            user: verifiedUser,
+            refresh: vi.fn().mockResolvedValueOnce(verifiedUser)
+        });
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        const { container, root } = await renderVerifyPending(auth);
+
+        expect(readPendingInvite).not.toHaveBeenCalled();
+        await act(async () => {
+            buttonByText(container, 'Continue to dashboard').click();
+        });
+
+        expect(reloadCurrentUser).toHaveBeenCalledTimes(1);
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(readPendingInvite).toHaveBeenCalledTimes(1);
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FAMILY01&type=coparent');
 
         await act(async () => root.unmount());
     });

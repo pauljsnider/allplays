@@ -31,7 +31,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433161', () => ({
+vi.mock('../../js/db.js?v=4433162', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -48,7 +48,7 @@ vi.mock('../../js/db.js?v=4433161', () => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=12', () => ({
+vi.mock('../../js/signup-flow.js?v=13', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

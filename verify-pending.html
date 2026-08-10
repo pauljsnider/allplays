@@ -76,8 +76,9 @@
 
     <script type="module">
         import { auth } from './js/firebase.js?v=22';
-        import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433163';
-        import { renderHeader, renderFooter } from './js/utils.js?v=443337';
+        import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433164';
+        import { renderHeader, renderFooter } from './js/utils.js?v=443338';
+        import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=3';
 
         renderHeader(document.getElementById('header-container'), null);
         renderFooter(document.getElementById('footer-container'));
@@ -95,25 +96,34 @@
         }
 
         // Check auth state
-        checkAuth((user) => {
+        checkAuth(async (user) => {
             if (!user) {
                 window.location.href = '/app/#/auth';
                 return;
             }
 
             userEmailEl.textContent = user.email;
-            const redirectUrl = getRedirectUrl(user);
-            continueBtn.href = redirectUrl;
+            const fallbackRedirectUrl = getRedirectUrl(user);
+
+            // Callable invite redemption reads email_verified from the ID token,
+            // so refresh it before a newly verified user leaves this page.
+            if (user.emailVerified) {
+                try {
+                    await refreshVerifiedUserToken(user);
+                    const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);
+                    window.location.href = redirectUrl;
+                } catch (error) {
+                    console.error('Error refreshing verification token:', error);
+                    showMessage('Unable to refresh your verification status. Please try again.', true);
+                }
+                return;
+            }
+
+            continueBtn.href = fallbackRedirectUrl;
             continueBtn.removeAttribute('aria-disabled');
             continueBtn.removeAttribute('tabindex');
             continueBtn.classList.remove('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             continueBtn.classList.add('hover:bg-indigo-700');
-
-            // If already verified, go straight to dashboard
-            if (user.emailVerified) {
-                window.location.href = redirectUrl;
-                return;
-            }
 
             // Auto-redirect countdown (non-blocking — user can verify later)
             let seconds = 5;
@@ -123,7 +133,7 @@
                 countdownEl.textContent = seconds;
                 if (seconds <= 0) {
                     clearInterval(interval);
-                    window.location.href = redirectUrl;
+                    window.location.href = fallbackRedirectUrl;
                 }
             }, 1000);
         }, { skipEmailVerificationCheck: true });

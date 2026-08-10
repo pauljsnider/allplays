@@ -66,9 +66,12 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
         expect(afterFunction).toContain('isParentInviteExpired(codeData.expiresAt)');
         expect(afterFunction).toContain('resolveAuthenticatedFamilyInviteEmail({');
-        expect(afterFunction).toContain('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)');
+        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)');
+        expect(afterFunction).toContain('assertFamilyInviteRecipientEmail(codeData, signedInEmail)');
         expect(afterFunction).not.toContain('data?.authEmail');
-        expect(afterFunction.indexOf('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)'))
+        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeQuerySnap.docs[0].data() || {}, signedInEmail)'))
+            .toBeLessThan(afterFunction.indexOf('firestore.runTransaction(async (transaction) =>'));
+        expect(afterFunction.indexOf('assertFamilyInviteRecipientEmail(codeData, signedInEmail)'))
             .toBeLessThan(afterFunction.indexOf('transaction.set(userRef'));
         expect(afterFunction).toContain('parentOf: nextUserData.parentOf');
         expect(afterFunction).toContain('parentTeamIds: nextUserData.parentTeamIds');

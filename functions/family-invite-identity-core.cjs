@@ -8,11 +8,15 @@ async function resolveAuthenticatedFamilyInviteEmail({ auth, getUser }) {
   const uid = String(auth?.uid || '').trim();
   if (!uid) return '';
 
-  const tokenEmail = normalizeAuthEmail(auth?.token?.email);
-  if (tokenEmail) return tokenEmail;
+  const token = auth?.token;
+  if (token && Object.prototype.hasOwnProperty.call(token, 'email')) {
+    if (token.email_verified !== true) return '';
+    return normalizeAuthEmail(token.email);
+  }
 
   if (typeof getUser !== 'function') return '';
   const authUser = await getUser(uid);
+  if (authUser?.emailVerified !== true || authUser?.disabled === true) return '';
   return normalizeAuthEmail(authUser?.email);
 }
 
