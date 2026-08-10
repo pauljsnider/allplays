@@ -645,6 +645,40 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
+for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 844 }]) {
+    test(`existing family share actions are thumb-friendly at ${viewport.width}px`, async ({ page, baseURL }) => {
+        await page.setViewportSize(viewport);
+        await mockParentToolsModules(page);
+        await page.goto(appUrl(baseURL, '/parent-tools/share'), { waitUntil: 'domcontentloaded' });
+
+        const tokenCard = page.locator('section.app-card').filter({ hasText: 'Grandma' });
+        await expect(tokenCard).toBeVisible({ timeout: 15000 });
+        const actions = tokenCard.getByRole('button').filter({ hasText: /^(Copy|Share|Feeds|Revoke)$/ });
+        await expect(actions).toHaveCount(4);
+
+        const geometry = await actions.evaluateAll((buttons) => buttons.map((button) => {
+            const rect = button.getBoundingClientRect();
+            return {
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                height: rect.height,
+                fullyVisible: button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight
+            };
+        }));
+        const cardRect = await tokenCard.evaluate((card) => {
+            const rect = card.getBoundingClientRect();
+            return { left: rect.left, right: rect.right };
+        });
+
+        expect(geometry.every(({ left, right, height, fullyVisible }) => left >= cardRect.left && right <= cardRect.right && height >= 44 && fullyVisible)).toBe(true);
+        expect(Math.abs(geometry[0].top - geometry[1].top)).toBeLessThan(1);
+        expect(Math.abs(geometry[2].top - geometry[3].top)).toBeLessThan(1);
+        expect(geometry[2].top).toBeGreaterThan(geometry[0].top);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+}
+
 test.describe('desktop Family navigation', () => {
     test.use({ viewport: { width: 1280, height: 900 }, hasTouch: false });
 
