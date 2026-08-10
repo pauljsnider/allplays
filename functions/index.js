@@ -141,6 +141,7 @@ const {
 const {
   normalizePublicTeamSearch,
   normalizePageSize,
+  searchDatastorePublicTeamPage,
   scanDatastorePublicTeamPage
 } = require('./public-team-discovery-core.cjs');
 const {
@@ -18343,7 +18344,7 @@ exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-discovery');
   const searchText = normalizePublicTeamSearch(data?.searchText);
   const pageSize = normalizePageSize(data?.pageSize);
-  const page = await scanDatastorePublicTeamPage(async ({ afterId, limit: queryLimit }) => {
+  const loadBrowsePage = async ({ afterId, limit: queryLimit }) => {
     let query = firestore.collection('teams')
       .where('isPublic', '==', true)
       .orderBy(admin.firestore.FieldPath.documentId());
@@ -18356,11 +18357,43 @@ exports.listPublicTeams = functions.https.onCall(async (data, context = {}) => {
       })),
       hasMore: teamsSnap.size === queryLimit
     };
-  }, {
+  };
+  const loadSearchPage = async ({ strategy, cursor, limit: queryLimit }) => {
+    let query = firestore.collection('teams')
+      .where('isPublic', '==', true);
+    if (strategy.state && strategy.stateField) {
+      query = query.where(strategy.stateField, '==', strategy.state);
+    }
+    query = query
+      .where(strategy.field, '>=', strategy.start)
+      .where(strategy.field, '<=', strategy.end)
+      .orderBy(strategy.field)
+      .orderBy(admin.firestore.FieldPath.documentId());
+    if (cursor?.value && cursor?.id) query = query.startAfter(cursor.value, cursor.id);
+    const teamsSnap = await query.limit(queryLimit).get();
+    return {
+      records: teamsSnap.docs.map((teamSnap) => {
+        const team = teamSnap.data() || {};
+        return {
+          id: teamSnap.id,
+          value: String(team[strategy.field] || ''),
+          data: team,
+          item: serializePublicTeamDiscovery(teamSnap.id, team)
+        };
+      })
+    };
+  };
+  const page = await (searchText
+    ? searchDatastorePublicTeamPage(loadSearchPage, {
+        searchText,
+        pageSize,
+        cursor: typeof data?.cursor === 'string' ? data.cursor : null
+      })
+    : scanDatastorePublicTeamPage(loadBrowsePage, {
     searchText,
     pageSize,
     cursor: typeof data?.cursor === 'string' ? data.cursor : null
-  });
+      }));
   return {
     items: page.items,
     nextCursor: page.nextCursor

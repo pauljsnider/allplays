@@ -10,6 +10,7 @@ const {
 } = require('../public-team-api-core.cjs');
 
 const source = readFileSync(join(__dirname, '..', 'index.js'), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(join(__dirname, '..', '..', 'firestore.indexes.json'), 'utf8'));
 
 function loadPublicTeamDataAccess(firestore) {
   const constantsStart = source.indexOf('const PUBLIC_TEAM_API_MAX_ROSTER_SCAN_DOCUMENTS');
@@ -178,6 +179,34 @@ test('public team handlers define public cache, CORS, method, and rate-limit beh
   assert.match(source, /req\.method !== 'GET' && req\.method !== 'HEAD'/);
   assert.match(source, /maxRequests: 120/);
   assert.match(source, /sendPublicTeamApiError\(res, 429, 'rate_limited'/);
+});
+
+test('listPublicTeams uses limited indexed ranges for search and preserves bounded browse', () => {
+  const start = source.indexOf('exports.listPublicTeams = functions');
+  const end = source.indexOf('exports.getPublicTeamGamesProjection', start);
+  const handlerSource = source.slice(start, end);
+
+  assert.match(handlerSource, /searchDatastorePublicTeamPage\(loadSearchPage/);
+  assert.match(handlerSource, /query = query\.where\(strategy\.stateField, '==', strategy\.state\)/);
+  assert.match(handlerSource, /\.where\(strategy\.field, '>=', strategy\.start\)/);
+  assert.match(handlerSource, /\.where\(strategy\.field, '<=', strategy\.end\)/);
+  assert.match(handlerSource, /\.orderBy\(strategy\.field\)/);
+  assert.match(handlerSource, /\.limit\(queryLimit\)\.get\(\)/);
+  assert.match(handlerSource, /startAfter\(cursor\.value, cursor\.id\)/);
+  assert.match(handlerSource, /scanDatastorePublicTeamPage\(loadBrowsePage/);
+  assert.match(handlerSource, /searchText\s*\? searchDatastorePublicTeamPage[\s\S]*:\s*scanDatastorePublicTeamPage/);
+
+  const indexedFields = firestoreIndexes.indexes
+    .filter((index) => index.collectionGroup === 'teams' &&
+      index.fields?.[0]?.fieldPath === 'isPublic')
+    .map((index) => index.fields.slice(1).map((field) => field.fieldPath).join(','));
+  assert.deepEqual(new Set(indexedFields), new Set([
+    'publicSearchName', 'name',
+    'publicSearchCity', 'city',
+    'publicSearchState,publicSearchCity', 'state,city',
+    'publicSearchState', 'state',
+    'publicSearchZip', 'zip'
+  ]));
 });
 
 test('public roster scan accepts 1,000 documents and safely rejects 1,001', async () => {

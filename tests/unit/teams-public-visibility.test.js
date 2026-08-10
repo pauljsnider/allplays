@@ -31,7 +31,8 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
         expect(source).toContain("httpsCallable(functions, 'listPublicTeams')");
         expect(functionsSource).toContain('.orderBy(admin.firestore.FieldPath.documentId())');
-        expect(functionsSource).toContain('scanDatastorePublicTeamPage(async ({ afterId, limit: queryLimit }) => {');
+        expect(functionsSource).toContain('const loadBrowsePage = async ({ afterId, limit: queryLimit }) => {');
+        expect(functionsSource).toContain('scanDatastorePublicTeamPage(loadBrowsePage, {');
         expect(functionsSource).toContain('if (afterId) query = query.startAfter(afterId);');
         expect(functionsSource).toContain('hasMore: teamsSnap.size === queryLimit');
         expect(functionsSource).toContain('serializePublicTeamDiscovery(teamSnap.id, teamSnap.data() || {})');
