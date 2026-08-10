@@ -156,6 +156,32 @@ describe('VerifyPending verification return flow', () => {
         await act(async () => root.unmount());
     });
 
+    it('keeps the unverified secondary path on the fallback when a family invite is pending', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'household' });
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Example',
+                emailVerified: false,
+                roles: []
+            })
+        });
+        reloadCurrentUser.mockResolvedValueOnce(false);
+        const { container, root } = await renderVerifyPending(auth);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+
+        const continueWithoutVerifying = Array.from(container.querySelectorAll('a'))
+            .find((candidate) => candidate.textContent.includes('Continue without verifying'));
+        expect(continueWithoutVerifying?.getAttribute('href')).toBe('/home');
+        expect(readPendingInvite).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+    });
+
     it('stays on verify pending and exposes secondary options when refreshed state is still unverified', async () => {
         const auth = createAuth({
             refresh: vi.fn().mockResolvedValueOnce({
@@ -205,6 +231,45 @@ describe('VerifyPending verification return flow', () => {
         expect(container.textContent).not.toContain("I've verified, continue");
         expect(container.textContent).not.toContain('Resend verification email');
         expect(container.textContent).not.toContain('Refresh status');
+
+        auth.refresh.mockResolvedValueOnce(auth.user);
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        await act(async () => {
+            buttonByText(container, 'Continue to dashboard').click();
+        });
+
+        expect(reloadCurrentUser).toHaveBeenCalledTimes(1);
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/home');
+
+        await act(async () => root.unmount());
+    });
+
+    it('force-refreshes an already verified session before resuming a pending invite', async () => {
+        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'coparent' });
+        const verifiedUser = {
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Example',
+            emailVerified: true,
+            roles: []
+        };
+        const auth = createAuth({
+            user: verifiedUser,
+            refresh: vi.fn().mockResolvedValueOnce(verifiedUser)
+        });
+        reloadCurrentUser.mockResolvedValueOnce(true);
+        const { container, root } = await renderVerifyPending(auth);
+
+        expect(readPendingInvite).not.toHaveBeenCalled();
+        await act(async () => {
+            buttonByText(container, 'Continue to dashboard').click();
+        });
+
+        expect(reloadCurrentUser).toHaveBeenCalledTimes(1);
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(readPendingInvite).toHaveBeenCalledTimes(1);
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FAMILY01&type=coparent');
 
         await act(async () => root.unmount());
     });

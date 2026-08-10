@@ -3,6 +3,10 @@ import { buildLegacyJoinUrl } from './join-code.js?v=2';
 export function getPendingVerificationRedirectUrl(user, getFallbackRedirectUrl, storage = globalThis.localStorage) {
     const fallbackRedirectUrl = getFallbackRedirectUrl(user);
 
+    if (user?.emailVerified !== true) {
+        return fallbackRedirectUrl;
+    }
+
     try {
         const inviteCode = storage?.getItem('inviteCode') || '';
         const inviteType = storage?.getItem('inviteType') || '';

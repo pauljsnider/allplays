@@ -78,7 +78,7 @@
         import { auth } from './js/firebase.js?v=22';
         import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433164';
         import { renderHeader, renderFooter } from './js/utils.js?v=443338';
-        import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=2';
+        import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=3';
 
         renderHeader(document.getElementById('header-container'), null);
         renderFooter(document.getElementById('footer-container'));
@@ -103,13 +103,14 @@
             }
 
             userEmailEl.textContent = user.email;
-            const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);
+            const fallbackRedirectUrl = getRedirectUrl(user);
 
             // Callable invite redemption reads email_verified from the ID token,
             // so refresh it before a newly verified user leaves this page.
             if (user.emailVerified) {
                 try {
                     await refreshVerifiedUserToken(user);
+                    const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);
                     window.location.href = redirectUrl;
                 } catch (error) {
                     console.error('Error refreshing verification token:', error);
@@ -118,7 +119,7 @@
                 return;
             }
 
-            continueBtn.href = redirectUrl;
+            continueBtn.href = fallbackRedirectUrl;
             continueBtn.removeAttribute('aria-disabled');
             continueBtn.removeAttribute('tabindex');
             continueBtn.classList.remove('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
@@ -132,7 +133,7 @@
                 countdownEl.textContent = seconds;
                 if (seconds <= 0) {
                     clearInterval(interval);
-                    window.location.href = redirectUrl;
+                    window.location.href = fallbackRedirectUrl;
                 }
             }, 1000);
         }, { skipEmailVerificationCheck: true });
