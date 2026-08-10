@@ -812,7 +812,10 @@ describe('Schedule', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
   });
 
-  it('constrains query-opened bulk RSVP rows by team and player', async () => {
+  it.each([
+    ['/schedule?teamId=team-2&bulkRsvp=1', { Sam: 2, Jordan: 1, Pat: 0 }],
+    ['/schedule?playerId=player-2&bulkRsvp=1', { Sam: 2, Jordan: 0, Pat: 0 }]
+  ])('constrains query-opened bulk RSVP rows for scoped Home links at %s', async (route, expectedRows) => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
@@ -845,12 +848,12 @@ describe('Schedule', () => {
       ]
     });
 
-    renderSchedule('/schedule?teamId=team-2&playerId=player-2&bulkRsvp=1');
+    renderSchedule(route);
 
     const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
-    expect(within(dialog).getAllByLabelText(/^Select Sam /)).toHaveLength(2);
-    expect(within(dialog).queryByLabelText(/^Select Pat /)).toBeNull();
-    expect(within(dialog).queryByLabelText(/^Select Jordan /)).toBeNull();
+    Object.entries(expectedRows).forEach(([playerName, expectedCount]) => {
+      expect(within(dialog).queryAllByLabelText(new RegExp(`^Select ${playerName} `))).toHaveLength(expectedCount);
+    });
   });
 
   it('does not open query-requested bulk RSVP when fewer than two eligible rows remain', async () => {
