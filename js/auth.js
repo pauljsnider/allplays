@@ -12,8 +12,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=22';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433161';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=12';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433162';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=13';
 import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=6';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
