@@ -2918,6 +2918,12 @@ async function init() {
       return;
     }
 
+    if (team?.delegatedAccess?.scorekeeping !== true) {
+      alert('You do not have scorekeeping access for this game.');
+      window.location.href = `team.html#teamId=${teamId}`;
+      return;
+    }
+
     currentTeam = team;
     currentGame = game;
     updateSubtitle();
