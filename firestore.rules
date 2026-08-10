@@ -3769,6 +3769,14 @@ service cloud.firestore {
         }
 
         // Live Chat subcollection - game-specific chat for live viewers
+        function canCreateLiveGameInteraction(teamId, gameId) {
+          let gamePath = /databases/$(database)/documents/teams/$(teamId)/games/$(gameId);
+          let gameData = get(gamePath).data;
+          return exists(gamePath) &&
+                 !(gameData.get('status', '') in ['completed', 'final', 'cancelled', 'canceled', 'deleted']) &&
+                 !(gameData.get('liveStatus', '') in ['completed', 'final', 'cancelled', 'canceled', 'deleted']);
+        }
+
         function isValidLiveChatCreate(data) {
           return data.keys().hasOnly([
                    'text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt'
@@ -3799,6 +3807,7 @@ service cloud.firestore {
         match /liveChat/{messageId} {
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isVerifiedForSensitiveWrite()
+            && canCreateLiveGameInteraction(teamId, gameId)
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
@@ -3813,6 +3822,7 @@ service cloud.firestore {
         match /liveReactions/{reactionId} {
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isVerifiedForSensitiveWrite()
+            && canCreateLiveGameInteraction(teamId, gameId)
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
