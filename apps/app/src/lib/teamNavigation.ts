@@ -228,6 +228,7 @@ export function buildTeamDetailNavigation(model: TeamDetailNavigationInput): Tea
     })),
     nextEvent: null,
     eventCount: model.upcomingEvents.length + model.recentResults.length,
+    upcomingEventCount: model.upcomingEvents.length,
     unreadCount: 0,
     openActions: 0
   });

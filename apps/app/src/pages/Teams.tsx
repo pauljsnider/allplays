@@ -380,7 +380,7 @@ function TeamLauncherRow({ team, selected, requestedWorkflow = '', compact = fal
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{getTeamLauncherDetail(team)}</span>
           <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
             <TeamLauncherChip label={`${team.players.length} player${team.players.length === 1 ? '' : 's'}`} />
-            <TeamLauncherChip label={`${team.eventCount} event${team.eventCount === 1 ? '' : 's'}`} />
+            <TeamLauncherChip label={`${team.upcomingEventCount} upcoming`} />
             {team.unreadCount > 0 ? <TeamLauncherChip tone="primary" label={`${team.unreadCount} unread`} /> : null}
             {team.openActions > 0 ? <TeamLauncherChip tone="amber" label={`${team.openActions} action${team.openActions === 1 ? '' : 's'}`} /> : null}
           </span>

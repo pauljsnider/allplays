@@ -72,7 +72,10 @@ export type ParentHomeTeam = {
   publicRosterCountCapped?: boolean;
   players: ParentScheduleChild[];
   nextEvent: ParentScheduleEvent | null;
+  /** Distinct schedule events present in the loaded history window. */
   eventCount: number;
+  /** Distinct, non-cancelled events on or after today. */
+  upcomingEventCount: number;
   unreadCount: number;
   openActions: number;
 };
@@ -149,6 +152,7 @@ type HomePlayerAggregate = {
 type HomeTeamAggregate = {
   nextEvent: ParentScheduleEvent | null;
   eventCount: number;
+  upcomingEventCount: number;
   openActions: number;
 };
 
@@ -346,6 +350,7 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
         players: [],
         nextEvent: aggregate?.nextEvent || null,
         eventCount: aggregate?.eventCount || 0,
+        upcomingEventCount: aggregate?.upcomingEventCount || 0,
         unreadCount: Number(inbox?.unreadCount || 0),
         openActions: 0
       });
@@ -365,6 +370,7 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
       players: [],
       nextEvent: null,
       eventCount: 0,
+      upcomingEventCount: 0,
       unreadCount: Number(inbox.unreadCount || 0),
       openActions: Number(inbox.unreadCount || 0) > 0 ? 1 : 0
     });
@@ -482,6 +488,7 @@ function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEven
     teamAggregates.set(teamId, {
       nextEvent: sortEventsByDate([...bucket.upcomingByKey.values()])[0] || null,
       eventCount: bucket.allByKey.size,
+      upcomingEventCount: bucket.upcomingByKey.size,
       openActions: bucket.openActions
     });
   });
