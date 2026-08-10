@@ -771,6 +771,146 @@ describe('sendTeamChatMessage attachment uploads', () => {
 });
 
 describe('subscribeToTeamChatMessages', () => {
+  function nativeMessageDocument(id: string, fields: Record<string, unknown> = {}) {
+    const encodeValue = (value: unknown): Record<string, unknown> => {
+      if (value === null) return { nullValue: 'NULL_VALUE' };
+      if (typeof value === 'string') return { stringValue: value };
+      if (typeof value === 'boolean') return { booleanValue: value };
+      if (typeof value === 'number') return { integerValue: String(value) };
+      if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeValue) } };
+      return {
+        mapValue: {
+          fields: Object.entries(value as Record<string, unknown>).reduce<Record<string, Record<string, unknown>>>((encoded, [key, entry]) => {
+            encoded[key] = encodeValue(entry);
+            return encoded;
+          }, {})
+        }
+      };
+    };
+
+    return {
+      name: `projects/demo-allplays/databases/(default)/documents/teams/team-1/chatMessages/${id}`,
+      fields: Object.entries({
+        text: 'Original message',
+        createdAt: '2026-08-10T17:00:00.000Z',
+        ...fields
+      }).reduce<Record<string, Record<string, unknown>>>((encoded, [key, value]) => {
+        encoded[key] = key.endsWith('At') && typeof value === 'string'
+          ? { timestampValue: value }
+          : encodeValue(value);
+        return encoded;
+      }, {})
+    };
+  }
+
+  function mockNativePolls(payloads: Array<Array<ReturnType<typeof nativeMessageDocument>>>) {
+    const fetchMock = vi.fn().mockImplementation(() => {
+      const documents = payloads[Math.min(fetchMock.mock.calls.length - 1, payloads.length - 1)];
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ documents })
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('deduplicates equivalent native polls and emits each visible message revision once', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const original = nativeMessageDocument('message-1', { _doc: { cursor: 'first-object' } });
+    const equivalent = nativeMessageDocument('message-1', { _doc: { cursor: 'regenerated-object' } });
+    const added = nativeMessageDocument('message-2', { text: 'Added message' });
+    const edited = nativeMessageDocument('message-1', {
+      text: 'Edited message',
+      editedAt: '2026-08-10T17:05:00.000Z'
+    });
+    const deleted = nativeMessageDocument('message-1', { deleted: true });
+    const reacted = nativeMessageDocument('message-1', { reactions: { heart: ['user-2'] } });
+    const attachmentChanged = nativeMessageDocument('message-1', {
+      attachments: [{
+        type: 'image',
+        url: 'https://example.test/photo.jpg',
+        name: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        size: 2048
+      }]
+    });
+    const fetchMock = mockNativePolls([
+      [original],
+      [equivalent],
+      [equivalent, added],
+      [equivalent],
+      [edited],
+      [deleted],
+      [reacted],
+      [attachmentChanged]
+    ]);
+    const onMessages = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onMessages).toHaveBeenCalledTimes(1);
+    expect(onMessages.mock.calls[0][0]).toEqual([expect.objectContaining({ id: 'message-1', text: 'Original message' })]);
+
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(onMessages).toHaveBeenCalledTimes(1);
+
+    for (let expectedEmissions = 2; expectedEmissions <= 7; expectedEmissions += 1) {
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(onMessages).toHaveBeenCalledTimes(expectedEmissions);
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(onMessages.mock.calls.map(([messages]) => messages)).toEqual([
+      [expect.objectContaining({ id: 'message-1', text: 'Original message' })],
+      [expect.objectContaining({ id: 'message-1' }), expect.objectContaining({ id: 'message-2' })],
+      [expect.objectContaining({ id: 'message-1' })],
+      [expect.objectContaining({ text: 'Edited message' })],
+      [expect.objectContaining({ deleted: true })],
+      [expect.objectContaining({ reactions: { heart: ['user-2'] } })],
+      [expect.objectContaining({ attachments: [expect.objectContaining({ url: 'https://example.test/photo.jpg' })] })]
+    ]);
+
+    subscription.unsubscribe();
+    await vi.advanceTimersByTimeAsync(16000);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('does not emit or report errors after an in-flight native poll is unsubscribed', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const response = createDeferred<{ ok: boolean; status: number; json: () => Promise<{ documents: ReturnType<typeof nativeMessageDocument>[] }> }>();
+    const fetchMock = vi.fn(() => response.promise);
+    vi.stubGlobal('fetch', fetchMock);
+    const onMessages = vi.fn();
+    const onError = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+    await vi.advanceTimersByTimeAsync(0);
+    subscription.unsubscribe();
+    response.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ documents: [nativeMessageDocument('message-1')] })
+    });
+    await vi.advanceTimersByTimeAsync(24000);
+
+    expect(onMessages).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('forwards async Firestore listener errors to the caller', async () => {
     const unsubscribe = vi.fn();
     const onMessages = vi.fn();
