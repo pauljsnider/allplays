@@ -196,6 +196,35 @@ test('requires a current game and RSVP for all-confirmed capability modes', asyn
   assert.deepEqual(result.item.teamPermissions.scorekeeping, { mode: 'all_confirmed', memberIds: [] });
 });
 
+test('binds an all-confirmed scorekeeping grant to the exact requested game', async () => {
+  const team = productionTeam({
+    teamPermissions: {
+      scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'selected', memberIds: [] },
+      streaming: { mode: 'selected', memberIds: [] },
+      teamMediaManagement: { mode: 'selected', memberIds: [] }
+    },
+    streamAccessMode: 'admins',
+    streamVolunteerEmails: []
+  });
+  const handler = createHarness({
+    teams: { 'team-1': team },
+    games: {
+      'team-1/game-1': { status: 'scheduled', liveStatus: 'scheduled' },
+      'team-1/game-2': { status: 'scheduled', liveStatus: 'scheduled' }
+    },
+    rsvps: { 'team-1/game-1/confirmed-1': { response: 'confirmed' } }
+  });
+
+  await assert.doesNotReject(
+    handler({ teamId: 'team-1', gameId: 'game-1' }, context('confirmed-1'))
+  );
+  await assert.rejects(
+    handler({ teamId: 'team-1', gameId: 'game-2' }, context('confirmed-1')),
+    { code: 'permission-denied' }
+  );
+});
+
 test('terminal game statuses revoke every confirmed-member grant', () => {
   const team = productionTeam({
     teamPermissions: {

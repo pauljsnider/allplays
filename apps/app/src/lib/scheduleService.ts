@@ -4566,6 +4566,7 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const targetTeamId = compactString(options.targetTeamId);
+  const delegatedGameId = compactString(options.delegatedGameId);
   const childResult: ParentScheduleChildrenResult = options.parentScope?.children
     ? {
         children: options.parentScope.children.filter((child) => !targetTeamId || child.teamId === targetTeamId),
@@ -4621,9 +4622,22 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
   const hasParentOrStaffTargetAccess = !targetTeamId
     || children.some((child) => child.teamId === targetTeamId)
     || staffTeams.some((team: any) => compactString(team?.id || team?.teamId) === targetTeamId);
-  if (targetTeamId && !hasParentOrStaffTargetAccess) {
-    const delegatedTeam = await getDelegatedTeamContext(targetTeamId, options.delegatedGameId).catch(() => null);
-    if (delegatedTeam) {
+  if (targetTeamId && delegatedGameId && !hasParentOrStaffTargetAccess) {
+    const delegatedTeam = await getDelegatedTeamContext(targetTeamId, delegatedGameId).catch(() => null);
+    const delegatedAccess = delegatedTeam?.delegatedAccess;
+    const hasDelegatedScheduleEventAccess = Boolean(
+      delegatedTeam
+      && compactString(delegatedTeam.id) === targetTeamId
+      && delegatedAccess
+      && typeof delegatedAccess === 'object'
+      && !Array.isArray(delegatedAccess)
+      && (
+        (delegatedAccess as Record<string, unknown>).full === true
+        || (delegatedAccess as Record<string, unknown>).parent === true
+        || (delegatedAccess as Record<string, unknown>).scorekeeping === true
+      )
+    );
+    if (hasDelegatedScheduleEventAccess && delegatedTeam) {
       delegatedTeamContexts.set(targetTeamId, delegatedTeam);
       const teamName = compactString(delegatedTeam.name || delegatedTeam.teamName) || targetTeamId;
       byTeam.set(targetTeamId, [{
