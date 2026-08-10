@@ -166,7 +166,7 @@ function serializeDelegatedTeamContext(teamId, team, uid, access) {
     teamPermissions: buildCompatibilityPermissions(uid, access)
   };
 
-  if (access.full || access.streaming) {
+  if (access.full || access.parent || access.streaming) {
     item.twitchChannel = cleanText(team?.twitchChannel, 160) || null;
     item.streamEmbedUrl = cleanHttpUrl(team?.streamEmbedUrl);
     item.youtubeEmbedUrl = cleanHttpUrl(team?.youtubeEmbedUrl);

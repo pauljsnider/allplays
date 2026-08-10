@@ -8,6 +8,7 @@ const {
 } = require('../delegated-team-context-core.cjs');
 
 const prohibitedFields = [
+  'ownerId',
   'ownerEmail',
   'ownerEmailLower',
   'adminEmails',
@@ -44,6 +45,9 @@ function productionTeam(overrides = {}) {
     mediaContributorUids: ['unrelated-media-user'],
     twitchChannel: 'falcons-live',
     streamEmbedUrl: 'https://example.com/embed',
+    youtubeEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk',
+    youtubeVideoId: 'abcdefghijk',
+    streamUrl: 'https://stream.example.com/live.m3u8',
     teamPermissions: {
       scorekeeping: { mode: 'selected', memberIds: ['scorekeeper-1'] },
       videography: { mode: 'selected', memberIds: ['videographer-1'] },
@@ -159,6 +163,32 @@ test('returns a bounded private-team projection for a current parent', async () 
     assert.equal(result.item.delegatedAccess.parent, true);
     assert.equal(result.item.delegatedAccess.full, false);
     assert.deepEqual(result.item.teamPermissions, {});
+    assert.deepEqual({
+      twitchChannel: result.item.twitchChannel,
+      streamEmbedUrl: result.item.streamEmbedUrl,
+      youtubeEmbedUrl: result.item.youtubeEmbedUrl,
+      youtubeVideoId: result.item.youtubeVideoId,
+      streamUrl: result.item.streamUrl
+    }, {
+      twitchChannel: 'falcons-live',
+      streamEmbedUrl: 'https://example.com/embed',
+      youtubeEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk',
+      youtubeVideoId: 'abcdefghijk',
+      streamUrl: 'https://stream.example.com/live.m3u8'
+    });
+    assertNoProhibitedFields(result);
+  }
+});
+
+test('marks owner and admin projections with server-authoritative full access', async () => {
+  const handler = createHarness();
+
+  const ownerResult = await handler({ teamId: 'team-1' }, context('owner-1', 'owner@example.com'));
+  const adminResult = await handler({ teamId: 'team-1' }, context('admin-1', 'ADMIN@example.com'));
+
+  for (const result of [ownerResult, adminResult]) {
+    assert.equal(result.item.delegatedAccess.full, true);
+    assert.equal(result.item.delegatedAccess.streaming, true);
     assertNoProhibitedFields(result);
   }
 });

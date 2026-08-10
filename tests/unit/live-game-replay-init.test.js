@@ -297,7 +297,7 @@ function buildModuleSource() {
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
-            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay, handleGameUpdate };"
+            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay, handleGameUpdate, canAttachScoreLinkedClips };"
         );
 }
 
@@ -319,7 +319,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, replay = true } = {}) {
+async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, replay = true, team: teamOverrides = {} } = {}) {
     const { document, ensureElement } = createEnvironment();
     const storage = new Map();
     const sessionStorage = {
@@ -364,7 +364,7 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
     const trackViewerPresence = vi.fn(() => () => {});
     const deps = {
         db: {
-            getGameDayTeamContext: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball' }),
+            getGameDayTeamContext: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball', ...teamOverrides }),
             getGame: async () => game,
             getPlayers: async () => [],
             subscribeLiveEvents: () => () => {},
@@ -592,6 +592,7 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
         engagementSubscriptions: { subscribeLiveChat, subscribeReactions, trackViewerPresence },
         replayControls: ensureElement('replay-controls'),
         replayStartRebaseCalls,
+        canAttachScoreLinkedClips: moduleInstance.canAttachScoreLinkedClips,
         seekReplay: moduleInstance.seekReplay,
         handleGameUpdate: moduleInstance.handleGameUpdate,
         opponentStats: ensureElement('opponent-stats'),
@@ -602,6 +603,16 @@ async function bootReplayPage({ replayEvents = [], game: gameOverrides = {}, rep
 }
 
 describe('live game replay initialization', () => {
+    it('honors server-authoritative full access for projected owner and admin controls', async () => {
+        const page = await bootReplayPage({
+            team: {
+                delegatedAccess: { full: true }
+            }
+        });
+
+        expect(page.canAttachScoreLinkedClips()).toBe(true);
+    });
+
     it('does not start engagement subscriptions for an initially cancelled stale-live game', async () => {
         const page = await bootReplayPage({
             replay: false,

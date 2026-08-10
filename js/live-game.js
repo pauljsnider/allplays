@@ -277,7 +277,7 @@ function updateShareButton() {
 }
 
 function canAttachScoreLinkedClips() {
-  return hasFullTeamAccess(state.user, state.team);
+  return state.team?.delegatedAccess?.full === true || hasFullTeamAccess(state.user, state.team);
 }
 
 function renderAnnouncerControls() {
