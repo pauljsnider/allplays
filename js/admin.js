@@ -17,8 +17,8 @@ import {
     getTelemetrySessions
 } from './db.js?v=4433163';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=23';
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443338';
-import { checkAuth } from './auth.js?v=4433164';
+import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=443339';
+import { checkAuth } from './auth.js?v=4433165';
 import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
