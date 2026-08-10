@@ -810,10 +810,13 @@ describe('Schedule', () => {
     act(() => finishHydration(hydratedSchedule));
     const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
     expect(within(dialog).getByText('1 selected')).toBeTruthy();
+    const hydrationCallCount = scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls.length;
+    expect(hydrationCallCount).toBe(1);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
     act(() => reportHydrationProgress(hydratedSchedule.events.map((event) => ({ ...event }))));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
+    expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(hydrationCallCount);
   });
 
   it.each([
