@@ -11,3 +11,12 @@ export function getPendingVerificationRedirectUrl(user, getFallbackRedirectUrl, 
         return fallbackRedirectUrl;
     }
 }
+
+export async function refreshVerifiedUserToken(user) {
+    if (user?.emailVerified !== true) {
+        return false;
+    }
+
+    await user.getIdToken(true);
+    return true;
+}
