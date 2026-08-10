@@ -57,6 +57,14 @@
       ]
     },
     {
+      "collectionGroup": "teams",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isPublic", "order": "ASCENDING" },
+        { "fieldPath": "zip", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "publicOpportunities",
       "queryScope": "COLLECTION",
       "fields": [

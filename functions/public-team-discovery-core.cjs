@@ -1,6 +1,7 @@
 const PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE = 100;
 const PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE = 24;
 const PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS = 200;
+const PUBLIC_TEAM_DISCOVERY_MAX_SEARCH_QUERIES = 4;
 
 function normalizePublicTeamSearch(value) {
   return String(value || '')
@@ -14,6 +15,180 @@ function normalizePageSize(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE;
   return Math.min(Math.max(Math.floor(parsed), 1), PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE);
+}
+
+function toTitleCase(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function buildPublicTeamSearchStrategies(searchText = '') {
+  const rawSearch = String(searchText || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!rawSearch) return [];
+
+  const normalizedSearch = rawSearch.toLowerCase();
+  const strategies = [
+    { field: 'publicSearchName', start: normalizedSearch, end: `${normalizedSearch}\uf8ff` },
+    { field: 'name', start: toTitleCase(rawSearch), end: `${toTitleCase(rawSearch)}\uf8ff` }
+  ];
+
+  if (/^\d{1,5}$/.test(rawSearch)) {
+    strategies.push(
+      { field: 'publicSearchZip', start: rawSearch, end: `${rawSearch}\uf8ff` },
+      { field: 'zip', start: rawSearch, end: `${rawSearch}\uf8ff` }
+    );
+    return strategies;
+  }
+
+  if (/^[A-Za-z]{2}$/.test(rawSearch)) {
+    const state = rawSearch.toUpperCase();
+    strategies.push(
+      { field: 'publicSearchState', start: state, end: `${state}\uf8ff` },
+      { field: 'state', start: state, end: `${state}\uf8ff` }
+    );
+    return strategies;
+  }
+
+  const [cityPart, statePart = ''] = rawSearch.split(',').map((part) => part.trim());
+  const city = String(cityPart || rawSearch).toLowerCase();
+  const legacyCity = toTitleCase(cityPart || rawSearch);
+  const state = statePart.toUpperCase();
+  strategies.push(
+    { field: 'publicSearchCity', start: city, end: `${city}\uf8ff`, state },
+    { field: 'city', start: legacyCity, end: `${legacyCity}\uf8ff`, state }
+  );
+  return strategies;
+}
+
+function publicTeamMatchesSearchStrategy(team = {}, strategy = {}) {
+  const fieldValue = String(team?.[strategy.field] || '').trim();
+  if (!fieldValue.startsWith(strategy.start)) return false;
+  if (!strategy.state) return true;
+  const teamState = String(team.publicSearchState || team.state || '').trim().toUpperCase();
+  return teamState.startsWith(strategy.state);
+}
+
+function encodeSearchCursor(searchText, strategyCursors, rotation = 0) {
+  if (!strategyCursors.some((cursor) => cursor?.done !== true)) return null;
+  return Buffer.from(JSON.stringify({
+    v: 3,
+    s: normalizePublicTeamSearch(searchText),
+    r: rotation,
+    c: strategyCursors.map((cursor) => cursor?.done === true
+      ? { d: true }
+      : cursor?.value && cursor?.id
+        ? { v: cursor.value, i: cursor.id }
+        : null)
+  }), 'utf8').toString('base64url');
+}
+
+function decodeSearchCursor(value, searchText, strategyCount) {
+  const empty = {
+    rotation: 0,
+    strategyCursors: Array.from({ length: strategyCount }, () => null)
+  };
+  if (!value || typeof value !== 'string' || value.length > 10000) return empty;
+  try {
+    const decoded = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+    if (decoded?.v !== 3 ||
+        decoded?.s !== normalizePublicTeamSearch(searchText) ||
+        !Array.isArray(decoded?.c) ||
+        decoded.c.length !== strategyCount) {
+      return empty;
+    }
+    const strategyCursors = decoded.c.map((cursor) => {
+      if (cursor?.d === true) return { done: true };
+      if (cursor === null) return null;
+      if (typeof cursor?.v !== 'string' || !cursor.v || typeof cursor?.i !== 'string' || !cursor.i) {
+        throw new TypeError('Invalid strategy cursor.');
+      }
+      return { value: cursor.v, id: cursor.i };
+    });
+    return {
+      rotation: Number.isInteger(decoded.r) && decoded.r >= 0 ? decoded.r % strategyCount : 0,
+      strategyCursors
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function allocateSearchStrategyLimits(strategyCursors, pageSize, rotation = 0) {
+  const activeIndexes = strategyCursors
+    .map((cursor, index) => cursor?.done === true ? -1 : index)
+    .filter((index) => index >= 0);
+  const limits = Array.from({ length: strategyCursors.length }, () => 0);
+  if (!activeIndexes.length) return limits;
+  const baseLimit = Math.floor(pageSize / activeIndexes.length);
+  const remainder = pageSize % activeIndexes.length;
+  activeIndexes.forEach((index) => { limits[index] = baseLimit; });
+  for (let offset = 0; offset < remainder; offset += 1) {
+    const activeIndex = activeIndexes[(rotation + offset) % activeIndexes.length];
+    limits[activeIndex] += 1;
+  }
+  return limits;
+}
+
+async function searchDatastorePublicTeamPage(loadStrategyRecords, options = {}) {
+  if (typeof loadStrategyRecords !== 'function') {
+    throw new TypeError('loadStrategyRecords must be a function.');
+  }
+  const searchText = normalizePublicTeamSearch(options.searchText);
+  const pageSize = normalizePageSize(options.pageSize);
+  const strategies = buildPublicTeamSearchStrategies(searchText)
+    .slice(0, PUBLIC_TEAM_DISCOVERY_MAX_SEARCH_QUERIES);
+  if (!strategies.length) return { items: [], nextCursor: null };
+
+  const decodedCursor = decodeSearchCursor(options.cursor, searchText, strategies.length);
+  const strategyCursors = decodedCursor.strategyCursors;
+  const limits = allocateSearchStrategyLimits(strategyCursors, pageSize, decodedCursor.rotation);
+  const loadedPages = await Promise.all(strategies.map(async (strategy, index) => {
+    if (!limits[index]) return null;
+    const loaded = await loadStrategyRecords({
+      strategy,
+      strategyIndex: index,
+      cursor: strategyCursors[index],
+      limit: limits[index]
+    });
+    return Array.isArray(loaded?.records) ? loaded.records.slice(0, limits[index]) : [];
+  }));
+
+  const teamsById = new Map();
+  loadedPages.forEach((records, strategyIndex) => {
+    if (!records) return;
+    const strategy = strategies[strategyIndex];
+    records.forEach((record) => {
+      const data = record?.data || {};
+      const item = record?.item;
+      if (!record?.id || !item?.id || !publicTeamMatchesSearchStrategy(data, strategy)) return;
+      if (strategies.slice(0, strategyIndex)
+        .some((earlierStrategy) => publicTeamMatchesSearchStrategy(data, earlierStrategy))) {
+        return;
+      }
+      teamsById.set(item.id, item);
+    });
+    const lastRecord = records[records.length - 1];
+    strategyCursors[strategyIndex] = records.length < limits[strategyIndex]
+      ? { done: true }
+      : {
+          value: String(lastRecord?.value || lastRecord?.data?.[strategy.field] || ''),
+          id: String(lastRecord?.id || '')
+        };
+  });
+
+  const items = Array.from(teamsById.values()).sort(comparePublicTeams);
+  const queriedCount = limits.filter(Boolean).length;
+  const nextRotation = strategies.length
+    ? (decodedCursor.rotation + Math.max(queriedCount, 1)) % strategies.length
+    : 0;
+  return {
+    items,
+    nextCursor: encodeSearchCursor(searchText, strategyCursors, nextRotation)
+  };
 }
 
 function publicTeamSearchText(team = {}) {
@@ -199,10 +374,14 @@ module.exports = {
   PUBLIC_TEAM_DISCOVERY_DEFAULT_PAGE_SIZE,
   PUBLIC_TEAM_DISCOVERY_MAX_PAGE_SIZE,
   PUBLIC_TEAM_DISCOVERY_MAX_SCAN_DOCUMENTS,
+  PUBLIC_TEAM_DISCOVERY_MAX_SEARCH_QUERIES,
+  allocateSearchStrategyLimits,
+  buildPublicTeamSearchStrategies,
   comparePublicTeams,
   buildDatastorePublicTeamPage,
   decodeCursor,
   decodeDatastoreCursor,
+  decodeSearchCursor,
   encodeCursor,
   encodeDatastoreCursor,
   matchesPublicTeamSearch,
@@ -210,5 +389,7 @@ module.exports = {
   normalizePublicTeamSearch,
   paginatePublicTeams,
   publicTeamSearchText,
+  publicTeamMatchesSearchStrategy,
+  searchDatastorePublicTeamPage,
   scanDatastorePublicTeamPage
 };
