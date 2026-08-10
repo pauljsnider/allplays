@@ -38,6 +38,7 @@ export function PublicTeamSearch({
   const autoBrowseTriggeredRef = useRef(false);
   const latestRequestIdRef = useRef(0);
   const rosterHydrationGenerationRef = useRef(0);
+  const rosterHydrationAbortControllerRef = useRef<AbortController | null>(null);
   const pendingRequestKeyRef = useRef<string | null>(null);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
@@ -52,7 +53,12 @@ export function PublicTeamSearch({
     const rosterHydrationGeneration = append
       ? rosterHydrationGenerationRef.current
       : rosterHydrationGenerationRef.current + 1;
+    const rosterHydrationAbortController = append
+      ? rosterHydrationAbortControllerRef.current
+      : new AbortController();
     if (!append) {
+      rosterHydrationAbortControllerRef.current?.abort();
+      rosterHydrationAbortControllerRef.current = rosterHydrationAbortController;
       rosterHydrationGenerationRef.current = rosterHydrationGeneration;
     }
 
@@ -84,7 +90,9 @@ export function PublicTeamSearch({
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
       setActiveSearchQuery(submittedSearchText || null);
-      if (showRosterCounts) void hydratePublicTeamRosterCounts(result.teams)
+      if (showRosterCounts) void hydratePublicTeamRosterCounts(result.teams, {
+        signal: rosterHydrationAbortController?.signal
+      })
         .then((hydratedTeams) => {
           if (rosterHydrationGeneration !== rosterHydrationGenerationRef.current) {
             return;
@@ -152,6 +160,8 @@ export function PublicTeamSearch({
   const handleClear = () => {
     latestRequestIdRef.current += 1;
     rosterHydrationGenerationRef.current += 1;
+    rosterHydrationAbortControllerRef.current?.abort();
+    rosterHydrationAbortControllerRef.current = null;
     setSearchQuery('');
     setPublicTeams([]);
     setError('');
@@ -173,6 +183,13 @@ export function PublicTeamSearch({
     autoBrowseTriggeredRef.current = true;
     void fetchPublicTeams();
   }, [autoBrowseOnMount, fetchPublicTeams]);
+
+  useEffect(() => () => {
+    latestRequestIdRef.current += 1;
+    rosterHydrationGenerationRef.current += 1;
+    rosterHydrationAbortControllerRef.current?.abort();
+    rosterHydrationAbortControllerRef.current = null;
+  }, []);
 
   const groupedTeams = useMemo(() => {
     const groups: Record<string, ParentHomeTeam[]> = {};

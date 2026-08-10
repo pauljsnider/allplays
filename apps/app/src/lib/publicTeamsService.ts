@@ -3,24 +3,66 @@ import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
 let activePublicRosterCountRequests = 0;
-const pendingPublicRosterCountRequests: Array<() => void> = [];
+type PendingPublicRosterCountRequest = {
+    run: () => void;
+    reject: (reason: unknown) => void;
+    signal?: AbortSignal;
+    abortListener?: () => void;
+};
+const pendingPublicRosterCountRequests: PendingPublicRosterCountRequest[] = [];
 
-function getBoundedPublicTeamRosterCount(teamId: string): Promise<PublicTeamRosterCount> {
+function publicRosterCountAbortError(): Error {
+    const error = new Error('Public team roster-count hydration was canceled.');
+    error.name = 'AbortError';
+    return error;
+}
+
+function runNextPublicRosterCountRequests(): void {
+    while (activePublicRosterCountRequests < PUBLIC_ROSTER_COUNT_CONCURRENCY) {
+        const pendingRequest = pendingPublicRosterCountRequests.shift();
+        if (!pendingRequest) return;
+        if (pendingRequest.abortListener) {
+            pendingRequest.signal?.removeEventListener('abort', pendingRequest.abortListener);
+        }
+        if (pendingRequest.signal?.aborted) {
+            pendingRequest.reject(publicRosterCountAbortError());
+            continue;
+        }
+        pendingRequest.run();
+    }
+}
+
+function getBoundedPublicTeamRosterCount(teamId: string, signal?: AbortSignal): Promise<PublicTeamRosterCount> {
     return new Promise((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(publicRosterCountAbortError());
+            return;
+        }
+
         const runRequest = () => {
             activePublicRosterCountRequests += 1;
             void getPublicTeamRosterCount(teamId)
                 .then(resolve, reject)
                 .finally(() => {
                     activePublicRosterCountRequests -= 1;
-                    pendingPublicRosterCountRequests.shift()?.();
+                    runNextPublicRosterCountRequests();
                 });
         };
 
         if (activePublicRosterCountRequests < PUBLIC_ROSTER_COUNT_CONCURRENCY) {
             runRequest();
         } else {
-            pendingPublicRosterCountRequests.push(runRequest);
+            const pendingRequest: PendingPublicRosterCountRequest = { run: runRequest, reject, signal };
+            if (signal) {
+                pendingRequest.abortListener = () => {
+                    const pendingIndex = pendingPublicRosterCountRequests.indexOf(pendingRequest);
+                    if (pendingIndex === -1) return;
+                    pendingPublicRosterCountRequests.splice(pendingIndex, 1);
+                    reject(publicRosterCountAbortError());
+                };
+                signal.addEventListener('abort', pendingRequest.abortListener, { once: true });
+            }
+            pendingPublicRosterCountRequests.push(pendingRequest);
         }
     });
 }
@@ -98,30 +140,39 @@ function mapPublicTeam(team: PublicTeamSearchResult, rosterCount: PublicTeamRost
     };
 }
 
-export async function hydratePublicTeamRosterCounts(teams: ParentHomeTeam[]): Promise<ParentHomeTeam[]> {
+export async function hydratePublicTeamRosterCounts(teams: ParentHomeTeam[], { signal }: { signal?: AbortSignal } = {}): Promise<ParentHomeTeam[]> {
     const hydratedTeams: ParentHomeTeam[] = [];
 
     for (let index = 0; index < teams.length; index += PUBLIC_ROSTER_COUNT_CONCURRENCY) {
+        if (signal?.aborted) return teams;
         const teamBatch = teams.slice(index, index + PUBLIC_ROSTER_COUNT_CONCURRENCY);
-        const mappedBatch = await Promise.all(teamBatch.map(async (team) => {
-            try {
-                const rosterCount = await getBoundedPublicTeamRosterCount(team.teamId);
-                return {
-                    ...team,
-                    publicRosterCount: rosterCount.count,
-                    publicRosterCountCapped: rosterCount.isCapped
-                };
-            } catch {
-                // A legacy roster can contain a document that is not publicly
-                // readable. Preserve that boundary and omit the count instead
-                // of falling back to fetching roster records or showing zero.
-                return {
-                    ...team,
-                    publicRosterCount: null,
-                    publicRosterCountCapped: false
-                };
-            }
-        }));
+        let mappedBatch: ParentHomeTeam[];
+        try {
+            mappedBatch = await Promise.all(teamBatch.map(async (team) => {
+                try {
+                    const rosterCount = await getBoundedPublicTeamRosterCount(team.teamId, signal);
+                    if (signal?.aborted) throw publicRosterCountAbortError();
+                    return {
+                        ...team,
+                        publicRosterCount: rosterCount.count,
+                        publicRosterCountCapped: rosterCount.isCapped
+                    };
+                } catch (error) {
+                    if (signal?.aborted) throw error;
+                    // A legacy roster can contain a document that is not publicly
+                    // readable. Preserve that boundary and omit the count instead
+                    // of falling back to fetching roster records or showing zero.
+                    return {
+                        ...team,
+                        publicRosterCount: null,
+                        publicRosterCountCapped: false
+                    };
+                }
+            }));
+        } catch (error) {
+            if (signal?.aborted) return teams;
+            throw error;
+        }
         hydratedTeams.push(...mappedBatch);
     }
 

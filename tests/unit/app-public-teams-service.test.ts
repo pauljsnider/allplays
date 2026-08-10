@@ -174,6 +174,62 @@ describe('publicTeamsService', () => {
         expect(maxActiveRequests).toBe(6);
     });
 
+    it('removes aborted queued hydration so newer roster counts take the next free slot', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: Array.from({ length: 11 }, (_, index) => ({
+                id: `queued-team-${index + 1}`,
+                name: `Queued Team ${index + 1}`
+            })),
+            nextCursor: null
+        });
+        const lightweightTeams = (await getPublicTeamsPage({ includeRosterCounts: false })).teams;
+        let activeRequests = 0;
+        let maxActiveRequests = 0;
+        const requests: Array<{
+            teamId: string;
+            resolve: (value: { count: number; isCapped: boolean }) => void;
+        }> = [];
+        dbMocks.getPublicTeamRosterCount.mockImplementation((teamId: string) => new Promise((resolve) => {
+            activeRequests += 1;
+            maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+            requests.push({
+                teamId,
+                resolve: (value) => {
+                    activeRequests -= 1;
+                    resolve(value);
+                }
+            });
+        }));
+
+        const blockingHydration = hydratePublicTeamRosterCounts(lightweightTeams.slice(0, 6));
+        const obsoleteController = new AbortController();
+        const obsoleteHydration = hydratePublicTeamRosterCounts(lightweightTeams.slice(6, 9), {
+            signal: obsoleteController.signal
+        });
+        const currentHydration = hydratePublicTeamRosterCounts(lightweightTeams.slice(9));
+
+        expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(6);
+        obsoleteController.abort();
+        await expect(obsoleteHydration).resolves.toEqual(lightweightTeams.slice(6, 9));
+        expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(6);
+
+        requests[0].resolve({ count: 1, isCapped: false });
+        await vi.waitFor(() => expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(7));
+        expect(requests[6].teamId).toBe('queued-team-10');
+        expect(maxActiveRequests).toBe(6);
+
+        requests.slice(1, 7).forEach((request) => request.resolve({ count: 1, isCapped: false }));
+        await vi.waitFor(() => expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledTimes(8));
+        expect(requests[7].teamId).toBe('queued-team-11');
+        requests[7].resolve({ count: 1, isCapped: false });
+
+        await Promise.all([blockingHydration, currentHydration]);
+        expect(maxActiveRequests).toBe(6);
+        expect(dbMocks.getPublicTeamRosterCount).not.toHaveBeenCalledWith('queued-team-7');
+        expect(dbMocks.getPublicTeamRosterCount).not.toHaveBeenCalledWith('queued-team-8');
+        expect(dbMocks.getPublicTeamRosterCount).not.toHaveBeenCalledWith('queued-team-9');
+    });
+
     it('omits a roster count when public aggregation access is denied', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [{ id: 'team-legacy-private-fields', name: 'Legacy Team', zip: '64131' }],

@@ -12,7 +12,7 @@ import { ParentHomeTeam } from '../../apps/app/src/lib/homeLogic';
 
 vi.mock('../../apps/app/src/lib/publicTeamsService', () => ({
     getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number; includeRosterCounts?: boolean }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
-    hydratePublicTeamRosterCounts: vi.fn() as MockInstance<(teams: ParentHomeTeam[]) => Promise<ParentHomeTeam[]>>,
+    hydratePublicTeamRosterCounts: vi.fn() as MockInstance<(teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => Promise<ParentHomeTeam[]>>,
 }));
 
 const mockTeams: ParentHomeTeam[] = [
@@ -370,6 +370,8 @@ describe('PublicTeamSearch', () => {
 
     it('ignores late roster-count hydration from a superseded search', async () => {
         const staleHydration = deferred<ParentHomeTeam[]>();
+        let staleSignal: AbortSignal | undefined;
+        let currentSignal: AbortSignal | undefined;
         const sharedTeamId = 'team-shared-result';
         const atlantaResult = { ...mockTeams[0], teamId: sharedTeamId, publicRosterCount: null };
         const newYorkResult = {
@@ -381,12 +383,18 @@ describe('PublicTeamSearch', () => {
             .mockResolvedValueOnce({ teams: [atlantaResult], nextCursor: null })
             .mockResolvedValueOnce({ teams: [newYorkResult], nextCursor: null });
         (hydratePublicTeamRosterCounts as import('vitest').Mock)
-            .mockReturnValueOnce(staleHydration.promise)
-            .mockResolvedValueOnce([{
-                ...newYorkResult,
-                publicRosterCount: 5,
-                publicRosterCountCapped: false
-            }]);
+            .mockImplementationOnce((_teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => {
+                staleSignal = options?.signal;
+                return staleHydration.promise;
+            })
+            .mockImplementationOnce((_teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => {
+                currentSignal = options?.signal;
+                return Promise.resolve([{
+                    ...newYorkResult,
+                    publicRosterCount: 5,
+                    publicRosterCountCapped: false
+                }]);
+            });
         renderSearch();
 
         const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip');
@@ -400,6 +408,9 @@ describe('PublicTeamSearch', () => {
         const currentTeam = await screen.findByText('New York Knicks');
         const currentCard = currentTeam.closest('article');
         expect(currentCard).toBeTruthy();
+        expect(staleSignal?.aborted).toBe(true);
+        expect(currentSignal?.aborted).toBe(false);
+        expect(currentSignal).not.toBe(staleSignal);
         await waitFor(() => expect(within(currentCard as HTMLElement).getByText('5 players')).toBeTruthy());
 
         staleHydration.resolve([{
@@ -412,15 +423,49 @@ describe('PublicTeamSearch', () => {
         expect(within(currentCard as HTMLElement).getByText('5 players')).toBeTruthy();
     });
 
+    it('aborts roster-count hydration when results are cleared or unmounted', async () => {
+        const signals: AbortSignal[] = [];
+        (hydratePublicTeamRosterCounts as import('vitest').Mock).mockImplementation((_teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => {
+            if (options?.signal) signals.push(options.signal);
+            return new Promise(() => {});
+        });
+        const firstRender = renderSearch();
+
+        fireEvent.change(screen.getByPlaceholderText('Search by team, city, state, or zip'), { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+        await screen.findByText('Atlanta United');
+        expect(signals[0]?.aborted).toBe(false);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear public team search' }));
+        expect(signals[0]?.aborted).toBe(true);
+
+        firstRender.unmount();
+        const secondRender = renderSearch();
+        fireEvent.change(screen.getByPlaceholderText('Search by team, city, state, or zip'), { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+        await screen.findByText('Atlanta United');
+        expect(signals[1]?.aborted).toBe(false);
+
+        secondRender.unmount();
+        expect(signals[1]?.aborted).toBe(true);
+    });
+
     it('appends the next page before its independent roster hydration completes', async () => {
         const firstHydration = deferred<ParentHomeTeam[]>();
         const secondHydration = deferred<ParentHomeTeam[]>();
+        const hydrationSignals: AbortSignal[] = [];
         (getPublicTeamsPage as import('vitest').Mock)
             .mockResolvedValueOnce({ teams: [{ ...mockTeams[0], publicRosterCount: null }], nextCursor: 'cursor-2' })
             .mockResolvedValueOnce({ teams: [{ ...mockTeams[1], publicRosterCount: null }], nextCursor: null });
         (hydratePublicTeamRosterCounts as import('vitest').Mock)
-            .mockReturnValueOnce(firstHydration.promise)
-            .mockReturnValueOnce(secondHydration.promise);
+            .mockImplementationOnce((_teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => {
+                if (options?.signal) hydrationSignals.push(options.signal);
+                return firstHydration.promise;
+            })
+            .mockImplementationOnce((_teams: ParentHomeTeam[], options?: { signal?: AbortSignal }) => {
+                if (options?.signal) hydrationSignals.push(options.signal);
+                return secondHydration.promise;
+            });
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -432,6 +477,9 @@ describe('PublicTeamSearch', () => {
         const secondCard = secondTeam.closest('article');
         expect(firstCard).toBeTruthy();
         expect(secondCard).toBeTruthy();
+        expect(hydrationSignals).toHaveLength(2);
+        expect(hydrationSignals[1]).toBe(hydrationSignals[0]);
+        expect(hydrationSignals[0].aborted).toBe(false);
         expect(within(firstCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
         expect(within(secondCard as HTMLElement).getByText('Loading roster count')).toBeTruthy();
 
