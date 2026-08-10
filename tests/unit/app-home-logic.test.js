@@ -147,7 +147,13 @@ describe('React app Home model helpers', () => {
         expect(model.teams.find((team) => team.teamId === 'team-2')).toMatchObject({
             role: 'Parent',
             unreadCount: 4,
+            eventCount: 1,
+            upcomingEventCount: 1,
             openActions: 2
+        });
+        expect(model.teams.find((team) => team.teamId === 'team-1')).toMatchObject({
+            eventCount: 4,
+            upcomingEventCount: 2
         });
         expect(model.actionItems.map((action) => action.kind)).toEqual(['rsvp', 'packet', 'assignment', 'fee', 'message']);
         expect(model.actionItems.find((action) => action.kind === 'rsvp')).toMatchObject({
@@ -409,11 +415,12 @@ describe('React app Home model helpers', () => {
             teamId: team.teamId,
             nextEvent: team.nextEvent?.id || null,
             eventCount: team.eventCount,
+            upcomingEventCount: team.upcomingEventCount,
             unreadCount: team.unreadCount,
             openActions: team.openActions
         }))).toEqual([
-            { teamId: 'team-1', nextEvent: 'game-1', eventCount: 2, unreadCount: 2, openActions: 3 },
-            { teamId: 'team-2', nextEvent: 'game-2', eventCount: 1, unreadCount: 0, openActions: 4 }
+            { teamId: 'team-1', nextEvent: 'game-1', eventCount: 2, upcomingEventCount: 2, unreadCount: 2, openActions: 3 },
+            { teamId: 'team-2', nextEvent: 'game-2', eventCount: 1, upcomingEventCount: 1, unreadCount: 0, openActions: 4 }
         ]);
         expect(model.actionItems.map((action) => action.kind)).toEqual(['rsvp', 'packet', 'assignment', 'assignment', 'fee', 'message']);
         expect(model.metrics).toEqual({

@@ -92,6 +92,7 @@ function mapPublicTeam(team: PublicTeamSearchResult, rosterCount: PublicTeamRost
         players: [],
         nextEvent: null,
         eventCount: 0,
+        upcomingEventCount: 0,
         unreadCount: 0,
         openActions: 0,
     };
