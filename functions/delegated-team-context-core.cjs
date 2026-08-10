@@ -103,11 +103,17 @@ function resolveDelegatedAccess({ uid, email, user, teamId, team, game, rsvp }) 
   const legacyConfirmedStreaming = ['confirmed_members', 'all_confirmed'].includes(legacyStreamMode)
     && isGameDayEligible(game)
     && hasConfirmedRsvp(rsvp);
+  const selectedStreaming = streamingPermission?.mode === 'selected'
+    && normalizeStringList(streamingPermission.memberIds).includes(uid);
+  const confirmedStreaming = hasAllConfirmedGrant(team, DELEGATED_PERMISSION_KEYS.streaming, rsvp, game);
   const streaming = full
-    || (streamingPermission?.mode === 'selected' && normalizeStringList(streamingPermission.memberIds).includes(uid))
-    || hasAllConfirmedGrant(team, DELEGATED_PERMISSION_KEYS.streaming, rsvp, game)
+    || selectedStreaming
+    || confirmedStreaming
     || legacySelectedStreaming
     || legacyConfirmedStreaming;
+  const streamingMode = full
+    ? 'full'
+    : (selectedStreaming || legacySelectedStreaming ? 'selected' : 'all_confirmed');
   const media = full || hasSelectedGrant(team, DELEGATED_PERMISSION_KEYS.media, uid);
 
   return {
@@ -120,7 +126,7 @@ function resolveDelegatedAccess({ uid, email, user, teamId, team, game, rsvp }) 
     modes: {
       ...(scorekeeping ? { scorekeeping: full ? 'full' : cleanText(team?.teamPermissions?.scorekeeping?.mode, 32) || 'selected' } : {}),
       ...(videography ? { videography: full ? 'full' : cleanText(team?.teamPermissions?.videography?.mode, 32) || 'selected' } : {}),
-      ...(streaming ? { streaming: full ? 'full' : cleanText(streamingPermission?.mode, 32) || 'selected' } : {}),
+      ...(streaming ? { streaming: streamingMode } : {}),
       ...(media ? { media: full ? 'full' : 'selected' } : {})
     }
   };

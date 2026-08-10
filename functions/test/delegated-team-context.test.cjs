@@ -104,6 +104,52 @@ test('accepts a current legacy streaming email without serializing the volunteer
   assertNoProhibitedFields(result);
 });
 
+test('preserves a legacy selected streaming grant when the newer mode is all-confirmed', async () => {
+  const team = productionTeam({
+    teamPermissions: {
+      ...productionTeam().teamPermissions,
+      streaming: { mode: 'all_confirmed', memberIds: [] }
+    }
+  });
+  const result = await createHarness({ teams: { 'team-1': team } })(
+    { teamId: 'team-1' },
+    context('legacy-1', 'LEGACY@example.com')
+  );
+
+  assert.equal(result.item.delegatedAccess.modes.streaming, 'selected');
+  assert.deepEqual(result.item.teamPermissions.streaming, { mode: 'selected', memberIds: ['legacy-1'] });
+});
+
+test('preserves and revokes a legacy confirmed streaming grant across a finished transition', async () => {
+  const team = productionTeam({
+    streamAccessMode: 'confirmed_members',
+    streamVolunteerEmails: [],
+    teamPermissions: {
+      ...productionTeam().teamPermissions,
+      streaming: { mode: 'selected', memberIds: [] }
+    }
+  });
+  const handler = createHarness({
+    teams: { 'team-1': team },
+    games: {
+      'team-1/game-live': { status: 'scheduled', liveStatus: 'live' },
+      'team-1/game-finished': { status: 'scheduled', liveStatus: 'finished' }
+    },
+    rsvps: {
+      'team-1/game-live/confirmed-1': { response: 'confirmed' },
+      'team-1/game-finished/confirmed-1': { response: 'confirmed' }
+    }
+  });
+
+  const liveResult = await handler({ teamId: 'team-1', gameId: 'game-live' }, context('confirmed-1'));
+  assert.equal(liveResult.item.delegatedAccess.modes.streaming, 'all_confirmed');
+  assert.deepEqual(liveResult.item.teamPermissions.streaming, { mode: 'all_confirmed', memberIds: [] });
+  await assert.rejects(
+    handler({ teamId: 'team-1', gameId: 'game-finished' }, context('confirmed-1')),
+    { code: 'permission-denied' }
+  );
+});
+
 test('fails closed for unsigned, revoked, cross-team, stale-email, and unrelated callers', async () => {
   const handler = createHarness({
     teams: {
