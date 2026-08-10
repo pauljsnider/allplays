@@ -18,6 +18,7 @@ export async function getGameDayTeamContext() {
     window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
     return team;
 }
+export async function getTeams() { return []; }
 export async function getTeam() {
     window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
     throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });

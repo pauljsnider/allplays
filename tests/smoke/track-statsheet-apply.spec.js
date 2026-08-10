@@ -175,7 +175,10 @@ async function installModuleMocks(page) {
 
         export async function getTeam() {
             window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
-            throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
+            if (window.location.pathname.endsWith('/track-statsheet.html')) {
+                throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
+            }
+            return clone(loadStore().team);
         }
 
         export async function getGame() {

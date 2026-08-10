@@ -158,6 +158,10 @@ async function installModuleMocks(page) {
             return null;
         }
 
+        export async function getGameDayTeamContext() {
+            return clone(loadStore().team);
+        }
+
         export async function getTeams() {
             return [];
         }
