@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getHorizontalScrollTarget, getParentToolAuthInvalidation, ParentTools, type ParentToolId } from './ParentTools';
+import { CalendarTool } from './parent-tools/CalendarTool';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT, getNativeBackTarget } from '../lib/nativeBackButton';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -782,7 +783,124 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
         await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith(privateFeedUrl));
         expect(writeText).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(1);
+    });
+
+    it('isolates cached private calendar feeds by team', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [
+                { teamId: 'team-1', teamName: 'Bears', eventCount: 1 },
+                { teamId: 'team-2', teamName: 'Wolves', eventCount: 2 }
+            ]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockImplementation(async (teamId: string) => `https://calendar.example.test/${teamId}.ics`);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        const bearsCard = (await screen.findByText('Bears')).closest('.app-card');
+        const wolvesCard = screen.getByText('Wolves').closest('.app-card');
+        expect(bearsCard).not.toBeNull();
+        expect(wolvesCard).not.toBeNull();
+
+        fireEvent.click(within(bearsCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://calendar.example.test/team-1.ics'));
+        fireEvent.click(within(wolvesCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith('https://calendar.example.test/team-2.ics'));
+        fireEvent.click(within(bearsCard as HTMLElement).getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(3));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenNthCalledWith(1, 'team-1');
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenNthCalledWith(2, 'team-2');
+    });
+
+    it('retries rejected and empty private calendar feed resolutions', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl
+            .mockRejectedValueOnce(new Error('Feed unavailable.'))
+            .mockResolvedValueOnce('')
+            .mockResolvedValueOnce(privateFeedUrl);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        const copyButton = await screen.findByRole('button', { name: 'Copy private link' });
+        fireEvent.click(copyButton);
+        expect(await screen.findByText('Feed unavailable.')).toBeTruthy();
+        fireEvent.click(copyButton);
+        expect(await screen.findByText('Unable to create private calendar feed. Sign in again and retry.')).toBeTruthy();
+        fireEvent.click(copyButton);
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledWith(privateFeedUrl));
+
         expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(3);
+    });
+
+    it('clears cached private calendar feeds on manual refresh', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears cached private calendar feeds when refreshVersion changes', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        const view = render(<CalendarTool auth={linkedAuth} refreshVersion={0} />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+
+        view.rerender(<CalendarTool auth={linkedAuth} refreshVersion={1} />);
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears cached private calendar feeds when auth changes', async () => {
+        const privateFeedUrl = 'https://calendar.example.test/private/teams/team-1.ics';
+        const refreshedAuth: AuthState = {
+            ...linkedAuth,
+            user: linkedAuth.user ? { ...linkedAuth.user, email: 'updated-parent@example.com' } : null
+        };
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue(privateFeedUrl);
+
+        const view = render(<CalendarTool auth={linkedAuth} refreshVersion={0} />);
+        fireEvent.click(await screen.findByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(1));
+
+        view.rerender(<CalendarTool auth={refreshedAuth} refreshVersion={0} />);
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(2));
+        fireEvent.click(screen.getByRole('button', { name: 'Copy private link' }));
+        await waitFor(() => expect(copyPublicText).toHaveBeenCalledTimes(2));
+
+        expect(parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledTimes(2);
     });
 
     it('reports a rejected Apple Calendar handoff and restores team actions', async () => {
