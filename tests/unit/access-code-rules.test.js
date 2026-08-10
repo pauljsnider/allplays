@@ -23,7 +23,8 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("data.generatedBy == request.auth.uid");
         expect(rules).toContain("request.auth.token.email.lower() == data.email.lower()");
         expect(rules).toContain('isFamilyInviteAccessCode(data) && verifiedAuthEmailMatches');
-        expect(rules).toContain("request.auth.token.phone_number == data.phone");
+        expect(rules).toContain('function currentAuthPhoneCanReadAccessCode(data)');
+        expect(rules).toContain('!isFamilyInviteAccessCode(data) || familyInviteHasNoTargetEmail');
         expect(rules).toContain('isTeamOwnerOrAdmin(data.teamId)');
         expect(accessCodeRules).toContain('allow get: if resource == null || canReadAccessCode(resource.data);');
         expect(rules).not.toContain('canGetPhoneOnlyFriendInviteAccessCode');
@@ -33,8 +34,8 @@ describe('access code Firestore rules', () => {
 
     it('allows signed-in users to read phone-only activation codes for redemption without reopening public reads', () => {
         expect(rules).toContain('request.auth.token.phone_number != null');
-        expect(rules).toContain('data.phone is string');
-        expect(rules).toContain('request.auth.token.phone_number == data.phone');
+        expect(rules).toContain("data.get('phone', null) is string");
+        expect(rules).toContain("request.auth.token.phone_number == data.get('phone', null)");
         expect(accessCodeRules).not.toMatch(/allow\s+read\s*:\s*if\s+true/);
         expect(accessCodeRules).not.toMatch(/allow\s+list\s*:\s*if\s+true/);
         expect(accessCodeRules).not.toMatch(/allow\s+get\s*:\s*if\s+true/);
@@ -230,6 +231,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
                 type: 'parent_invite',
                 generatedBy: 'owner-a',
                 email: 'recipient@example.com',
+                phone: '+15555550123',
                 teamId: 'team-a',
                 playerId: 'player-a',
                 createdAt: Timestamp.now(),
@@ -242,6 +244,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
                 code: 'PARENTLEGACY',
                 type: 'parent_invite',
                 generatedBy: 'owner-a',
+                phone: '+15555550999',
                 teamId: 'team-a',
                 playerId: 'player-a',
                 createdAt: Timestamp.now(),
@@ -257,6 +260,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
                 organizerUserId: 'owner-a',
                 familyMembershipId: 'member-a',
                 email: 'recipient@example.com',
+                phone: '+15555550123',
                 teamId: 'team-a',
                 playerId: 'player-a',
                 createdAt: Timestamp.now(),
@@ -265,6 +269,20 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
                 usedBy: null,
                 usedAt: null,
                 revoked: false
+            });
+            await setDoc(doc(firestore, 'accessCodes/COPEEMAIL'), {
+                code: 'COPEEMAIL',
+                type: 'coparent_invite',
+                generatedBy: 'owner-a',
+                email: 'recipient@example.com',
+                phone: '+15555550123',
+                teamId: 'team-a',
+                playerId: 'player-a',
+                createdAt: Timestamp.now(),
+                expiresAt,
+                used: false,
+                usedBy: null,
+                usedAt: null
             });
         });
     });
@@ -353,12 +371,17 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
     it('denies matching unverified reads and redemption writes for email-targeted family invites', async () => {
         const unverifiedDb = testEnv.authenticatedContext('recipient', {
             email: 'recipient@example.com',
-            email_verified: false
+            email_verified: false,
+            phone_number: '+15555550123'
         }).firestore();
+
+        for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL', 'COPEEMAIL']) {
+            const codeRef = doc(unverifiedDb, `accessCodes/${codeId}`);
+            await assertFails(getDoc(codeRef));
+        }
 
         for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL']) {
             const codeRef = doc(unverifiedDb, `accessCodes/${codeId}`);
-            await assertFails(getDoc(codeRef));
             await assertFails(updateDoc(codeRef, {
                 used: true,
                 usedBy: 'recipient',
@@ -370,11 +393,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
     it('allows verified matching redemption and preserves non-email legacy parent redemption', async () => {
         const verifiedDb = testEnv.authenticatedContext('recipient', {
             email: 'recipient@example.com',
-            email_verified: true
+            email_verified: true,
+            phone_number: '+15555550123'
         }).firestore();
         const legacyDb = testEnv.authenticatedContext('legacy-parent', {
             email: 'legacy@example.com',
-            email_verified: false
+            email_verified: false,
+            phone_number: '+15555550999'
         }).firestore();
 
         for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL']) {
@@ -387,6 +412,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             }));
         }
 
+        await assertSucceeds(getDoc(doc(verifiedDb, 'accessCodes/COPEEMAIL')));
+
+        await assertSucceeds(getDoc(doc(legacyDb, 'accessCodes/PARENTLEGACY')));
         await assertSucceeds(updateDoc(doc(legacyDb, 'accessCodes/PARENTLEGACY'), {
             used: true,
             usedBy: 'legacy-parent',
@@ -400,7 +428,9 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('access code rules engine 
             email_verified: true
         }).firestore();
 
-        await assertFails(getDoc(doc(mismatchedDb, 'accessCodes/PARENTEMAIL')));
+        for (const codeId of ['PARENTEMAIL', 'HOUSEEMAIL', 'COPEEMAIL']) {
+            await assertFails(getDoc(doc(mismatchedDb, `accessCodes/${codeId}`)));
+        }
         await assertFails(updateDoc(doc(mismatchedDb, 'accessCodes/PARENTEMAIL'), {
             used: true,
             usedBy: 'other-recipient',

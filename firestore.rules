@@ -139,6 +139,16 @@ service cloud.firestore {
              request.auth.token.email.lower() == email.lower();
     }
 
+    function currentAuthPhoneCanReadAccessCode(data) {
+      let familyInviteHasNoTargetEmail = !data.keys().hasAny(['email']) ||
+              data.email == null ||
+              data.email == '';
+      return request.auth.token.phone_number != null &&
+             data.get('phone', null) is string &&
+             request.auth.token.phone_number == data.get('phone', null) &&
+             (!isFamilyInviteAccessCode(data) || familyInviteHasNoTargetEmail);
+    }
+
     function canReadAccessCode(data) {
       return isSignedIn() &&
              (data.generatedBy == request.auth.uid ||
@@ -147,9 +157,7 @@ service cloud.firestore {
                data.email is string &&
                request.auth.token.email.lower() == data.email.lower()) ||
               (isFamilyInviteAccessCode(data) && verifiedAuthEmailMatches(data.get('email', null))) ||
-              (request.auth.token.phone_number != null &&
-               data.phone is string &&
-               request.auth.token.phone_number == data.phone) ||
+              currentAuthPhoneCanReadAccessCode(data) ||
               (data.teamId is string && isTeamOwnerOrAdmin(data.teamId)) ||
               isGlobalAdmin());
     }
