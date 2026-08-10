@@ -205,7 +205,8 @@ describe('Teams empty state', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 2,
+        eventCount: 4,
+        upcomingEventCount: 2,
         unreadCount: 1,
         openActions: 0
       }],
@@ -233,11 +234,11 @@ describe('Teams empty state', () => {
       teams: [
         {
           teamId: 'team-1', teamName: 'Vipers', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
-          players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0
+          players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
         },
         {
           teamId: 'team-2', teamName: 'Current', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
-          players: [], nextEvent: null, eventCount: 0, unreadCount: 0, openActions: 0
+          players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
         }
       ],
       upcomingEvents: [],
@@ -273,7 +274,8 @@ describe('Teams empty state', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 0,
+        eventCount: 3,
+        upcomingEventCount: 0,
         unreadCount: 1,
         openActions: 0
       }],
@@ -294,7 +296,8 @@ describe('Teams empty state', () => {
       ...fastTeamHome,
       teams: [{
         ...fastTeamHome.teams[0],
-        eventCount: 2
+        eventCount: 2,
+        upcomingEventCount: 2
       }]
     });
 
@@ -346,7 +349,8 @@ describe('Teams launcher navigation', () => {
         photoUrl: null,
         players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
         nextEvent: null,
-        eventCount: 2,
+        eventCount: 4,
+        upcomingEventCount: 2,
         unreadCount: 1,
         openActions: 0
       },
@@ -358,7 +362,8 @@ describe('Teams launcher navigation', () => {
         photoUrl: null,
         players: [],
         nextEvent: null,
-        eventCount: 0,
+        eventCount: 3,
+        upcomingEventCount: 0,
         unreadCount: 0,
         openActions: 0
       }
@@ -428,6 +433,7 @@ describe('Teams launcher navigation', () => {
     expect(within(selectedRow!).getByText('2 upcoming')).toBeTruthy();
     expect(within(selectedRow!).getByText('1 unread')).toBeTruthy();
     expect(within(selectedRow!).getAllByRole('link')).toEqual([fastFalcons]);
+    expect(within(screen.getByRole('link', { name: 'Open Slow Sharks' }).closest('article')!).getByText('0 upcoming')).toBeTruthy();
   });
 });
 
@@ -441,6 +447,7 @@ describe('Teams single-team navigation', () => {
     players: [{ teamId: 'team-solo', teamName: 'Solo Bears', playerId: 'player-1', playerName: 'Alex Star' }],
     nextEvent: null,
     eventCount: 3,
+    upcomingEventCount: 3,
     unreadCount: 0,
     openActions: 0
   };
