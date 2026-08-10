@@ -45,7 +45,7 @@ export function getScheduleRsvpHydrationTargets(
   events: ParentScheduleEvent[],
   visibleEvents: ParentScheduleEvent[],
   visibleGroupLimit: number,
-  hydratedGroupKeys: ReadonlySet<string> = new Set()
+  hydratedEventKeys: ReadonlySet<string> = new Set()
 ) {
   const visibleGroupKeys = new Set<string>();
   [...visibleEvents]
@@ -57,8 +57,7 @@ export function getScheduleRsvpHydrationTargets(
 
   return getEligibleBulkRsvpCandidates(events.filter((event) => (
     visibleGroupKeys.has(getRsvpGroupKey(event))
-    && !hydratedGroupKeys.has(getRsvpGroupKey(event))
-  )));
+  ))).filter((event) => !hydratedEventKeys.has(event.eventKey));
 }
 
 export function getNeededBulkRsvpEventKeys(events: ParentScheduleEvent[]) {

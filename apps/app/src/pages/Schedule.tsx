@@ -257,7 +257,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
-  const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
+  const hydratedRsvpRowsRef = useRef({
+    userId: auth.user?.uid || '',
+    eventKeys: new Set<string>()
+  });
+  if (hydratedRsvpRowsRef.current.userId !== (auth.user?.uid || '')) {
+    hydratedRsvpRowsRef.current = {
+      userId: auth.user?.uid || '',
+      eventKeys: new Set<string>()
+    };
+  }
   const activeRsvpScopeRef = useRef('');
   activeRsvpScopeRef.current = `${auth.user?.uid || ''}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}`;
   const exportPendingRef = useRef(false);
@@ -368,7 +377,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       scopedEvents,
       hydrateAll ? getBulkRsvpCandidates(scopedEvents) : visibleEvents,
       hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
-      hydratedRsvpGroupKeysRef.current
+      hydratedRsvpRowsRef.current.eventKeys
     );
     setRsvpHydrationPending(true);
     if (!rsvpEvents.length) {
@@ -399,25 +408,29 @@ export function Schedule({ auth }: { auth: AuthState }) {
     };
 
     const hydrationPromise = hydrateParentScheduleRsvps(
-      { children: result.children, events: rsvpEvents },
+      { children: result.children, events: rsvpEvents.map((event) => ({ ...event })) },
       user,
       { onProgress: mergeHydratedEvents }
     ).then((hydrated) => {
       const accepted = mergeHydratedEvents(hydrated.events);
       const hydratedByKey = new Map(hydrated.events.map((event) => [event.eventKey, event]));
-      const fullyHydrated = rsvpEvents.every((event) => (
-        hydratedByKey.get(event.eventKey)?.myRsvpNoteHydrated === true
-      ));
-      if (!accepted || !fullyHydrated) return false;
-      rsvpEvents.forEach((event) => hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`));
-      return true;
+      if (!accepted) return false;
+      rsvpEvents.forEach((event) => {
+        if (hydratedByKey.get(event.eventKey)?.myRsvpNoteHydrated === true) {
+          hydratedRsvpRowsRef.current.eventKeys.add(event.eventKey);
+        }
+      });
+      return rsvpEvents.every((event) => hydratedRsvpRowsRef.current.eventKeys.has(event.eventKey));
     })
       .catch((error) => {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });
         return false;
       })
       .finally(() => {
-        if (hydrationVersion === rsvpHydrationVersionRef.current && auth.user?.uid === user.uid) {
+        if (
+          hydrationVersion === rsvpHydrationVersionRef.current
+          && activeRsvpScopeRef.current === activeScopeKey
+        ) {
           setRsvpHydrationPending(false);
         }
       });
@@ -536,6 +549,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
+    if (force) {
+      rsvpHydrationVersionRef.current += 1;
+      lastRsvpHydrationScopeRef.current = '';
+      hydratedRsvpRowsRef.current.eventKeys.clear();
+    }
     clearScheduleReadError();
     setScheduleLoadError(null);
     setStatusMessage(null);

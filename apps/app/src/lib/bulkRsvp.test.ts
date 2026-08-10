@@ -82,8 +82,24 @@ describe('bulk RSVP helpers', () => {
       events,
       [first, second, third],
       2,
-      new Set([`${first.teamId}::${first.id}`])
-    ).map((row) => row.eventKey)).toEqual([second.eventKey]);
+      new Set([first.eventKey])
+    ).map((row) => row.eventKey)).toEqual([firstSibling.eventKey, second.eventKey]);
+  });
+
+  it('tracks hydrated sibling rows independently within one event group', () => {
+    const first = event(1);
+    const sibling = event(1, {
+      eventKey: 'team-1::game-1::player-2',
+      childId: 'player-2',
+      childName: 'Player 2'
+    });
+
+    expect(getScheduleRsvpHydrationTargets(
+      [first, sibling],
+      [sibling],
+      1,
+      new Set([first.eventKey])
+    ).map((row) => row.eventKey)).toEqual([sibling.eventKey]);
   });
 
   it('selects visible groups before applying the hydration row bound', () => {
