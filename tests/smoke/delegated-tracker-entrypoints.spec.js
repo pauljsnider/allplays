@@ -112,6 +112,11 @@ test.beforeEach(async ({ page }) => {
         contentType: 'application/javascript',
         body: 'window.tailwind = window.tailwind || {};'
     }));
+    await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: ''
+    }));
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
