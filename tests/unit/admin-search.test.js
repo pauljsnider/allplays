@@ -7,53 +7,17 @@ import {
     buildAdminUserSearchHash,
     buildAdminUserSearchStrategies,
     createDebouncedAdminUserSearch,
-    hasAdminGlobalSearchTerm,
-    loadCompleteAdminSearchCollection,
     mergeAdminUserSearchResults,
     mergeBoundedAdminUserCandidates,
     normalizeAdminSearchTerm,
     resolveAdminUserSearchResult,
     selectAdminItemById,
-    selectAdminSearchCollection,
     shouldRunRemoteAdminUserSearch
 } from '../../js/admin-search.js';
 
 describe('admin search collection selection', () => {
-    it('keeps empty searches scoped to the current paginated page', () => {
-        const pageItems = [{ id: 'team-1', name: 'Aardvarks' }];
-        const globalItems = [{ id: 'team-99', name: 'Zebras' }];
-
-        expect(selectAdminSearchCollection({ searchTerm: '', pageItems, globalItems })).toBe(pageItems);
-        expect(selectAdminSearchCollection({ searchTerm: '   ', pageItems, globalItems })).toBe(pageItems);
-    });
-
-    it('keeps the legacy collection-wide cache available for team search', () => {
-        const pageItems = [{ id: 'team-1', name: 'Alpha' }];
-        const globalItems = [{ id: 'team-99', name: 'Zeta' }];
-
-        expect(selectAdminSearchCollection({ searchTerm: 'zeta', pageItems, globalItems })).toBe(globalItems);
-    });
-
-    it('loads every admin page only for the unchanged team search path', async () => {
-        const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `team-${index + 1}` }));
-        const secondPage = Array.from({ length: 50 }, (_, index) => ({ id: `team-${index + 101}` }));
-        const firstCursor = { id: 'team-100' };
-        const fetchPage = vi.fn()
-            .mockResolvedValueOnce({ teams: firstPage, nextCursor: firstCursor })
-            .mockResolvedValueOnce({ teams: secondPage, nextCursor: null });
-
-        const teams = await loadCompleteAdminSearchCollection({ fetchPage, itemsKey: 'teams' });
-
-        expect(fetchPage).toHaveBeenNthCalledWith(1, { pageSize: 100 });
-        expect(fetchPage).toHaveBeenNthCalledWith(2, { pageSize: 100, cursor: firstCursor });
-        expect(teams).toHaveLength(150);
-        expect(teams.at(-1)).toEqual({ id: 'team-150' });
-    });
-
     it('normalizes whitespace and casing before deciding whether search is global', () => {
         expect(normalizeAdminSearchTerm('  Team Z  ')).toBe('team z');
-        expect(hasAdminGlobalSearchTerm('  Team Z  ')).toBe(true);
-        expect(hasAdminGlobalSearchTerm('\n\t')).toBe(false);
         expect(normalizeAdminSearchTerm('X'.repeat(ADMIN_USER_SEARCH_MAX_LENGTH + 20)))
             .toBe('x'.repeat(ADMIN_USER_SEARCH_MAX_LENGTH));
     });
