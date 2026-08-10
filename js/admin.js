@@ -39,13 +39,16 @@ import {
 } from './admin-user-official-links.js?v=3';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
+    createDebouncedAdminTeamSearch,
+    normalizeAdminTeamSearchTerm,
+    resolveAdminTeamSearchResult,
+    searchAdminTeams
+} from './admin-team-search.js?v=1';
+import {
     createDebouncedAdminUserSearch,
-    hasAdminGlobalSearchTerm,
-    loadCompleteAdminSearchCollection,
     normalizeAdminSearchTerm,
     resolveAdminUserSearchResult,
-    selectAdminItemById,
-    selectAdminSearchCollection
+    selectAdminItemById
 } from './admin-search.js?v=7';
 import {
     buildTrackedWorkflowLoadSummary,
@@ -91,8 +94,9 @@ let loadedGamesPageKey = '';
 let loadedDashboardGamesKey = '';
 let loadedTeamsOfficialsPageKey = '';
 let loadedUsersOfficialsKey = '';
-let globalSearchTeamsLoaded = false;
-let globalSearchTeamsPromise = null;
+const runDebouncedAdminTeamSearch = createDebouncedAdminTeamSearch({
+    search: searchAdminTeams
+});
 const runDebouncedAdminUserSearch = createDebouncedAdminUserSearch({
     search: searchAdminUsers
 });
@@ -147,38 +151,18 @@ function applyCurrentUsersPage() {
 function resetGlobalAdminSearchCollections() {
     globalSearchTeams = [];
     globalSearchUsers = [];
-    globalSearchTeamsLoaded = false;
-    globalSearchTeamsPromise = null;
-}
-
-async function ensureGlobalAdminTeamsForSearch() {
-    if (globalSearchTeamsLoaded) return globalSearchTeams;
-    if (!globalSearchTeamsPromise) {
-        globalSearchTeamsPromise = loadCompleteAdminSearchCollection({
-            fetchPage: getAdminTeamsPage,
-            itemsKey: 'teams'
-        })
-            .then((teams) => {
-                globalSearchTeams = teams;
-                globalSearchTeamsLoaded = true;
-                return globalSearchTeams;
-            })
-            .finally(() => {
-                globalSearchTeamsPromise = null;
-            });
-    }
-    return globalSearchTeamsPromise;
 }
 
 async function getAdminTeamsForSearch(searchTerm = '') {
-    if (hasAdminGlobalSearchTerm(searchTerm)) {
-        await ensureGlobalAdminTeamsForSearch();
+    const result = await runDebouncedAdminTeamSearch(searchTerm);
+    const teams = resolveAdminTeamSearchResult(allTeams, result);
+    if (!teams) return null;
+    if (!result.remote) {
+        globalSearchTeams = [];
+        return teams;
     }
-    return selectAdminSearchCollection({
-        searchTerm,
-        pageItems: allTeams,
-        globalItems: globalSearchTeams
-    });
+    globalSearchTeams = teams;
+    return globalSearchTeams;
 }
 
 async function getAdminUsersForSearch(searchTerm = '') {
@@ -1690,9 +1674,10 @@ async function saveRegistrationForm(event) {
 }
 
 async function renderCurrentTeamsView() {
-    const term = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    const term = normalizeAdminTeamSearchTerm(document.getElementById('search-teams')?.value || '');
     const teams = await getAdminTeamsForSearch(term);
-    const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    if (!teams) return;
+    const latestTerm = normalizeAdminTeamSearchTerm(document.getElementById('search-teams')?.value || '');
     if (term !== latestTerm) return;
 
     const visibleTeams = showInactiveTeams ? teams : teams.filter(isTeamActive);
