@@ -77,16 +77,7 @@ export function writeBatch() { return { set() {}, update() {}, delete() {}, comm
 export function doc(_db, path) { return { path }; }
 export async function setDoc() {}
 export async function addDoc() { return { id: 'event-1' }; }
-export function onSnapshot(_ref, callback) {
-    queueMicrotask(() => callback({
-        docs: [],
-        empty: true,
-        exists() { return true; },
-        data() { return { liveViewerCount: 2 }; },
-        forEach() {}
-    }));
-    return () => {};
-}
+export function onSnapshot() { return () => {}; }
 export function orderBy() { return {}; }
 `;
 
