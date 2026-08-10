@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeamSettings } from './TeamSettings';
+import { isTeamSettingsDraftDirty, TeamSettings } from './TeamSettings';
 import type { AuthState } from '../lib/types';
+
+const shellLayoutMocks = vi.hoisted(() => ({
+  isDesktopWeb: false
+}));
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
   loadParentTeamDetail: vi.fn(),
@@ -12,6 +16,9 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
+vi.mock('../lib/useShellLayout', () => ({
+  useShellLayout: () => ({ isDesktopWeb: shellLayoutMocks.isDesktopWeb })
+}));
 
 const auth: AuthState = {
   user: {
@@ -79,9 +86,42 @@ const managedModel = {
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
 
+const loadedDraft = {
+  name: 'Bears',
+  sport: 'Basketball',
+  zip: '66210',
+  isPublic: true,
+  photoUrl: 'https://img.example.test/team.png',
+  leagueUrl: 'https://league.example.test/standings',
+  streamUrl: 'https://www.youtube.com/watch?v=LJNfHqRRhBI'
+};
+
+describe('isTeamSettingsDraftDirty', () => {
+  it('detects text, visibility, and photo changes and clears when restored', () => {
+    expect(isTeamSettingsDraftDirty(loadedDraft, loadedDraft, null)).toBe(false);
+
+    for (const [field, value] of [
+      ['name', 'Lady Bears'],
+      ['sport', 'Soccer'],
+      ['zip', '66211'],
+      ['leagueUrl', 'https://league.example.test/new'],
+      ['streamUrl', 'https://twitch.tv/bears']
+    ] as const) {
+      expect(isTeamSettingsDraftDirty({ ...loadedDraft, [field]: value }, loadedDraft, null)).toBe(true);
+      expect(isTeamSettingsDraftDirty({ ...loadedDraft, [field]: loadedDraft[field] }, loadedDraft, null)).toBe(false);
+    }
+
+    expect(isTeamSettingsDraftDirty({ ...loadedDraft, isPublic: false }, loadedDraft, null)).toBe(true);
+    expect(isTeamSettingsDraftDirty({ ...loadedDraft, isPublic: true }, loadedDraft, null)).toBe(false);
+    expect(isTeamSettingsDraftDirty(loadedDraft, loadedDraft, new File(['photo'], 'team.png'))).toBe(true);
+    expect(isTeamSettingsDraftDirty(loadedDraft, loadedDraft, null)).toBe(false);
+  });
+});
+
 describe('TeamSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    shellLayoutMocks.isDesktopWeb = false;
     Object.defineProperty(URL, 'createObjectURL', {
       value: vi.fn(() => 'blob:preview'),
       writable: true
@@ -140,7 +180,7 @@ describe('TeamSettings', () => {
     });
   });
 
-  it('validates team name inline and saves native team settings', async () => {
+  it('validates team name inline and saves the current draft from the mobile tray', async () => {
     render(
       <MemoryRouter initialEntries={['/teams/team-1/edit']}>
         <Routes>
@@ -215,6 +255,91 @@ describe('TeamSettings', () => {
     await waitFor(() => {
       expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('shows the mobile save tray only while the draft differs from the loaded settings', async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    const trayName = /Team settings with unsaved changes/i;
+    const nameInput = screen.getByPlaceholderText('Team name');
+    const visibilityInput = screen.getByRole('checkbox', { name: /Public team/i });
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+
+    expect(screen.queryByRole('region', { name: trayName })).toBeNull();
+
+    fireEvent.change(nameInput, { target: { value: 'Lady Bears' } });
+    expect(screen.getByRole('region', { name: trayName })).toBeTruthy();
+    fireEvent.change(nameInput, { target: { value: 'Bears' } });
+    expect(screen.queryByRole('region', { name: trayName })).toBeNull();
+
+    fireEvent.click(visibilityInput);
+    expect(screen.getByRole('region', { name: trayName })).toBeTruthy();
+    fireEvent.click(visibilityInput);
+    expect(screen.queryByRole('region', { name: trayName })).toBeNull();
+
+    fireEvent.change(fileInput, { target: { files: [new File(['photo'], 'team.png', { type: 'image/png' })] } });
+    expect(screen.getByRole('region', { name: trayName })).toBeTruthy();
+    fireEvent.change(fileInput, { target: { files: [] } });
+    expect(screen.queryByRole('region', { name: trayName })).toBeNull();
+  });
+
+  it('keeps the dirty mobile draft and retry action when saving fails', async () => {
+    const saveAttempt = createDeferred<void>();
+    teamDetailServiceMocks.updateTeamSettingsForApp.mockReturnValueOnce(saveAttempt.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    const nameInput = screen.getByPlaceholderText('Team name') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Lady Bears' } });
+
+    const tray = screen.getByRole('region', { name: /Team settings with unsaved changes/i });
+    const saveButton = within(tray).getByRole('button', { name: 'Save team' });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(saveButton).toBeDisabled());
+    fireEvent.click(saveButton);
+    expect(teamDetailServiceMocks.updateTeamSettingsForApp).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      saveAttempt.reject(new Error('Save unavailable.'));
+    });
+
+    expect(await screen.findByText('Save unavailable.')).toBeTruthy();
+    expect(nameInput.value).toBe('Lady Bears');
+    expect(screen.getByRole('region', { name: /Team settings with unsaved changes/i })).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: /Team settings with unsaved changes/i })).getByRole('button', { name: 'Save team' })).toBeEnabled();
+  });
+
+  it('keeps one inline save action on desktop and does not render the mobile tray', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'Lady Bears' } });
+
+    expect(screen.queryByRole('region', { name: /Team settings with unsaved changes/i })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Save team' })).toHaveLength(1);
   });
 
   it('defaults legacy teams without visibility set to public on save', async () => {

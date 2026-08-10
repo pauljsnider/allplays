@@ -5,11 +5,45 @@ import { AvatarImage } from '../components/AvatarImage';
 import { loadParentTeamDetailBootstrap, updateTeamSettingsForApp } from '../lib/teamDetailService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from '../lib/teamLinks';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
+
+type TeamSettingsDraft = {
+  name: string;
+  sport: string;
+  zip: string;
+  isPublic: boolean;
+  photoUrl: string;
+  leagueUrl: string;
+  streamUrl: string;
+};
+
+const emptyDraft: TeamSettingsDraft = {
+  name: '',
+  sport: '',
+  zip: '',
+  isPublic: true,
+  photoUrl: '',
+  leagueUrl: '',
+  streamUrl: ''
+};
+
+export function isTeamSettingsDraftDirty(current: TeamSettingsDraft, loaded: TeamSettingsDraft | null, photoFile: File | null) {
+  if (!loaded) return false;
+  return photoFile !== null
+    || current.name !== loaded.name
+    || current.sport !== loaded.sport
+    || current.zip !== loaded.zip
+    || current.isPublic !== loaded.isPublic
+    || current.photoUrl !== loaded.photoUrl
+    || current.leagueUrl !== loaded.leagueUrl
+    || current.streamUrl !== loaded.streamUrl;
+}
 
 export function TeamSettings({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const navigate = useNavigate();
+  const { isDesktopWeb } = useShellLayout();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const photoPreviewUrlRef = useRef('');
   const activeLoadIdRef = useRef(0);
@@ -22,17 +56,11 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
   const [canManageTeam, setCanManageTeam] = useState(false);
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
   const [teamName, setTeamName] = useState('Team');
-  const [form, setForm] = useState({
-    name: '',
-    sport: '',
-    zip: '',
-    isPublic: true,
-    photoUrl: '',
-    leagueUrl: '',
-    streamUrl: ''
-  });
+  const [form, setForm] = useState<TeamSettingsDraft>(emptyDraft);
+  const [loadedSnapshot, setLoadedSnapshot] = useState<TeamSettingsDraft | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
+  const isDirty = isTeamSettingsDraftDirty(form, loadedSnapshot, photoFile);
 
   useEffect(() => {
     photoPreviewUrlRef.current = photoPreviewUrl;
@@ -53,7 +81,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
           if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(model.canManageTeam);
           setTeamName(model.team.name || 'Team');
-          setForm({
+          const loadedDraft = {
             name: model.team.name || '',
             sport: model.team.sport === 'Sport not set' ? '' : model.team.sport,
             zip: model.team.zip || '',
@@ -61,22 +89,18 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
             photoUrl: model.team.photoUrl || '',
             leagueUrl: model.team.leagueUrl || '',
             streamUrl: model.team.streamUrl || ''
-          });
+          };
+          setForm(loadedDraft);
+          setLoadedSnapshot(loadedDraft);
+          setPhotoFile(null);
           setPhotoPreviewUrl(model.team.photoUrl || '');
         },
         onError: () => {
           if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(false);
           setTeamName('Team');
-          setForm({
-            name: '',
-            sport: '',
-            zip: '',
-            isPublic: true,
-            photoUrl: '',
-            leagueUrl: '',
-            streamUrl: ''
-          });
+          setForm(emptyDraft);
+          setLoadedSnapshot(null);
           setPhotoFile(null);
           setPhotoPreviewUrl('');
         },
@@ -210,7 +234,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
         Back to team
       </Link>
 
-      <section className="app-card p-4 sm:p-5">
+      <section className={`app-card p-4 sm:p-5 ${isDirty && !isDesktopWeb ? 'mobile-team-settings-save-offset' : ''}`}>
         <div>
           <h1 className="text-2xl font-black text-gray-950">Edit team</h1>
           <p className="mt-2 text-sm font-semibold text-gray-600">Update the basics for {teamName} without leaving the app.</p>
@@ -323,10 +347,30 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
 
           {saveError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">{saveError}</div> : null}
 
-          <button type="submit" className="primary-button w-full justify-center" disabled={saving} aria-disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            Save team
-          </button>
+          {isDesktopWeb || !isDirty ? (
+            <button type="submit" className="primary-button w-full justify-center" disabled={saving} aria-disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              Save team
+            </button>
+          ) : null}
+
+          {!isDesktopWeb && isDirty ? (
+            <div
+              className="mobile-team-settings-save-tray"
+              role="region"
+              aria-label="Team settings with unsaved changes"
+            >
+              <div className="mobile-team-settings-save-tray__surface rounded-2xl border border-amber-200 bg-white p-3 shadow-app-lg">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-bold text-amber-700" role="status" aria-live="polite">Unsaved changes</div>
+                  <button type="submit" className="primary-button shrink-0" disabled={saving} aria-disabled={saving}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                    Save team
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </form>
       </section>
     </div>
