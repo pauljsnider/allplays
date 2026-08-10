@@ -353,7 +353,12 @@ async function bootLiveTracker({ game, snapshots }) {
     value: { clipboard: { writeText: async () => {} } }
   });
 
-  const homeTeam = { id: 'team-1', name: 'Tigers', sport: 'Basketball' };
+  const homeTeam = {
+    id: 'team-1',
+    name: 'Tigers',
+    sport: 'Basketball',
+    delegatedAccess: { scorekeeping: true }
+  };
   const linkedOpponentTeam = {
     id: 'opp-team-1',
     name: 'Lions Academy',
