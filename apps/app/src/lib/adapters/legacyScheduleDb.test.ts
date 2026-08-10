@@ -64,9 +64,9 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeams as legacyGetTeams } from '@legacy/db.js';
+import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
 import { collection, doc, getDoc, getDocs, httpsCallable, query, where } from '@legacy/firebase.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -236,6 +236,41 @@ describe('legacyScheduleDb tracker config reads', () => {
         ]);
 
         expect(legacyGetConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
+    });
+});
+
+describe('legacyScheduleDb delegated team context reads', () => {
+    it('loads the bounded callable projection without invoking the canonical legacy team reader', async () => {
+        const callable = vi.fn().mockResolvedValue({
+            data: {
+                item: {
+                    id: 'team-1',
+                    name: 'Falcons',
+                    delegatedAccess: { scorekeeping: true }
+                }
+            }
+        });
+        vi.mocked(httpsCallable).mockReturnValue(callable as never);
+
+        await expect(getDelegatedTeamContext('team-1', 'game-1')).resolves.toEqual({
+            id: 'team-1',
+            name: 'Falcons',
+            delegatedAccess: { scorekeeping: true }
+        });
+
+        expect(httpsCallable).toHaveBeenCalledWith({ name: 'functions' }, 'getDelegatedTeamContext');
+        expect(callable).toHaveBeenCalledWith({ teamId: 'team-1', gameId: 'game-1' });
+        expect(legacyGetTeam).not.toHaveBeenCalled();
+        expect(getDoc).not.toHaveBeenCalled();
+    });
+
+    it('fails closed on a malformed delegated projection without falling back to a canonical read', async () => {
+        vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({ data: {} }) as never);
+
+        await expect(getDelegatedTeamContext('team-1', 'game-1'))
+            .rejects.toThrow('Delegated team context response is invalid.');
+        expect(legacyGetTeam).not.toHaveBeenCalled();
+        expect(getDoc).not.toHaveBeenCalled();
     });
 });
 

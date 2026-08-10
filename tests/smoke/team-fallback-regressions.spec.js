@@ -435,8 +435,13 @@ export async function postChatMessage() {
 
 const MEDIA_DB_STUB = `
 ${PERMISSION_ERROR}
-export async function getTeam(teamId) {
+export async function getDelegatedTeamContext(teamId) {
+    window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
     return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeam() {
+    window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+    throw permissionDenied();
 }
 export async function getTeamMediaFolders() {
     throw permissionDenied();
@@ -460,8 +465,13 @@ export async function updateTeamMediaItem() {}
 `;
 
 const MEDIA_DB_WITH_FOLDER_STUB = `
-export async function getTeam(teamId) {
+export async function getDelegatedTeamContext(teamId) {
+    window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
     return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeam() {
+    window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+    throw new Error('Canonical team read denied');
 }
 export async function getTeamMediaFolders() {
     return [{ id: 'folder-1', name: 'Highlights', order: 0 }];
@@ -486,8 +496,13 @@ export async function updateTeamMediaItem() {}
 
 const MEDIA_DB_RECORDING_STUB = `
 window.__TEAM_MEDIA_CALLS__ = [];
-export async function getTeam(teamId) {
+export async function getDelegatedTeamContext(teamId) {
+    window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
     return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeam() {
+    window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+    throw new Error('Canonical team read denied');
 }
 export async function getTeamMediaFolders() {
     return [{ id: 'folder-1', name: 'Highlights', order: 0 }];
@@ -662,13 +677,20 @@ export async function shareOrCopy() {
 `;
 
 const LIVE_GAME_DB_STUB = `
-export async function getTeam(teamId) {
+export async function getGameDayTeamContext(teamId) {
+    window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
     return {
         ...(window.__LIVE_GAME_TEAM__ || {}),
         id: teamId,
         name: 'Replay Test Team',
-        sport: 'basketball'
+        sport: 'basketball',
+        isPublic: false,
+        delegatedAccess: { parent: true }
     };
+}
+export async function getTeam() {
+    window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+    throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
 }
 export async function getGame(_teamId, gameId) {
     return {
@@ -1144,6 +1166,8 @@ test('team media shows an empty library when media reads are denied', async ({ p
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await expect(page.locator('#folders-list')).toContainText('No team-visible albums have been shared yet.');
     await expect(page.locator('#folders-list')).not.toContainText('Unable to load team media');
     expect(pageErrors).toEqual([]);
@@ -1285,8 +1309,26 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
 
     await expect(page.locator('#video-paywall')).toBeHidden();
     await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(liveGameStubs.getTelemetryStubRequestCount()).toBeGreaterThan(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('private-team parent opens a live game through the bounded team projection', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__LIVE_GAME_GAME__ = { status: 'scheduled', liveStatus: 'live' };
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#home-team-name')).toHaveText('Replay Test Team');
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
 

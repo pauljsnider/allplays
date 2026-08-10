@@ -337,6 +337,7 @@ const {
   serializeManagedTeamProfile,
   serializeStaffTeamProfile
 } = require('./managed-team-projection-core.cjs');
+const { createDelegatedTeamContextHandler } = require('./delegated-team-context-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
   buildChatConversationAccountScrubPlan,
@@ -17405,6 +17406,26 @@ function hasOpportunityTeamAdminAccess(caller, team) {
   });
 }
 
+const delegatedTeamContextHandler = createDelegatedTeamContextHandler({
+  loadTeam: async (teamId) => {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    return teamSnap.exists ? teamSnap.data() || {} : null;
+  },
+  loadUser: async (uid) => {
+    const userSnap = await firestore.doc(`users/${uid}`).get();
+    return userSnap.exists ? userSnap.data() || {} : {};
+  },
+  loadGame: async (teamId, gameId) => {
+    const gameSnap = await firestore.doc(`teams/${teamId}/games/${gameId}`).get();
+    return gameSnap.exists ? gameSnap.data() || {} : null;
+  },
+  loadRsvp: async (teamId, gameId, uid) => {
+    const rsvpSnap = await firestore.doc(`teams/${teamId}/games/${gameId}/rsvps/${uid}`).get();
+    return rsvpSnap.exists ? rsvpSnap.data() || {} : null;
+  },
+  makeError: (code, message) => new functions.https.HttpsError(code, message)
+});
+
 const redeemFriendInviteTransaction = createFriendInviteRedemptionTransaction({
   firestore,
   Timestamp: { now: () => admin.firestore.Timestamp.now() },
@@ -18310,6 +18331,8 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
   return { items, isPartial: staffTeams.isPartial === true };
 });
+
+exports.getDelegatedTeamContext = functions.https.onCall(delegatedTeamContextHandler);
 
 exports.getPublicTeamProfile = functions.https.onCall(async (data, context = {}) => {
   assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'team-profile');

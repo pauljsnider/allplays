@@ -12,13 +12,13 @@ const mocks = vi.hoisted(() => ({
     updateTeamMediaItem: vi.fn(),
     getTeamMediaItemsPage: vi.fn(),
     getTeamMediaFolders: vi.fn(),
-    getTeam: vi.fn(),
+    getDelegatedTeamContext: vi.fn(),
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433162', () => {
+vi.mock('../../js/db.js?v=4433163', () => {
     return {
-        getTeam: mocks.getTeam,
+        getDelegatedTeamContext: mocks.getDelegatedTeamContext,
         getTeamMediaFolders: mocks.getTeamMediaFolders,
         getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
         createTeamMediaFolder: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock('../../js/db.js?v=4433162', () => {
     };
 });
 
-vi.mock('../../js/auth.js?v=4433164', () => {
+vi.mock('../../js/auth.js?v=4433165', () => {
     return {
         checkAuth: mocks.checkAuth
     };
@@ -65,7 +65,7 @@ describe('team media item renaming', () => {
         window.confirm = vi.fn();
         loadTeamMediaHtml();
 
-        mocks.getTeam.mockResolvedValue({ id: 'team123', name: 'Test Team', adminEmails: ['admin@example.com'] });
+        mocks.getDelegatedTeamContext.mockResolvedValue({ id: 'team123', name: 'Test Team', adminEmails: ['admin@example.com'] });
         mocks.getTeamMediaFolders.mockResolvedValue([{ id: 'folderA', name: 'Album A', visibility: 'team' }]);
         mocks.getTeamMediaItemsPage.mockResolvedValue({
             items: [

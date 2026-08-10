@@ -420,35 +420,6 @@ service cloud.firestore {
              hasTeamOwnerOrAdminAccess(data);
     }
 
-    function canReadTeamMediaManagerTeamDocument(data) {
-      let permission = data.get('teamPermissions', {}).get('teamMediaManagement', {});
-      return isSignedIn() &&
-             permission.get('mode', '') == 'selected' &&
-             request.auth.uid in permission.get('memberIds', []);
-    }
-
-    function canReadScopedTeamHelperDocument(data) {
-      let permissions = data.get('teamPermissions', {});
-      let scorekeeping = permissions.get('scorekeeping', {});
-      let videography = permissions.get('videography', {});
-      let streaming = permissions.get('streaming', {});
-      let media = permissions.get('teamMediaManagement', {});
-      return isSignedIn() &&
-             (
-               (scorekeeping.get('mode', '') == 'selected' &&
-                request.auth.uid in scorekeeping.get('memberIds', [])) ||
-               (videography.get('mode', '') == 'selected' &&
-                request.auth.uid in videography.get('memberIds', [])) ||
-               (streaming.get('mode', '') == 'selected' &&
-                request.auth.uid in streaming.get('memberIds', [])) ||
-               (media.get('mode', '') == 'selected' &&
-                request.auth.uid in media.get('memberIds', [])) ||
-               (data.get('streamAccessMode', '') in ['selected_volunteers', 'selected'] &&
-                request.auth.token.email is string &&
-                request.auth.token.email.lower() in data.get('streamVolunteerEmails', []))
-             );
-    }
-
     function canListManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
@@ -457,9 +428,7 @@ service cloud.firestore {
 
     function canReadTeamDocument(teamId, data) {
       return canReadManagedTeamDocument(data) ||
-             isParentForTeam(teamId) ||
-             canReadScopedTeamHelperDocument(data) ||
-             canReadTeamMediaManagerTeamDocument(data);
+             isParentForTeam(teamId);
     }
 
     function isTeamOwnerOrGlobalAdmin(teamId) {

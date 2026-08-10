@@ -162,6 +162,19 @@ export async function getTeam(teamId: string, options?: { includeInactive?: bool
     return await Promise.resolve(options === undefined ? legacyGetTeam(teamId) : legacyGetTeam(teamId, options));
 }
 
+export async function getDelegatedTeamContext(teamId: string, gameId?: string | null) {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'getDelegatedTeamContext');
+    const response = await callable({
+        teamId,
+        ...(gameId ? { gameId } : {})
+    });
+    const item = (response as any)?.data?.item;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new Error('Delegated team context response is invalid.');
+    }
+    return item as Record<string, unknown>;
+}
+
 export async function getTeams(options?: { includePrivate?: boolean }) {
     return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }

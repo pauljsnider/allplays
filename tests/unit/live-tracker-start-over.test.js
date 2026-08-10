@@ -185,7 +185,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './db.js',
-    'const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
+    'const { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
   );
   rewritten = replaceImport(
     rewritten,
@@ -353,7 +353,12 @@ async function bootLiveTracker({ game, snapshots }) {
     value: { clipboard: { writeText: async () => {} } }
   });
 
-  const homeTeam = { id: 'team-1', name: 'Tigers', sport: 'Basketball' };
+  const homeTeam = {
+    id: 'team-1',
+    name: 'Tigers',
+    sport: 'Basketball',
+    delegatedAccess: { scorekeeping: true }
+  };
   const linkedOpponentTeam = {
     id: 'opp-team-1',
     name: 'Lions Academy',
@@ -373,6 +378,7 @@ async function bootLiveTracker({ game, snapshots }) {
 
   const deps = {
     db: {
+      getGameDayTeamContext: async () => homeTeam,
       getTeam: async (teamId) => {
         if (teamId === 'team-1') return homeTeam;
         if (teamId === 'opp-team-1') return linkedOpponentTeam;

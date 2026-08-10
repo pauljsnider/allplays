@@ -1,8 +1,8 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433162';
+import { getTeam, getGameDayTeamContext, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=4433163';
 import { db } from './firebase.js?v=22';
-import { getUrlParams, escapeHtml } from './utils.js?v=443338';
-import { checkAuth } from './auth.js?v=4433164';
+import { getUrlParams, escapeHtml } from './utils.js?v=443339';
+import { checkAuth } from './auth.js?v=4433165';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=22';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -15,7 +15,7 @@ import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=2';
-import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=15';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=16';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=3';
@@ -2901,7 +2901,7 @@ async function init() {
 
   try {
     const [team, game, playersList] = await Promise.all([
-      getTeam(teamId, { includeInactive: true }),
+      getGameDayTeamContext(teamId, gameId, { includeInactive: true }),
       getGame(teamId, gameId),
       getPlayers(teamId)
     ]);
@@ -2915,6 +2915,12 @@ async function init() {
     if (game.type === 'practice') {
       alert('Practice events cannot be tracked.');
       window.location.href = `edit-schedule.html#teamId=${teamId}`;
+      return;
+    }
+
+    if (team?.delegatedAccess?.scorekeeping !== true) {
+      alert('You do not have scorekeeping access for this game.');
+      window.location.href = `team.html#teamId=${teamId}`;
       return;
     }
 

@@ -1,6 +1,6 @@
-import { checkAuth } from './auth.js?v=4433164';
+import { checkAuth } from './auth.js?v=4433165';
 import {
-    getTeam,
+    getDelegatedTeamContext,
     getTeamMediaFolders,
     getTeamMediaItemsPage,
     createTeamMediaFolder,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=4433162';
+} from './db.js?v=4433163';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -808,7 +808,7 @@ checkAuth(async (user) => {
     }
 
     try {
-        state.team = await getTeam(state.teamId, { includeInactive: true });
+        state.team = await getDelegatedTeamContext(state.teamId, null, { includeInactive: true });
         state.team.id = state.team.id || state.teamId;
         state.canManage = canManageTeamMedia(user, state.team);
         state.canContribute = canContributeTeamMedia(user, state.team);

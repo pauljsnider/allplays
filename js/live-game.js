@@ -1,5 +1,5 @@
 import {
-  getTeam,
+  getGameDayTeamContext,
   getGame,
   getPlayers,
   subscribeLiveEvents,
@@ -17,12 +17,12 @@ import {
   updateGame,
   uploadGameClip,
   deleteUploadedMediaObjects
-} from './db.js?v=4433162';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443338';
+} from './db.js?v=4433163';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=443339';
 import { hasFullTeamAccess } from './team-access.js?v=44338';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=4433164';
+import { checkAuth } from './auth.js?v=4433165';
 import { isViewerChatEnabled } from './live-game-chat.js?v=2';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -38,7 +38,7 @@ import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=3';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=15';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=16';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=5';
 import { createSafeImageElement, resolveSafeProfilePhotoUrl, resolveSafeProfilePhotoWriteUrl } from './safe-image-url.js?v=1';
@@ -277,7 +277,7 @@ function updateShareButton() {
 }
 
 function canAttachScoreLinkedClips() {
-  return hasFullTeamAccess(state.user, state.team);
+  return state.team?.delegatedAccess?.full === true || hasFullTeamAccess(state.user, state.team);
 }
 
 function renderAnnouncerControls() {
@@ -2826,7 +2826,7 @@ async function init() {
     });
     [team, game, players, configs] = await Promise.all([
       // Replay/live links should still load team metadata for inactive teams.
-      getTeam(state.teamId, { includeInactive: true }),
+      getGameDayTeamContext(state.teamId, state.gameId, { includeInactive: true }),
       getGame(state.teamId, state.gameId),
       playersPromise,
       getConfigs(state.teamId)

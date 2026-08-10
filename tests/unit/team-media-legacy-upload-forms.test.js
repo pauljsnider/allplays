@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../..');
 
 const mocks = vi.hoisted(() => ({
-    getTeam: vi.fn(),
+    getDelegatedTeamContext: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItemsPage: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
@@ -17,8 +17,8 @@ const mocks = vi.hoisted(() => ({
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433162', () => ({
-    getTeam: mocks.getTeam,
+vi.mock('../../js/db.js?v=4433163', () => ({
+    getDelegatedTeamContext: mocks.getDelegatedTeamContext,
     getTeamMediaFolders: mocks.getTeamMediaFolders,
     getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
     createTeamMediaFolder: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock('../../js/db.js?v=4433162', () => ({
     updateTeamMediaItem: vi.fn()
 }));
 
-vi.mock('../../js/auth.js?v=4433164', () => ({
+vi.mock('../../js/auth.js?v=4433165', () => ({
     checkAuth: mocks.checkAuth
 }));
 
@@ -77,7 +77,7 @@ describe('legacy team media upload forms', () => {
             email: 'media@example.com',
             teamMediaUploadTeamIds: ['team123']
         }));
-        mocks.getTeam.mockResolvedValue({
+        mocks.getDelegatedTeamContext.mockResolvedValue({
             id: 'team123',
             name: 'Test Team',
             ownerId: 'owner123',

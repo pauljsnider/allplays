@@ -754,7 +754,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443338'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443339'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -1086,6 +1086,34 @@ export async function getTeam(teamId, options = {}) {
             }
             throw projectionError;
         }
+    }
+}
+
+export async function getDelegatedTeamContext(teamId, gameId = null, options = {}) {
+    const includeInactive = options.includeInactive === true;
+    const callable = httpsCallable(functions, 'getDelegatedTeamContext');
+    const response = await callable({
+        teamId,
+        ...(gameId ? { gameId } : {})
+    });
+    const team = response?.data?.item || null;
+    if (!team || (!includeInactive && !isTeamActive(team))) return null;
+    return team;
+}
+
+export async function getGameDayTeamContext(teamId, gameId = null, options = {}) {
+    try {
+        return await getDelegatedTeamContext(teamId, gameId, options);
+    } catch (error) {
+        const code = String(error?.code || '');
+        if (!['functions/permission-denied', 'permission-denied', 'functions/unauthenticated', 'unauthenticated'].includes(code)) {
+            throw error;
+        }
+        const callable = httpsCallable(functions, 'getPublicTeamProfile');
+        const response = await callable({ teamId });
+        const team = response?.data?.item || null;
+        if (!team || (!options.includeInactive && !isTeamActive(team))) return null;
+        return team;
     }
 }
 

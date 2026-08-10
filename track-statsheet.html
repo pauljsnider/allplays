@@ -198,12 +198,12 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433162';
+    import { getGameDayTeamContext, getGame, getPlayers, getConfigs, collection, getDocs, uploadStatSheetPhoto, deleteUploadedMediaObjects } from './js/db.js?v=4433163';
     import { db } from './js/firebase.js?v=22';
     import { writeBatch, doc, setDoc } from './js/firebase.js?v=22';
-    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443338';
-    import { checkAuth } from './js/auth.js?v=4433164';
-    import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443320';
+    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=443339';
+    import { checkAuth } from './js/auth.js?v=4433165';
+    import { renderTeamAdminBanner } from './js/team-admin-banner.js?v=443321';
     import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=11';
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=5';
     import { getApp } from './js/vendor/firebase-app.js';
@@ -249,7 +249,7 @@
       currentGameId = gameId;
 
       const [team, game, players] = await Promise.all([
-        getTeam(teamId),
+        getGameDayTeamContext(teamId, gameId),
         getGame(teamId, gameId),
         getPlayers(teamId)
       ]);
@@ -263,6 +263,12 @@
       if (game.type === 'practice') {
         alert('Practice events cannot be tracked.');
         window.location.href = `edit-schedule.html#teamId=${teamId}`;
+        return;
+      }
+
+      if (team?.delegatedAccess?.scorekeeping !== true) {
+        alert('You do not have scorekeeping access for this game.');
+        window.location.href = `team.html#teamId=${teamId}`;
         return;
       }
 
@@ -995,7 +1001,7 @@ Write the match report now:`;
       try {
         if (summaryText) {
           status.textContent = 'Saving summary…';
-          const { updateGame } = await import('./js/db.js?v=4433162');
+          const { updateGame } = await import('./js/db.js?v=4433163');
           await updateGame(currentTeamId, currentGameId, { summary: summaryText });
           status.textContent = 'Summary saved!';
         }

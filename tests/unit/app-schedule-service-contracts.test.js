@@ -577,7 +577,10 @@ describe('React app schedule service contract integration', () => {
         expect(targetedSource).toContain('loadGameById(teamId, eventId)');
         expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
         expect(targetedSource).toContain('createScheduleEvent({');
-        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
+        expect(detailSource).toContain('const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;');
+        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(');
+        expect(detailSource).toContain('delegatedTeamContext');
+        expect(detailSource).toContain('if (!events.length && !delegatedTeamContext)');
         expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, {');
         expect(detailSource).toContain('includePastGames: true,');
         expect(detailSource).toContain('onSourcePartial: () => {');

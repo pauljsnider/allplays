@@ -13,7 +13,8 @@ function createScenario(overrides = {}) {
         team: {
             id: 'team-1',
             name: 'Comets',
-            sport: 'Basketball'
+            sport: 'Basketball',
+            delegatedAccess: { scorekeeping: true }
         },
         game: {
             id: 'game-1',
@@ -168,7 +169,16 @@ async function installModuleMocks(page) {
             return createSnapshot([]);
         }
 
+        export async function getGameDayTeamContext() {
+            window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
+            return clone(loadStore().team);
+        }
+
         export async function getTeam() {
+            window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+            if (window.location.pathname.endsWith('/track-statsheet.html')) {
+                throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
+            }
             return clone(loadStore().team);
         }
 
@@ -725,6 +735,10 @@ test('defers score and side controls until statsheet analysis completes', async 
     await page.goto(buildUrl(baseURL, '/track-statsheet.html#teamId=team-1&gameId=game-1'), {
         waitUntil: 'domcontentloaded'
     });
+
+    await expect(page.locator('#game-title')).toHaveText('vs. Rockets');
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
 
     await expect(page.locator('#home-score-input')).toBeHidden();
     await expect(page.locator('#visitor-score-input')).toBeHidden();

@@ -54,6 +54,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getRsvpBreakdownByPlayer: vi.fn(),
   getRsvps: vi.fn(),
   getRsvpSummaries: vi.fn(),
+  getDelegatedTeamContext: vi.fn(),
   getTeam: vi.fn(),
   getTeams: vi.fn(),
   getStaffTeams: vi.fn(),
@@ -230,7 +231,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -1688,6 +1689,119 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe('delegated schedule event authorization', () => {
+  const delegatedUser = { uid: 'helper-1', email: 'helper@example.com', roles: [] } as any;
+  const scheduledGame = {
+    id: 'game-1',
+    type: 'game',
+    date: new Date('2026-08-15T18:00:00.000Z'),
+    opponent: 'Wolves',
+    status: 'scheduled'
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(getGame).mockResolvedValue(scheduledGame as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+  });
+
+  it('loads only the requested game for an exact scorekeeping projection', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    const result = await loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'game-1', teamId: 'team-1', opponent: 'Wolves' })
+    ]);
+  });
+
+  it.each(['media', 'videography', 'streaming'] as const)(
+    'does not promote a %s-only projection to schedule access',
+    async (capability) => {
+      vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+        id: 'team-1',
+        name: 'Falcons',
+        delegatedAccess: { [capability]: true }
+      } as any);
+
+      await expect(loadParentScheduleEventDetail(delegatedUser, {
+        teamId: 'team-1',
+        eventId: 'game-1',
+        hydrateDetails: false,
+        expandStaffPlayers: false
+      })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+      expect(getGame).not.toHaveBeenCalled();
+      expect(getTeam).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not use delegated access for an unscoped team schedule request', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-1',
+      name: 'Falcons',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    await expect(loadParentSchedule(delegatedUser, {
+      targetTeamId: 'team-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getDelegatedTeamContext).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mismatched team projection before loading the requested game', async () => {
+    vi.mocked(getDelegatedTeamContext).mockResolvedValue({
+      id: 'team-2',
+      name: 'Other Team',
+      delegatedAccess: { scorekeeping: true }
+    } as any);
+
+    await expect(loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getGame).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the exact-game projection is revoked or terminal', async () => {
+    vi.mocked(getDelegatedTeamContext).mockRejectedValue(
+      Object.assign(new Error('No current delegated team access was found.'), { code: 'permission-denied' })
+    );
+
+    await expect(loadParentScheduleEventDetail(delegatedUser, {
+      teamId: 'team-1',
+      eventId: 'game-finished',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })).rejects.toThrow('You do not have permission to load this team schedule.');
+
+    expect(getDelegatedTeamContext).toHaveBeenCalledWith('team-1', 'game-finished');
+    expect(getGame).not.toHaveBeenCalled();
   });
 });
 

@@ -10,8 +10,14 @@ function createScenario(overrides = {}) {
             id: 'team-1',
             name: 'Comets',
             sport: 'Basketball',
-            ownerId: 'coach-1',
-            adminEmails: ['coach@example.com'],
+            isDelegatedTeamContext: true,
+            delegatedAccess: {
+                full: false,
+                scorekeeping: true,
+                videography: false,
+                streaming: false,
+                media: false
+            },
             teamPermissions: {
                 scorekeeping: {
                     mode: 'selected',
@@ -59,8 +65,15 @@ async function installModuleMocks(page) {
             return JSON.parse(JSON.stringify(value));
         }
 
-        export async function getTeam() {
+        export async function getGameDayTeamContext() {
+            window.__DELEGATED_TEAM_CONTEXT_COUNT__ = (window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0) + 1;
+            if (loadStore().delegatedContextError) throw new Error('Delegated context unavailable');
             return clone(loadStore().team);
+        }
+
+        export async function getTeam() {
+            window.__CANONICAL_TEAM_READ_COUNT__ = (window.__CANONICAL_TEAM_READ_COUNT__ || 0) + 1;
+            throw Object.assign(new Error('Canonical team read denied'), { code: 'permission-denied' });
         }
 
         export async function getGame() {
@@ -255,6 +268,8 @@ async function openGameDay(page, baseURL) {
     });
     await expect(page.getByText('Scorekeeping access')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Open scorekeeper' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
 }
 
 async function expectManagementControlsHidden(page) {
@@ -308,6 +323,17 @@ test('delegated non-basketball scorekeeper opens standard tracker', async ({ pag
 
     await page.getByRole('link', { name: 'Open scorekeeper' }).click();
     await expect(page).toHaveURL(/\/track\.html#teamId=team-1&gameId=game-1$/);
+});
+
+test('delegated projection failure does not fall back to a canonical team read', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario({ delegatedContextError: true }));
+    await page.goto(buildUrl(baseURL, '/game-day.html#teamId=team-1&gameId=game-1'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.getByText('Failed to load game data: Delegated context unavailable')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__DELEGATED_TEAM_CONTEXT_COUNT__ || 0)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__CANONICAL_TEAM_READ_COUNT__ || 0)).toBe(0);
 });
 
 test('limited streaming access receives successive broadcast lease snapshots', async ({ page, baseURL }) => {
