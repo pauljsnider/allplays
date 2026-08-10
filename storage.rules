@@ -212,6 +212,13 @@ service firebase.storage {
           request.auth.uid in teamPermission(teamId, 'scorekeeping').get('memberIds', [])));
     }
 
+    function canVideographStorageGame(teamId, gameId) {
+      return isSignedIn() &&
+        isScorekeeperVisibleStorageGame(teamId, gameId) &&
+        (isTeamOwnerOrAdmin(teamId) ||
+         request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', []));
+    }
+
     function isAllowedCertificateImageUpload(contentType, size) {
       return size > 0 &&
         size <= 5 * 1024 * 1024 &&
@@ -371,11 +378,10 @@ service firebase.storage {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
       allow create: if isVerifiedForSensitiveWrite() &&
-        canAccessTeamMedia(teamId) &&
+        canVideographStorageGame(teamId, gameId) &&
         request.auth.uid == userId &&
-        gameId.size() > 0 &&
         request.resource.size > 0 &&
-        request.resource.size <= 100 * 1024 * 1024 &&
+        request.resource.size <= 50 * 1024 * 1024 &&
         request.resource.contentType.matches('video/.*');
       allow delete: if isVerifiedForSensitiveWrite() &&
         (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));

@@ -1064,9 +1064,13 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
     assertIncludes(storageRules, 'function isVerifiedForSensitiveWrite()', 'Staged Storage verified-email policy helper');
-    assertIncludes(storageRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
-    assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
-    assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+    assertIncludes(storageRules, 'function canVideographStorageGame(teamId, gameId)', 'Game-scoped Storage videography helper');
+    assertIncludes(storageRules, "request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', [])", 'Selected Storage videographer authorization');
+    assertIncludes(clipFallbackRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        canVideographStorageGame(teamId, gameId) &&', 'Scoped Storage game clip create rules');
+    assertIncludes(clipFallbackRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
+    assertIncludes(clipFallbackRules, 'request.resource.size > 0', 'Scoped Storage nonempty game clip rules');
+    assertIncludes(clipFallbackRules, 'request.resource.size <= 50 * 1024 * 1024', 'Scoped Storage game clip size rules');
+    assertIncludes(clipFallbackRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');

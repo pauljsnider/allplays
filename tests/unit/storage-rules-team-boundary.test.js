@@ -45,6 +45,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                         scorekeeping: {
                             mode: 'selected',
                             memberIds: ['selected-scorekeeper']
+                        },
+                        videography: {
+                            mode: 'selected',
+                            memberIds: ['selected-videographer']
                         }
                     }
                 });
@@ -93,6 +97,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 });
                 await firestore.doc('teams/team-a/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
                 await firestore.doc('teams/team-a/games/cancelled-game').set({ status: 'cancelled', liveStatus: 'scheduled' });
+                await firestore.doc('teams/team-a/games/deleted-game').set({ status: 'scheduled', liveStatus: 'deleted' });
                 await firestore.doc('teams/team-confirmed/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
                 await firestore.doc('teams/team-confirmed/games/game-b').set({ status: 'scheduled', liveStatus: 'live' });
                 await firestore.doc('teams/team-confirmed/games/game-a/rsvps/confirmed-scorekeeper').set({ response: 'going' });
@@ -218,6 +223,86 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 { contentType: 'image/jpeg' }
             ));
         }, 30000);
+
+        it('allows managers and selected videographers to upload game clips through the exact 50 MB boundary', async () => {
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const adminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+            const videographerStorage = testEnv.authenticatedContext('selected-videographer', {
+                email: 'videographer@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertSucceeds(ownerStorage.ref('game-clips/team-a/game-a/owner-a/owner.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertSucceeds(adminStorage.ref('game-clips/team-a/game-a/admin-a/admin.webm').put(
+                new Uint8Array([1]),
+                { contentType: 'video/webm' }
+            ));
+            await assertSucceeds(videographerStorage.ref('game-clips/team-a/game-a/selected-videographer/boundary.mp4').put(
+                new Uint8Array(50 * 1024 * 1024),
+                { contentType: 'video/mp4' }
+            ));
+        }, 60000);
+
+        it('denies unauthorized and cross-boundary game clip uploads', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const outsiderStorage = testEnv.authenticatedContext('outsider', {
+                email: 'outsider@example.com',
+                email_verified: true
+            }).storage();
+            const videographerStorage = testEnv.authenticatedContext('selected-videographer', {
+                email: 'videographer@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertFails(parentStorage.ref('game-clips/team-a/game-a/member-a/parent.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(outsiderStorage.ref('game-clips/team-a/game-a/outsider/outsider.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/missing-game/selected-videographer/missing.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/cancelled-game/selected-videographer/cancelled.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/deleted-game/selected-videographer/deleted.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/game-a/another-user/mismatched.mp4').put(
+                new Uint8Array([1]),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/game-a/selected-videographer/not-video.txt').put(
+                new Uint8Array([1]),
+                { contentType: 'text/plain' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/game-a/selected-videographer/empty.mp4').put(
+                new Uint8Array(0),
+                { contentType: 'video/mp4' }
+            ));
+            await assertFails(videographerStorage.ref('game-clips/team-a/game-a/selected-videographer/oversized.mp4').put(
+                new Uint8Array((50 * 1024 * 1024) + 1),
+                { contentType: 'video/mp4' }
+            ));
+        }, 60000);
 
         it('allows only the signed-in profile owner or linked player editor to upload profile photos', async () => {
             const memberStorage = testEnv.authenticatedContext('member-a', {
