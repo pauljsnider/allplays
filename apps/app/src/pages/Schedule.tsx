@@ -266,6 +266,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(nextEvents);
   }, []);
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
+    rsvpHydrationVersionRef.current += 1;
+    hydratedRsvpGroupKeysRef.current.clear();
     childrenRef.current = data.children;
     eventsRef.current = data.events;
     staffTeamsRef.current = data.staffTeams ?? [];
@@ -375,11 +377,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
 
     const mergeHydratedEvents = (hydratedEvents: ParentScheduleEvent[]) => {
-      if (hydrationVersion !== rsvpHydrationVersionRef.current || auth.user?.uid !== user.uid) return;
+      const mergedEventKeys = new Set<string>();
+      if (hydrationVersion !== rsvpHydrationVersionRef.current || auth.user?.uid !== user.uid) return mergedEventKeys;
       const hydratedByKey = new Map(hydratedEvents.map((event) => [event.eventKey, event]));
       updateScheduleEvents((current) => current.map((event) => {
         if (pendingRsvpEventKeysRef.current.has(event.eventKey)) return event;
         const hydrated = hydratedByKey.get(event.eventKey);
+        if (hydrated) mergedEventKeys.add(event.eventKey);
         return hydrated
           ? {
               ...event,
@@ -389,6 +393,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             }
           : event;
       }));
+      return mergedEventKeys;
     };
 
     const hydrationPromise = hydrateParentScheduleRsvps(
@@ -396,8 +401,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
       user,
       { onProgress: mergeHydratedEvents }
     ).then((hydrated) => {
-      mergeHydratedEvents(hydrated.events);
-      rsvpEvents.forEach((event) => hydratedRsvpGroupKeysRef.current.add(`${event.teamId}::${event.id}`));
+      const mergedEventKeys = mergeHydratedEvents(hydrated.events);
+      const requestedGroups = new Map<string, ParentScheduleEvent[]>();
+      rsvpEvents.forEach((event) => {
+        const groupKey = `${event.teamId}::${event.id}`;
+        requestedGroups.set(groupKey, [...(requestedGroups.get(groupKey) || []), event]);
+      });
+      requestedGroups.forEach((groupEvents, groupKey) => {
+        if (groupEvents.every((event) => mergedEventKeys.has(event.eventKey))) {
+          hydratedRsvpGroupKeysRef.current.add(groupKey);
+        }
+      });
     })
       .catch((error) => {
         logger.warn('Unable to hydrate schedule RSVPs in the background.', { error });

@@ -537,6 +537,76 @@ describe('Schedule', () => {
     expect(scopedEvents.every((event: ParentScheduleEvent) => event.teamId === 'team-2')).toBe(true);
   });
 
+  it('retries a filtered RSVP hydration after its stale result is discarded', async () => {
+    const schedule = {
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Hawks' }
+      ],
+      events: [
+        buildScheduleEvent(1),
+        buildScheduleEvent(2, {
+          eventKey: 'team-2::event-2::player-2',
+          teamId: 'team-2',
+          teamName: 'Hawks',
+          childId: 'player-2',
+          childName: 'Sam'
+        })
+      ]
+    };
+    const hydrationResolvers: Array<(value: typeof schedule) => void> = [];
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    scheduleServiceMocks.hydrateParentScheduleRsvps
+      .mockImplementation(async (hydrationSchedule: typeof schedule) => hydrationSchedule)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        hydrationResolvers.push(resolve);
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        hydrationResolvers.push(resolve);
+      }));
+
+    renderSchedule('/schedule?teamId=team-1');
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-2' } });
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+
+    await act(async () => hydrationResolvers[1]?.(schedule));
+    await act(async () => hydrationResolvers[0]?.(schedule));
+    fireEvent.change(screen.getByLabelText('Team filter'), { target: { value: 'team-1' } });
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(3));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[2]?.[0] as any).events).toEqual([
+      expect.objectContaining({ teamId: 'team-1', id: 'event-1' })
+    ]);
+  });
+
+  it('hydrates an unhydrated same-key event again after a schedule refresh', async () => {
+    const initialSchedule = {
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1)]
+    };
+    const refreshedSchedule = {
+      ...initialSchedule,
+      events: [buildScheduleEvent(1, { myRsvpNoteHydrated: false })]
+    };
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(initialSchedule)
+      .mockResolvedValueOnce(refreshedSchedule);
+
+    renderSchedule();
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh schedule' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedule' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events).toEqual([
+      expect.objectContaining({ eventKey: initialSchedule.events[0].eventKey })
+    ]);
+  });
+
   it('waits for RSVP hydration before preselecting only unanswered bulk events', async () => {
     const schedule = {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
