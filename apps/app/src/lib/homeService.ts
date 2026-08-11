@@ -1,4 +1,3 @@
-import { listParentTeamFeeRecipients } from './adapters/legacyHomeFees';
 import { normalizeParentFeeRecord } from './adapters/legacyHomeFees';
 import { loadChatInbox } from './chatService';
 import { startUxTimer } from './uxTiming';
@@ -15,6 +14,7 @@ import {
   loadCachedAppData
 } from './appDataCache';
 import { toAppServiceError } from './appErrors';
+import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -64,7 +64,7 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
     loadChatInbox(user).then(requireCompleteChatInbox).catch((error) => {
       throw toAppServiceError(error, 'Unable to load Home chat.');
     }),
-    Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
+    listParentTeamFeeRecipientsForApp(user.uid, schedule.children).catch((error) => {
       throw toAppServiceError(error, 'Unable to load Home fees.');
     })
   ]);
@@ -256,7 +256,7 @@ export async function loadParentHomeWithSecondaryData(
         logger.warn('Chat inbox failed.', { error: appError });
         throw appError;
       }),
-      Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
+      listParentTeamFeeRecipientsForApp(user.uid, children).then((rawFees) => {
         const nextFees = (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
         emit({ fees: nextFees });
         return nextFees;

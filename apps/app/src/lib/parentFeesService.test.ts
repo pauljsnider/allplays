@@ -5,7 +5,6 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
     formatParentFeeDueDate: vi.fn(() => 'Aug 15, 2026'),
     getParentFeeStatusMeta: vi.fn(() => ({ label: 'Unpaid' })),
     initiateTeamFeeCheckout: vi.fn(),
-    listParentTeamFeeRecipients: vi.fn(),
     normalizeParentFeeRecord: vi.fn((fee: any) => ({
         ...fee,
         checkoutUrl: fee.checkoutUrl || fee.checkoutURL || fee.paymentLink || fee.paymentLinkUrl || fee.paymentUrl || ''
@@ -13,7 +12,12 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
     sortParentFeeRecords: vi.fn((fees: any[]) => fees)
 }));
 
+const parentFeeRecipientMocks = vi.hoisted(() => ({
+    listParentTeamFeeRecipientsForApp: vi.fn()
+}));
+
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
+vi.mock('./parentFeeRecipientsService', () => parentFeeRecipientMocks);
 
 import { initiateParentTeamFeeCheckout, loadParentFeesForApp } from './parentFeesService';
 
@@ -36,12 +40,12 @@ function payableFee(overrides: Record<string, unknown> = {}) {
 describe('parentFeesService checkout destinations', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
+        parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([]);
     });
 
     it('regenerates even a trusted stored Stripe destination through the same-payer callable', async () => {
         const checkoutUrl = 'https://checkout.stripe.com/c/pay/session-1';
-        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
+        parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([
             payableFee({ checkoutUrl })
         ]);
 
@@ -62,7 +66,7 @@ describe('parentFeesService checkout destinations', () => {
         ['non-Stripe', 'https://checkout.stripe.com.attacker.example/c/pay/lookalike'],
         ['explicit-port', 'https://checkout.stripe.com:8443/c/pay/nonstandard-port']
     ])('scrubs a %s stored destination and selects regeneration', async (_caseName, checkoutUrl) => {
-        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
+        parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([
             payableFee({ checkoutUrl })
         ]);
 
@@ -77,7 +81,7 @@ describe('parentFeesService checkout destinations', () => {
     });
 
     it('selects regeneration when an online fee has no stored destination', async () => {
-        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([payableFee()]);
+        parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([payableFee()]);
 
         const [fee] = await loadParentFeesForApp(user);
 
@@ -90,7 +94,7 @@ describe('parentFeesService checkout destinations', () => {
     });
 
     it('preserves due-date metadata while sanitizing the checkout destination', async () => {
-        legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
+        parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([
             payableFee({
                 dueDate: '2026-08-15',
                 checkoutUrl: 'https://attacker.example/checkout'
@@ -111,7 +115,7 @@ describe('parentFeesService checkout destinations', () => {
         'removes a rejected %s alias from the returned record',
         async (field) => {
             const rejectedUrl = 'https://attacker.example/checkout';
-            legacyParentToolsMocks.listParentTeamFeeRecipients.mockResolvedValue([
+            parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([
                 payableFee({ [field]: rejectedUrl })
             ]);
 

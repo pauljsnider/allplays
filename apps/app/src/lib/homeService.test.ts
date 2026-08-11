@@ -19,7 +19,12 @@ const feesMocks = vi.hoisted(() => ({
 
 vi.mock('./chatService', () => chatServiceMocks);
 vi.mock('./scheduleService', () => scheduleServiceMocks);
-vi.mock('./adapters/legacyHomeFees', () => feesMocks);
+vi.mock('./adapters/legacyHomeFees', () => ({
+    normalizeParentFeeRecord: feesMocks.normalizeParentFeeRecord
+}));
+vi.mock('./parentFeeRecipientsService', () => ({
+    listParentTeamFeeRecipientsForApp: feesMocks.listParentTeamFeeRecipients
+}));
 vi.mock('./uxTiming', () => ({
     startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));

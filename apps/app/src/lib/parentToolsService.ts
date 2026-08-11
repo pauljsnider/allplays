@@ -42,7 +42,6 @@ import {
   listCertificatesForPlayer,
   listFamilyShareTokens,
   listMyParentMembershipRequests,
-  listParentTeamFeeRecipients,
   listPublishedTeamRegistrationForms,
   listTeamRegistrationReviews,
   listTeamRegistrationReviewsPage,
@@ -67,6 +66,7 @@ import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { canonicalizeAppAcceptInviteUrl } from './inviteUrls';
 import { formatCurrencyFromCents as formatCurrency } from './money';
 import { requireTrustedStripeCheckoutUrl } from './stripeCheckoutUrl';
+import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleLocationLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -412,7 +412,7 @@ export async function submitParentAccessRequest(teamId: string, playerId: string
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
   if (!user?.uid) return [];
-  const rawFees = await Promise.resolve(listParentTeamFeeRecipients(user.uid, user.parentOf || []));
+  const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
   return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 

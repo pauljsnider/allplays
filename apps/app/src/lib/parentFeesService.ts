@@ -3,10 +3,10 @@ import {
     formatParentFeeDueDate,
     getParentFeeStatusMeta,
     initiateTeamFeeCheckout,
-    listParentTeamFeeRecipients,
     normalizeParentFeeRecord,
     sortParentFeeRecords
 } from './adapters/legacyParentTools';
+import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
 import type { AuthUser } from './types';
 
 export type ParentFeeAppRecord = Record<string, any> & {
@@ -30,7 +30,7 @@ export type ParentFeeAppRecord = Record<string, any> & {
 
 export async function loadParentFeesForApp(user: AuthUser | null): Promise<ParentFeeAppRecord[]> {
     if (!user?.uid) return [];
-    const rawFees = await Promise.resolve(listParentTeamFeeRecipients(user.uid, user.parentOf || []));
+    const rawFees = await listParentTeamFeeRecipientsForApp(user.uid, user.parentOf || []);
     return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
 }
 
