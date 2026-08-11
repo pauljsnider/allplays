@@ -816,6 +816,27 @@ describe('Schedule', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
   });
 
+  it('opens a query-requested bulk RSVP after the initial schedule load completes', async () => {
+    const schedule = {
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1), buildScheduleEvent(2)]
+    };
+    let finishSchedule!: (value: typeof schedule) => void;
+    scheduleServiceMocks.loadParentSchedule.mockImplementationOnce(() => new Promise((resolve) => {
+      finishSchedule = resolve;
+    }));
+
+    renderSchedule('/schedule?bulkRsvp=1');
+
+    expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull();
+    await waitFor(() => expect(typeof finishSchedule).toBe('function'));
+
+    act(() => finishSchedule(schedule));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(within(dialog).getByText('2 selected')).toBeTruthy();
+  });
+
   it.each([
     ['/schedule?teamId=team-2&bulkRsvp=1', { Sam: 2, Jordan: 1, Pat: 0 }],
     ['/schedule?playerId=player-2&bulkRsvp=1', { Sam: 2, Jordan: 0, Pat: 0 }]
