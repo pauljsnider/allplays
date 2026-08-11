@@ -202,6 +202,11 @@ describe('React app social service', () => {
                 title: 'Pat Star highlight',
                 caption: 'Great hustle.',
                 route: '/players/team-1/player-1',
+                href: null,
+                snapshot: expect.objectContaining({
+                    route: '/players/team-1/player-1',
+                    href: null
+                }),
                 visibleUserIds: ['user-1', 'friend-1'],
                 media: [expect.objectContaining({ url: 'https://img.example.test/post.png' })],
                 reactionCounts: {},
@@ -209,6 +214,56 @@ describe('React app social service', () => {
                 hidden: false
             })
         );
+    });
+
+    it.each([
+        ['an external route', { route: 'https://example.invalid/source' }],
+        ['a protocol-relative route', { route: '//example.invalid/source' }],
+        ['a backslash route', { route: '/\\example.invalid/source' }],
+        ['a control-character route', { route: '/teams/team-1\nnext' }],
+        ['an external href', { route: '/teams/team-1', href: 'https://example.invalid/source' }],
+        ['a non-web href', { route: '/teams/team-1', href: 'mailto:team@example.invalid' }]
+    ])('rejects %s before writing a social post', async (_label, navigation) => {
+        const { createSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await expect(createSocialPost(user, {
+            type: 'team_media',
+            visibility: 'team',
+            title: 'Team update',
+            teamId: 'team-1',
+            ...navigation
+        })).rejects.toThrow('navigation');
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
+    it('fails legacy stored navigation closed while preserving the social post', async () => {
+        const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'socialPosts') {
+                return snapshot([{
+                    id: 'legacy-post',
+                    authorId: 'friend-1',
+                    title: 'Legacy team update',
+                    route: '//example.invalid/source',
+                    href: 'mailto:team@example.invalid',
+                    createdAt: { seconds: 4102444800 },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                }]);
+            }
+            return snapshot([]);
+        });
+
+        const posts = await loadVisibleSocialPosts(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(posts).toEqual([
+            expect.objectContaining({ id: 'legacy-post', title: 'Legacy team update', route: null, href: null })
+        ]);
     });
 
     it('writes deterministic friendship records and request decisions', async () => {

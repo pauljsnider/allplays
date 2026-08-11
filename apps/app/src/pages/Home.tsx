@@ -98,6 +98,7 @@ import type { AuthState } from '../lib/types';
 import { OpportunityCard } from '../components/OpportunityCard';
 import { listPublicOpportunities } from '../lib/opportunityService';
 import type { PublicOpportunity } from '../lib/opportunityLogic';
+import { getSafeSocialPostRoute } from '../lib/socialNavigation';
 
 type HomeSectionId = 'today' | 'feed' | 'players' | 'teams' | 'friends';
 
@@ -1224,8 +1225,7 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
 }
 
 function SocialFeedMini({ item }: { item: SocialFeedItem }) {
-  const href = item.route || item.href || '/home?section=feed';
-  const isExternal = Boolean(item.href && !item.route);
+  const href = getSafeSocialPostRoute(item.route, item.href);
   const content = (
     <>
       <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-gray-950 text-white">
@@ -1235,17 +1235,17 @@ function SocialFeedMini({ item }: { item: SocialFeedItem }) {
         <span className="block truncate text-sm font-black text-gray-950">{item.title}</span>
         <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{item.detail}</span>
       </span>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      {href ? <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" /> : null}
     </>
   );
-  return isExternal ? (
-    <a href={href} target="_blank" rel="noreferrer" className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200">
-      {content}
-    </a>
-  ) : (
+  return href ? (
     <Link to={href} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200">
       {content}
     </Link>
+  ) : (
+    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3">
+      {content}
+    </div>
   );
 }
 
@@ -1433,8 +1433,7 @@ function SocialFeedCard({
   const inFlightActionsRef = useRef(new Set<string>());
   const canPersist = Boolean(auth.user?.uid);
   const isAuthor = item.authorId === auth.user?.uid;
-  const primaryHref = item.route || item.href || '';
-  const isExternal = Boolean(item.href && !item.route);
+  const primaryHref = getSafeSocialPostRoute(item.route, item.href);
 
   useEffect(() => {
     setOptimisticItem(item);
@@ -1552,17 +1551,10 @@ function SocialFeedCard({
       <div className="border-t border-gray-100 bg-gray-50 p-3">
         <div className="flex flex-wrap items-center gap-2">
           {primaryHref ? (
-            isExternal ? (
-              <a href={primaryHref} target="_blank" rel="noreferrer" className="ghost-button !min-h-9 !px-3 text-xs">
-                Open source
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </a>
-            ) : (
-              <Link to={primaryHref} className="ghost-button !min-h-9 !px-3 text-xs">
-                Open source
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </Link>
-            )
+            <Link to={primaryHref} className="ghost-button !min-h-9 !px-3 text-xs">
+              Open source
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           ) : null}
           <button
             type="button"

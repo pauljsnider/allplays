@@ -989,6 +989,57 @@ describe('Home', () => {
     expect(screen.getByRole('button', { name: 'Create a post' })).toBeTruthy();
   });
 
+  it('keeps legacy posts visible but omits unsafe source actions in feed cards', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'unsafe-post',
+        title: 'Stored team update',
+        route: '//example.invalid/source',
+        href: 'mailto:team@example.invalid'
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByText('Stored team update')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open source' })).toBeNull();
+  });
+
+  it('keeps canonical app routes actionable in feed cards', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect((await screen.findByRole('link', { name: 'Open source' })).getAttribute('href'))
+      .toBe('/players/team-1/player-1');
+  });
+
+  it('omits unsafe source actions from Home feed previews', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{
+        ...baseFeedItem,
+        id: 'unsafe-preview',
+        title: 'Stored preview update',
+        route: '/\\example.invalid/source',
+        href: null
+      }],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth);
+
+    const title = await screen.findByText('Stored preview update');
+    expect(title.closest('a')).toBeNull();
+  });
+
   it('optimistically updates likes and blocks rapid double taps from writing twice', async () => {
     let resolveLike: () => void = () => {};
     socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
