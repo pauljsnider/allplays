@@ -17,6 +17,13 @@ export function getBulkRsvpCandidates(
   events: ParentScheduleEvent[],
   now = new Date()
 ) {
+  return getRsvpHydrationCandidates(events, now).slice(0, maxBulkRsvpEvents);
+}
+
+function getRsvpHydrationCandidates(
+  events: ParentScheduleEvent[],
+  now = new Date()
+) {
   const seenEventKeys = new Set<string>();
   return [...events]
     .filter((event) => (
@@ -31,8 +38,7 @@ export function getBulkRsvpCandidates(
       if (seenEventKeys.has(event.eventKey)) return false;
       seenEventKeys.add(event.eventKey);
       return true;
-    })
-    .slice(0, maxBulkRsvpEvents);
+    });
 }
 
 export function getScheduleRsvpHydrationTargets(
@@ -49,7 +55,10 @@ export function getScheduleRsvpHydrationTargets(
       visibleGroupKeys.add(getRsvpGroupKey(event));
     });
 
-  return getBulkRsvpCandidates(events).filter((event) => (
+  // Hydration is bounded by visible groups rather than rows. Keep every
+  // eligible sibling in a selected group even when that crosses the bulk
+  // launcher's row limit, so a shared event is never cached as partial.
+  return getRsvpHydrationCandidates(events).filter((event) => (
     visibleGroupKeys.has(getRsvpGroupKey(event))
     && !hydratedGroupKeys.has(getRsvpGroupKey(event))
   ));

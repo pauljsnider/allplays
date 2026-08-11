@@ -349,10 +349,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setRsvpHydrationPending(false);
       return;
     }
-    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${hydrateAll ? 'all' : visibleGroupLimit}`;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}::${hydrateAll ? 'all' : visibleGroupLimit}`;
     lastRsvpHydrationScopeRef.current = hydrationScopeKey;
     const hydrationVersion = ++rsvpHydrationVersionRef.current;
-    const scopedEvents = filterParentScheduleEvents(result.events, {
+    const groupEvents = filterParentScheduleEvents(result.events, {
+      filter: 'upcoming-all',
+      playerId: '',
+      teamId: selectedTeamId,
+      timeRange: 'all'
+    });
+    const playerScopedEvents = filterParentScheduleEvents(result.events, {
       filter: 'upcoming-all',
       playerId: selectedPlayerId,
       teamId: selectedTeamId,
@@ -365,8 +371,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
       timeRange
     });
     const rsvpEvents = getScheduleRsvpHydrationTargets(
-      scopedEvents,
-      hydrateAll ? scopedEvents : visibleEvents,
+      groupEvents,
+      hydrateAll ? playerScopedEvents : visibleEvents,
       hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
       hydratedRsvpGroupKeysRef.current
     );
@@ -383,7 +389,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       updateScheduleEvents((current) => current.map((event) => {
         if (pendingRsvpEventKeysRef.current.has(event.eventKey)) return event;
         const hydrated = hydratedByKey.get(event.eventKey);
-        if (hydrated) mergedEventKeys.add(event.eventKey);
+        if (hydrated?.myRsvpNoteHydrated === true) mergedEventKeys.add(event.eventKey);
         return hydrated
           ? {
               ...event,
@@ -756,7 +762,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     const user = auth.user;
     if (!user?.uid || !hasLoadedSchedule || scheduleReadLoading) return;
-    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${upcomingListPageSize}`;
+    const hydrationScopeKey = `${user.uid}::${selectedTeamId}::${selectedPlayerId}::${filter}::${timeRange}::${upcomingListPageSize}`;
     if (lastRsvpHydrationScopeRef.current === hydrationScopeKey) return;
     hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
@@ -765,7 +771,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     // The hydration helper intentionally reads the latest refs and owns its
     // stale-request guard. Filter changes are the only trigger needed here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, hasLoadedSchedule, scheduleReadLoading, selectedPlayerId, selectedTeamId]);
+  }, [auth.user?.uid, filter, hasLoadedSchedule, scheduleReadLoading, selectedPlayerId, selectedTeamId, timeRange]);
 
   useEffect(() => {
     if (filter === 'past-all' && hasLoadedSchedule) {

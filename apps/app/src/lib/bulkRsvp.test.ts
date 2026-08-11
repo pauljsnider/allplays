@@ -86,6 +86,22 @@ describe('bulk RSVP helpers', () => {
     ).map((row) => row.eventKey)).toEqual([second.eventKey]);
   });
 
+  it('keeps every sibling row when a visible group crosses the bulk row limit', () => {
+    const earlierEvents = Array.from({ length: maxBulkRsvpEvents }, (_, index) => event(index + 1));
+    const visible = event(60, { childId: 'player-1' });
+    const visibleSibling = event(60, {
+      eventKey: 'team-1::game-60::player-2',
+      childId: 'player-2',
+      childName: 'Player 2'
+    });
+
+    expect(getScheduleRsvpHydrationTargets(
+      [...earlierEvents, visible, visibleSibling],
+      [visible],
+      1
+    ).map((row) => row.eventKey)).toEqual([visible.eventKey, visibleSibling.eventKey]);
+  });
+
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
     const knownEmptyNote = event(1, { myRsvpNote: null, myRsvpNoteHydrated: true });
     const unknownNote = event(2, { myRsvpNote: null, myRsvpNoteHydrated: false });

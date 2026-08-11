@@ -496,6 +496,10 @@ describe('Schedule', () => {
   });
 
   it('hydrates RSVP rows again when a team filter moves beyond the global bulk limit', async () => {
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementation(async (schedule) => ({
+      ...schedule,
+      events: schedule.events.map((event) => ({ ...event, myRsvpNoteHydrated: true }))
+    }));
     const teamOneEvents = Array.from({ length: 50 }, (_, index) => buildScheduleEvent((index % 28) + 1, {
       id: `team-1-event-${index + 1}`,
       eventKey: `team-1::event-${index + 1}::player-1`,
@@ -538,6 +542,121 @@ describe('Schedule', () => {
     const scopedEvents = (scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[2]?.[0] as any).events;
     expect(scopedEvents).toHaveLength(2);
     expect(scopedEvents.every((event: ParentScheduleEvent) => event.teamId === 'team-2')).toBe(true);
+  });
+
+  it('hydrates newly visible groups when the event-type filter changes', async () => {
+    const games = Array.from({ length: 10 }, (_, index) => buildScheduleEvent(index + 1));
+    const practice = buildScheduleEvent(20, {
+      eventKey: 'team-1::practice-20::player-1',
+      id: 'practice-20',
+      type: 'practice',
+      title: 'Late practice'
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [...games, practice]
+    });
+
+    renderSchedule();
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events).toHaveLength(10);
+
+    fireEvent.change(screen.getByLabelText('Schedule filter'), { target: { value: 'upcoming-practices' } });
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events).toEqual([
+      expect.objectContaining({ id: 'practice-20' })
+    ]);
+  });
+
+  it('hydrates newly visible groups when the upcoming time range expands', async () => {
+    const nearDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const farDate = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    const nearEvent = buildScheduleEvent(1, { date: nearDate });
+    const farEvent = buildScheduleEvent(2, { date: farDate });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [nearEvent, farEvent]
+    });
+
+    renderSchedule('/schedule?range=week');
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events).toEqual([
+      expect.objectContaining({ eventKey: nearEvent.eventKey })
+    ]);
+
+    fireEvent.change(screen.getByLabelText('Schedule range'), { target: { value: 'quarter' } });
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events).toEqual([
+      expect.objectContaining({ eventKey: farEvent.eventKey })
+    ]);
+  });
+
+  it('hydrates all sibling rows before caching a player-filtered group', async () => {
+    const firstPlayer = buildScheduleEvent(1, { myRsvpNoteHydrated: false });
+    const secondPlayer = buildScheduleEvent(1, {
+      eventKey: 'team-1::event-1::player-2',
+      childId: 'player-2',
+      childName: 'Sam',
+      myRsvpNoteHydrated: false
+    });
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [firstPlayer, secondPlayer]
+    });
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockImplementationOnce(async (schedule) => ({
+      ...schedule,
+      events: schedule.events.map((event) => ({ ...event, myRsvpNoteHydrated: true }))
+    }));
+
+    renderSchedule('/schedule?playerId=player-1');
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[0]?.[0] as any).events.map(
+      (event: ParentScheduleEvent) => event.childId
+    )).toEqual(['player-1', 'player-2']);
+
+    fireEvent.change(screen.getByLabelText('Player filter'), { target: { value: 'player-2' } });
+    await act(async () => Promise.resolve());
+    fireEvent.change(screen.getByLabelText('Player filter'), { target: { value: '' } });
+    await act(async () => Promise.resolve());
+
+    expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cache a group when hydration resolves with incomplete sibling rows', async () => {
+    const firstPlayer = buildScheduleEvent(1, { myRsvpNoteHydrated: false });
+    const secondPlayer = buildScheduleEvent(1, {
+      eventKey: 'team-1::event-1::player-2',
+      childId: 'player-2',
+      childName: 'Sam',
+      myRsvpNoteHydrated: false
+    });
+    const schedule = {
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [firstPlayer, secondPlayer]
+    };
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(schedule);
+    scheduleServiceMocks.hydrateParentScheduleRsvps.mockResolvedValueOnce(schedule);
+
+    renderSchedule('/schedule?playerId=player-1');
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText('Player filter'), { target: { value: 'player-2' } });
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events.map(
+      (event: ParentScheduleEvent) => event.childId
+    )).toEqual(['player-1', 'player-2']);
   });
 
   it('retries a filtered RSVP hydration after its stale result is discarded', async () => {
