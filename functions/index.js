@@ -4,6 +4,11 @@ const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
 const { canProjectChatConversation } = require('./chat-conversation-access-core.cjs');
+const {
+  canReadSocialPostForCaller,
+  getNextSocialPostLikeState,
+  normalizeSocialPostId
+} = require('./social-post-mutations-core.cjs');
 const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
 const {
   createPublicProfileAuthDeleteHandler,
@@ -18421,6 +18426,90 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     items,
     isPartial: staffTeams.isPartial === true || chatTeamDiscoveryPartial || chatMetadataPartial
   };
+});
+
+exports.toggleSocialPostReaction = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to react to this post.');
+  }
+  await assertSensitiveEmailVerified(context, 'toggle-social-post-reaction');
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId || data?.reactionKey !== 'like') {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and like reaction are required.');
+  }
+  const caller = await getOpportunityCaller(context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reactionRef = firestore.doc(`socialPosts/${postId}/reactions/${caller.uid}`);
+  return firestore.runTransaction(async (transaction) => {
+    const postSnap = await transaction.get(postRef);
+    if (!postSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+    }
+    const post = postSnap.data() || {};
+    let canAccessTeam = false;
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam: false
+    })) {
+      const teamId = normalizeSocialPostId(post.teamId);
+      if (teamId) {
+        const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+        canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+      }
+    }
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam
+    })) {
+      throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+    }
+    const reactionSnap = await transaction.get(reactionRef);
+    let nextState;
+    try {
+      nextState = getNextSocialPostLikeState({
+        reactionExists: reactionSnap.exists,
+        currentCount: post.reactionCounts?.like
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('failed-precondition', error.message);
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    if (nextState.liked) {
+      transaction.set(reactionRef, {
+        userId: caller.uid,
+        reactionKey: 'like',
+        createdAt: now,
+        updatedAt: now
+      });
+    } else {
+      transaction.delete(reactionRef);
+    }
+    transaction.update(postRef, {
+      'reactionCounts.like': nextState.count,
+      updatedAt: now
+    });
+    return nextState;
+  });
+});
+
+exports.hideSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to hide this post.');
+  }
+  await assertSensitiveEmailVerified(context, 'hide-social-post');
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post is required.');
+  }
+  await firestore.doc(`users/${context.auth.uid}/hiddenSocialPosts/${postId}`).set({
+    postId,
+    hiddenAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return { hidden: true };
 });
 
 function normalizeParentFeePlayerLinks(user = {}) {

@@ -27,6 +27,7 @@ import { loadProfileDocument } from './profileService';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { isNativeRuntime } from './nativeRuntime';
+import { callNativeFirebaseFunction } from './nativeCallable';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
 import { getPublicBaseUrl } from './inviteUrls';
 import {
@@ -874,6 +875,18 @@ export async function reactToSocialPost(postId: string, user: AuthUser, reaction
   if (reactionKey !== 'like') {
     throw new Error('This reaction is not supported yet.');
   }
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{ liked?: unknown; count?: unknown }>(
+      'toggleSocialPostReaction',
+      { postId, reactionKey },
+      { errorLabel: 'Social reaction' }
+    );
+    const count = Number(result?.count);
+    if (typeof result?.liked !== 'boolean' || !Number.isInteger(count) || count < 0) {
+      throw new Error('Social reaction response is invalid.');
+    }
+    return { liked: result.liked, count };
+  }
   const postRef = doc(db, 'socialPosts', postId);
   const reactionRef = doc(db, 'socialPosts', postId, 'reactions', user.uid);
   return runTransaction(db, async (transaction: any) => {
@@ -932,6 +945,15 @@ export async function reportSocialPost(postId: string, user: AuthUser, reason = 
 }
 
 export async function hideSocialPost(postId: string, user: AuthUser) {
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{ hidden?: unknown }>(
+      'hideSocialPostForCaller',
+      { postId },
+      { errorLabel: 'Hide social post' }
+    );
+    if (result?.hidden !== true) throw new Error('Hide social post response is invalid.');
+    return;
+  }
   await setDoc(doc(db, 'users', user.uid, 'hiddenSocialPosts', postId), {
     postId,
     hiddenAt: serverTimestamp()

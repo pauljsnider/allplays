@@ -7,6 +7,8 @@ import {
     sortParentFeeRecords
 } from './adapters/legacyParentTools';
 import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
+import { callNativeFirebaseFunction } from './nativeCallable';
+import { isNativeRuntime } from './nativeRuntime';
 import type { AuthUser } from './types';
 
 export type ParentFeeAppRecord = Record<string, any> & {
@@ -39,8 +41,17 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
         throw new Error('Missing required fields for team fee checkout.');
     }
 
+    const input = { teamId, batchId, recipientId };
+    const nativeRuntime = isNativeRuntime();
+    const checkoutResult = nativeRuntime
+        ? await callNativeFirebaseFunction<{ checkoutUrl?: unknown }>(
+            'createStripeTeamFeeCheckout',
+            input,
+            { errorLabel: 'Team fee checkout' }
+        )
+        : await initiateTeamFeeCheckout(input);
     const checkoutUrl = getTrustedStripeCheckoutUrl(
-        await initiateTeamFeeCheckout({ teamId, batchId, recipientId })
+        nativeRuntime ? checkoutResult?.checkoutUrl : checkoutResult
     );
     if (!checkoutUrl) {
         throw new Error('Unable to get a trusted Stripe checkout link. Try again.');

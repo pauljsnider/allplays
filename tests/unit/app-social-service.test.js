@@ -40,6 +40,8 @@ const athleteProfileMocks = vi.hoisted(() => ({
 const profileMocks = vi.hoisted(() => ({
     loadProfileDocument: vi.fn()
 }));
+const nativeCallableMocks = vi.hoisted(() => ({ callNativeFirebaseFunction: vi.fn() }));
+const nativeRuntimeMocks = vi.hoisted(() => ({ isNativeRuntime: vi.fn() }));
 
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
@@ -47,6 +49,8 @@ vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
 vi.mock(import('../../apps/app/src/lib/publicTeamsService.ts'), () => publicTeamMocks);
 vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => athleteProfileMocks);
 vi.mock(import('../../apps/app/src/lib/profileService.ts'), () => profileMocks);
+vi.mock(import('../../apps/app/src/lib/nativeCallable.ts'), () => nativeCallableMocks);
+vi.mock(import('../../apps/app/src/lib/nativeRuntime.ts'), () => nativeRuntimeMocks);
 
 const user = {
     uid: 'user-1',
@@ -76,6 +80,7 @@ function deferred() {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
     Object.defineProperty(globalThis, 'crypto', {
         value: {
             subtle: {
@@ -852,6 +857,21 @@ describe('React app social service', () => {
         expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
     });
 
+    it('uses the native-authenticated callable to hide posts in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ hidden: true });
+        const { hideSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await hideSocialPost('post-1', user);
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'hideSocialPostForCaller',
+            { postId: 'post-1' },
+            { errorLabel: 'Hide social post' }
+        );
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
     it('atomically toggles the viewer reaction and parent like count', async () => {
         const transaction = {
             get: vi.fn()
@@ -875,6 +895,20 @@ describe('React app social service', () => {
             expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
             expect.objectContaining({ 'reactionCounts.like': 3 })
         );
+    });
+
+    it('uses the native-authenticated callable to toggle reactions in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ liked: true, count: 3 });
+        const { reactToSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await expect(reactToSocialPost('post-1', user)).resolves.toEqual({ liked: true, count: 3 });
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'toggleSocialPostReaction',
+            { postId: 'post-1', reactionKey: 'like' },
+            { errorLabel: 'Social reaction' }
+        );
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it('atomically removes an existing viewer reaction', async () => {

@@ -7,6 +7,7 @@ const primaryRestCallers = [
     '../../apps/app/src/lib/accountDeletionService.ts',
     '../../apps/app/src/lib/authService.ts',
     '../../apps/app/src/lib/chatService.ts',
+    '../../apps/app/src/lib/nativeCallable.ts',
     '../../apps/app/src/lib/nativeFirestoreMutation.ts',
     '../../apps/app/src/lib/nativeStorageUpload.ts',
     '../../apps/app/src/lib/notificationInboxService.ts',

@@ -15,9 +15,13 @@ const legacyParentToolsMocks = vi.hoisted(() => ({
 const parentFeeRecipientMocks = vi.hoisted(() => ({
     listParentTeamFeeRecipientsForApp: vi.fn()
 }));
+const nativeCallableMocks = vi.hoisted(() => ({ callNativeFirebaseFunction: vi.fn() }));
+const nativeRuntimeMocks = vi.hoisted(() => ({ isNativeRuntime: vi.fn() }));
 
 vi.mock('./adapters/legacyParentTools', () => legacyParentToolsMocks);
 vi.mock('./parentFeeRecipientsService', () => parentFeeRecipientMocks);
+vi.mock('./nativeCallable', () => nativeCallableMocks);
+vi.mock('./nativeRuntime', () => nativeRuntimeMocks);
 
 import { initiateParentTeamFeeCheckout, loadParentFeesForApp } from './parentFeesService';
 
@@ -40,6 +44,7 @@ function payableFee(overrides: Record<string, unknown> = {}) {
 describe('parentFeesService checkout destinations', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
         parentFeeRecipientMocks.listParentTeamFeeRecipientsForApp.mockResolvedValue([]);
     });
 
@@ -142,6 +147,21 @@ describe('parentFeesService checkout destinations', () => {
             batchId: 'batch-1',
             recipientId: 'recipient-1'
         });
+    });
+
+    it('creates native checkout with the native-authenticated callable transport', async () => {
+        const checkoutUrl = 'https://checkout.stripe.com/c/pay/native-generated';
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ checkoutUrl, sessionId: 'session-1' });
+
+        await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
+            .resolves.toEqual({ success: true, checkoutUrl });
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'createStripeTeamFeeCheckout',
+            { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { errorLabel: 'Team fee checkout' }
+        );
+        expect(legacyParentToolsMocks.initiateTeamFeeCheckout).not.toHaveBeenCalled();
     });
 
     it.each([

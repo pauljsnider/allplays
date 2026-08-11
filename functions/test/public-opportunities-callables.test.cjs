@@ -799,6 +799,91 @@ test('parent fee discovery preserves direct UID assignments for parent-team-only
     assert.deepEqual(result.items.map((item) => item.id), ['direct']);
 });
 
+test('social mutation callables authorize native reactions and viewer-local hides server-side', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            email: 'parent@example.com',
+            isAdmin: false,
+            parentTeamIds: ['team-1']
+        },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            adminEmails: []
+        },
+        'socialPosts/post.with:punctuation': {
+            authorId: 'author-1',
+            teamId: 'team-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 2 }
+        }
+    });
+
+    const reaction = await callables.toggleSocialPostReaction(
+        { postId: 'post.with:punctuation', reactionKey: 'like' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(reaction, { liked: true, count: 3 });
+    assert.equal(
+        firestore.snapshot('socialPosts/post.with:punctuation/reactions/parent-1').userId,
+        'parent-1'
+    );
+    assert.equal(
+        firestore.snapshot('socialPosts/post.with:punctuation')['reactionCounts.like'],
+        3
+    );
+
+    const hidden = await callables.hideSocialPostForCaller(
+        { postId: 'post.with:punctuation' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(hidden, { hidden: true });
+    assert.equal(
+        firestore.snapshot('users/parent-1/hiddenSocialPosts/post.with:punctuation').postId,
+        'post.with:punctuation'
+    );
+});
+
+test('social reaction callable rejects hidden, unrelated, and malformed requests', async () => {
+    const { callables } = loadCallables({
+        'users/viewer-1': { email: 'viewer@example.com', parentTeamIds: [] },
+        'socialPosts/private-post': {
+            authorId: 'author-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        },
+        'socialPosts/hidden-post': {
+            authorId: 'viewer-1',
+            visibleUserIds: ['viewer-1'],
+            hidden: true,
+            reactionCounts: { like: 0 }
+        }
+    });
+
+    await assert.rejects(
+        callables.toggleSocialPostReaction(
+            { postId: 'private-post', reactionKey: 'like' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.toggleSocialPostReaction(
+            { postId: 'hidden-post', reactionKey: 'like' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.hideSocialPostForCaller(
+            { postId: 'bad/path' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
+});
+
 test('team admin revocation atomically clears reciprocal coach access and accepted invites', async () => {
     const { firestore, callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com' },

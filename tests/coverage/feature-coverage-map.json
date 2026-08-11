@@ -243,6 +243,7 @@
             ],
             "cloudFunctions": [
                 "cleanupPublicUserProfileOnAuthDelete",
+                "hideSocialPostForCaller",
                 "listPublicTeams",
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
@@ -256,13 +257,16 @@
                 "syncPublicUserProfileOnUserWrite",
                 "syncPublicUserProfileProjection",
                 "syncPublicUserProfilesOnTeamWrite",
-                "syncTeamOwnerAccessOnCreate"
+                "syncTeamOwnerAccessOnCreate",
+                "toggleSocialPostReaction"
             ],
             "unitTests": [
+                "functions/test/public-opportunities-callables.test.cjs",
                 "tests/unit/app-friend-profile.test.jsx",
                 "tests/unit/app-home-logic.test.js",
                 "tests/unit/app-home-service.test.js",
                 "tests/unit/app-player-service.test.js",
+                "tests/unit/app-social-service.test.js",
                 "tests/unit/app-team-detail-service.test.js",
                 "tests/unit/athlete-profile-utils.test.js",
                 "tests/unit/discover-public-teams-search-pagination.test.js",
@@ -271,6 +275,7 @@
                 "tests/unit/edit-team-registration-sync.test.js",
                 "tests/unit/public-user-profile-backfill.test.js",
                 "tests/unit/public-user-profile-sync.test.js",
+                "tests/unit/social-post-mutations-core.test.js",
                 "tests/unit/team-owner-access-trigger.test.js",
                 "tests/unit/teams-public-visibility.test.js"
             ],
@@ -451,6 +456,8 @@
                 "functions/test/public-opportunities-callables.test.cjs",
                 "apps/app/src/lib/parentFeeRecipientsService.test.ts",
                 "tests/unit/app-team-fees-service.test.ts",
+                "apps/app/src/lib/nativeCallable.test.ts",
+                "apps/app/src/lib/parentFeesService.test.ts",
                 "tests/unit/db-team-fee-recipient-list.test.js",
                 "tests/unit/db-team-fee-recipient-updates.test.js",
                 "tests/unit/fee-due-reminders-source.test.js",
