@@ -12,6 +12,7 @@ const redeemFriendInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 const rollbackParentInviteRedemptionMock = vi.fn();
+const redeemAdminInviteAcceptanceMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=22', () => ({
     auth: { currentUser: null },
@@ -31,7 +32,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433165', () => ({
+vi.mock('../../js/db.js?v=4433166', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -48,12 +49,12 @@ vi.mock('../../js/db.js?v=4433165', () => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=13', () => ({
+vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
 vi.mock('../../js/admin-invite.js?v=6', () => ({
-    redeemAdminInviteAcceptance: vi.fn(),
+    redeemAdminInviteAcceptance: redeemAdminInviteAcceptanceMock,
     redeemAdminInviteAtomically: vi.fn()
 }));
 
@@ -146,6 +147,42 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
         await loginWithGoogle('COPO1234');
 
         expect(redeemCoParentInviteMock).toHaveBeenCalledWith('user-456', 'COPO1234', 'coparent@example.com');
+        expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+    });
+
+    it('redeems admin invites for a verified Google account', async () => {
+        const result = {
+            user: {
+                uid: 'verified-google-admin',
+                email: 'admin@example.com',
+                emailVerified: true,
+                displayName: 'Admin User',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-03-01T11:00:00.000Z'
+                },
+                delete: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'admin_invite',
+            codeId: 'admin-code-id',
+            data: { code: 'ADMIN001' }
+        });
+        redeemAdminInviteAcceptanceMock.mockResolvedValue({ id: 'team-1' });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await loginWithGoogle('ADMIN001');
+
+        expect(redeemAdminInviteAcceptanceMock).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'verified-google-admin',
+            userEmail: 'admin@example.com',
+            codeId: 'admin-code-id'
+        }));
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
     });
 

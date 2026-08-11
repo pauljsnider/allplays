@@ -5,9 +5,10 @@ const test = require('node:test');
 const { createRedeemAdminInviteHandler } = require('../admin-invite-redemption-core.cjs');
 
 class TestHttpsError extends Error {
-  constructor(code, message) {
+  constructor(code, message, details) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -22,6 +23,7 @@ function clone(value) {
 function makeFirestore(seed) {
   const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
   const committedWrites = [];
+  let transactionCount = 0;
 
   function doc(path) {
     return { path };
@@ -38,8 +40,12 @@ function makeFirestore(seed) {
   return {
     doc,
     committedWrites,
+    get transactionCount() {
+      return transactionCount;
+    },
     snapshot: (path) => clone(state.get(path)),
     async runTransaction(callback) {
+      transactionCount += 1;
       const pendingWrites = [];
       const result = await callback({
         get: async (ref) => snapshot(ref),
@@ -67,7 +73,13 @@ function normalizeFirestoreId(value, label) {
   return value.trim();
 }
 
-function createHarness({ team, issuerProfile = {}, issuerAuthUser, selfAddressed = false }) {
+function createHarness({
+  team,
+  issuerProfile = {},
+  issuerAuthUser,
+  selfAddressed = false,
+  recipientToken = { email_verified: true }
+}) {
   const issuerUid = 'issuer-1';
   const inviteeUid = selfAddressed ? issuerUid : 'invitee-1';
   const invitedEmail = selfAddressed ? 'issuer@example.com' : 'invitee@example.com';
@@ -108,7 +120,7 @@ function createHarness({ team, issuerProfile = {}, issuerAuthUser, selfAddressed
   const context = {
     auth: {
       uid: inviteeUid,
-      token: { email: invitedEmail }
+      token: { email: invitedEmail, ...recipientToken }
     }
   };
   return { context, firestore, handler, inviteeUid, seed };
@@ -159,8 +171,67 @@ for (const [label, authorization] of [
       { type: 'set', path: `users/${harness.inviteeUid}` },
       { type: 'update', path: 'accessCodes/invite-1' }
     ]);
+    assert.equal(harness.firestore.transactionCount, 1);
   });
 }
+
+for (const [label, recipientToken] of [
+  ['matching recipient with an unverified email', { email_verified: false }],
+  ['matching recipient with a missing verification claim', {}]
+]) {
+  test(`denies ${label} after confirming the invite recipient`, async () => {
+    const harness = createHarness({
+      team: { ownerId: 'issuer-1', adminEmails: [] },
+      issuerAuthUser: { uid: 'issuer-1', email: 'owner@example.com' },
+      recipientToken
+    });
+    const before = {
+      code: harness.firestore.snapshot('accessCodes/invite-1'),
+      team: harness.firestore.snapshot('teams/team-1'),
+      user: harness.firestore.snapshot(`users/${harness.inviteeUid}`)
+    };
+
+    await assert.rejects(
+      redeem(harness),
+      (error) => error.code === 'permission-denied' &&
+        error.details?.reason === 'email-verification-required'
+    );
+    assert.equal(harness.firestore.transactionCount, 1);
+    assert.deepEqual(harness.firestore.snapshot('accessCodes/invite-1'), before.code);
+    assert.deepEqual(harness.firestore.snapshot('teams/team-1'), before.team);
+    assert.deepEqual(harness.firestore.snapshot(`users/${harness.inviteeUid}`), before.user);
+    assert.deepEqual(harness.firestore.committedWrites, []);
+  });
+}
+
+test('denies an unverified recipient whose authenticated email does not match before allowing verification retry', async () => {
+  const harness = createHarness({
+    team: { ownerId: 'issuer-1', adminEmails: [] },
+    issuerAuthUser: { uid: 'issuer-1', email: 'owner@example.com' },
+    recipientToken: { email: 'other@example.com', email_verified: false }
+  });
+  const before = {
+    code: harness.firestore.snapshot('accessCodes/invite-1'),
+    team: harness.firestore.snapshot('teams/team-1'),
+    user: harness.firestore.snapshot(`users/${harness.inviteeUid}`)
+  };
+
+  await assert.rejects(
+    harness.handler({
+      codeId: 'invite-1',
+      userId: harness.inviteeUid,
+      userEmail: 'invitee@example.com'
+    }, harness.context),
+    (error) => error.code === 'permission-denied' &&
+      error.details?.reason !== 'email-verification-required' &&
+      /sent to invitee@example.com/.test(error.message)
+  );
+  assert.equal(harness.firestore.transactionCount, 1);
+  assert.deepEqual(harness.firestore.snapshot('accessCodes/invite-1'), before.code);
+  assert.deepEqual(harness.firestore.snapshot('teams/team-1'), before.team);
+  assert.deepEqual(harness.firestore.snapshot(`users/${harness.inviteeUid}`), before.user);
+  assert.deepEqual(harness.firestore.committedWrites, []);
+});
 
 for (const [label, authorization] of [
   ['removed administrator', {

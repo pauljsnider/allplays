@@ -136,8 +136,8 @@ describe('VerifyPending verification return flow', () => {
         await act(async () => root.unmount());
     });
 
-    it('returns a newly verified user to the preserved family invite', async () => {
-        readPendingInvite.mockReturnValue({ code: 'FAMILY01', type: 'household' });
+    it('returns a newly verified user to the preserved admin invite', async () => {
+        readPendingInvite.mockReturnValue({ code: 'ADMIN001', type: 'admin' });
         const auth = createAuth();
         auth.refresh.mockResolvedValueOnce({
             ...auth.user,
@@ -150,7 +150,7 @@ describe('VerifyPending verification return flow', () => {
             buttonByText(container, "I've verified, continue").click();
         });
 
-        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=FAMILY01&type=household');
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/accept-invite?code=ADMIN001&type=admin');
         expect(container.textContent).toContain('Pending invite');
 
         await act(async () => root.unmount());

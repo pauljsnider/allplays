@@ -15,7 +15,7 @@ describe('verify pending legacy page redirect wiring', () => {
     it('uses role-aware redirect logic instead of hardcoded dashboard links', () => {
         const source = readFileSync(resolve(process.cwd(), 'verify-pending.html'), 'utf8');
 
-        expect(source).toContain("import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433167';");
+        expect(source).toContain("import { checkAuth, getRedirectUrl, logout, resendVerificationEmail } from './js/auth.js?v=4433168';");
         expect(source).toContain("import { getPendingVerificationRedirectUrl, refreshVerifiedUserToken } from './js/verify-pending-flow.js?v=3';");
         expect(source).toContain('const fallbackRedirectUrl = getRedirectUrl(user);');
         expect(source).toContain('const redirectUrl = getPendingVerificationRedirectUrl(user, getRedirectUrl);');
@@ -28,7 +28,8 @@ describe('verify pending legacy page redirect wiring', () => {
     it.each([
         ['parent', 'PARENT01'],
         ['household', 'HOME1234'],
-        ['coparent', 'COPAR123']
+        ['coparent', 'COPAR123'],
+        ['admin', 'ADMIN001']
     ])('resumes a preserved %s invite after verification', (inviteType, inviteCode) => {
         const redirectUrl = getPendingVerificationRedirectUrl(
             { uid: 'user-123', emailVerified: true },
@@ -42,7 +43,8 @@ describe('verify pending legacy page redirect wiring', () => {
     it.each([
         ['Continue', 'parent', 'PARENT01'],
         ['countdown', 'household', 'HOME1234'],
-        ['countdown', 'coparent', 'COPAR123']
+        ['countdown', 'coparent', 'COPAR123'],
+        ['countdown', 'admin', 'ADMIN001']
     ])('keeps the unverified %s path on the fallback with a pending %s invite', (_path, inviteType, inviteCode) => {
         const redirectUrl = getPendingVerificationRedirectUrl(
             { uid: 'user-123', emailVerified: false },
