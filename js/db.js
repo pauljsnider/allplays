@@ -730,7 +730,31 @@ export async function uploadGameClip(teamId, gameId, file) {
     };
 }
 
+const STAT_SHEET_MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+export function validateStatSheetPhotoUpload(teamId, gameId, file) {
+    if (typeof teamId !== 'string' || !teamId.trim()) {
+        throw new Error('Team-scoped stat sheet upload requires a team.');
+    }
+    if (typeof gameId !== 'string' || !gameId.trim()) {
+        throw new Error('Game-scoped stat sheet upload requires a game.');
+    }
+    if (!file || typeof file !== 'object') {
+        throw new Error('Stat sheet upload requires a file.');
+    }
+    if (typeof file.type !== 'string' || !/^image\/.+/i.test(file.type.trim())) {
+        throw new Error('Stat sheet upload requires an image file.');
+    }
+    if (typeof file.size !== 'number' || !Number.isFinite(file.size) || file.size <= 0) {
+        throw new Error('Stat sheet upload requires a non-empty file.');
+    }
+    if (file.size > STAT_SHEET_MAX_UPLOAD_BYTES) {
+        throw new Error('Stat sheet upload cannot exceed 20 MB.');
+    }
+}
+
 export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
+    validateStatSheetPhotoUpload(teamId, gameId, file);
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -738,10 +762,6 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
     });
 
     const userId = getRequiredSignedInUserId();
-    if (!teamId) throw new Error('Team-scoped stat sheet upload requires a team.');
-    if (typeof gameId !== 'string' || !gameId.trim()) {
-        throw new Error('Game-scoped stat sheet upload requires a game.');
-    }
     const ts = Date.now();
     const nonce = createSecureUploadToken();
     const path = buildGameScopedStatSheetFallbackPath(teamId, gameId, userId, file.name, ts, nonce);
@@ -754,7 +774,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443339'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443340'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

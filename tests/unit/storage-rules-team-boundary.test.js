@@ -96,6 +96,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     participantIds: ['user:member-a']
                 });
                 await firestore.doc('teams/team-a/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
+                await firestore.doc('teams/team-b/games/game-b').set({ status: 'scheduled', liveStatus: 'live' });
                 await firestore.doc('teams/team-a/games/cancelled-game').set({ status: 'cancelled', liveStatus: 'scheduled' });
                 await firestore.doc('teams/team-a/games/deleted-game').set({ status: 'scheduled', liveStatus: 'deleted' });
                 await firestore.doc('teams/team-confirmed/games/game-a').set({ status: 'scheduled', liveStatus: 'live' });
@@ -179,6 +180,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 { contentType: 'image/jpeg' }
             ));
         }, 30000);
+
+        it('denies a scorekeeper crossing the statsheet team boundary', async () => {
+            const selectedStorage = testEnv.authenticatedContext('selected-scorekeeper', {
+                email: 'selected@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertFails(selectedStorage.ref('stat-sheets/team-games/team-b/game-b/selected-scorekeeper/cross-team.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+        });
 
         it('denies unauthorized, wrong-game, mismatched-uploader, invalid-type, empty, and oversized statsheets', async () => {
             const parentStorage = testEnv.authenticatedContext('member-a', {

@@ -18,6 +18,7 @@ import {
   GoogleAIBackend,
   Schema,
   uploadStatSheetPhoto,
+  validateStatSheetPhotoUpload,
   validateTrackStatsheetApplyRows,
   writeBatch
 } from './adapters/legacyStatsheetImport'
@@ -342,6 +343,10 @@ export async function applyTrackStatsheetImportForApp({
   uploadedPhotoUrl?: string;
   replaceExisting?: boolean;
 }) {
+  if (file && !String(uploadedPhotoUrl || '').trim()) {
+    validateStatSheetPhotoUpload(teamId, gameId, file)
+  }
+
   const validation = validateTrackStatsheetApplyRows(homeRows)
   if (!validation.ok) {
     throw new Error(validation.alertMessage)
@@ -386,6 +391,9 @@ export async function applyTrackStatsheetImportForApp({
       awayScore,
       statSheetPhotoUrl: statSheetPhotoUrl || null
     })
+    if (newlyUploadedPhoto?.path) {
+      applyPlan.gameUpdate.statSheetPhotoPath = newlyUploadedPhoto.path
+    }
 
     const plannedPlayerIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
 
@@ -437,6 +445,7 @@ export async function applyTrackStatsheetImportForApp({
       requiresReplaceConfirmation: false,
       hasExistingTrackedData,
       uploadedPhotoUrl: statSheetPhotoUrl,
+      uploadedPhotoPath: newlyUploadedPhoto?.path || '',
       applyPlan
     }
   } catch (error) {
