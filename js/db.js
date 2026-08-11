@@ -774,7 +774,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443340'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443341'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5941,16 +5941,19 @@ export async function listTeamFeeBatches(teamId) {
     return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
-export async function listTeamFeeRecipients(teamId, batchId) {
+export async function listTeamFeeRecipients(teamId, batchId, { hydrateAdminBilling = true } = {}) {
     if (!teamId || !batchId) return [];
     const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
     const snapshot = await getDocs(recipientsRef);
-    const recipients = await Promise.all(snapshot.docs.map(async (recipientDoc) => {
-        const recipient = { id: recipientDoc.id, ...recipientDoc.data() };
+    const recipients = snapshot.docs.map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }));
+    const sortRecipients = (items) => items.sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+    if (!hydrateAdminBilling) return sortRecipients(recipients);
+
+    const hydratedRecipients = await Promise.all(recipients.map(async (recipient) => {
         if (recipient?.hasAdminBilling !== true) return recipient;
 
         try {
-            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientDoc.id, 'adminBilling', 'latest');
+            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipient.id, 'adminBilling', 'latest');
             const adminBillingSnap = await getDoc(adminBillingRef);
             if (!adminBillingSnap.exists()) return recipient;
             return {
@@ -5963,8 +5966,7 @@ export async function listTeamFeeRecipients(teamId, batchId) {
         }
     }));
 
-    return recipients
-        .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+    return sortRecipients(hydratedRecipients);
 }
 
 const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS = new Set([

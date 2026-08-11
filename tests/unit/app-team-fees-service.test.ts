@@ -369,7 +369,8 @@ describe('React app team fee offline payment service', () => {
     it('loads batches and recipients only for fee managers', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.listTeamFeeBatches.mockResolvedValue([{ id: 'batch-1', title: 'Dues', amountCents: 10000 }]);
-        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', amountDueCents: 10000, amountPaidCents: 2500, collectionMode: 'online_stripe', checkoutUrl: 'https://pay.example.test/team-fee', checkoutStatus: 'open' }]);
+        const paymentLedger = [{ type: 'offline_payment', amountCents: 2500, paymentDate: '2026-07-20' }];
+        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', status: 'partial', amountDueCents: 10000, amountPaidCents: 2500, remainingBalanceCents: 7000, collectionMode: 'online_stripe', checkoutUrl: 'https://pay.example.test/team-fee', checkoutStatus: 'open', paymentLedger }]);
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', number: '12', active: true },
             { id: 'player-2', name: 'Inactive Player', active: false }
@@ -379,14 +380,19 @@ describe('React app team fee offline payment service', () => {
 
         expect(model.canManageFees).toBe(true);
         expect(model.selectedBatch?.id).toBe('batch-1');
+        expect(dbMocks.listTeamFeeRecipients).toHaveBeenCalledWith('team-1', 'batch-1', { hydrateAdminBilling: false });
         expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12', parentName: '', parentEmail: '' }]);
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
-            remainingBalanceCents: 7500,
+            status: 'partial',
+            amountDueCents: 10000,
+            amountPaidCents: 2500,
+            remainingBalanceCents: 7000,
             collectionMode: 'online_stripe',
             checkoutUrl: '',
-            checkoutStatus: 'open'
+            checkoutStatus: 'open',
+            paymentLedger
         });
     });
 
