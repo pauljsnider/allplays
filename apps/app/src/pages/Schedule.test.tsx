@@ -2106,6 +2106,7 @@ describe('Schedule', () => {
 
     expect(await screen.findByText('Showing 10 of 16 events')).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Manage schedule with AI' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Show 6 more' }));
     await waitFor(() => {
       expect(screen.queryByText('Showing 10 of 16 events')).toBeNull();
