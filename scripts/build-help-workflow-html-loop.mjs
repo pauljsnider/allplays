@@ -219,8 +219,8 @@ function primaryTailwindConfig() {
 
 function standardChromeScript() {
     return `<script type="module">
-      import { checkAuth } from './js/auth.js?v=4433167';
-      import { renderHeader, renderFooter } from './js/utils.js?v=443341';
+      import { checkAuth } from './js/auth.js?v=4433168';
+      import { renderHeader, renderFooter } from './js/utils.js?v=443342';
       renderHeader(document.getElementById('header-container'), null);
       renderFooter(document.getElementById('footer-container'));
       checkAuth((user) => {

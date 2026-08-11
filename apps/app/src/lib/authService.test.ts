@@ -497,6 +497,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
     legacyAuthMocks.markAccessCodeAsUsed.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    legacyAdminInviteMocks.redeemAdminInviteAcceptance.mockReset();
     legacyInviteFlowMocks.processInvite.mockReset();
     legacyInviteFlowMocks.processInvite.mockResolvedValue({ success: true, redirectUrl: 'dashboard.html' });
     legacyInviteFlowMocks.createInviteProcessor.mockReset();
@@ -513,6 +514,7 @@ describe('signInWithGoogleAccount invite redemption', () => {
       user: {
         uid: 'google-user',
         email,
+        emailVerified: true,
         displayName: 'Google User',
         photoURL: 'https://example.com/photo.png',
         metadata: {
@@ -593,6 +595,26 @@ describe('signInWithGoogleAccount invite redemption', () => {
     await signInWithGoogleAccount('friend12');
 
     expect(legacyAuthMocks.redeemFriendInvite).toHaveBeenCalledWith('google-user', 'FRIEND12', 'friend@example.com');
+    expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+  });
+
+  it('redeems admin invites for a verified Google account across app runtimes', async () => {
+    mockNewGoogleUser('admin@example.com');
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'admin_invite',
+      codeId: 'admin-code-id',
+      data: { code: 'ADMIN001' }
+    });
+    legacyAdminInviteMocks.redeemAdminInviteAcceptance.mockResolvedValue({ id: 'team-1' });
+
+    await signInWithGoogleAccount('admin001');
+
+    expect(legacyAdminInviteMocks.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'google-user',
+      userEmail: 'admin@example.com',
+      codeId: 'admin-code-id'
+    }));
     expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 

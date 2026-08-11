@@ -10,14 +10,11 @@ export async function executeEmailPasswordSignup({
         createUserWithEmailAndPassword,
         redeemParentInvite,
         redeemFriendInvite,
-        redeemAdminInviteAcceptance,
         redeemHouseholdInvite,
         redeemCoParentInvite,
         updateUserProfile,
         markAccessCodeAsUsed,
         rollbackParentInviteRedemption,
-        getTeam,
-        getUserProfile,
         sendVerificationEmail,
         signOut
     } = dependencies;
@@ -67,7 +64,7 @@ export async function executeEmailPasswordSignup({
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const userId = userCredential.user.uid;
     let validation = preAuthValidation;
-    let pendingFamilyInvite = null;
+    let pendingInvite = null;
 
     if (shouldValidateAfterSignup) {
         try {
@@ -99,9 +96,9 @@ export async function executeEmailPasswordSignup({
         return error?.details?.reason === 'email-verification-required';
     }
 
-    function preservePendingFamilyInvite(type, code) {
+    function preservePendingInvite(type, code) {
         const pendingCode = String(code || activationCode).trim().toUpperCase();
-        pendingFamilyInvite = { code: pendingCode, type };
+        pendingInvite = { code: pendingCode, type };
         try {
             globalThis.localStorage?.setItem('inviteCode', pendingCode);
             globalThis.localStorage?.setItem('inviteType', type);
@@ -117,7 +114,7 @@ export async function executeEmailPasswordSignup({
         } catch (e) {
             console.error('Error linking parent:', e);
             if (isEmailVerificationRequired(e)) {
-                preservePendingFamilyInvite('parent', validation.data?.code || activationCode);
+                preservePendingInvite('parent', validation.data?.code || activationCode);
                 await writeSignupProfile({ email });
             } else {
                 await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
@@ -126,7 +123,7 @@ export async function executeEmailPasswordSignup({
         }
 
         // Best-effort profile write after invite redemption.
-        if (!pendingFamilyInvite) {
+        if (!pendingInvite) {
             await writeSignupProfile({ email });
         }
     } else if (validation.type === 'friend_invite') {
@@ -142,20 +139,8 @@ export async function executeEmailPasswordSignup({
             throw e;
         }
     } else if (validation.type === 'admin_invite') {
-        try {
-            await redeemAdminInviteAcceptance({
-                userId,
-                userEmail: email,
-                codeId: validation.codeId,
-                getTeam,
-                getUserProfile
-            });
-            await writeSignupProfile({ email });
-        } catch (e) {
-            console.error('Error redeeming admin invite:', e);
-            await cleanupFailedSignup(userCredential?.user);
-            throw e;
-        }
+        preservePendingInvite('admin', validation.data?.code || activationCode);
+        await writeSignupProfile({ email });
     } else if (validation.type === 'household_invite') {
         try {
             if (typeof redeemHouseholdInvite !== 'function') {
@@ -166,7 +151,7 @@ export async function executeEmailPasswordSignup({
         } catch (e) {
             console.error('Error redeeming household invite:', e);
             if (isEmailVerificationRequired(e)) {
-                preservePendingFamilyInvite('household', validation.data?.code || activationCode);
+                preservePendingInvite('household', validation.data?.code || activationCode);
                 await writeSignupProfile({ email });
             } else {
                 await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
@@ -183,7 +168,7 @@ export async function executeEmailPasswordSignup({
         } catch (e) {
             console.error('Error redeeming co-parent invite:', e);
             if (isEmailVerificationRequired(e)) {
-                preservePendingFamilyInvite('coparent', validation.data?.code || activationCode);
+                preservePendingInvite('coparent', validation.data?.code || activationCode);
                 await writeSignupProfile({ email });
             } else {
                 await cleanupFailedSignup(userCredential?.user, { inviteCode: validation.data?.code || activationCode });
@@ -226,8 +211,8 @@ export async function executeEmailPasswordSignup({
         console.error('SIGNUP ERROR:', e.code, e.message);
     }
 
-    if (pendingFamilyInvite) {
-        userCredential.pendingFamilyInvite = pendingFamilyInvite;
+    if (pendingInvite) {
+        userCredential.pendingFamilyInvite = pendingInvite;
     }
     return userCredential;
 }
