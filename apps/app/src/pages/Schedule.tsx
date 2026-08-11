@@ -802,6 +802,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
 
+  const handleOpenBulkRsvp = async () => {
+    if (rsvpHydrationPending || scheduleReadLoading) return;
+    setRsvpHydrationPending(true);
+    await hydrateScheduleRsvpsInBackground({
+      children: childrenRef.current,
+      events: eventsRef.current
+    }, true);
+    await Promise.all([...rsvpHydrationPromisesRef.current]);
+    setBulkRsvpResult(null);
+    setBulkRsvpOpen(true);
+  };
+
   useEffect(() => {
     if (searchParams.get('bulkRsvp') !== '1') {
       bulkRsvpQueryHandledRef.current = false;
@@ -1036,18 +1048,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
     } catch {
       setStatusMessage('Copy is not available in this browser.');
     }
-  };
-
-  const handleOpenBulkRsvp = async () => {
-    if (rsvpHydrationPending || scheduleReadLoading) return;
-    setRsvpHydrationPending(true);
-    await hydrateScheduleRsvpsInBackground({
-      children: childrenRef.current,
-      events: eventsRef.current
-    }, true);
-    await Promise.all([...rsvpHydrationPromisesRef.current]);
-    setBulkRsvpResult(null);
-    setBulkRsvpOpen(true);
   };
 
   const handleBulkRsvp = async (
