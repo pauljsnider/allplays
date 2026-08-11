@@ -583,6 +583,66 @@ describe('Schedule', () => {
     expect(scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[1]).toEqual(nextAuth.user);
   });
 
+  it('rehydrates RSVP groups after an authoritative schedule refresh for the same account', async () => {
+    const schedule = {
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1, { myRsvpNoteHydrated: false })]
+    };
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(schedule)
+      .mockResolvedValueOnce({
+        ...schedule,
+        events: schedule.events.map((event) => ({ ...event, myRsvp: 'maybe', myRsvpNoteHydrated: false }))
+      });
+    const completeHydration = async (loaded: any) => ({
+      ...loaded,
+      events: loaded.events.map((event: ParentScheduleEvent) => ({ ...event, myRsvpNoteHydrated: true }))
+    });
+    scheduleServiceMocks.hydrateParentScheduleRsvps
+      .mockImplementationOnce(completeHydration)
+      .mockImplementationOnce(completeHydration);
+
+    renderSchedule();
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedule' }));
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+    expect((scheduleServiceMocks.hydrateParentScheduleRsvps.mock.calls[1]?.[0] as any).events).toEqual([
+      expect.objectContaining({ id: 'event-1', myRsvp: 'maybe' })
+    ]);
+  });
+
+  it('does not reuse hydrated RSVP groups after the same user signs out and back in', async () => {
+    const schedule = {
+      children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],
+      events: [buildScheduleEvent(1)]
+    };
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(schedule)
+      .mockResolvedValueOnce({ ...schedule, events: schedule.events.map((event) => ({ ...event })) });
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes><Route path="/schedule" element={<Schedule auth={auth} />} /></Routes>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes><Route path="/schedule" element={<Schedule auth={{ ...auth, user: null }} />} /></Routes>
+      </MemoryRouter>
+    );
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes><Route path="/schedule" element={<Schedule auth={auth} />} /></Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(2));
+  });
+
   it('does not apply an in-flight RSVP response from the previous account', async () => {
     const oldSchedule = {
       children: [{ playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }],

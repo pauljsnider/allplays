@@ -257,6 +257,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const lastRsvpHydrationScopeRef = useRef('');
   const bulkRsvpQueryHandledRef = useRef(false);
   const pendingRsvpEventKeysRef = useRef(new Set<string>());
+  const rsvpDisplayEventsRef = useRef<ParentScheduleEvent[]>([]);
   const hydratedRsvpGroupsRef = useRef({
     userId: auth.user?.uid || null,
     groupKeys: new Set<string>()
@@ -267,7 +268,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
     eventsRef.current = nextEvents;
     setEvents(nextEvents);
   }, []);
-  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
+  const applyScheduleResult = (
+    data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; },
+    { authoritative = false }: { authoritative?: boolean } = {}
+  ) => {
+    if (authoritative) {
+      rsvpHydrationVersionRef.current += 1;
+      lastRsvpHydrationScopeRef.current = '';
+      hydratedRsvpGroupsRef.current = {
+        userId: auth.user?.uid || null,
+        groupKeys: new Set<string>()
+      };
+    }
     childrenRef.current = data.children;
     eventsRef.current = data.events;
     staffTeamsRef.current = data.staffTeams ?? [];
@@ -342,7 +354,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const hydrateScheduleRsvpsInBackground = useCallback(async (
     result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
     hydrateAll = false,
-    visibleGroupLimit = upcomingListPageSize
+    visibleGroupLimit = upcomingListPageSize,
+    displayEvents: ParentScheduleEvent[] = []
   ): Promise<boolean> => {
     const user = auth.user;
     if (!user) {
@@ -364,15 +377,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
       teamId: selectedTeamId,
       timeRange: 'all'
     });
-    const visibleEvents = filterParentScheduleEvents(result.events, {
-      filter,
-      playerId: selectedPlayerId,
-      teamId: selectedTeamId,
-      timeRange
-    });
     const rsvpEvents = getScheduleRsvpHydrationTargets(
       scopedEvents,
-      hydrateAll ? scopedEvents : visibleEvents,
+      hydrateAll ? scopedEvents : displayEvents,
       hydrateAll ? Number.MAX_SAFE_INTEGER : visibleGroupLimit,
       hydratedRsvpGroupsRef.current.groupKeys
     );
@@ -666,8 +673,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
-          applyScheduleResult(authoritativeResult);
-          void hydrateScheduleRsvpsInBackground(authoritativeResult);
+          applyScheduleResult(authoritativeResult, { authoritative: true });
+          void hydrateScheduleRsvpsInBackground(
+            authoritativeResult,
+            false,
+            upcomingListPageSize,
+            filterParentScheduleEvents(authoritativeResult.events, {
+              filter,
+              playerId: selectedPlayerId,
+              teamId: selectedTeamId,
+              timeRange
+            })
+          );
           completeParentCoreWorkflowTimer('schedule', {
             targetPage: 'schedule',
             teamId: selectedTeamId || '',
@@ -722,7 +739,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
           setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {
-            applyScheduleResult({ children: [], events: [] });
+            applyScheduleResult({ children: [], events: [] }, { authoritative: true });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
           setRsvpHydrationPending(false);
@@ -747,7 +764,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setRsvpHydrationPending(Boolean(auth.user?.uid));
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
-      applyScheduleResult({ children: [], events: [] });
+      applyScheduleResult({ children: [], events: [] }, { authoritative: true });
       return;
     }
     hasStartedInitialScheduleLoadRef.current = true;
@@ -763,7 +780,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
-    }, false, upcomingListPageSize);
+    }, false, upcomingListPageSize, rsvpDisplayEventsRef.current);
   }, [
     auth.user,
     filter,
@@ -812,6 +829,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(scopedEvents, { filter, playerId: activeSelectedPlayerId, teamId: selectedTeamId, timeRange })
   ), [activeSelectedPlayerId, filter, scopedEvents, selectedTeamId, timeRange]);
+  rsvpDisplayEventsRef.current = visibleEvents;
   const allBulkRsvpCandidates = useMemo(() => getBulkRsvpCandidates(filterParentScheduleEvents(scopedEvents, {
     filter: 'upcoming-all',
     playerId: activeSelectedPlayerId,
@@ -830,7 +848,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const hydrated = await hydrateScheduleRsvpsInBackground({
       children: childrenRef.current,
       events: eventsRef.current
-    }, true);
+    }, true, Number.MAX_SAFE_INTEGER, rsvpDisplayEventsRef.current);
     if (!hydrated) {
       setBulkRsvpOpen(false);
       setBulkRsvpResult({
@@ -921,7 +939,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       void hydrateScheduleRsvpsInBackground({
         children: childrenRef.current,
         events: eventsRef.current
-      }, false, nextVisibleCount);
+      }, false, nextVisibleCount, visibleEvents);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -939,7 +957,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       void hydrateScheduleRsvpsInBackground({
         children: childrenRef.current,
         events: eventsRef.current
-      }, false, nextVisibleCount);
+      }, false, nextVisibleCount, visibleEvents);
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
