@@ -811,7 +811,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     bulkRsvpQueryHandledRef.current = true;
     if (allBulkRsvpCandidates.length < 2) return;
     void handleOpenBulkRsvp();
-  }, [allBulkRsvpCandidates.length, rsvpHydrationPending, scheduleReadLoading, searchParams]);
+  }, [allBulkRsvpCandidates.length, handleOpenBulkRsvp, rsvpHydrationPending, scheduleReadLoading, searchParams]);
   const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
 
   useViewLoadTimer({
