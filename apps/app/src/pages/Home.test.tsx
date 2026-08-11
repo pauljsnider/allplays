@@ -154,6 +154,7 @@ const baseSocial = {
   outgoingRequests: [],
   suggestions: [],
   friendshipsError: null,
+  feedError: null,
   metrics: {
     feedItems: 0,
     friends: 0,
@@ -1095,6 +1096,23 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('surfaces incomplete feed state and disables Like when the viewer reaction is unknown', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{ ...baseFeedItem, viewerHasLiked: undefined, viewerReactionError: true }],
+      feedError: 'Some feed details could not load. Retry before relying on the complete post or Like state.',
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Some feed details could not load');
+    const likeButton = screen.getByRole('button', { name: 'Like status unavailable, 2 likes' });
+    expect(likeButton).toBeDisabled();
+    fireEvent.click(likeButton);
+    expect(socialServiceMocks.reactToSocialPost).not.toHaveBeenCalled();
   });
 
   it('optimistically removes an existing like', async () => {

@@ -42,6 +42,13 @@ const profileMocks = vi.hoisted(() => ({
 }));
 const nativeCallableMocks = vi.hoisted(() => ({ callNativeFirebaseFunction: vi.fn() }));
 const nativeRuntimeMocks = vi.hoisted(() => ({ isNativeRuntime: vi.fn() }));
+const nativeAuthMocks = vi.hoisted(() => ({
+    firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
+    getNativeAuthIdToken: vi.fn()
+}));
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => ({ ...headers, 'X-Firebase-AppCheck': 'debug-app-check' }))
+}));
 
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
@@ -51,6 +58,8 @@ vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => 
 vi.mock(import('../../apps/app/src/lib/profileService.ts'), () => profileMocks);
 vi.mock(import('../../apps/app/src/lib/nativeCallable.ts'), () => nativeCallableMocks);
 vi.mock(import('../../apps/app/src/lib/nativeRuntime.ts'), () => nativeRuntimeMocks);
+vi.mock(import('../../apps/app/src/lib/authService.ts'), () => nativeAuthMocks);
+vi.mock(import('../../apps/app/src/lib/adapters/legacyFirebaseAppCheck.ts'), () => appCheckMocks);
 
 const user = {
     uid: 'user-1',
@@ -68,6 +77,21 @@ function snapshot(docs) {
     };
 }
 
+function nativeJsonResponse(data, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => data
+    };
+}
+
+function nativeFirestoreDocument(path, fields) {
+    return {
+        name: `projects/demo-project/databases/(default)/documents/${path}`,
+        fields
+    };
+}
+
 function deferred() {
     let resolve;
     let reject;
@@ -79,8 +103,10 @@ function deferred() {
 }
 
 beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
     nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
+    nativeAuthMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
     Object.defineProperty(globalThis, 'crypto', {
         value: {
             subtle: {
@@ -393,6 +419,81 @@ describe('React app social service', () => {
         expect(firebaseMocks.where).toHaveBeenCalledWith('requesterId', '==', 'user-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('recipientId', '==', 'user-1');
         expect(firebaseMocks.where).not.toHaveBeenCalledWith('memberIds', 'array-contains', 'user-1');
+    });
+
+    it('surfaces a failed native team-post query without treating the known feed as complete', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        const fetchMock = vi.fn(async (url, request) => {
+            const requestUrl = String(url);
+            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
+                return nativeJsonResponse({ documents: [] });
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                const filters = body?.structuredQuery?.where?.compositeFilter?.filters || [];
+                const hasTeamFilter = filters.some((filter) => filter?.fieldFilter?.field?.fieldPath === 'teamId');
+                if (hasTeamFilter) {
+                    return nativeJsonResponse({ error: { message: 'Team feed unavailable.' } }, 503);
+                }
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/known-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    authorName: { stringValue: 'Jamie Friend' },
+                    title: { stringValue: 'Known update' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/known-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Not found.' } }, 404);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [{ teamId: 'team-1', teamName: 'Bears' }], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({ id: 'known-post', viewerHasLiked: false })]);
+        expect(model.feedError).toContain('Some feed details could not load');
+    });
+
+    it('keeps failed native reaction reads unknown so Like cannot invert an existing reaction', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        vi.stubGlobal('fetch', vi.fn(async (url) => {
+            const requestUrl = String(url);
+            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
+                return nativeJsonResponse({ documents: [] });
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/unknown-reaction-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    title: { stringValue: 'Reaction state pending' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' },
+                    reactionCounts: { mapValue: { fields: { like: { integerValue: '2' } } } }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/unknown-reaction-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Reaction read unavailable.' } }, 503);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        }));
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({
+            id: 'unknown-reaction-post',
+            viewerHasLiked: undefined,
+            viewerReactionError: true
+        })]);
+        expect(model.feedError).toContain('Like state');
     });
 
     it('merges query results newest-first and applies viewer-local hide and reaction state', async () => {

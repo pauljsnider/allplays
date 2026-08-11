@@ -703,7 +703,17 @@ describe('native chat team discovery fallback', () => {
         chatConversations: [{
           id: 'direct-1',
           type: 'direct',
-          lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }, {
+          id: 'group-older',
+          type: 'group',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T11:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
         }]
       }],
       isPartial: false
@@ -753,6 +763,9 @@ describe('native chat team discovery fallback', () => {
     expect(fetchMock.mock.calls.some(([url]) => (
       String(url).includes('/chatConversations/direct-1:runAggregationQuery')
     ))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/group-older/chatMessages')
+    ))).toBe(false);
   });
 
   it('marks native unread counts partial when an authenticated aggregation fails', async () => {

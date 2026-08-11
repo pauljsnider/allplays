@@ -60,7 +60,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   };
 
   const toggleLike = async (post: SocialFeedItem) => {
-    if (!auth.user || busyPostId) return;
+    if (!auth.user || busyPostId || post.viewerReactionError) return;
     const previousLiked = post.viewerHasLiked;
     const previousCount = Number(post.reactionCounts.like || 0);
     setBusyPostId(post.id);
@@ -78,6 +78,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
       updatePost(post.id, (current) => ({
         ...current,
         viewerHasLiked: result.liked,
+        viewerReactionError: false,
         reactionCounts: { ...current.reactionCounts, like: result.count }
       }));
       setStatus(result.liked ? 'Post liked.' : 'Like removed.');
@@ -278,9 +279,11 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
                 <button
                   type="button"
                   className={`ghost-button !min-h-11 !px-3 text-xs ${post.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
-                  disabled={Boolean(busyPostId)}
+                  disabled={Boolean(busyPostId) || post.viewerReactionError === true}
                   onClick={() => toggleLike(post)}
-                  aria-label={`${post.viewerHasLiked ? 'Unlike' : 'Like'} post, ${Number(post.reactionCounts.like || 0)} likes`}
+                  aria-label={post.viewerReactionError
+                    ? `Like status unavailable, ${Number(post.reactionCounts.like || 0)} likes`
+                    : `${post.viewerHasLiked ? 'Unlike' : 'Like'} post, ${Number(post.reactionCounts.like || 0)} likes`}
                 >
                   <Heart className={`h-4 w-4 ${post.viewerHasLiked ? 'fill-current' : ''}`} aria-hidden="true" />
                   {busyPostId === post.id ? 'Saving…' : Number(post.reactionCounts.like || 0)}

@@ -922,7 +922,8 @@ function getConversationIdFromMetadata(value: unknown): string | null {
 function getConversationLatestMessageTimeFromMetadata(value: unknown) {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, any>;
-  return record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
+  const timestamp = record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
+  return toDate(timestamp);
 }
 
 function shouldRequestUnreadCount(
@@ -2352,7 +2353,20 @@ function toDate(value: any) {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (value?.toDate) return value.toDate();
-  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+  const seconds = typeof value?.seconds === 'number'
+    ? value.seconds
+    : typeof value?._seconds === 'number'
+      ? value._seconds
+      : null;
+  if (seconds !== null) {
+    const nanoseconds = typeof value?.nanoseconds === 'number'
+      ? value.nanoseconds
+      : typeof value?._nanoseconds === 'number'
+        ? value._nanoseconds
+        : 0;
+    const date = new Date((seconds * 1000) + Math.floor(nanoseconds / 1_000_000));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
 }

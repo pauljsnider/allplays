@@ -1220,6 +1220,11 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
         </button>
       </div>
       <div className="space-y-2 p-3">
+        {social.feedError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs font-bold text-amber-800" role="alert">
+            {social.feedError}
+          </div>
+        ) : null}
         {loading ? (
           <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-600">
             <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
@@ -1227,11 +1232,11 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
           </div>
         ) : previewItems.length ? previewItems.map((item) => (
           <SocialFeedMini key={item.id} item={item} />
-        )) : (
+        )) : !social.feedError ? (
           <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
             Post a player moment, team photo, or game recap to start your family feed.
           </div>
-        )}
+        ) : null}
         <Link to="/home?section=feed" className="flex min-h-10 items-center justify-between rounded-xl bg-primary-50 px-3 text-sm font-black text-primary-800">
           Open full feed
           <ChevronRight className="h-4 w-4" aria-hidden="true" />
@@ -1353,6 +1358,12 @@ function FeedSection({
             </div>
           </div>
         </div>
+        {filter !== 'opportunities' && social.feedError ? (
+          <div className="m-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3" role="alert">
+            <span className="text-xs font-bold text-amber-800">{social.feedError}</span>
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => onRefresh()} disabled={loading}>Retry feed</button>
+          </div>
+        ) : null}
         <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,1fr)_280px]">
           <div className="space-y-3">
             {filter === 'opportunities' ? opportunityLoading ? (
@@ -1367,7 +1378,7 @@ function FeedSection({
                 onStatus={onStatus}
                 onOptimisticHide={setPostOptimisticallyHidden}
               />
-            )) : (
+            )) : social.feedError ? null : (
               <EmptyCard
                 icon={Newspaper}
                 title="No posts for this filter"
@@ -1522,6 +1533,7 @@ function SocialFeedCard({
   const hideBusy = Boolean(busyActions.hide);
   const reportBusy = Boolean(busyActions.report);
   const commentBusy = Boolean(busyActions.comment);
+  const likeStateUnavailable = optimisticItem.viewerReactionError === true;
 
   return (
     <article className="social-feed-card app-card overflow-hidden shadow-sm">
@@ -1576,7 +1588,7 @@ function SocialFeedCard({
           <button
             type="button"
             className={`ghost-button !min-h-9 !px-3 text-xs ${optimisticItem.viewerHasLiked ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`}
-            disabled={!canPersist || likeBusy}
+            disabled={!canPersist || likeBusy || likeStateUnavailable}
             onClick={() => runAction({
               actionKey: 'like',
               action: async () => {
@@ -1585,6 +1597,7 @@ function SocialFeedCard({
                   setOptimisticItem((current) => ({
                     ...current,
                     viewerHasLiked: result.liked,
+                    viewerReactionError: false,
                     reactionCounts: { ...current.reactionCounts, like: result.count }
                   }));
                 }
@@ -1607,8 +1620,10 @@ function SocialFeedCard({
                 }
               }))
             })}
-            aria-label={`${optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'} post, ${likeCount} like${likeCount === 1 ? '' : 's'}`}
-            title={optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'}
+            aria-label={likeStateUnavailable
+              ? `Like status unavailable, ${likeCount} like${likeCount === 1 ? '' : 's'}`
+              : `${optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'} post, ${likeCount} like${likeCount === 1 ? '' : 's'}`}
+            title={likeStateUnavailable ? 'Refresh the feed to verify Like status' : optimisticItem.viewerHasLiked ? 'Unlike' : 'Like'}
           >
             {likeBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Heart className={`h-4 w-4 ${optimisticItem.viewerHasLiked ? 'fill-current' : ''}`} aria-hidden="true" />}
             {likeCount}

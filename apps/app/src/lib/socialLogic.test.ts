@@ -85,5 +85,6 @@ describe('buildSocialHomeModel', () => {
 describe('emptySocialHome', () => {
   it('has a null friendshipsError', () => {
     expect(emptySocialHome().friendshipsError).toBeNull();
+    expect(emptySocialHome().feedError).toBeNull();
   });
 });
