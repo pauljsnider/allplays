@@ -216,7 +216,7 @@ function createOfficialTeamDiscoveryHandler({
     }
   }
 
-  async function loadAssignmentProjection(teamIds, authUser, directoryTeamIds = new Set()) {
+  async function loadAssignmentProjection(teamIds, authUser, directoryTeamIds = new Set(), preferredTeamId = '') {
     if (teamIds.length > boundedAssignmentTeamLimit) {
       throw new HttpsError(
         'resource-exhausted',
@@ -331,8 +331,14 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('unavailable', 'Official assignment details could not be verified. Try again.');
     }
     const accessibleProjections = projections.filter((projection) => projection.hasAccess);
+    const assignmentProjections = preferredTeamId
+      ? [
+          ...accessibleProjections.filter((projection) => projection.team.id === preferredTeamId),
+          ...accessibleProjections.filter((projection) => projection.team.id !== preferredTeamId)
+        ]
+      : accessibleProjections;
     const deduplicatedAssignments = new Map();
-    accessibleProjections.flatMap((projection) => projection.assignments).forEach((assignment) => {
+    assignmentProjections.flatMap((projection) => projection.assignments).forEach((assignment) => {
       const key = assignment.sharedGamePath
         ? `shared:${assignment.sharedGamePath}:${assignment.slotId}`
         : `direct:${assignment.teamId}:${assignment.gameId}:${assignment.slotId}`;
@@ -392,7 +398,7 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('invalid-argument', 'The requested official team is invalid.');
     }
     const projectionTeamIds = [...new Set([...teamIds, ...(requestedTeamId ? [requestedTeamId] : [])])].sort();
-    const projection = await loadAssignmentProjection(projectionTeamIds, authUser, new Set(teamIds));
+    const projection = await loadAssignmentProjection(projectionTeamIds, authUser, new Set(teamIds), requestedTeamId);
     const accessibleTeamIds = projection.teams.map((team) => team.id);
     return {
       teamIds: accessibleTeamIds,

@@ -18,6 +18,8 @@ describe('social post mutation callable core', () => {
         expect(canReadSocialPostForCaller({ ...base, isGlobalAdmin: true })).toBe(true);
         expect(canReadSocialPostForCaller({ ...base, canAccessTeam: true })).toBe(true);
         expect(canReadSocialPostForCaller(base)).toBe(false);
+        expect(canReadSocialPostForCaller({ ...base, callerUid: 'author-1 ' })).toBe(false);
+        expect(canReadSocialPostForCaller({ ...base, callerUid: 'viewer-1 ' })).toBe(false);
         expect(canReadSocialPostForCaller({ ...base, post: { ...base.post, hidden: true }, isGlobalAdmin: true })).toBe(false);
     });
 

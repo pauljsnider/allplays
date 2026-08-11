@@ -7,7 +7,13 @@ function normalizeSocialPostId(value) {
 
 function canReadSocialPostForCaller({ post, callerUid, isGlobalAdmin, canAccessTeam }) {
   const data = post && typeof post === 'object' && !Array.isArray(post) ? post : {};
-  const uid = typeof callerUid === 'string' ? callerUid.trim() : '';
+  const uid = typeof callerUid === 'string' &&
+    callerUid === callerUid.trim() &&
+    callerUid.length > 0 &&
+    callerUid.length <= 128 &&
+    !callerUid.includes('/')
+    ? callerUid
+    : '';
   if (!uid || data.hidden === true) return false;
   const visibleUserIds = Array.isArray(data.visibleUserIds)
     ? data.visibleUserIds.filter((value) => typeof value === 'string')

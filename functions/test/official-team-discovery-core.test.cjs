@@ -519,6 +519,13 @@ test('official assignment projection deduplicates one shared slot linked through
   assert.equal(result.assignments.length, 1);
   assert.equal(result.assignments[0].sharedGamePath, sharedPath);
   assert.equal(result.assignments[0].slotId, 'mine');
+
+  const requestedResult = await handler({ includeAssignments: true, requestedTeamId: 'team-2' }, context);
+  assert.deepEqual(requestedResult.teamIds, ['team-1', 'team-2']);
+  assert.equal(requestedResult.assignments.length, 1);
+  assert.equal(requestedResult.assignments[0].teamId, 'team-2');
+  assert.equal(requestedResult.assignments[0].sharedGamePath, sharedPath);
+  assert.equal(requestedResult.assignments[0].slotId, 'mine');
 });
 
 test('official assignment projection fails closed when shared-game membership exceeds the bound', async () => {
