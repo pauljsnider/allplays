@@ -381,7 +381,7 @@ export async function loadTeamFeeManagementModel(teamId: string, batchId: string
   const batches = ((rawBatches || []) as any[]).map(toBatchSummary);
   const selectedBatch = batches.find((batch) => batch.id === batchId) || batches[0] || null;
   const recipients = selectedBatch
-    ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id))) as any[]).map(toRecipientSummary)
+    ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id, { hydrateAdminBilling: false }))) as any[]).map(toRecipientSummary)
     : [];
   const rosterPlayers = ((rawPlayers || []) as any[])
     .filter((player) => player?.active !== false)

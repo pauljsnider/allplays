@@ -214,24 +214,39 @@ describe('TeamFees recipient queue', () => {
     expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
   });
 
-  it('renders a large batch as summary rows without mounting every editor', async () => {
+  it('renders 100 recipients with correct totals and actions without admin billing data', async () => {
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
       team: { id: 'team-1', name: 'Bears' },
       batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
       selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
       canManageFees: true,
       rosterPlayers: [],
-      recipients: Array.from({ length: 50 }, (_, index) => buildRecipient(index + 1))
+      recipients: Array.from({ length: 100 }, (_, index) => buildRecipient(index + 1, {
+        status: 'partial',
+        amountPaidCents: 2500,
+        remainingBalanceCents: 7500,
+        paymentLedger: [{ type: 'offline_payment', amountCents: 2500 }]
+      }))
     });
 
     renderTeamFees();
 
     expect(await screen.findByText('Player 1')).toBeTruthy();
-    expect(screen.getByText('Player 50')).toBeTruthy();
-    expect(screen.getAllByRole('button', { name: 'Open details' })).toHaveLength(50);
+    expect(screen.getByText('Player 100')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Open details' })).toHaveLength(100);
+    expect(screen.getByText('$10,000.00')).toBeTruthy();
+    expect(screen.getByText('$2,500.00')).toBeTruthy();
+    expect(screen.getByText('$7,500.00')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Record payment' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Share family payment link' })).toBeNull();
+
+    const recipientCard = openRecipientDetails('Player 1');
+    expect(within(recipientCard).getByRole('button', { name: 'Record payment' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Record refund' })).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Share family payment link' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
   });
 
   it('unmounts inactive recipient editors while preserving typed drafts', async () => {

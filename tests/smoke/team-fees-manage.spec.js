@@ -145,7 +145,8 @@ async function mockTeamFeesManageModules(page) {
                     hasAdminBilling: true,
                     adminBilling: {
                         stripePaymentIntentId: 'pi_123',
-                        stripeChargeId: 'ch_123'
+                        stripeChargeId: 'ch_123',
+                        note: 'Stripe payment reconciled by admin'
                     },
                     status: 'paid'
                 },
@@ -217,6 +218,7 @@ test('team fees manage page records manual payments and refunds through delegate
     await expect(paidRecipient.locator('[data-refund-action]')).toBeEnabled();
 
     const stripeRecipient = page.locator('[data-recipient-id="stripe-1"]');
+    await expect(stripeRecipient).toContainText('Stripe payment reconciled by admin');
     await expect(stripeRecipient.locator('form[data-action="refund"]')).toBeVisible();
     await expect(stripeRecipient.getByRole('button', { name: 'Issue refund' })).toBeVisible();
 
