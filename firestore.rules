@@ -1625,6 +1625,24 @@ service cloud.firestore {
              );
     }
 
+    function isCanonicalSocialPostRoute(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 500 &&
+             value.matches("^/[A-Za-z0-9._~!$&'()*+,;=:@%/?#-]*$") &&
+             !value.matches('^//.*$');
+    }
+
+    function isSocialPostNavigationValid(data) {
+      let snapshot = data.get('snapshot', {});
+      let route = data.get('route', null);
+      return snapshot is map &&
+             (route == null || isCanonicalSocialPostRoute(route)) &&
+             data.get('href', null) == null &&
+             snapshot.get('route', null) == route &&
+             snapshot.get('href', null) == null;
+    }
+
     function isSocialPostCreatePayloadValid(data) {
       return isSignedIn() &&
              data.get('authorId', '') == request.auth.uid &&
@@ -1640,6 +1658,7 @@ service cloud.firestore {
              data.get('playerIds', []) is list &&
              data.get('playerNames', []) is list &&
              data.get('media', []) is list &&
+             isSocialPostNavigationValid(data) &&
              data.get('hidden', false) == false &&
              (
                !(data.get('visibility', '') in ['team', 'friends_and_team']) ||
@@ -1655,6 +1674,8 @@ service cloud.firestore {
         'visibility',
         'visibleUserIds',
         'createdAt',
+        'route',
+        'href',
         'snapshot'
       ];
     }

@@ -32,6 +32,8 @@ const immutableSocialPostScopeFields = [
     'visibility',
     'visibleUserIds',
     'createdAt',
+    'route',
+    'href',
     'snapshot'
 ];
 
@@ -112,6 +114,8 @@ describe('React app social Firestore rules', () => {
 
         expect(source).toContain('function canReadSocialPost(data)');
         expect(source).toContain('function isSocialPostCreatePayloadValid(data)');
+        expect(source).toContain('function isCanonicalSocialPostRoute(value)');
+        expect(source).toContain('function isSocialPostNavigationValid(data)');
         expect(source).toContain('function canModerateSocialPost(data)');
         expect(source).toContain('function socialPostImmutableScopeFields()');
         expect(source).toContain('function isSocialPostAuthorContentUpdateValid()');
@@ -136,6 +140,130 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('allow delete: if isVerifiedForSensitiveWrite() && isSocialPostReactionDeleteValid(postId, userId);');
         expect(source).toContain("request.resource.data.get('postId', '') == postId");
         expect(source).toContain("request.resource.data.keys().hasOnly(['postId', 'hiddenAt'])");
+        expect(source).toContain("data.get('href', null) == null");
+        expect(source).toContain("snapshot.get('route', null) == route");
+        expect(source).toContain("snapshot.get('href', null) == null");
+        expect(source).toContain('isSocialPostNavigationValid(data)');
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social post navigation rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-social-navigation-rules-${Date.now()}`,
+                firestore: { rules: rulesSource() }
+            });
+        }, 30_000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
+                    ownerId: 'owner-1',
+                    adminEmails: []
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function socialPostPayload(overrides = {}) {
+            const route = Object.prototype.hasOwnProperty.call(overrides, 'route')
+                ? overrides.route
+                : '/teams/team-1';
+            const href = Object.prototype.hasOwnProperty.call(overrides, 'href')
+                ? overrides.href
+                : null;
+            const snapshotRoute = Object.prototype.hasOwnProperty.call(overrides, 'snapshotRoute')
+                ? overrides.snapshotRoute
+                : route;
+            const snapshotHref = Object.prototype.hasOwnProperty.call(overrides, 'snapshotHref')
+                ? overrides.snapshotHref
+                : href;
+            return {
+                authorId: overrides.authorId || 'owner-1',
+                type: 'team_media',
+                visibility: 'team',
+                title: 'Team update',
+                detail: 'Team media · Bears',
+                caption: '',
+                teamId: 'team-1',
+                teamIds: ['team-1'],
+                playerIds: [],
+                playerNames: [],
+                media: [],
+                visibleUserIds: [overrides.authorId || 'owner-1'],
+                route,
+                href,
+                snapshot: {
+                    type: 'team_media',
+                    title: 'Team update',
+                    detail: 'Team media · Bears',
+                    teamId: 'team-1',
+                    playerIds: [],
+                    playerNames: [],
+                    route: snapshotRoute,
+                    href: snapshotHref
+                },
+                hidden: false,
+                reactionCounts: {},
+                commentCount: 0,
+                createdAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            };
+        }
+
+        it('allows the team owner to create a post with a canonical app route', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertSucceeds(setDoc(doc(db, 'socialPosts', 'valid-team-post'), socialPostPayload()));
+        });
+
+        it('allows the team owner to create a post with no navigation destination', async () => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+            const payload = socialPostPayload({ route: null, snapshotRoute: null });
+            delete payload.href;
+            delete payload.snapshot.href;
+
+            await assertSucceeds(setDoc(doc(db, 'socialPosts', 'post-without-navigation'), payload));
+        });
+
+        it('denies a cross-team caller even when the navigation route is canonical', async () => {
+            const db = testEnv.authenticatedContext('outsider-1', {
+                email: 'outsider@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', 'cross-team-post'), socialPostPayload({
+                authorId: 'outsider-1'
+            })));
+        });
+
+        it.each([
+            ['external route', { route: 'https://example.invalid/source', snapshotRoute: 'https://example.invalid/source' }],
+            ['protocol-relative route', { route: '//example.invalid/source', snapshotRoute: '//example.invalid/source' }],
+            ['backslash route', { route: '/\\example.invalid/source', snapshotRoute: '/\\example.invalid/source' }],
+            ['control-character route', { route: '/teams/team-1\nnext', snapshotRoute: '/teams/team-1\nnext' }],
+            ['stored href', { href: 'mailto:team@example.invalid', snapshotHref: 'mailto:team@example.invalid' }],
+            ['mismatched snapshot route', { snapshotRoute: '/teams/team-2' }],
+            ['mismatched snapshot href', { snapshotHref: 'https://example.invalid/source' }]
+        ])('denies %s navigation values from an otherwise authorized author', async (_label, overrides) => {
+            const db = testEnv.authenticatedContext('owner-1', {
+                email: 'owner@example.com',
+                email_verified: true
+            }).firestore();
+
+            await assertFails(setDoc(doc(db, 'socialPosts', `invalid-${_label.replaceAll(' ', '-')}`), socialPostPayload(overrides)));
+        });
     });
 
     describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('social reaction and viewer hide rules engine coverage', () => {

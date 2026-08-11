@@ -26,6 +26,10 @@ import { getPublicTeamDetail } from './publicTeamsService';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
 import { getPublicBaseUrl } from './inviteUrls';
 import {
+  getStoredSocialPostNavigation,
+  normalizeSocialPostNavigationForCreate
+} from './socialNavigation';
+import {
   buildFriendshipId,
   buildSocialHomeModel,
   emptySocialHome,
@@ -132,6 +136,7 @@ function getUserDisplayName(user: AuthUser | null, fallback = 'ALL PLAYS user') 
 
 function mapSocialPost(docData: FirestoreDoc): SocialFeedItem {
   const snapshot = docData.snapshot && typeof docData.snapshot === 'object' ? docData.snapshot : {};
+  const navigation = getStoredSocialPostNavigation(docData, snapshot);
   const type = compactString(docData.type || snapshot.type || 'manual_post') as SocialPostType;
   const visibility = compactString(docData.visibility || 'team') as SocialVisibility;
   return {
@@ -151,8 +156,8 @@ function mapSocialPost(docData: FirestoreDoc): SocialFeedItem {
     detail: compactString(docData.detail || snapshot.detail),
     caption: compactString(docData.caption) || null,
     media: Array.isArray(docData.media) ? docData.media.filter((entry: any) => entry?.url) : [],
-    route: docData.route || snapshot.route || null,
-    href: docData.href || snapshot.href || null,
+    route: navigation.route,
+    href: navigation.href,
     createdAt: toSocialDate(docData.createdAt),
     reactionCounts: docData.reactionCounts && typeof docData.reactionCounts === 'object' ? docData.reactionCounts : {},
     commentCount: Number(docData.commentCount || 0),
@@ -570,6 +575,7 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
   const playerIds = uniqueStrings(input.playerIds || []);
   const playerNames = uniqueStrings(input.playerNames || []);
   const createdAt = Timestamp.now();
+  const navigation = normalizeSocialPostNavigationForCreate(input.route, input.href);
   const snapshot = {
     type: input.type,
     title,
@@ -580,8 +586,8 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
     playerNames,
     sourceType: input.sourceType || null,
     sourceId: input.sourceId || null,
-    route: input.route || null,
-    href: input.href || null
+    route: navigation.route,
+    href: navigation.href
   };
 
   const postData = {
@@ -602,8 +608,8 @@ export async function createSocialPost(user: AuthUser, input: CreateSocialPostIn
     detail: input.detail || '',
     caption: input.caption || '',
     media: input.media || [],
-    route: input.route || null,
-    href: input.href || null,
+    route: navigation.route,
+    href: navigation.href,
     visibleUserIds,
     snapshot,
     hidden: false,

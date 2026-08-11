@@ -104,7 +104,7 @@ async function waitForTeamsRoute(page, readyLocator) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false } = {}) {
+async function mockHomePlayerModules(page, { switchableSocialTargets = false, failSocialPost = false, unsafeSocialTarget = false } = {}) {
     await page.route('https://img.example.test/**', async (route) => {
         await route.fulfill({
             status: 200,
@@ -113,7 +113,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
         });
     });
 
-    await page.addInitScript(({ switchableSocialTargets: enableSwitching, failSocialPost: failPost }) => {
+    await page.addInitScript(({ switchableSocialTargets: enableSwitching, failSocialPost: failPost, unsafeSocialTarget: includeUnsafeTarget }) => {
         window.__ALLPLAYS_CONFIG__ = {
             ...(window.__ALLPLAYS_CONFIG__ || {}),
             firebase: {
@@ -130,12 +130,13 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
         window.__socialDiscards = [];
         window.__switchableSocialTargets = enableSwitching;
         window.__failSocialPost = failPost;
+        window.__unsafeSocialTarget = includeUnsafeTarget;
         window.__parentToolPanelLoads = [];
         window.__parentToolRenders = [];
         window.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
             window.__parentToolRenders.push(toolId);
         };
-    }, { switchableSocialTargets, failSocialPost });
+    }, { switchableSocialTargets, failSocialPost, unsafeSocialTarget });
 
     await page.route(/\/src\/lib\/friendMessageService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -918,7 +919,29 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                             createdAt: new Date('2100-06-01T18:00:00Z'),
                             reactionCounts: { like: 2 },
                             commentCount: 1
-                        }],
+                        }, ...(window.__unsafeSocialTarget ? [{
+                            id: 'post-unsafe',
+                            type: 'team_media',
+                            visibility: 'team',
+                            authorId: 'friend-1',
+                            authorName: 'Jamie Friend',
+                            authorPhotoUrl: null,
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerIds: [],
+                            playerNames: [],
+                            sourceType: 'team',
+                            sourceId: 'team-1',
+                            title: 'Stored unsafe destination',
+                            detail: 'Legacy team update',
+                            caption: null,
+                            media: [],
+                            route: '//example.invalid/source',
+                            href: 'mailto:team@example.invalid',
+                            createdAt: new Date('2100-06-01T17:00:00Z'),
+                            reactionCounts: {},
+                            commentCount: 0
+                        }] : [])],
                         friends: [{
                             id: 'friendship-1',
                             userId: 'friend-1',
@@ -1891,6 +1914,24 @@ test('social quick share defers changing the selected post type', async ({ page,
     await expect(dialog.getByRole('button', { name: 'Photos from today.' })).toBeVisible();
     await dialog.getByRole('button', { name: 'Post', exact: true }).click();
     await expect(dialog.getByText('Add a photo or video for this share.')).toBeVisible();
+});
+
+test('social feed keeps canonical sources in-app and fails unsafe stored destinations closed', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page, { unsafeSocialTarget: true });
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await page.goto(appUrl(baseURL, '/home?section=feed'), { waitUntil: 'domcontentloaded' });
+        await waitForHomeRoute(page, page.getByText('Quick shares'));
+
+        const canonicalCard = page.locator('.social-feed-card').filter({ hasText: 'Pat Star highlight' });
+        await expect(canonicalCard.getByRole('link', { name: 'Open source' }))
+            .toHaveAttribute('href', '#/players/team-1/player-1');
+
+        const unsafeCard = page.locator('.social-feed-card').filter({ hasText: 'Stored unsafe destination' });
+        await expect(unsafeCard).toBeVisible();
+        await expect(unsafeCard.getByRole('link', { name: 'Open source' })).toHaveCount(0);
+    }
 });
 
 test('social game recap switches between completed games and linked players', async ({ page, baseURL }) => {
