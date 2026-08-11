@@ -513,7 +513,7 @@ describe('native chat team discovery fallback', () => {
     expect(requestedFields).toEqual(['ownerId']);
   });
 
-  it('uses complete native callable discovery before the partial direct-read fallback', async () => {
+  it('uses complete native callable team discovery before the partial direct-read fallback', async () => {
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
       teams: [{
         id: 'team-admin',
@@ -536,9 +536,79 @@ describe('native chat team discovery fallback', () => {
     expect(result.teams).toEqual([
       expect.objectContaining({ id: 'team-admin', name: 'Admin Email Team' })
     ]);
-    expect(result.isPartial).toBe(false);
+    expect(result.isPartial).toBe(true);
     expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
+  });
+
+  it('merges verified parent-linked teams when managed callable discovery succeeds empty', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-parent', name: 'Jr KC Current', role: 'Parent' })
+    ]);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-parent'))).toBe(true);
+  });
+
+  it('marks native unread counts partial when message metadata can represent nonzero unread state', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          teamChatState: {
+            mapValue: {
+              fields: {
+                'team-admin': {
+                  mapValue: {
+                    fields: {
+                      lastReadAt: { timestampValue: '2026-08-11T11:00:00.000Z' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }));
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 0 })
+    ]);
+    expect(result.isPartial).toBe(true);
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
   });
 
   it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {

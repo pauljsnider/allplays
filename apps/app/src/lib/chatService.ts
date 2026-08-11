@@ -673,12 +673,7 @@ function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<
   return 'Parent';
 }
 
-async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
-  const isPartial = true;
-  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid).catch((error) => {
-    logger.warn('Native owner team query failed.', { error });
-    return [];
-  });
+async function nativeLoadLinkedTeams(profile: Record<string, any>) {
   const linkedTeamIds = [
     ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
     ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : []),
@@ -692,8 +687,20 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
     logger.warn('Native linked team read failed.', { error: result.reason });
     return [];
   });
+  return {
+    teams: linkedTeams,
+    isPartial: linkedTeamResults.some((result) => result.status === 'rejected')
+  };
+}
+
+async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
+  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid).catch((error) => {
+    logger.warn('Native owner team query failed.', { error });
+    return [] as FirestoreDocument[];
+  });
+  const linkedTeamsResult = await nativeLoadLinkedTeams(profile);
   const map = new Map<string, FirestoreDocument>();
-  [...ownedTeams, ...linkedTeams].forEach((team) => {
+  [...ownedTeams, ...linkedTeamsResult.teams].forEach((team) => {
     if (team?.id) map.set(team.id, team);
   });
   return {
@@ -703,7 +710,7 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
     // The denied adminEmails collection query cannot be made provable under
     // Firestore rules. Owner/direct linked reads preserve verified records,
     // but only the server callable can prove the result is complete.
-    isPartial
+    isPartial: true
   };
 }
 
@@ -977,9 +984,16 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   let teamDiscoveryPartial = false;
   if (nativeRuntime) {
     try {
-      const managedTeams = await loadManagedTeamsFromNativeCallable();
-      teams = managedTeams.teams;
-      teamDiscoveryPartial = managedTeams.isPartial;
+      const [managedTeams, linkedTeams] = await Promise.all([
+        loadManagedTeamsFromNativeCallable(),
+        nativeLoadLinkedTeams(profile)
+      ]);
+      const teamsById = new Map<string, Record<string, any>>();
+      [...managedTeams.teams, ...linkedTeams.teams].forEach((team) => {
+        if (team?.id) teamsById.set(team.id, team);
+      });
+      teams = [...teamsById.values()];
+      teamDiscoveryPartial = managedTeams.isPartial || linkedTeams.isPartial;
     } catch (error) {
       logger.warn('Native managed team callable failed; using partial direct reads.', { error });
       const fallback = await nativeLoadUserTeams(user, profile);
@@ -1077,6 +1091,11 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     ))
     .map((team) => team.id);
   const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
+  // Native uses authenticated REST for team and message discovery, while the
+  // web unread counter depends on the signed-in web Firestore SDK. Until the
+  // native path has an authenticated count projection, every nonempty native
+  // inbox has incomplete unread data rather than authoritative zeroes.
+  const unreadCountsPartial = nativeRuntime && accessibleTeams.length > 0;
   const unreadCounts = nativeRuntime
     ? {}
     : await withTimeout(
@@ -1123,7 +1142,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   }
 
   return {
-    isPartial: teamDiscoveryPartial,
+    isPartial: teamDiscoveryPartial || unreadCountsPartial,
     teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
       name: team.name || 'Team',
