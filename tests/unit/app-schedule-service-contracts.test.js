@@ -561,7 +561,7 @@ describe('React app schedule service contract integration', () => {
         expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');
     });
 
-    it('discovers official teams through one authenticated callable and rejects partial-empty responses', () => {
+    it('discovers official teams and native assignments through one authenticated bounded callable', () => {
         const officialDiscoverySource = getScheduleServiceSlice(
             'function normalizeOfficialLinkedTeamIdsResponse',
             'export async function loadOfficialAssignmentsAccess'
@@ -573,9 +573,13 @@ describe('React app schedule service contract integration', () => {
 
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds')");
         expect(officialDiscoverySource).toContain('source.isPartial !== false');
-        expect(officialDiscoverySource).toContain('readWithNativeFallback(');
+        expect(officialDiscoverySource).toContain('if (isNativeRuntime())');
+        expect(officialDiscoverySource).toContain('includeAssignments: options.includeAssignments === true');
+        expect(officialDiscoverySource).toContain('requireAssignments: options.includeAssignments === true');
         expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
         expect(officialDiscoverySource).not.toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain('linkedAssignmentsComplete');
+        expect(officialAssignmentsSource).toContain('loadOfficialLinkedTeamIds({ includeAssignments: isNativeRuntime() })');
         expect(officialAssignmentsSource).toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
         expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');

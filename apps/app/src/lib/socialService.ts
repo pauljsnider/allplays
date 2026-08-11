@@ -191,6 +191,74 @@ async function nativeGetFirestoreDocument(path: string) {
   }
 }
 
+async function loadPublicUserProfileDocument(userId: string) {
+  if (isNativeRuntime()) {
+    return nativeGetFirestoreDocument(`${publicUserProfileCollection}/${encodeURIComponent(userId)}`);
+  }
+  const profileSnap = await withTimeout(
+    getDoc(doc(db, publicUserProfileCollection, userId)),
+    'Public profile'
+  );
+  return profileSnap?.exists?.()
+    ? { id: profileSnap.id || userId, ...profileSnap.data() }
+    : null;
+}
+
+async function loadPublicAthleteProfileDocuments(userId: string) {
+  if (isNativeRuntime()) {
+    const payload = await nativeFirestoreRequest(':runQuery', {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: 'athleteProfiles' }],
+          where: {
+            compositeFilter: {
+              op: 'AND',
+              filters: [
+                {
+                  fieldFilter: {
+                    field: { fieldPath: 'parentUserId' },
+                    op: 'EQUAL',
+                    value: { stringValue: userId }
+                  }
+                },
+                {
+                  fieldFilter: {
+                    field: { fieldPath: 'privacy' },
+                    op: 'EQUAL',
+                    value: { stringValue: 'public' }
+                  }
+                }
+              ]
+            }
+          },
+          limit: 12
+        }
+      })
+    });
+    return (Array.isArray(payload) ? payload : [])
+      .map((entry: any) => decodeNativeFirestoreDocument(entry.document))
+      .filter((entry): entry is FirestoreDoc => Boolean(entry));
+  }
+  const snapshot = await withTimeout(getDocs(query(
+    collection(db, 'athleteProfiles'),
+    where('parentUserId', '==', userId),
+    where('privacy', '==', 'public'),
+    limit(12)
+  )), 'Public athlete profiles');
+  return snapshotToDocs(snapshot);
+}
+
+function collectPrivateProfileTeamIds(profile: Record<string, any> = {}) {
+  return uniqueStrings([
+    ...(Array.isArray(profile.discoveryTeamIds) ? profile.discoveryTeamIds : []),
+    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : []),
+    ...(Array.isArray(profile.coachOf) ? profile.coachOf : []),
+    ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((link: any) => link?.teamId) : []),
+    ...(Array.isArray(profile.players) ? profile.players.map((link: any) => link?.teamId) : [])
+  ]);
+}
+
 async function loadNativeSocialPostQueryPages({
   filters,
   label,
@@ -575,31 +643,38 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
   let friendship: FirestoreDoc | null = null;
   if (!isSelf) {
     const friendshipId = buildFriendshipId(viewerId, targetUserId);
-    const friendshipSnap = await withTimeout(
-      getDoc(doc(db, 'friendships', friendshipId)),
-      'Friend profile access'
-    );
-    friendship = friendshipSnap?.exists?.()
-      ? { id: friendshipSnap.id || friendshipId, ...friendshipSnap.data() }
-      : null;
+    if (isNativeRuntime()) {
+      friendship = await nativeGetFirestoreDocument(`friendships/${encodeURIComponent(friendshipId)}`);
+    } else {
+      const friendshipSnap = await withTimeout(
+        getDoc(doc(db, 'friendships', friendshipId)),
+        'Friend profile access'
+      );
+      friendship = friendshipSnap?.exists?.()
+        ? { id: friendshipSnap.id || friendshipId, ...friendshipSnap.data() }
+        : null;
+    }
     if (!friendship || !isAcceptedFriendship(friendship, viewerId, targetUserId)) {
       throw new Error('This profile is available to accepted friends only.');
     }
   }
 
-  const [profile, hiddenPostIds, publicChildSnap] = await Promise.all([
-    isSelf
-      ? loadProfileDocument(targetUserId)
-      : withTimeout(getDoc(doc(db, publicUserProfileCollection, targetUserId)), 'Friend profile')
-        .then((profileSnap) => profileSnap?.exists?.() ? profileSnap.data() || {} : {}),
+  const [privateProfile, publicProfile, hiddenPostIds, publicChildrenDocs] = await Promise.all([
+    isSelf ? loadProfileDocument(targetUserId) : Promise.resolve(null),
+    loadPublicUserProfileDocument(targetUserId),
     loadHiddenSocialPostIds(viewerId),
-    withTimeout(getDocs(query(
-      collection(db, 'athleteProfiles'),
-      where('parentUserId', '==', targetUserId),
-      where('privacy', '==', 'public'),
-      limit(12)
-    )), 'Public athlete profiles').catch(() => null)
+    loadPublicAthleteProfileDocuments(targetUserId)
   ]);
+  const profile = isSelf
+    ? {
+        ...(publicProfile || {}),
+        ...(privateProfile || {}),
+        discoveryTeamIds: uniqueStrings([
+          ...uniqueStrings(publicProfile?.discoveryTeamIds || []),
+          ...collectPrivateProfileTeamIds(privateProfile || {})
+        ])
+      }
+    : (publicProfile || {});
   const publicTeamsPromise = Promise.all(
     uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
   ).then((teams) => teams.filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
@@ -640,13 +715,13 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     return [];
   });
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
-  const publicChildren = publicChildSnap ? snapshotToDocs(publicChildSnap).map((child) => ({
+  const publicChildren = publicChildrenDocs.map((child) => ({
     id: child.id,
     name: compactString(child.athlete?.name) || 'Athlete profile',
     headline: compactString(child.athlete?.headline),
     photoUrl: compactString(child.profilePhoto?.url || child.profilePhotoUrl) || null,
     shareUrl: buildAthleteProfileShareUrl(getPublicBaseUrl(), child.id)
-  })) : [];
+  }));
   const posts = sortSocialFeedItems(postDocs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));

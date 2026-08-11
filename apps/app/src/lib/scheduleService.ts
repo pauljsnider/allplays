@@ -7053,7 +7053,14 @@ function isEligibleOpenOfficiatingSlotParticipant(
   return false;
 }
 
-function normalizeOfficialLinkedTeamIdsResponse(source: any) {
+type OfficialLinkedTeamDiscoveryResult = {
+  teamIds: string[];
+  isPartial: false;
+  assignments: OfficialAssignmentItem[];
+  assignmentsComplete: boolean;
+};
+
+function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireAssignments?: boolean } = {}): OfficialLinkedTeamDiscoveryResult {
   if (!source || source.isPartial !== false || !Array.isArray(source.teamIds)) {
     throw new Error('Official team discovery returned an incomplete response.');
   }
@@ -7061,15 +7068,55 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any) {
   if (teamIds.some((teamId: string) => !teamId || teamId.length > 128 || teamId.includes('/'))) {
     throw new Error('Official team discovery returned an invalid response.');
   }
-  return [...new Set<string>(teamIds)].sort();
+  const normalizedTeamIds = [...new Set<string>(teamIds)].sort();
+  const assignmentsComplete = source.assignmentsComplete === true;
+  if (options.requireAssignments && (!assignmentsComplete || !Array.isArray(source.assignments))) {
+    throw new Error('Official assignment discovery returned an incomplete response.');
+  }
+  const assignments = assignmentsComplete && Array.isArray(source.assignments)
+    ? source.assignments.map((item: any) => {
+      const kind = compactString(item?.kind);
+      const teamId = compactString(item?.teamId);
+      const gameId = compactString(item?.gameId);
+      const slotId = compactString(item?.slotId);
+      const date = normalizeScheduleDate(item?.date);
+      if (!['assigned', 'open'].includes(kind) ||
+        !teamId || !normalizedTeamIds.includes(teamId) || teamId.length > 128 || teamId.includes('/') ||
+        !gameId || gameId.length > 128 || gameId.includes('/') ||
+        !slotId || slotId.length > 128 || slotId.includes('/') ||
+        !date) {
+        throw new Error('Official assignment discovery returned an invalid response.');
+      }
+      return {
+        kind: kind as 'assigned' | 'open',
+        teamId,
+        teamName: compactString(item.teamName) || 'Team',
+        gameId,
+        slotId,
+        position: compactString(item.position) || 'Official',
+        status: kind === 'open' ? 'open' : (compactString(item.status) || 'pending'),
+        opponent: compactString(item.opponent) || 'TBD',
+        location: compactString(item.location) || 'Location TBD',
+        date,
+        canClaim: kind === 'open' && item.canClaim === true,
+        scheduleReviewRequired: kind === 'assigned' && item.scheduleReviewRequired === true
+      } satisfies OfficialAssignmentItem;
+    })
+    : [];
+  return {
+    teamIds: normalizedTeamIds,
+    isPartial: false,
+    assignments,
+    assignmentsComplete
+  };
 }
 
-async function loadOfficialLinkedTeamIdsFromNativeCallable() {
+async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAssignments?: boolean } = {}) {
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listOfficialLinkedTeamIds`;
   const response = await withTimeout(CapacitorHttp.post({
     url: requestUrl,
     headers: await getNativeHeaders(requestUrl) as Record<string, string>,
-    data: { data: {} },
+    data: { data: { includeAssignments: options.includeAssignments === true } },
     connectTimeout: staffTeamDiscoveryTimeoutMs,
     readTimeout: staffTeamDiscoveryTimeoutMs
   }), 'Official team discovery', staffTeamDiscoveryTimeoutMs);
@@ -7078,19 +7125,44 @@ async function loadOfficialLinkedTeamIdsFromNativeCallable() {
   if (response.status < 200 || response.status >= 300) {
     throw new Error(payload?.error?.message || 'Official team access could not be verified.');
   }
-  return normalizeOfficialLinkedTeamIdsResponse(result);
+  return normalizeOfficialLinkedTeamIdsResponse(result, {
+    requireAssignments: options.includeAssignments === true
+  });
 }
 
-async function loadOfficialLinkedTeamIds() {
-  return {
-    teamIds: await readWithNativeFallback(
-      'official team discovery',
-      async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
-      loadOfficialLinkedTeamIdsFromNativeCallable,
-      staffTeamDiscoveryTimeoutMs
-    ),
-    isPartial: false
-  };
+async function loadOfficialLinkedTeamIds(options: { includeAssignments?: boolean } = {}): Promise<OfficialLinkedTeamDiscoveryResult> {
+  if (isNativeRuntime()) {
+    return loadOfficialLinkedTeamIdsFromNativeCallable(options);
+  }
+  return normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds());
+}
+
+async function loadOfficialTeamGames(teamId: string, startDate: Date) {
+  return readWithNativeFallback(
+    `official games ${teamId}`,
+    () => Promise.resolve(getGames(teamId, { startDate })),
+    async () => {
+      const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+        method: 'POST',
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'games' }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: 'date' },
+                op: 'GREATER_THAN_OR_EQUAL',
+                value: encodeFirestoreValue(startDate)
+              }
+            },
+            orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]
+          }
+        })
+      });
+      return (Array.isArray(payload) ? payload : [])
+        .map((entry) => mapFirestoreDocument(entry?.document as NativeFirestoreDocument))
+        .filter(Boolean) as FirestoreDocument[];
+    }
+  );
 }
 
 export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<OfficialAssignmentsAccess> {
@@ -7107,18 +7179,35 @@ export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<Of
 export async function loadOfficialAssignments(user: AuthUser, options: { teamId?: string } = {}): Promise<OfficialAssignmentsResult> {
   const requestedTeamId = compactString(options.teamId);
   const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
+  let linkedAssignments: OfficialAssignmentItem[] = [];
+  let linkedAssignmentsComplete = false;
   let linkedTeamIds: string[] = [];
   let linkedTeamIdsPartial = false;
   let discoveryError: unknown = null;
   try {
-    const linkedTeamResult = await loadOfficialLinkedTeamIds();
+    const linkedTeamResult = await loadOfficialLinkedTeamIds({ includeAssignments: isNativeRuntime() });
     linkedTeamIds = linkedTeamResult.teamIds;
     linkedTeamIdsPartial = linkedTeamResult.isPartial;
+    linkedAssignments = linkedTeamResult.assignments;
+    linkedAssignmentsComplete = linkedTeamResult.assignmentsComplete;
   } catch (error) {
     if (!requestedTeamId) throw error;
     discoveryError = error;
   }
   const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
+  if (isNativeRuntime() && linkedAssignmentsComplete && (!requestedTeamId || linkedRequestedTeamIds.length > 0)) {
+    const nativeTeamIds = requestedTeamId ? linkedRequestedTeamIds : linkedTeamIds;
+    const nativeAssignments = linkedAssignments
+      .filter((item) => nativeTeamIds.includes(item.teamId))
+      .sort((left, right) => left.date.getTime() - right.date.getTime());
+    return {
+      hasAccess: nativeTeamIds.length > 0,
+      teamIds: nativeTeamIds,
+      teamCount: nativeTeamIds.length,
+      isPartial: false,
+      assignments: nativeAssignments
+    };
+  }
   const teamIds = linkedRequestedTeamIds.length
     ? linkedRequestedTeamIds
     : (requestedTeamId ? [requestedTeamId] : linkedTeamIds);
@@ -7141,8 +7230,12 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
     const [teamResult, gamesResult] = await Promise.allSettled([
-      getTeam(teamId, { includeInactive: true }),
-      getGames(teamId, { startDate: officialGamesSince })
+      readWithNativeFallback(
+        `official team ${teamId}`,
+        () => Promise.resolve(getTeam(teamId, { includeInactive: true })),
+        () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
+      ),
+      loadOfficialTeamGames(teamId, officialGamesSince)
     ]);
     const team = teamResult.status === 'fulfilled' ? teamResult.value : null;
     const games = gamesResult.status === 'fulfilled' ? gamesResult.value : [];

@@ -2220,6 +2220,73 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
+  it('loads native linked-team assignments from the authenticated bounded callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-alpha', name: 'Alpha FC' }],
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId: 'game-assigned',
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [{
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        teamName: 'Alpha FC',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        status: 'pending',
+        opponent: 'Tigers',
+        location: 'Field 2',
+        date: new Date(futureDate),
+        canClaim: false,
+        scheduleReviewRequired: false
+      }]
+    });
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: { includeAssignments: true } },
+      headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+    }));
+    expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('marks a verified linked-team result partial when its games cannot load', async () => {
     vi.mocked(getGames).mockRejectedValue(new Error('Schedule unavailable.'));
 
@@ -2277,7 +2344,7 @@ describe('official assignments app service', () => {
     await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
     expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
       url: expect.stringContaining('listOfficialLinkedTeamIds'),
-      data: { data: {} }
+      data: { data: { includeAssignments: false } }
     }));
     expect(getStaffTeams).not.toHaveBeenCalled();
     expect(getTeam).not.toHaveBeenCalled();

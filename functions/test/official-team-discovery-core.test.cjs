@@ -14,8 +14,45 @@ class HttpsError extends Error {
   }
 }
 
-function makeFirestore(records = [], { failField = null } = {}) {
+function makeFirestore(records = [], { failField = null, documents = {}, gamesByTeam = {} } = {}) {
   return {
+    doc(path) {
+      return {
+        async get() {
+          const data = documents[path];
+          return {
+            id: path.split('/').pop(),
+            exists: data != null,
+            data: () => data
+          };
+        }
+      };
+    },
+    collection(path) {
+      const match = /^teams\/([^/]+)\/games$/.exec(path);
+      assert.ok(match, `Unexpected collection path: ${path}`);
+      let queryLimit = Infinity;
+      let startDate = null;
+      return {
+        where(field, operator, value) {
+          assert.equal(field, 'date');
+          assert.equal(operator, '>=');
+          startDate = value;
+          return this;
+        },
+        limit(value) {
+          queryLimit = value;
+          return this;
+        },
+        async get() {
+          const docs = (gamesByTeam[match[1]] || [])
+            .filter(({ data }) => !startDate || new Date(data.date).getTime() >= startDate.getTime())
+            .slice(0, queryLimit)
+            .map(({ id, data }) => ({ id, data: () => data }));
+          return { docs, size: docs.length, empty: docs.length === 0 };
+        }
+      };
+    },
     collectionGroup(name) {
       assert.equal(name, 'officials');
       const filters = [];
@@ -51,7 +88,9 @@ function makeHandler(records, authUser, options = {}) {
     firestore: makeFirestore(records, options),
     auth: { getUser: async () => authUser },
     HttpsError,
-    maxDocumentsPerQuery: options.maxDocumentsPerQuery
+    maxDocumentsPerQuery: options.maxDocumentsPerQuery,
+    maxAssignmentTeams: options.maxAssignmentTeams,
+    maxGamesPerTeam: options.maxGamesPerTeam
   });
 }
 
@@ -86,6 +125,139 @@ test('official discovery supports normalized and common formatted Auth phone var
   });
 
   assert.deepEqual((await handler({}, context)).teamIds, ['phone-team']);
+});
+
+test('official discovery returns only caller assignments and eligible open slots in its bounded projection', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: ['team-1'] },
+      'teams/team-1': { name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          opponent: 'Tigers',
+          location: 'Field 2',
+          officiatingSelfAssignmentEnabled: true,
+          officiatingSlots: [
+            { id: 'mine', position: 'Center', officialEmail: 'Current@Example.com', status: 'pending' },
+            { id: 'other', position: 'Assistant', officialEmail: 'other@example.com', officialName: 'Other Ref', status: 'accepted' },
+            { id: 'open', position: 'Line', status: 'open' }
+          ]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.teamIds, ['team-1']);
+  assert.equal(result.assignmentsComplete, true);
+  assert.deepEqual(result.teams, [{ id: 'team-1', name: 'Alpha FC' }]);
+  assert.deepEqual(result.assignments, [
+    {
+      kind: 'assigned',
+      teamId: 'team-1',
+      teamName: 'Alpha FC',
+      gameId: 'game-1',
+      slotId: 'mine',
+      position: 'Center',
+      status: 'pending',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: futureDate,
+      canClaim: false,
+      scheduleReviewRequired: false
+    },
+    {
+      kind: 'open',
+      teamId: 'team-1',
+      teamName: 'Alpha FC',
+      gameId: 'game-1',
+      slotId: 'open',
+      position: 'Line',
+      status: 'open',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: futureDate,
+      canClaim: true,
+      scheduleReviewRequired: false
+    }
+  ]);
+  assert.equal(result.assignments.some((assignment) => assignment.slotId === 'other'), false);
+});
+
+test('official assignment projection does not expose open slots without current team authority', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: [] },
+      'teams/team-1': { name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSelfAssignmentEnabled: true,
+          officiatingSlots: [
+            { id: 'mine', officialUserId: 'official-1', status: 'pending' },
+            { id: 'open', status: 'open' }
+          ]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.assignments.map((assignment) => assignment.slotId), ['mine']);
+});
+
+test('official assignment projection fails closed when a bounded game query overflows', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    maxGamesPerTeam: 1,
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    gamesByTeam: {
+      'team-1': [
+        { id: 'game-1', data: { date: futureDate, officiatingSlots: [] } },
+        { id: 'game-2', data: { date: futureDate, officiatingSlots: [] } }
+      ]
+    }
+  });
+
+  await assert.rejects(
+    handler({ includeAssignments: true }, context),
+    (error) => error.code === 'resource-exhausted'
+  );
 });
 
 test('official discovery denies disabled accounts', async () => {

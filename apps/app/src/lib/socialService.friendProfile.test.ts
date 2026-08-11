@@ -40,6 +40,10 @@ const appCheckMocks = vi.hoisted(() => ({
   }))
 }));
 
+const publicTeamMocks = vi.hoisted(() => ({
+  getPublicTeamDetail: vi.fn()
+}));
+
 vi.mock('./adapters/legacySocialDb', () => firestoreMocks);
 vi.mock('./profileService', () => profileMocks);
 vi.mock('./nativeRuntime', () => nativeRuntimeMocks);
@@ -50,7 +54,7 @@ vi.mock('./chatService', () => ({
   deleteTeamChatAttachments: vi.fn(),
   uploadTeamChatAttachment: vi.fn()
 }));
-vi.mock('./publicTeamsService', () => ({ getPublicTeamDetail: vi.fn() }));
+vi.mock('./publicTeamsService', () => publicTeamMocks);
 vi.mock('./adapters/legacyPlayerProfile', () => ({
   buildAthleteProfileShareUrl: vi.fn((_base: string, id: string) => `https://allplays.test/athletes/${id}`)
 }));
@@ -71,7 +75,8 @@ describe('loadFriendProfile self-profile resilience', () => {
       photoUrl: 'https://cdn.example.test/pat.jpg',
       discoveryTeamIds: []
     });
-    firestoreMocks.getDoc.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    firestoreMocks.getDoc.mockResolvedValue({ id: '', exists: () => false, data: () => null });
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
     firestoreMocks.getDocs.mockImplementation(async (queryValue: any) => {
       const path = queryValue?.base?.path || '';
       if (path === 'socialPosts') {
@@ -106,7 +111,9 @@ describe('loadFriendProfile self-profile resilience', () => {
       postsError: 'Recent posts could not load. Try again.'
     });
     expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
-    expect(firestoreMocks.getDoc).not.toHaveBeenCalled();
+    expect(firestoreMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'publicUserProfiles/user-1'
+    }));
   });
 
   it('loads self-profile posts through authenticated REST in native builds', async () => {
@@ -116,8 +123,21 @@ describe('loadFriendProfile self-profile resilience', () => {
       if (url.includes('/hiddenSocialPosts?')) {
         return { ok: true, status: 200, json: async () => ({ documents: [] }) };
       }
+      if (url.includes('/publicUserProfiles/user-1')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/publicUserProfiles/user-1',
+            fields: { discoveryTeamIds: { arrayValue: {} } }
+          })
+        };
+      }
       if (url.endsWith('/documents:runQuery')) {
         const query = JSON.parse(String(init?.body || '{}'));
+        if (query.structuredQuery.from?.[0]?.collectionId === 'athleteProfiles') {
+          return { ok: true, status: 200, json: async () => [] };
+        }
         expect(query.structuredQuery.where.compositeFilter.filters).toEqual(expect.arrayContaining([
           expect.objectContaining({
             fieldFilter: expect.objectContaining({
@@ -186,5 +206,129 @@ describe('loadFriendProfile self-profile resilience', () => {
         })
       })
     );
+  });
+
+  it('merges the native self public projection so public team links are retained', async () => {
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+    profileMocks.loadProfileDocument.mockResolvedValue({
+      displayName: 'Pat Parent',
+      photoUrl: 'https://cdn.example.test/pat.jpg',
+      parentTeamIds: []
+    });
+    publicTeamMocks.getPublicTeamDetail.mockResolvedValue({
+      id: 'team-public',
+      name: 'Public Tigers',
+      sport: 'Soccer',
+      photoUrl: 'https://cdn.example.test/team.jpg'
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/publicUserProfiles/user-1')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/publicUserProfiles/user-1',
+            fields: {
+              discoveryTeamIds: { arrayValue: { values: [{ stringValue: 'team-public' }] } }
+            }
+          })
+        };
+      }
+      if (url.includes('/hiddenSocialPosts?')) {
+        return { ok: true, status: 200, json: async () => ({ documents: [] }) };
+      }
+      if (url.endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (body.structuredQuery.from?.[0]?.collectionId === 'athleteProfiles') {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+        if (body.structuredQuery.from?.[0]?.collectionId === 'socialPosts') {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const profile = await loadFriendProfile({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    } as any, 'user-1');
+
+    expect(profile.publicTeams).toEqual([{
+      id: 'team-public',
+      name: 'Public Tigers',
+      sport: 'Soccer',
+      photoUrl: 'https://cdn.example.test/team.jpg'
+    }]);
+    expect(publicTeamMocks.getPublicTeamDetail).toHaveBeenCalledWith('team-public');
+    expect(firestoreMocks.getDoc).not.toHaveBeenCalled();
+    expect(firestoreMocks.getDocs).not.toHaveBeenCalled();
+  });
+
+  it('uses native-authenticated reads for accepted-friend access and profile data', async () => {
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/friendships/user-1__user-2')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/friendships/user-1__user-2',
+            fields: {
+              status: { stringValue: 'accepted' },
+              memberIds: { arrayValue: { values: [{ stringValue: 'user-1' }, { stringValue: 'user-2' }] } },
+              sharedTeamIds: { arrayValue: { values: [{ stringValue: 'team-shared' }] } },
+              sharedTeamNames: { arrayValue: { values: [{ stringValue: 'Shared Team' }] } }
+            }
+          })
+        };
+      }
+      if (url.includes('/publicUserProfiles/user-2')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/publicUserProfiles/user-2',
+            fields: {
+              displayName: { stringValue: 'Friendly User' },
+              discoveryTeamIds: { arrayValue: {} }
+            }
+          })
+        };
+      }
+      if (url.includes('/hiddenSocialPosts?')) {
+        return { ok: true, status: 200, json: async () => ({ documents: [] }) };
+      }
+      if (url.endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (['athleteProfiles', 'socialPosts'].includes(body.structuredQuery.from?.[0]?.collectionId)) {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const profile = await loadFriendProfile({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    } as any, 'user-2');
+
+    expect(profile).toMatchObject({
+      userId: 'user-2',
+      name: 'Friendly User',
+      sharedTeamNames: ['Shared Team'],
+      isSelf: false,
+      posts: [],
+      postsError: null
+    });
+    expect(profile.messageRoute).toBeTruthy();
+    expect(firestoreMocks.getDoc).not.toHaveBeenCalled();
+    expect(firestoreMocks.getDocs).not.toHaveBeenCalled();
   });
 });
