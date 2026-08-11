@@ -814,6 +814,7 @@ describe('Schedule', () => {
 
     act(() => reportHydrationProgress(hydratedSchedule.events.map((event) => ({ ...event }))));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Respond to multiple events' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Review RSVPs' })).toBeEnabled();
   });
 
   it.each([
