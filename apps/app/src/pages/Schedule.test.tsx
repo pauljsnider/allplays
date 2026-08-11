@@ -837,6 +837,12 @@ describe('Schedule', () => {
     expect(within(dialog).getByText('2 selected')).toBeTruthy();
   });
 
+  it('keeps the query-open bulk RSVP callback stable for its effect dependency', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+
+    expect(source).toContain('const handleOpenBulkRsvp = useCallback(async () =>');
+  });
+
   it.each([
     ['/schedule?teamId=team-2&bulkRsvp=1', { Sam: 2, Jordan: 1, Pat: 0 }],
     ['/schedule?playerId=player-2&bulkRsvp=1', { Sam: 2, Jordan: 0, Pat: 0 }]

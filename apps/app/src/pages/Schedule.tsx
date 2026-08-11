@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
@@ -260,11 +260,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const hydratedRsvpGroupKeysRef = useRef(new Set<string>());
   const rsvpHydrationPromisesRef = useRef(new Set<Promise<unknown>>());
   const exportPendingRef = useRef(false);
-  const updateScheduleEvents = (updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
+  const updateScheduleEvents = useCallback((updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     const nextEvents = updater(eventsRef.current);
     eventsRef.current = nextEvents;
     setEvents(nextEvents);
-  };
+  }, []);
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; staffTeams?: ParentScheduleStaffTeam[]; }) => {
     childrenRef.current = data.children;
     eventsRef.current = data.events;
@@ -337,7 +337,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(mergedEvents);
   };
 
-  const hydrateScheduleRsvpsInBackground = (
+  const hydrateScheduleRsvpsInBackground = useCallback((
     result: { children: ParentScheduleChild[]; events: ParentScheduleEvent[] },
     hydrateAll = false,
     visibleGroupLimit = upcomingListPageSize
@@ -410,7 +410,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     rsvpHydrationPromisesRef.current.add(hydrationPromise);
     void hydrationPromise.finally(() => rsvpHydrationPromisesRef.current.delete(hydrationPromise));
     return hydrationPromise;
-  };
+  }, [auth.user, filter, selectedPlayerId, selectedTeamId, timeRange, updateScheduleEvents]);
 
   const buildPastScheduleRangeByTeam = () => {
     const cutoff = new Date(Date.now() - pastScheduleCutoffMs);
@@ -802,7 +802,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
 
-  const handleOpenBulkRsvp = async () => {
+  const handleOpenBulkRsvp = useCallback(async () => {
     if (rsvpHydrationPending || scheduleReadLoading) return;
     setRsvpHydrationPending(true);
     await hydrateScheduleRsvpsInBackground({
@@ -812,7 +812,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     await Promise.all([...rsvpHydrationPromisesRef.current]);
     setBulkRsvpResult(null);
     setBulkRsvpOpen(true);
-  };
+  }, [hydrateScheduleRsvpsInBackground, rsvpHydrationPending, scheduleReadLoading]);
 
   useEffect(() => {
     if (searchParams.get('bulkRsvp') !== '1') {
