@@ -969,6 +969,17 @@ export async function reactToSocialPost(postId: string, user: AuthUser, reaction
 export async function commentOnSocialPost(postId: string, user: AuthUser, text: string) {
   const trimmed = compactString(text);
   if (!trimmed) throw new Error('Write a comment first.');
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{ commented?: unknown; commentId?: unknown }>(
+      'commentOnSocialPostForCaller',
+      { postId, text: trimmed },
+      { errorLabel: 'Social comment' }
+    );
+    if (result?.commented !== true || typeof result?.commentId !== 'string' || !result.commentId) {
+      throw new Error('Social comment response is invalid.');
+    }
+    return;
+  }
   await addDoc(collection(db, 'socialPosts', postId, 'comments'), {
     text: trimmed,
     authorId: user.uid,
@@ -981,6 +992,17 @@ export async function commentOnSocialPost(postId: string, user: AuthUser, text: 
 }
 
 export async function reportSocialPost(postId: string, user: AuthUser, reason = 'Reported from app') {
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{ reported?: unknown; reportId?: unknown }>(
+      'reportSocialPostForCaller',
+      { postId, reason },
+      { errorLabel: 'Social report' }
+    );
+    if (result?.reported !== true || typeof result?.reportId !== 'string' || !result.reportId) {
+      throw new Error('Social report response is invalid.');
+    }
+    return;
+  }
   await addDoc(collection(db, 'socialReports'), {
     postId,
     reporterId: user.uid,

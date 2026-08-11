@@ -973,6 +973,31 @@ describe('React app social service', () => {
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
     });
 
+    it('uses native-authenticated callables for comments and reports in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction
+            .mockResolvedValueOnce({ commented: true, commentId: 'comment-1' })
+            .mockResolvedValueOnce({ reported: true, reportId: 'report-1' });
+        const { commentOnSocialPost, reportSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await commentOnSocialPost('post-1', user, '  Great update!  ');
+        await reportSocialPost('post-1', user, 'Needs review');
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            1,
+            'commentOnSocialPostForCaller',
+            { postId: 'post-1', text: 'Great update!' },
+            { errorLabel: 'Social comment' }
+        );
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            2,
+            'reportSocialPostForCaller',
+            { postId: 'post-1', reason: 'Needs review' },
+            { errorLabel: 'Social report' }
+        );
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
     it('atomically toggles the viewer reaction and parent like count', async () => {
         const transaction = {
             get: vi.fn()

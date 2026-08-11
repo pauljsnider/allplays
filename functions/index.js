@@ -18337,6 +18337,36 @@ function hasCallableChatTeamAccess(caller, teamId, team = {}) {
     .some((value) => normalizeStablePrincipalUid(value) === teamId);
 }
 
+async function requireCallableSocialPostAccess(transaction, postRef, caller) {
+  const postSnap = await transaction.get(postRef);
+  if (!postSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+  }
+  const post = postSnap.data() || {};
+  let canAccessTeam = false;
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam: false
+  })) {
+    const teamId = normalizeSocialPostId(post.teamId);
+    if (teamId) {
+      const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+      canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+    }
+  }
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam
+  })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+  }
+  return post;
+}
+
 exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
   const caller = await getOpportunityCaller(context);
   const staffTeams = await listStaffTeamDocuments(caller);
@@ -18510,6 +18540,70 @@ exports.hideSocialPostForCaller = functions.https.onCall(async (data, context = 
     hiddenAt: admin.firestore.FieldValue.serverTimestamp()
   });
   return { hidden: true };
+});
+
+exports.commentOnSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to comment on this post.');
+  }
+  await assertSensitiveEmailVerified(context, 'comment-on-social-post');
+  const postId = normalizeSocialPostId(data?.postId);
+  const text = cleanOpportunityText(typeof data?.text === 'string' ? data.text : '', 1500);
+  if (!postId || !text) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and comment are required.');
+  }
+  const caller = await getOpportunityCaller(context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const commentRef = firestore.collection(`socialPosts/${postId}/comments`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(commentRef, {
+      text,
+      authorId: caller.uid,
+      authorName: cleanOpportunityText(
+        context.auth.token?.name || caller.user?.displayName || caller.user?.fullName || caller.rawEmail,
+        100
+      ) || 'ALL PLAYS member',
+      authorPhotoUrl: cleanOpportunityText(
+        context.auth.token?.picture || caller.user?.photoUrl || caller.user?.profilePhotoUrl,
+        1000
+      ) || null,
+      hidden: false,
+      createdAt: now,
+      updatedAt: now
+    });
+  });
+  return { commented: true, commentId: commentRef.id };
+});
+
+exports.reportSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to report this post.');
+  }
+  await assertSensitiveEmailVerified(context, 'report-social-post');
+  const postId = normalizeSocialPostId(data?.postId);
+  const reason = cleanOpportunityText(
+    data?.reason == null ? 'Reported from app' : (typeof data.reason === 'string' ? data.reason : ''),
+    500
+  );
+  if (!postId || !reason) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and report reason are required.');
+  }
+  const caller = await getOpportunityCaller(context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reportRef = firestore.collection('socialReports').doc();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(reportRef, {
+      postId,
+      reporterId: caller.uid,
+      reason,
+      status: 'open',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+  return { reported: true, reportId: reportRef.id };
 });
 
 function normalizeParentFeePlayerLinks(user = {}) {

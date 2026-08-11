@@ -46,5 +46,12 @@ describe('social post mutation callable core', () => {
         expect(source).toContain('exports.hideSocialPostForCaller');
         expect(source).toContain("assertSensitiveEmailVerified(context, 'hide-social-post')");
         expect(source).toContain('users/${context.auth.uid}/hiddenSocialPosts/${postId}');
+        expect(source).toContain('exports.commentOnSocialPostForCaller');
+        expect(source).toContain("assertSensitiveEmailVerified(context, 'comment-on-social-post')");
+        expect(source).toContain('requireCallableSocialPostAccess(transaction, postRef, caller)');
+        expect(source).toContain('transaction.create(commentRef');
+        expect(source).toContain('exports.reportSocialPostForCaller');
+        expect(source).toContain("assertSensitiveEmailVerified(context, 'report-social-post')");
+        expect(source).toContain('transaction.create(reportRef');
     });
 });

@@ -243,6 +243,7 @@
             ],
             "cloudFunctions": [
                 "cleanupPublicUserProfileOnAuthDelete",
+                "commentOnSocialPostForCaller",
                 "hideSocialPostForCaller",
                 "listPublicTeams",
                 "notifyInviteRedeemed",
@@ -251,6 +252,7 @@
                 "queueInviteEmail",
                 "queueParentInviteEmail",
                 "reconcileLegacyTeamOwnership",
+                "reportSocialPostForCaller",
                 "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
                 "syncLegacyTeamOwnershipOnAuthCreate",

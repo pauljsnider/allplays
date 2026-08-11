@@ -799,12 +799,13 @@ test('parent fee discovery preserves direct UID assignments for parent-team-only
     assert.deepEqual(result.items.map((item) => item.id), ['direct']);
 });
 
-test('social mutation callables authorize native reactions and viewer-local hides server-side', async () => {
+test('social mutation callables authorize native post actions server-side', async () => {
     const { firestore, callables } = loadCallables({
         'users/parent-1': {
             email: 'parent@example.com',
             isAdmin: false,
-            parentTeamIds: ['team-1']
+            parentTeamIds: ['team-1'],
+            photoUrl: 'https://img.example.test/parent.jpg'
         },
         'teams/team-1': {
             ownerId: 'owner-1',
@@ -842,6 +843,34 @@ test('social mutation callables authorize native reactions and viewer-local hide
         firestore.snapshot('users/parent-1/hiddenSocialPosts/post.with:punctuation').postId,
         'post.with:punctuation'
     );
+
+    const comment = await callables.commentOnSocialPostForCaller(
+        { postId: 'post.with:punctuation', text: ' Great update! ' },
+        authContext('parent-1', { email: 'parent@example.com', name: 'Pat Parent' })
+    );
+    assert.deepEqual(comment, { commented: true, commentId: 'auto-1' });
+    assert.deepEqual(firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1'), {
+        text: 'Great update!',
+        authorId: 'parent-1',
+        authorName: 'Pat Parent',
+        authorPhotoUrl: 'https://img.example.test/parent.jpg',
+        hidden: false,
+        createdAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').createdAt,
+        updatedAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').updatedAt
+    });
+
+    const report = await callables.reportSocialPostForCaller(
+        { postId: 'post.with:punctuation', reason: ' Needs review ' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(report, { reported: true, reportId: 'auto-2' });
+    assert.deepEqual(firestore.snapshot('socialReports/auto-2'), {
+        postId: 'post.with:punctuation',
+        reporterId: 'parent-1',
+        reason: 'Needs review',
+        status: 'open',
+        createdAt: firestore.snapshot('socialReports/auto-2').createdAt
+    });
 });
 
 test('social reaction callable rejects hidden, unrelated, and malformed requests', async () => {
@@ -878,6 +907,34 @@ test('social reaction callable rejects hidden, unrelated, and malformed requests
     await assert.rejects(
         callables.hideSocialPostForCaller(
             { postId: 'bad/path' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        callables.commentOnSocialPostForCaller(
+            { postId: 'private-post', text: 'Unauthorized comment' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.commentOnSocialPostForCaller(
+            { postId: 'private-post', text: '   ' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        callables.reportSocialPostForCaller(
+            { postId: 'private-post', reason: 'Unauthorized report' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.reportSocialPostForCaller(
+            { postId: 'private-post', reason: { unsafe: true } },
             authContext('viewer-1', { email: 'viewer@example.com' })
         ),
         (error) => error.code === 'invalid-argument'
