@@ -7081,42 +7081,20 @@ async function loadOfficialLinkedTeamIdsFromNativeCallable() {
   return normalizeOfficialLinkedTeamIdsResponse(result);
 }
 
-async function loadOfficialLinkedTeamIds(user: AuthUser) {
-  try {
-    return {
-      teamIds: await readWithNativeFallback(
-        'official team discovery',
-        async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
-        loadOfficialLinkedTeamIdsFromNativeCallable,
-        staffTeamDiscoveryTimeoutMs
-      ),
-      isPartial: false
-    };
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    const scope = await loadParentScheduleScope(user);
-    const verifiedTeamIds = [...new Set([
-      ...(scope.children || []).map((child) => compactString(child.teamId)),
-      ...(scope.staffTeams || []).map((team) => compactString(team.teamId))
-    ].filter(Boolean))].sort();
-    if (verifiedTeamIds.length === 0) {
-      throw error;
-    }
-    logScheduleWarning(
-      'Official callable unavailable; using verified linked schedule teams.',
-      'official-team-discovery-partial',
-      error,
-      { fallback: 'verified_schedule_scope', teamCount: verifiedTeamIds.length }
-    );
-    return {
-      teamIds: verifiedTeamIds,
-      isPartial: true
-    };
-  }
+async function loadOfficialLinkedTeamIds() {
+  return {
+    teamIds: await readWithNativeFallback(
+      'official team discovery',
+      async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
+      loadOfficialLinkedTeamIdsFromNativeCallable,
+      staffTeamDiscoveryTimeoutMs
+    ),
+    isPartial: false
+  };
 }
 
-export async function loadOfficialAssignmentsAccess(user: AuthUser): Promise<OfficialAssignmentsAccess> {
-  const result = await loadOfficialLinkedTeamIds(user);
+export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<OfficialAssignmentsAccess> {
+  const result = await loadOfficialLinkedTeamIds();
   const teamIds = result.teamIds;
   return {
     hasAccess: teamIds.length > 0,
@@ -7133,7 +7111,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   let linkedTeamIdsPartial = false;
   let discoveryError: unknown = null;
   try {
-    const linkedTeamResult = await loadOfficialLinkedTeamIds(user);
+    const linkedTeamResult = await loadOfficialLinkedTeamIds();
     linkedTeamIds = linkedTeamResult.teamIds;
     linkedTeamIdsPartial = linkedTeamResult.isPartial;
   } catch (error) {

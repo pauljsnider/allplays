@@ -14,7 +14,7 @@ import {
   getTeamsSummaryBootstrapCacheKey,
   loadCachedAppData
 } from './appDataCache';
-import { toAppServiceError, type AppServiceError } from './appErrors';
+import { toAppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -45,12 +45,6 @@ type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
 
 function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
   return toAppServiceError(error, fallbackMessage);
-}
-
-function throwIfAllSecondarySlicesFailed(errors: AppServiceError[]) {
-  if (errors.length >= 3) {
-    throw errors[0];
-  }
 }
 
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
@@ -227,8 +221,9 @@ export async function loadParentHomeWithSecondaryData(
     // Stream each secondary slice independently so Home renders schedule cards
     // immediately and fills in chat badges / fee items / hydrated RSVP states as
     // each arrives, instead of blocking on all of them before any update (#2037).
-    // A per-slice failure degrades that card rather than gating the whole page.
-    const secondaryErrors: AppServiceError[] = [];
+    // A failed slice leaves the streamed preview available, but the final load
+    // rejects so Home labels it retryable and never caches empty fallback data
+    // as authoritative chat, fee, or schedule state.
     const results = await Promise.allSettled([
       hydrateParentScheduleDetails(schedule, user).then((hydratedSchedule) => {
         const nextSchedule = hydratedSchedule || schedule;
@@ -240,9 +235,8 @@ export async function loadParentHomeWithSecondaryData(
         return patch;
       }).catch((error) => {
         const appError = normalizeSecondaryError(error, 'Unable to hydrate Home schedule.');
-        secondaryErrors.push(appError);
         logger.warn('Schedule hydration failed.', { error: appError });
-        return null;
+        throw appError;
       }),
       loadChatInbox(user).then((chatInbox) => {
         const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
@@ -250,9 +244,8 @@ export async function loadParentHomeWithSecondaryData(
         return nextInboxTeams;
       }).catch((error) => {
         const appError = normalizeSecondaryError(error, 'Unable to load Home chat.');
-        secondaryErrors.push(appError);
         logger.warn('Chat inbox failed.', { error: appError });
-        return [];
+        throw appError;
       }),
       Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
         const nextFees = (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
@@ -260,17 +253,15 @@ export async function loadParentHomeWithSecondaryData(
         return nextFees;
       }).catch((error) => {
         const appError = normalizeSecondaryError(error, 'Unable to load Home fees.');
-        secondaryErrors.push(appError);
         logger.warn('Fees failed.', { error: appError });
-        return [];
+        throw appError;
       })
     ]);
 
-    const permissionFailure = results.find((result) => result.status === 'rejected');
-    if (permissionFailure?.status === 'rejected') {
-      throw permissionFailure.reason;
+    const failedSlice = results.find((result) => result.status === 'rejected');
+    if (failedSlice?.status === 'rejected') {
+      throw failedSlice.reason;
     }
-    throwIfAllSecondarySlicesFailed(secondaryErrors);
 
     const [scheduleResult, chatResult, feesResult] = results;
     return buildParentHomeModel({

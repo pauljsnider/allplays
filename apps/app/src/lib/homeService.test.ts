@@ -343,7 +343,11 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(window.localStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
     });
 
-    it('keeps a valid Home schedule usable when one secondary slice is permission denied', async () => {
+    it.each([
+        ['schedule hydration', () => scheduleServiceMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(new Error('schedule unavailable'))],
+        ['chat inbox', () => chatServiceMocks.loadChatInbox.mockRejectedValueOnce(new Error('chat unavailable'))],
+        ['fees', () => feesMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('fees unavailable'))]
+    ])('reports a retryable partial result when %s fails and does not cache its empty fallback', async (_slice, failSlice) => {
         const schedule = {
             children: [{
                 teamId: 'team-1',
@@ -358,22 +362,13 @@ describe('homeService Teams bootstrap reuse', () => {
                 date: new Date('2026-08-12T18:00:00.000Z')
             }]
         } as any;
-        const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
-            code: 'permission-denied'
-        });
-        scheduleServiceMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(permissionError);
-        chatServiceMocks.loadChatInbox.mockResolvedValueOnce({
-            teams: [{ id: 'team-1', name: 'Fast Falcons', role: 'Parent', unreadCount: 0 }]
-        });
+        failSlice();
 
-        const home = await loadParentHomeWithSecondaryData(user, { schedule, force: true });
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true })).rejects.toThrow('unavailable');
 
-        expect(home.upcomingEvents).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'event-1', teamId: 'team-1' })
-        ]));
-        expect(home.teams).toEqual(expect.arrayContaining([
-            expect.objectContaining({ teamId: 'team-1', teamName: 'Fast Falcons' })
-        ]));
+        await expect(loadParentHomeWithSecondaryData(user, { schedule })).resolves.toMatchObject({
+            upcomingEvents: [expect.objectContaining({ id: 'event-1', teamId: 'team-1' })]
+        });
     });
 
     it('still surfaces a retryable error when every Home secondary slice fails', async () => {

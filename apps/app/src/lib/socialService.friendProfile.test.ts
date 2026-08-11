@@ -62,7 +62,7 @@ describe('loadFriendProfile self-profile resilience', () => {
     });
   });
 
-  it('renders authoritative self profile fields when optional social posts are denied', async () => {
+  it('marks denied self-profile posts incomplete instead of reporting an authoritative empty timeline', async () => {
     const user = {
       uid: 'user-1',
       email: 'parent@example.test',
@@ -77,7 +77,8 @@ describe('loadFriendProfile self-profile resilience', () => {
       name: 'Pat Parent',
       photoUrl: 'https://cdn.example.test/pat.jpg',
       isSelf: true,
-      posts: []
+      posts: [],
+      postsIncomplete: true
     });
     expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
     expect(firestoreMocks.getDoc).not.toHaveBeenCalled();

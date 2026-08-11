@@ -2220,7 +2220,7 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
-  it('uses nonempty verified schedule scope when a native official callable is not deployed', async () => {
+  it('fails closed instead of treating parent or staff schedule teams as official links', async () => {
     capacitorCoreMock.isNativePlatform.mockReturnValue(true);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
     vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
@@ -2238,14 +2238,10 @@ describe('official assignments app service', () => {
       url: ''
     });
 
-    const result = await loadOfficialAssignmentsAccess(user);
-
-    expect(result).toEqual({
-      hasAccess: true,
-      teamIds: ['team-alpha'],
-      teamCount: 1,
-      isPartial: true
-    });
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
+    expect(loadProfileDocument).not.toHaveBeenCalled();
+    expect(getStaffTeams).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
     expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
       url: expect.stringContaining('listOfficialLinkedTeamIds'),
       data: { data: {} }
