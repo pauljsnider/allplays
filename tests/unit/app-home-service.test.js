@@ -349,11 +349,12 @@ describe('React app Home service', () => {
                 }
             ]
         });
-        await Promise.resolve();
-        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
-            metrics: expect.objectContaining({ unreadMessages: 4 }),
-            fees: []
-        }));
+        await vi.waitFor(() => {
+            expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+                metrics: expect.objectContaining({ unreadMessages: 4 }),
+                fees: []
+            }));
+        });
 
         resolveFees([
             {

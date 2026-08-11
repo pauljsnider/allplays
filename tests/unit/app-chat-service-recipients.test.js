@@ -43,6 +43,10 @@ const friendMessageMocks = vi.hoisted(() => ({
     sendAuthorizedDirectMessage: vi.fn()
 }));
 
+const profileServiceMocks = vi.hoisted(() => ({
+    loadManagedTeamsFromNativeCallable: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => false
@@ -51,6 +55,7 @@ vi.mock('@capacitor/core', () => ({
 
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
+vi.mock('../../apps/app/src/lib/profileService.ts', () => profileServiceMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
