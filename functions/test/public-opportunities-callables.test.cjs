@@ -612,6 +612,7 @@ test('managed-team discovery returns bounded chat thread summaries without parti
     );
 
     assert.equal(managed.isPartial, false);
+    assert.equal(managed.items[0].chatAccessVerified, true);
     assert.deepEqual(managed.items[0].chatConversations, [{
         id: 'direct-1',
         type: 'direct',
@@ -619,6 +620,59 @@ test('managed-team discovery returns bounded chat thread summaries without parti
         lastMessageAt: new FakeTimestamp(1900)
     }]);
     assert.equal('participantIds' in managed.items[0].chatConversations[0], false);
+});
+
+test('managed-team chat discovery includes parent-only teams and their conversation summaries', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: ['team-parent'] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/group-1': {
+            type: 'group',
+            lastMessageAt: new FakeTimestamp(1900),
+            participantIds: ['parent-1', 'owner-1']
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+
+    assert.equal(managed.isPartial, false);
+    assert.deepEqual(managed.items, [{
+        id: 'team-parent',
+        name: 'Parent Bears',
+        sport: null,
+        photoUrl: null,
+        description: null,
+        active: true,
+        archived: false,
+        status: null,
+        isPublic: false,
+        chatAccessVerified: true,
+        chatConversations: [{
+            id: 'group-1',
+            type: 'group',
+            updatedAt: null,
+            lastMessageAt: new FakeTimestamp(1900)
+        }]
+    }]);
+});
+
+test('managed-team chat discovery excludes legacy coach-only grants without current chat access', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': { coachOf: ['team-legacy'] },
+        'teams/team-legacy': { name: 'Legacy Bears', ownerId: 'owner-1', active: true },
+        'teams/team-legacy/chatConversations/group-1': { type: 'group' }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('coach-1', { email: 'coach@example.com' })
+    );
+
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, false);
 });
 
 test('managed-team discovery marks chat metadata partial when a thread query fails', async () => {

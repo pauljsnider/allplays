@@ -499,7 +499,7 @@ describe('native chat team discovery fallback', () => {
   it('uses complete server-authoritative discovery for an admin-email-only native coach', async () => {
     installNativeTeamFetch({ includeTeams: false });
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
-      teams: [{ id: 'team-admin', name: 'Admin Bears', active: true }],
+      teams: [{ id: 'team-admin', name: 'Admin Bears', active: true, chatAccessVerified: true }],
       isPartial: false
     });
     legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
@@ -574,9 +574,19 @@ describe('native chat team discovery fallback', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
   });
 
-  it('merges verified parent-linked teams when managed callable discovery succeeds empty', async () => {
+  it('uses callable-proven parent teams and their non-default conversations without a direct team read', async () => {
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
-      teams: [],
+      teams: [{
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'parent-group',
+          type: 'group',
+          lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+        }]
+      }],
       isPartial: false
     });
     const fetchMock = installNativeTeamFetch({ includeTeams: true });
@@ -590,10 +600,37 @@ describe('native chat team discovery fallback', () => {
     }, { includeLastMessages: false });
 
     expect(result.teams).toEqual([
-      expect.objectContaining({ id: 'team-parent', name: 'Jr KC Current', role: 'Parent' })
+      expect.objectContaining({
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        role: 'Parent'
+      })
     ]);
     expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-parent'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents/teams/team-parent'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/parent-group:runAggregationQuery')
+    ))).toBe(true);
+  });
+
+  it('does not bypass chat authorization for an unverified staff projection', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'legacy-coach-team', name: 'Old Coach Team', active: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([]);
+    expect(result.isPartial).toBe(false);
   });
 
   it('loads native unread counts through authenticated aggregation queries', async () => {
@@ -662,6 +699,7 @@ describe('native chat team discovery fallback', () => {
         id: 'team-admin',
         name: 'Admin Email Team',
         active: true,
+        chatAccessVerified: true,
         chatConversations: [{
           id: 'direct-1',
           type: 'direct',

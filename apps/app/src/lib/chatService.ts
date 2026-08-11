@@ -874,24 +874,6 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
   };
 }
 
-async function nativeLoadParentTeams(profile: Record<string, any>) {
-  const parentTeamIds = [
-    ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
-    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
-  ].map(compactString).filter(Boolean);
-  const results = await Promise.allSettled(
-    [...new Set(parentTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
-  );
-  return {
-    teams: results.flatMap((result) => {
-      if (result.status === 'fulfilled') return result.value ? [result.value] : [];
-      logger.warn('Native parent team read failed.', { error: result.reason });
-      return [];
-    }),
-    isPartial: results.some((result) => result.status === 'rejected')
-  };
-}
-
 function getMessageTime(message: ChatMessage | null) {
   return toDate(message?.createdAt)?.getTime() || 0;
 }
@@ -1171,25 +1153,21 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   let teams: Record<string, any>[] = [];
   let teamDiscoveryPartial = false;
-  const serverAuthorizedStaffTeamIds = new Set<string>();
+  const serverAuthorizedChatTeamIds = new Set<string>();
   if (nativeRuntime) {
     try {
       // Keep the larger profile adapter out of the web chat module graph. Native
       // loads it only when the authenticated callable path is actually needed.
       const { loadManagedTeamsFromNativeCallable } = await import('./profileService');
-      const [managedResult, parentResult] = await Promise.all([
-        loadManagedTeamsFromNativeCallable({ includeChatMetadata: true }),
-        nativeLoadParentTeams(profile)
-      ]);
+      const managedResult = await loadManagedTeamsFromNativeCallable({ includeChatMetadata: true });
       const map = new Map<string, Record<string, any>>();
       managedResult.teams.forEach((team: any) => {
-        if (team?.id) serverAuthorizedStaffTeamIds.add(team.id);
-      });
-      [...managedResult.teams, ...parentResult.teams].forEach((team: any) => {
-        if (team?.id) map.set(team.id, team);
+        if (!team?.id) return;
+        map.set(team.id, team);
+        if (team.chatAccessVerified === true) serverAuthorizedChatTeamIds.add(team.id);
       });
       teams = [...map.values()];
-      teamDiscoveryPartial = managedResult.isPartial || parentResult.isPartial;
+      teamDiscoveryPartial = managedResult.isPartial;
     } catch (error) {
       logger.warn('Native managed team discovery failed; using verified direct reads.', { error });
       const fallback = await nativeLoadUserTeams(user, profile);
@@ -1233,7 +1211,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   const userWithProfile = mapUserWithProfile(user, profile);
   const accessibleTeams = teams.filter((team) => isTeamActive(team) && (
-    serverAuthorizedStaffTeamIds.has(team.id)
+    serverAuthorizedChatTeamIds.has(team.id)
     || canAccessTeamChat(userWithProfile, { ...team, id: team.id })
   ));
   if (teamDiscoveryPartial && accessibleTeams.length === 0) {

@@ -18325,12 +18325,49 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+function hasCallableChatTeamAccess(caller, teamId, team = {}) {
+  if (hasOpportunityTeamAdminAccess(caller, team)) return true;
+  return (Array.isArray(caller.user?.parentTeamIds) ? caller.user.parentTeamIds : [])
+    .some((value) => normalizeStablePrincipalUid(value) === teamId);
+}
+
 exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
   const caller = await getOpportunityCaller(context);
   const staffTeams = await listStaffTeamDocuments(caller);
   const conversationLimit = 100;
-  const teamSnaps = Array.from(staffTeams.values());
   const includeChatMetadata = data?.includeChatMetadata === true;
+  let chatTeamDiscoveryPartial = false;
+  const teamSnapsById = new Map();
+  if (includeChatMetadata) {
+    staffTeams.forEach((teamSnap) => {
+      if (hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
+        teamSnapsById.set(teamSnap.id, teamSnap);
+      }
+    });
+    const parentTeamLimit = 180;
+    const rawParentTeamIds = Array.isArray(caller.user?.parentTeamIds) ? caller.user.parentTeamIds : [];
+    const normalizedParentTeamIds = rawParentTeamIds.map(normalizeStablePrincipalUid);
+    if (normalizedParentTeamIds.some((teamId) => !teamId)) chatTeamDiscoveryPartial = true;
+    const allParentTeamIds = Array.from(new Set(normalizedParentTeamIds.filter(Boolean)));
+    if (allParentTeamIds.length > parentTeamLimit) chatTeamDiscoveryPartial = true;
+    const parentTeamIds = allParentTeamIds.slice(0, parentTeamLimit);
+    const parentTeamResults = await Promise.allSettled(
+      parentTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+    );
+    parentTeamResults.forEach((result) => {
+      if (result.status === 'rejected') {
+        chatTeamDiscoveryPartial = true;
+        return;
+      }
+      const teamSnap = result.value;
+      if (teamSnap.exists && hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
+        teamSnapsById.set(teamSnap.id, teamSnap);
+      }
+    });
+  } else {
+    staffTeams.forEach((teamSnap) => teamSnapsById.set(teamSnap.id, teamSnap));
+  }
+  const teamSnaps = Array.from(teamSnapsById.values());
   const conversationResults = includeChatMetadata
     ? await Promise.allSettled(teamSnaps.map((teamSnap) => (
       firestore.collection(`teams/${teamSnap.id}/chatConversations`)
@@ -18365,12 +18402,16 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
       return {
         ...item,
         name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team',
+        ...(includeChatMetadata ? { chatAccessVerified: true } : {}),
         ...(chatConversations.length > 0 ? { chatConversations } : {})
       };
     })
     .filter(Boolean)
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
-  return { items, isPartial: staffTeams.isPartial === true || chatMetadataPartial };
+  return {
+    items,
+    isPartial: staffTeams.isPartial === true || chatTeamDiscoveryPartial || chatMetadataPartial
+  };
 });
 
 function normalizeParentFeePlayerLinks(user = {}) {
