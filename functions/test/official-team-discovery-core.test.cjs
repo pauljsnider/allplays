@@ -567,6 +567,41 @@ test('official assignment projection rejects a non-string stored UID before comp
   assert.deepEqual(result.assignments, []);
 });
 
+test('official assignment projection does not repair a stored UID by trimming', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSlots: [{
+            id: 'malformed-uid',
+            position: 'Center',
+            officialUserId: 'official-1 ',
+            officialEmail: 'current@example.com',
+            status: 'pending'
+          }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, { auth: { uid: 'official-1' } });
+  assert.deepEqual(result.assignments, []);
+});
+
 test('official assignment projection fails closed when a bounded game query overflows', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([

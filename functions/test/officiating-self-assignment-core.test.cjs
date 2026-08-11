@@ -332,6 +332,32 @@ test('buildOfficiatingAssignmentResponseUpdate rejects a non-string stored UID b
     }), /invalid user binding/);
 });
 
+test('buildOfficiatingAssignmentResponseUpdate rejects stored UIDs repaired by trimming', () => {
+    const cases = [
+        { storedUid: 'official-1 ', callerUid: 'official-1' },
+        { storedUid: `${'x'.repeat(128)} `, callerUid: 'x'.repeat(128) }
+    ];
+
+    for (const { storedUid, callerUid } of cases) {
+        const game = {
+            officiatingSlots: [{
+                id: 'center',
+                position: 'Center Referee',
+                officialUserId: storedUid,
+                officialEmail: 'current@example.com',
+                status: 'pending'
+            }]
+        };
+
+        assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+            game,
+            slotId: 'center',
+            status: 'accepted',
+            official: { uid: callerUid, email: 'current@example.com' }
+        }), /invalid user binding/);
+    }
+});
+
 test('buildOfficiatingAssignmentResponseNotificationRecord targets the assigner', () => {
     const record = buildOfficiatingAssignmentResponseNotificationRecord({
         teamId: 'team-1',

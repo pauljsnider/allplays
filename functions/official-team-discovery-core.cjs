@@ -15,9 +15,15 @@ function normalizeBoundedId(value) {
   return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
 }
 
+function normalizeStoredUserId(value) {
+  if (typeof value !== 'string') return '';
+  if (!value || value.length > 128 || value.includes('/') || value !== value.trim()) return '';
+  return value;
+}
+
 function hasStoredPrincipalValue(value) {
   if (value === null || value === undefined) return false;
-  return typeof value === 'string' ? Boolean(value.trim()) : true;
+  return typeof value === 'string' ? value.length > 0 : true;
 }
 
 function normalizeOfficialEmail(value) {
@@ -87,7 +93,7 @@ function isCancelledGame(game = {}) {
 function isAssignedToAuthUser(slot = {}, authUser = {}) {
   const uid = normalizeBoundedId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
-  const assignedUid = normalizeBoundedId(slot.officialUserId);
+  const assignedUid = normalizeStoredUserId(slot.officialUserId);
   if (hasStoredPrincipalValue(slot.officialUserId)) return Boolean(assignedUid && uid && assignedUid === uid);
   return Boolean(email && normalizeOfficialEmail(slot.officialEmail || slot.email) === email);
 }

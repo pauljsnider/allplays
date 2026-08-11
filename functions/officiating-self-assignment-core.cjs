@@ -19,13 +19,13 @@ function normalizeEmail(value) {
 
 function normalizeStoredUserId(value) {
     if (typeof value !== 'string') return '';
-    const normalized = value.trim();
-    return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
+    if (!value || value.length > 128 || value.includes('/') || value !== value.trim()) return '';
+    return value;
 }
 
 function hasStoredPrincipalValue(value) {
     if (value === null || value === undefined) return false;
-    return typeof value === 'string' ? Boolean(value.trim()) : true;
+    return typeof value === 'string' ? value.length > 0 : true;
 }
 
 function createClaimError(code, message) {
