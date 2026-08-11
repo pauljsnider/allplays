@@ -224,11 +224,11 @@ describe('React app Home service', () => {
         });
     });
 
-    it('keeps rendering Home when only the fees slice is denied', async () => {
+    it('reports denied fees as retryable without caching an empty fees slice', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Permission denied for fees'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
 
-        const home = await loadParentHomeWithSecondaryData(user, {
+        const options = {
             schedule: {
                 children: [
                     {
@@ -240,21 +240,25 @@ describe('React app Home service', () => {
                 ],
                 events: [event()]
             }
+        };
+
+        await expect(loadParentHomeWithSecondaryData(user, options)).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'permission',
+            message: 'Permission denied for fees'
         });
 
-        expect(home.fees).toEqual([]);
-        expect(home.players).toEqual([expect.objectContaining({ playerId: 'player-1' })]);
-        expect(home.teams).toEqual(expect.arrayContaining([
-            expect.objectContaining({ teamId: 'team-1' }),
-            expect.objectContaining({ teamId: 'team-staff' })
-        ]));
+        await expect(loadParentHomeWithSecondaryData(user, options)).resolves.toMatchObject({
+            fees: [expect.objectContaining({ id: 'fee-1' })],
+            players: [expect.objectContaining({ playerId: 'player-1' })]
+        });
     });
 
-    it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {
+    it('reports a non-permission fees failure as retryable without caching an empty fees slice', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
 
-        const home = await loadParentHomeWithSecondaryData(user, {
+        const options = {
             schedule: {
                 children: [
                     {
@@ -266,12 +270,20 @@ describe('React app Home service', () => {
                 ],
                 events: [event()]
             }
+        };
+
+        await expect(loadParentHomeWithSecondaryData(user, options)).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
         });
 
-        expect(home.fees).toEqual([]);
-        expect(home.teams).toEqual(expect.arrayContaining([
-            expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
-        ]));
+        await expect(loadParentHomeWithSecondaryData(user, options)).resolves.toMatchObject({
+            fees: [expect.objectContaining({ id: 'fee-1' })],
+            teams: expect.arrayContaining([
+                expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
+            ])
+        });
     });
 
     it('throws a typed secondary error when every Home detail slice fails', async () => {
