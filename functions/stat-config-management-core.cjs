@@ -93,7 +93,9 @@ function createStatConfigManagementHandlers({
       team,
       user: { isAdmin: user.isAdmin === true },
       uid: caller.uid,
-      email: typeof caller.authUser.email === 'string' ? caller.authUser.email.trim().toLowerCase() : ''
+      email: caller.authUser.emailVerified === true && typeof caller.authUser.email === 'string'
+        ? caller.authUser.email.trim().toLowerCase()
+        : ''
     })) {
       throw new HttpsError('permission-denied', 'You cannot manage stat configs for this team.');
     }

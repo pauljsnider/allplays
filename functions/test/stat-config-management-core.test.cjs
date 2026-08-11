@@ -85,7 +85,7 @@ function makeFirestore(seed = {}, { failQuery = null } = {}) {
 
 function makeHandlers(seed, options = {}) {
   const firestore = makeFirestore(seed, options);
-  const authUser = options.authUser || { uid: 'owner-1', email: 'owner@example.com', disabled: false };
+  const authUser = options.authUser || { uid: 'owner-1', email: 'owner@example.com', emailVerified: true, disabled: false };
   const handlers = createStatConfigManagementHandlers({
     firestore,
     auth: { getUser: async () => authUser },
@@ -211,6 +211,20 @@ test('current Auth email cannot recover access through a stale profile alias', a
     'teams/team-1': { adminEmails: ['old-admin@example.com'] },
     'teams/team-1/statTrackerConfigs/config-1': { name: 'One' }
   }, { authUser: { uid: 'owner-1', email: 'new-email@example.com', disabled: false } });
+
+  await assert.rejects(
+    handlers.deleteStatConfig({ teamId: 'team-1', configId: 'config-1' }, context),
+    (error) => error.code === 'permission-denied'
+  );
+  assert.ok(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'));
+});
+
+test('destructive config handlers deny unverified admin-email grants', async () => {
+  const { firestore, handlers } = makeHandlers({
+    'users/owner-1': {},
+    'teams/team-1': { adminEmails: ['owner@example.com'] },
+    'teams/team-1/statTrackerConfigs/config-1': { name: 'One' }
+  }, { authUser: { uid: 'owner-1', email: 'owner@example.com', emailVerified: false, disabled: false } });
 
   await assert.rejects(
     handlers.deleteStatConfig({ teamId: 'team-1', configId: 'config-1' }, context),

@@ -107,8 +107,8 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('permission-denied', 'This account is not available.');
     }
 
-    const emailCandidates = buildOfficialEmailCandidates(authUser);
-    const normalizedEmail = normalizeOfficialEmail(authUser.email);
+    const emailCandidates = authUser.emailVerified === true ? buildOfficialEmailCandidates(authUser) : [];
+    const normalizedEmail = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
     const phoneCandidates = buildOfficialPhoneCandidates(authUser);
     const normalizedPhone = normalizeOfficialPhone(authUser.phoneNumber);
     const queryPlans = [

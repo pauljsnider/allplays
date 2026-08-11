@@ -68,6 +68,9 @@ const friendMessageMocks = vi.hoisted(() => ({
 const nativeStorageMocks = vi.hoisted(() => ({
   deleteNativePrimaryStorageFile: vi.fn()
 }));
+const profileServiceMocks = vi.hoisted(() => ({
+  loadManagedTeamsFromNativeCallable: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -100,6 +103,7 @@ vi.mock('./uxTiming', () => ({
 
 vi.mock('./friendMessageService', () => friendMessageMocks);
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
+vi.mock('./profileService', () => profileServiceMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -171,6 +175,7 @@ beforeEach(() => {
   }));
   friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
   friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
+  profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
   vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
 });
 
@@ -506,6 +511,34 @@ describe('native chat team discovery fallback', () => {
       .map((body) => body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath)
       .filter(Boolean);
     expect(requestedFields).toEqual(['ownerId']);
+  });
+
+  it('uses complete native callable discovery before the partial direct-read fallback', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true
+      }],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Email Team' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
   });
 
   it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {

@@ -12,16 +12,23 @@ import type {
   PublicOpportunity
 } from './opportunityLogic';
 
-async function call<T>(name: string, data: Record<string, unknown> = {}): Promise<T> {
+async function call<T>(
+  name: string,
+  data: Record<string, unknown> = {},
+  options: { allowAnonymous?: boolean } = {}
+): Promise<T> {
   if (isNativeRuntime()) {
     const projectId = String(firebaseAuth.app?.options?.projectId || '').trim();
-    const token = await getNativeAuthIdToken(true);
-    if (!projectId || !token) {
+    const token = await getNativeAuthIdToken(true).catch((error) => {
+      if (options.allowAnonymous) return null;
+      throw error;
+    });
+    if (!projectId || (!token && !options.allowAnonymous)) {
       throw new Error('Native opportunity access is unavailable.');
     }
     const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/${name}`;
     const headers = await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'Content-Type': 'application/json'
     }, requestUrl);
     const response = await CapacitorHttp.post({
@@ -42,11 +49,19 @@ async function call<T>(name: string, data: Record<string, unknown> = {}): Promis
 }
 
 export async function listPublicOpportunities(filters: OpportunityFilters = {}, cursor: string | null = null) {
-  return call<{ items: PublicOpportunity[]; nextCursor: string | null }>('listPublicOpportunities', { filters, cursor, pageSize: 24 });
+  return call<{ items: PublicOpportunity[]; nextCursor: string | null }>(
+    'listPublicOpportunities',
+    { filters, cursor, pageSize: 24 },
+    { allowAnonymous: true }
+  );
 }
 
 export async function getPublicOpportunity(listingId: string) {
-  const result = await call<{ item: PublicOpportunity }>('getPublicOpportunity', { listingId });
+  const result = await call<{ item: PublicOpportunity }>(
+    'getPublicOpportunity',
+    { listingId },
+    { allowAnonymous: true }
+  );
   return result.item;
 }
 

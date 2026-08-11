@@ -380,4 +380,30 @@ describe('homeService Teams bootstrap reuse', () => {
         await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true }))
             .rejects.toThrow('schedule unavailable');
     });
+
+    it('rejects a partial chat inbox instead of caching it as complete Home data', async () => {
+        const schedule = { children: [], events: [] } as any;
+        chatServiceMocks.loadChatInbox
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-1', name: 'Known Team', unreadCount: 2 }],
+                isPartial: true
+            })
+            .mockResolvedValueOnce({
+                teams: [
+                    { id: 'team-1', name: 'Known Team', unreadCount: 2 },
+                    { id: 'team-2', name: 'Recovered Team', unreadCount: 1 }
+                ],
+                isPartial: false
+            });
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true }))
+            .rejects.toThrow('Home chat access is incomplete');
+        const recovered = await loadParentHomeWithSecondaryData(user, { schedule });
+
+        expect(recovered.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1' }),
+            expect.objectContaining({ teamId: 'team-2' })
+        ]));
+        expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+    });
 });

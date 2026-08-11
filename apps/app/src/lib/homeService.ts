@@ -47,6 +47,13 @@ function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
   return toAppServiceError(error, fallbackMessage);
 }
 
+function requireCompleteChatInbox<T extends { isPartial?: boolean }>(chatInbox: T): T {
+  if (chatInbox.isPartial === true) {
+    throw new Error('Home chat access is incomplete. Try loading Home again.');
+  }
+  return chatInbox;
+}
+
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
@@ -54,7 +61,7 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
 
   const schedule = await loadParentScheduleSummary(user);
   const [chatInbox, rawFees] = await Promise.all([
-    loadChatInbox(user).catch((error) => {
+    loadChatInbox(user).then(requireCompleteChatInbox).catch((error) => {
       throw toAppServiceError(error, 'Unable to load Home chat.');
     }),
     Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
@@ -132,6 +139,7 @@ export async function loadParentTeamsSummaryBootstrap(
       try {
         const [chatInboxResult, scheduleScope] = await Promise.all([
           loadChatInbox(user, { includeLastMessages: false })
+            .then(requireCompleteChatInbox)
             .then((chatInbox) => ({ chatInbox, error: null }))
             .catch((error) => ({
               chatInbox: { teams: [] },
@@ -238,7 +246,7 @@ export async function loadParentHomeWithSecondaryData(
         logger.warn('Schedule hydration failed.', { error: appError });
         throw appError;
       }),
-      loadChatInbox(user).then((chatInbox) => {
+      loadChatInbox(user).then(requireCompleteChatInbox).then((chatInbox) => {
         const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
         emit({ inboxTeams: nextInboxTeams });
         return nextInboxTeams;

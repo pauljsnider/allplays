@@ -34,6 +34,7 @@ import {
   upsertChatConversation
 } from './adapters/legacyChatService';
 import { firebaseAuth, getNativeAuthIdToken, getNativeAuthUserId } from './authService';
+import { loadManagedTeamsFromNativeCallable } from './profileService';
 import { loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
@@ -975,9 +976,16 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   let teams: Record<string, any>[] = [];
   let teamDiscoveryPartial = false;
   if (nativeRuntime) {
-    const fallback = await nativeLoadUserTeams(user, profile);
-    teams = fallback.teams;
-    teamDiscoveryPartial = fallback.isPartial;
+    try {
+      const managedTeams = await loadManagedTeamsFromNativeCallable();
+      teams = managedTeams.teams;
+      teamDiscoveryPartial = managedTeams.isPartial;
+    } catch (error) {
+      logger.warn('Native managed team callable failed; using partial direct reads.', { error });
+      const fallback = await nativeLoadUserTeams(user, profile);
+      teams = fallback.teams;
+      teamDiscoveryPartial = fallback.isPartial;
+    }
   } else {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
       getUserTeamsWithAccess(user.uid, user.email || ''),

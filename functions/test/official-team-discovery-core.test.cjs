@@ -64,6 +64,7 @@ test('official discovery uses the current enabled Auth email instead of stale to
   ], {
     uid: 'official-1',
     email: 'current@example.com',
+    emailVerified: true,
     disabled: false
   });
 
@@ -92,10 +93,28 @@ test('official discovery denies disabled accounts', async () => {
   await assert.rejects(handler({}, context), (error) => error.code === 'permission-denied');
 });
 
+test('official discovery denies unverified Auth email matches', async () => {
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { email: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: false,
+    disabled: false
+  });
+
+  assert.deepEqual(await handler({}, context), {
+    teamIds: [],
+    teamCount: 0,
+    isPartial: false
+  });
+});
+
 test('official discovery propagates any query failure instead of returning partial empty access', async () => {
   const handler = makeHandler([], {
     uid: 'official-1',
     email: 'current@example.com',
+    emailVerified: true,
     disabled: false
   }, { failField: 'emailLower' });
 
@@ -113,6 +132,7 @@ test('official discovery fails closed when a bounded query cannot prove complete
   const handler = makeHandler(records, {
     uid: 'official-1',
     email: 'current@example.com',
+    emailVerified: true,
     disabled: false
   }, { maxDocumentsPerQuery: 2 });
 
@@ -126,6 +146,7 @@ test('official discovery ignores malformed collection-group paths', async () => 
   ], {
     uid: 'official-1',
     email: 'current@example.com',
+    emailVerified: true,
     disabled: false
   });
 
