@@ -61,6 +61,7 @@ const {
   isEligibleTeamFeePayer,
   getTeamFeeRecipientTargetUserIds,
   LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+  sanitizeParentTeamFeeRecipient,
   hasLegacyReadableTeamFeeCheckoutState,
   buildLegacyReadableTeamFeeCheckoutAttempt,
   buildTeamFeeCheckoutUrls,
@@ -18324,25 +18325,156 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
-exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) => {
+exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
   const caller = await getOpportunityCaller(context);
   const staffTeams = await listStaffTeamDocuments(caller);
-  const items = Array.from(staffTeams.values())
-    .map((teamSnap) => {
+  const conversationLimit = 100;
+  const teamSnaps = Array.from(staffTeams.values());
+  const includeChatMetadata = data?.includeChatMetadata === true;
+  const conversationResults = includeChatMetadata
+    ? await Promise.allSettled(teamSnaps.map((teamSnap) => (
+      firestore.collection(`teams/${teamSnap.id}/chatConversations`)
+        .limit(conversationLimit + 1)
+        .get()
+    )))
+    : [];
+  let chatMetadataPartial = false;
+  const items = teamSnaps
+    .map((teamSnap, index) => {
       const team = teamSnap.data() || {};
       const canManage = hasOpportunityTeamAdminAccess(caller, team);
       const item = canManage
         ? serializeManagedTeamDocument(teamSnap.id, team)
         : serializeStaffTeamProfile(teamSnap.id, team);
       if (!item) return null;
+      const conversationResult = conversationResults[index];
+      if (includeChatMetadata && conversationResult?.status !== 'fulfilled') chatMetadataPartial = true;
+      const conversationDocs = conversationResult?.status === 'fulfilled' ? conversationResult.value.docs : [];
+      if (conversationDocs.length > conversationLimit) chatMetadataPartial = true;
+      const chatConversations = conversationDocs.slice(0, conversationLimit).map((conversationSnap) => {
+        const conversation = conversationSnap.data() || {};
+        const conversationId = String(conversationSnap.id || '').trim();
+        if (!conversationId || conversationId.includes('/') || conversationId.length > 1500) return null;
+        return {
+          id: conversationId,
+          type: cleanOpportunityText(conversation.type, 32) || null,
+          updatedAt: conversation.updatedAt || null,
+          lastMessageAt: conversation.lastMessageAt || conversation.latestMessageAt || null
+        };
+      }).filter(Boolean);
       return {
         ...item,
-        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team'
+        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team',
+        ...(chatConversations.length > 0 ? { chatConversations } : {})
       };
     })
     .filter(Boolean)
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
-  return { items, isPartial: staffTeams.isPartial === true };
+  return { items, isPartial: staffTeams.isPartial === true || chatMetadataPartial };
+});
+
+function normalizeParentFeePlayerLinks(user = {}) {
+  const links = new Map();
+  const addLink = (teamValue, playerValue) => {
+    const teamId = normalizeStablePrincipalUid(teamValue);
+    const playerId = normalizeStablePrincipalUid(playerValue);
+    if (!teamId || !playerId) return;
+    links.set(`${teamId}::${playerId}`, { teamId, playerId, playerKey: `${teamId}::${playerId}` });
+  };
+  (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => addLink(link?.teamId, link?.playerId || link?.childId));
+  (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((value) => {
+    const key = String(value || '');
+    const separatorIndex = key.indexOf('::');
+    if (separatorIndex <= 0 || key.indexOf('::', separatorIndex + 2) !== -1) return;
+    addLink(key.slice(0, separatorIndex), key.slice(separatorIndex + 2));
+  });
+  return Array.from(links.values());
+}
+
+function getParentFeeRecipientTeamId(recipient = {}, documentPath = '') {
+  const storedTeamId = normalizeStablePrincipalUid(recipient.teamId);
+  if (storedTeamId) return storedTeamId;
+  const pathParts = String(documentPath || '').split('/');
+  const teamIndex = pathParts.indexOf('teams');
+  return teamIndex >= 0 ? normalizeStablePrincipalUid(pathParts[teamIndex + 1]) : '';
+}
+
+function getParentFeeRecipientPlayerKey(recipient = {}, teamId = '') {
+  const normalizedTeamId = normalizeStablePrincipalUid(teamId);
+  const storedPlayerKey = String(recipient.playerKey || '').trim();
+  const separatorIndex = storedPlayerKey.indexOf('::');
+  if (separatorIndex > 0 && storedPlayerKey.indexOf('::', separatorIndex + 2) === -1) {
+    const storedTeamId = normalizeStablePrincipalUid(storedPlayerKey.slice(0, separatorIndex));
+    const storedPlayerId = normalizeStablePrincipalUid(storedPlayerKey.slice(separatorIndex + 2));
+    if (storedTeamId && storedPlayerId && storedTeamId === normalizedTeamId) {
+      return `${storedTeamId}::${storedPlayerId}`;
+    }
+  }
+  const playerId = normalizeStablePrincipalUid(recipient.playerId || recipient.childId);
+  return normalizedTeamId && playerId ? `${normalizedTeamId}::${playerId}` : '';
+}
+
+exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team fees.');
+  }
+  const uid = normalizeStablePrincipalUid(context.auth.uid);
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'The signed-in account is invalid.');
+  }
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  const user = userSnap.exists ? (userSnap.data() || {}) : {};
+  const playerLinks = normalizeParentFeePlayerLinks(user);
+  const teamIds = new Set([
+    ...playerLinks.map((link) => link.teamId),
+    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])
+      .map(normalizeStablePrincipalUid)
+      .filter(Boolean)
+  ]);
+  if (playerLinks.length > 60 || teamIds.size > 60) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many linked players to load fees safely.');
+  }
+  if (teamIds.size === 0) return { items: [] };
+
+  const recipientQueryLimit = 100;
+  const playerKeys = new Set(playerLinks.map((link) => link.playerKey));
+  const playerIds = new Set(playerLinks.map((link) => link.playerId));
+  const queryJobs = [
+    ...['parentUserId', 'accountUserId', 'userId'].map((field) => (
+      firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(recipientQueryLimit + 1).get()
+    )),
+    ...Array.from(playerKeys).map((playerKey) => (
+      firestore.collectionGroup('feeRecipients').where('playerKey', '==', playerKey).limit(recipientQueryLimit + 1).get()
+    )),
+    ...Array.from(playerIds).map((playerId) => (
+      firestore.collectionGroup('feeRecipients').where('playerId', '==', playerId).limit(recipientQueryLimit + 1).get()
+    ))
+  ];
+  const querySnapshots = await Promise.all(queryJobs);
+  if (querySnapshots.some((querySnap) => querySnap.docs.length > recipientQueryLimit)) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many fee recipients to load safely.');
+  }
+  const recipients = new Map();
+  querySnapshots.forEach((querySnap) => querySnap.docs.forEach((docSnap) => {
+    const recipient = docSnap.data() || {};
+    const teamId = getParentFeeRecipientTeamId(recipient, docSnap.ref?.path);
+    if (!teamId || !teamIds.has(teamId)) return;
+    const hasDirectAssignment = [recipient.parentUserId, recipient.accountUserId, recipient.userId]
+      .some((value) => String(value || '').trim() === uid);
+    const hasPlayerAssignment = playerKeys.has(getParentFeeRecipientPlayerKey(recipient, teamId));
+    if (!hasDirectAssignment && !hasPlayerAssignment) return;
+    const pathParts = String(docSnap.ref?.path || '').split('/');
+    const batchIndex = pathParts.indexOf('feeBatches');
+    recipients.set(docSnap.ref.path, sanitizeParentTeamFeeRecipient({
+      id: docSnap.id,
+      ...recipient,
+      teamId,
+      batchId: recipient.batchId || (batchIndex >= 0 ? pathParts[batchIndex + 1] : ''),
+      recipientId: recipient.recipientId || docSnap.id,
+      playerKey: getParentFeeRecipientPlayerKey(recipient, teamId)
+    }));
+  }));
+  return { items: Array.from(recipients.values()) };
 });
 
 exports.listOfficialLinkedTeamIds = functions.https.onCall(listOfficialLinkedTeamIdsHandler);

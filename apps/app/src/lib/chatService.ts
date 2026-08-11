@@ -1042,22 +1042,33 @@ async function getLatestConversationMessage(teamId: string, conversationId: stri
 async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<{ message: ChatMessage | null; conversationId: string | null }> {
   let conversations: ChatConversation[] = [buildDefaultTeamConversation(team)];
   try {
-    if (isNativeRuntime()) throw new Error('Native inbox previews use verified team chat metadata.');
-    const loadedConversations = await withTimeout(
-      Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
-      `latest chat conversations ${teamId}`,
-      2500
-    ) as ChatConversation[];
-    const mappedConversations = mapChatConversationRecords(loadedConversations);
-    conversations = mappedConversations.length
-      ? mappedConversations
-      : [buildDefaultTeamConversation(team)];
-  } catch (error) {
-    if (!isNativeRuntime()) {
-      conversations = [buildDefaultTeamConversation(team)];
+    if (isNativeRuntime()) {
+      const metadata = getTeamConversationMetadata(team);
+      conversations = [
+        buildDefaultTeamConversation(team),
+        ...metadata.ids
+          .filter((conversationId) => !isDefaultTeamConversation(conversationId))
+          .map((conversationId) => ({
+            id: conversationId,
+            type: 'group',
+            updatedAt: metadata.latestMessageAtByConversation[conversationId] || null,
+            lastMessageAt: metadata.latestMessageAtByConversation[conversationId] || null
+          } as ChatConversation))
+      ];
     } else {
-      logger.warn('Latest inbox preview limited to team chat.', { error });
+      const loadedConversations = await withTimeout(
+        Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
+        `latest chat conversations ${teamId}`,
+        2500
+      ) as ChatConversation[];
+      const mappedConversations = mapChatConversationRecords(loadedConversations);
+      conversations = mappedConversations.length
+        ? mappedConversations
+        : [buildDefaultTeamConversation(team)];
     }
+  } catch (error) {
+    conversations = [buildDefaultTeamConversation(team)];
+    logger.warn('Latest inbox preview limited to team chat.', { error });
   }
 
   const rankedConversations = conversations
@@ -1167,7 +1178,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       // loads it only when the authenticated callable path is actually needed.
       const { loadManagedTeamsFromNativeCallable } = await import('./profileService');
       const [managedResult, parentResult] = await Promise.all([
-        loadManagedTeamsFromNativeCallable(),
+        loadManagedTeamsFromNativeCallable({ includeChatMetadata: true }),
         nativeLoadParentTeams(profile)
       ]);
       const map = new Map<string, Record<string, any>>();

@@ -656,6 +656,67 @@ describe('native chat team discovery fallback', () => {
     expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
   });
 
+  it('includes server-authorized managed-team threads in native unread counts and previews', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        chatConversations: [{
+          id: 'direct-1',
+          type: 'direct',
+          lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-1/chatMessages')) {
+        return jsonResponse({ documents: [firestoreDocument(
+          'teams/team-admin/chatConversations/direct-1/chatMessages/message-direct',
+          {
+            text: { stringValue: 'Direct update' },
+            senderId: { stringValue: 'user-2' },
+            createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+          }
+        )] });
+      }
+      if (String(url).includes('/teams/team-admin/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: true });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({
+        id: 'team-admin',
+        preferredConversationId: 'direct-1',
+        lastMessage: expect.objectContaining({ id: 'message-direct', text: 'Direct update' })
+      })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/direct-1:runAggregationQuery')
+    ))).toBe(true);
+  });
+
   it('marks native unread counts partial when an authenticated aggregation fails', async () => {
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
       teams: [{

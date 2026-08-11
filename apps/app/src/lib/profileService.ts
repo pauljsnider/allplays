@@ -291,7 +291,7 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
-export async function loadManagedTeamsFromNativeCallable() {
+export async function loadManagedTeamsFromNativeCallable(options: { includeChatMetadata?: boolean } = {}) {
   const token = await getNativeAuthIdToken(true);
   if (!token) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listManagedTeams`;
@@ -301,7 +301,7 @@ export async function loadManagedTeamsFromNativeCallable() {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json'
     }, requestUrl) as Record<string, string>,
-    data: { data: {} },
+    data: { data: options.includeChatMetadata === true ? { includeChatMetadata: true } : {} },
     connectTimeout: profileTimeoutMs,
     readTimeout: profileTimeoutMs
   }), 'Managed team load');

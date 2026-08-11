@@ -1,27 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const httpMocks = vi.hoisted(() => ({ post: vi.fn() }));
 const legacyMocks = vi.hoisted(() => ({
   listParentTeamFeeRecipients: vi.fn()
 }));
-
 const authMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn(),
   firebaseAuth: {
     app: { options: { projectId: 'demo-project' } }
   }
 }));
-
 const appCheckMocks = vi.hoisted(() => ({
   getPrimaryAppCheckHeaders: vi.fn(async (headers: Record<string, string>) => ({
     ...headers,
     'X-Firebase-AppCheck': 'debug-app-check'
   }))
 }));
-
 const runtimeMocks = vi.hoisted(() => ({
   isNativeRuntime: vi.fn()
 }));
 
+vi.mock('@capacitor/core', () => ({ CapacitorHttp: { post: httpMocks.post } }));
 vi.mock('./adapters/legacyHomeFees', () => legacyMocks);
 vi.mock('./adapters/legacyFirebaseAppCheck', () => appCheckMocks);
 vi.mock('./authService', () => authMocks);
@@ -31,21 +30,6 @@ import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService'
 
 const childLinks = [{ teamId: 'team-1', playerId: 'player-1' }];
 
-function firestoreDocument() {
-  return {
-    name: 'projects/demo-project/databases/(default)/documents/teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1',
-    fields: {
-      teamId: { stringValue: 'team-1' },
-      batchId: { stringValue: 'batch-1' },
-      recipientId: { stringValue: 'recipient-1' },
-      playerId: { stringValue: 'player-1' },
-      parentUserId: { stringValue: 'parent-1' },
-      amountDueCents: { integerValue: '2500' },
-      paid: { booleanValue: false }
-    }
-  };
-}
-
 describe('parentFeeRecipientsService native access', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,89 +38,57 @@ describe('parentFeeRecipientsService native access', () => {
     legacyMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
   });
 
-  it('uses authenticated collection-group REST queries in native builds', async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const query = JSON.parse(String(init?.body || '{}'));
-      const fieldPath = query.structuredQuery.where.compositeFilter.filters[1].fieldFilter.field.fieldPath;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => fieldPath === 'parentUserId' ? [{ document: firestoreDocument() }] : []
-      };
+  it('uses the authenticated server-authoritative callable with bounded native timeouts', async () => {
+    httpMocks.post.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          items: [{
+            id: 'recipient-1',
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            playerKey: 'team-1::player-1',
+            amountDueCents: 2500,
+            paid: false
+          }]
+        }
+      }
     });
-    vi.stubGlobal('fetch', fetchMock);
 
     await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks)).resolves.toEqual([
       expect.objectContaining({
         id: 'recipient-1',
-        teamId: 'team-1',
-        batchId: 'batch-1',
-        recipientId: 'recipient-1',
         playerKey: 'team-1::player-1',
-        amountDueCents: 2500,
-        paid: false
+        amountDueCents: 2500
       })
     ]);
-
     expect(legacyMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://firestore.googleapis.com/v1/projects/demo-project/databases/(default)/documents:runQuery',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          Authorization: 'Bearer native-id-token',
-          'X-Firebase-AppCheck': 'debug-app-check'
-        })
-      })
-    );
-    for (const [, init] of fetchMock.mock.calls) {
-      const query = JSON.parse(String(init?.body || '{}'));
-      expect(query.structuredQuery.from).toEqual([{ collectionId: 'feeRecipients', allDescendants: true }]);
-      expect(query.structuredQuery.where.compositeFilter.filters[0].fieldFilter).toEqual(expect.objectContaining({
-        field: { fieldPath: 'teamId' },
-        op: 'EQUAL',
-        value: { stringValue: 'team-1' }
-      }));
-    }
-    const recipientFilters = fetchMock.mock.calls.map(([, init]) => {
-      const query = JSON.parse(String(init?.body || '{}'));
-      return query.structuredQuery.where.compositeFilter.filters[1].fieldFilter;
+    expect(httpMocks.post).toHaveBeenCalledWith({
+      url: 'https://us-central1-demo-project.cloudfunctions.net/listParentTeamFeeRecipients',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer native-id-token',
+        'X-Firebase-AppCheck': 'debug-app-check'
+      }),
+      data: { data: {} },
+      connectTimeout: 8000,
+      readTimeout: 8000
     });
-    expect(recipientFilters).toContainEqual({
-      field: { fieldPath: 'playerKey' },
-      op: 'EQUAL',
-      value: { stringValue: 'team-1::player-1' }
-    });
-    expect(recipientFilters).not.toContainEqual(expect.objectContaining({
-      field: { fieldPath: 'playerId' }
-    }));
   });
 
-  it('rejects the complete load when any bounded native query is denied', async () => {
-    let requestNumber = 0;
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      requestNumber += 1;
-      if (requestNumber === 2) {
-        return {
-          ok: false,
-          status: 403,
-          json: async () => ({ error: { message: 'Missing or insufficient permissions.' } })
-        };
-      }
-      return { ok: true, status: 200, json: async () => [] };
-    }));
+  it('rejects invalid or failed callable responses instead of treating them as complete emptiness', async () => {
+    httpMocks.post.mockResolvedValue({
+      status: 503,
+      data: { error: { message: 'Fee discovery unavailable.' } }
+    });
 
     await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks))
-      .rejects.toMatchObject({ message: 'Missing or insufficient permissions.', code: 'permission-denied' });
+      .rejects.toThrow('Fee discovery unavailable.');
   });
 
-  it('returns a complete empty result without querying when no player links exist', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(listParentTeamFeeRecipientsForApp('parent-1', [])).resolves.toEqual([]);
-    expect(fetchMock).not.toHaveBeenCalled();
+  it('does not invoke the server when no user is signed in', async () => {
+    await expect(listParentTeamFeeRecipientsForApp('', [])).resolves.toEqual([]);
+    expect(httpMocks.post).not.toHaveBeenCalled();
     expect(authMocks.getNativeAuthIdToken).not.toHaveBeenCalled();
   });
 
@@ -147,5 +99,6 @@ describe('parentFeeRecipientsService native access', () => {
     await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks))
       .resolves.toEqual([{ id: 'web-fee' }]);
     expect(legacyMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith('parent-1', childLinks);
+    expect(httpMocks.post).not.toHaveBeenCalled();
   });
 });

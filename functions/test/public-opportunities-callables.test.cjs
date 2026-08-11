@@ -92,22 +92,22 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
         };
     }
 
-    function makeQuery(path, filters = [], orders = [], limitCount = null, cursor = null) {
+    function makeQuery(path, filters = [], orders = [], limitCount = null, cursor = null, collectionGroupName = null) {
         const query = {
             path,
             where(field, operator, value) {
-                return makeQuery(path, [...filters, { field, operator, value }], orders, limitCount, cursor);
+                return makeQuery(path, [...filters, { field, operator, value }], orders, limitCount, cursor, collectionGroupName);
             },
             orderBy(field, direction = 'asc') {
-                return makeQuery(path, filters, [...orders, { field, direction }], limitCount, cursor);
+                return makeQuery(path, filters, [...orders, { field, direction }], limitCount, cursor, collectionGroupName);
             },
             limit(count) {
-                return makeQuery(path, filters, orders, Number(count), cursor);
+                return makeQuery(path, filters, orders, Number(count), cursor, collectionGroupName);
             },
             startAfter(...values) {
                 return makeQuery(path, filters, orders, limitCount, values.length === 1 && values[0]?.ref
                     ? { snapshot: values[0] }
-                    : { values });
+                    : { values }, collectionGroupName);
             },
             doc(id) {
                 return doc(`${path}/${id || `auto-${nextAutoId++}`}`);
@@ -116,17 +116,19 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                 queryLog.push({ path, filters: clone(filters), limitCount });
                 const forcedFailure = queryFailures.find((failure) => (
                     failure?.path === path
-                    && filters.some(({ field, operator, value }) => (
+                    && (!failure.field || filters.some(({ field, operator, value }) => (
                         field === failure.field
                         && operator === failure.operator
                         && (!Object.hasOwn(failure, 'value')
                             || JSON.stringify(comparable(value)) === JSON.stringify(comparable(failure.value)))
-                    ))
+                    )))
                 ));
                 if (forcedFailure) throw new Error(forcedFailure.message || 'Forced query failure');
                 const depth = path.split('/').length + 1;
                 let snapshots = [...state.keys()]
-                    .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
+                    .filter((entryPath) => collectionGroupName
+                        ? entryPath.split('/').at(-2) === collectionGroupName
+                        : entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
                     .map(makeSnapshot);
 
                 snapshots = snapshots.filter((snapshot) => filters.every(({ field, operator, value }) => {
@@ -175,11 +177,16 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
         return makeQuery(path);
     }
 
+    function collectionGroup(name) {
+        return makeQuery(`**/${name}`, [], [], null, null, name);
+    }
+
     return {
         _state: state,
         _queryLog: queryLog,
         doc,
         collection,
+        collectionGroup,
         runTransaction: async (callback) => {
             if (typeof beforeTransaction === 'function') {
                 await beforeTransaction({ state });
@@ -583,6 +590,159 @@ test('managed-team discovery normalizes legacy teamName-only documents before so
         { id: 'bears-team', name: 'Bears' },
         { id: 'zebra-team', name: 'Zebras' }
     ]);
+});
+
+test('managed-team discovery returns bounded chat thread summaries without participant data', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true },
+        'teams/team-1/chatConversations/direct-1': {
+            type: 'direct',
+            participantIds: ['owner-1', 'user-2'],
+            directUserIds: ['owner-1', 'user-2'],
+            updatedAt: new FakeTimestamp(2000),
+            lastMessageAt: new FakeTimestamp(1900),
+            privateNote: 'must-not-leak'
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.equal(managed.isPartial, false);
+    assert.deepEqual(managed.items[0].chatConversations, [{
+        id: 'direct-1',
+        type: 'direct',
+        updatedAt: new FakeTimestamp(2000),
+        lastMessageAt: new FakeTimestamp(1900)
+    }]);
+    assert.equal('participantIds' in managed.items[0].chatConversations[0], false);
+});
+
+test('managed-team discovery marks chat metadata partial when a thread query fails', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true }
+    }, {
+        queryFailures: [{ path: 'teams/team-1/chatConversations', message: 'chat metadata unavailable' }]
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.equal(managed.isPartial, true);
+    assert.equal('chatConversations' in managed.items[0], false);
+});
+
+test('parent fee discovery returns bounded modern and legacy player assignments without private checkout state', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1'],
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/modern': {
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'modern',
+            playerId: 'player-1',
+            playerKey: 'team-1::player-1',
+            amountDueCents: 2500,
+            checkoutUrl: 'https://checkout.stripe.com/private',
+            receiptMetadata: { amountPaidCents: 500, paymentIntentId: 'pi_private' },
+            ledgerEntries: [{ type: 'payment', amountCents: 500, providerSessionId: 'cs_private' }]
+        },
+        'teams/team-1/feeBatches/batch-2/feeRecipients/legacy': {
+            teamId: 'team-1',
+            playerId: 'player-1',
+            amountDueCents: 1500
+        },
+        'teams/team-1/feeBatches/batch-2/feeRecipients/unrelated': {
+            teamId: 'team-1',
+            playerId: 'player-2',
+            amountDueCents: 9999
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id).sort(), ['legacy', 'modern']);
+    const legacy = result.items.find((item) => item.id === 'legacy');
+    assert.equal(legacy.batchId, 'batch-2');
+    assert.equal(legacy.recipientId, 'legacy');
+    assert.equal(legacy.playerKey, 'team-1::player-1');
+    const modern = result.items.find((item) => item.id === 'modern');
+    assert.equal('checkoutUrl' in modern, false);
+    assert.equal('paymentIntentId' in modern.receiptMetadata, false);
+    assert.equal('providerSessionId' in modern.ledgerEntries[0], false);
+    const feeQueries = firestore._queryLog.filter(({ path }) => path === '**/feeRecipients');
+    assert.ok(feeQueries.length > 0);
+    assert.ok(feeQueries.every(({ limitCount }) => limitCount === 101));
+});
+
+test('parent fee discovery fails closed when a bounded query overflows', async () => {
+    const seed = {
+        'users/parent-1': { parentTeamIds: ['team-1'] }
+    };
+    for (let index = 0; index < 101; index += 1) {
+        seed[`teams/team-1/feeBatches/batch-1/feeRecipients/direct-${index}`] = {
+            parentUserId: 'parent-1',
+            amountDueCents: 100
+        };
+    }
+    const { callables } = loadCallables(seed);
+
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        (error) => error.code === 'resource-exhausted'
+    );
+});
+
+test('parent fee discovery is authenticated and rejects incomplete server queries', async () => {
+    const seed = {
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        }
+    };
+    const { callables } = loadCallables(seed);
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, {}),
+        (error) => error.code === 'unauthenticated'
+    );
+
+    const failed = loadCallables(seed, {
+        queryFailures: [{
+            path: '**/feeRecipients',
+            field: 'playerId',
+            operator: '==',
+            value: 'player-1',
+            message: 'fee query failed'
+        }]
+    });
+    await assert.rejects(
+        failed.callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        /fee query failed/
+    );
+});
+
+test('parent fee discovery preserves direct UID assignments for parent-team-only profiles', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: ['team-1'] },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/direct': {
+            teamId: 'team-1',
+            parentUserId: 'parent-1',
+            amountDueCents: 3200
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id), ['direct']);
 });
 
 test('team admin revocation atomically clears reciprocal coach access and accepted invites', async () => {

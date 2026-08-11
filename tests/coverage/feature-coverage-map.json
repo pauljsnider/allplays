@@ -439,6 +439,7 @@
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
                 "getPublicTeamPassStatus",
+                "listParentTeamFeeRecipients",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
                 "refundStripeTeamFeePayment",
@@ -447,6 +448,8 @@
             ],
             "unitTests": [
                 "functions/test/team-fee-checkout-callable.test.cjs",
+                "functions/test/public-opportunities-callables.test.cjs",
+                "apps/app/src/lib/parentFeeRecipientsService.test.ts",
                 "tests/unit/app-team-fees-service.test.ts",
                 "tests/unit/db-team-fee-recipient-list.test.js",
                 "tests/unit/db-team-fee-recipient-updates.test.js",

@@ -64,7 +64,7 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { getNativeAuthIdToken } from './authService';
-import { createProfileAccessCode, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { createProfileAccessCode, loadManagedTeamsFromNativeCallable, loadNotificationTeams, loadParentTeams, loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
 
 describe('createProfileAccessCode', () => {
     beforeEach(() => {
@@ -355,6 +355,18 @@ describe('native parent-team fallback hydration', () => {
         vi.stubGlobal('fetch', fetchMock);
         return fetchMock;
     }
+
+    it('requests bounded chat metadata only for chat callers', async () => {
+        mockNativeProfileFallbackFetch();
+
+        await loadManagedTeamsFromNativeCallable({ includeChatMetadata: true });
+
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            data: { data: { includeChatMetadata: true } },
+            connectTimeout: 8000,
+            readTimeout: 8000
+        }));
+    });
 
     it('uses per-document team reads for notification teams so parent hydration stays rule-compatible', async () => {
         dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
