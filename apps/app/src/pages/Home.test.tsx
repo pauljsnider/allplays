@@ -774,6 +774,31 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
   });
 
+  it('continues the independent social load from the latest streamed Home state when a secondary slice fails', async () => {
+    const partialHome = {
+      ...baseHome,
+      fees: [{ id: 'fee-1', teamId: 'team-1', teamName: 'Bears', title: 'Spring dues' }]
+    } as any;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.(partialHome);
+      return Promise.reject(new Error('fees unavailable'));
+    });
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Needs refresh')).toBeTruthy();
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, partialHome);
+    });
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
+  });
+
   it('keeps the Needs refresh badge when a secondary retry also fails', async () => {
     homeServiceMocks.loadParentHomeWithSecondaryData
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))

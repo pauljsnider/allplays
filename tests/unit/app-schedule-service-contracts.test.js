@@ -583,6 +583,8 @@ describe('React app schedule service contract integration', () => {
         expect(officialAssignmentsSource).toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
         expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('respondToOfficiatingAssignment'");
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('claimOpenOfficiatingSlot'");
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {

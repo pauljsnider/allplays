@@ -226,6 +226,7 @@ export function Home({ auth }: { auth: AuthState }) {
         setHome(summary.home);
         setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
+        let latestSecondaryHome = summary.home;
 
         void runSecondaryLoad(
           async () => {
@@ -234,8 +235,12 @@ export function Home({ auth }: { auth: AuthState }) {
               schedule: summary.schedule,
               // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
               // arrives instead of waiting for all of them (#2037).
-              onPartial: (partial) => setHome(partial)
+              onPartial: (partial) => {
+                latestSecondaryHome = partial;
+                setHome(partial);
+              }
             });
+            latestSecondaryHome = secondaryHome;
             setHome(secondaryHome);
             setLoadedHomeDetailsUserId(user.uid);
             setFailedHomeDetailsUserId(null);
@@ -256,8 +261,16 @@ export function Home({ auth }: { auth: AuthState }) {
           {
             rethrow: false,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
-            onError: (secondaryError) => {
+            onError: async (secondaryError) => {
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              try {
+                const socialHome = await loadSocialHome(user, latestSecondaryHome);
+                setSocial(socialHome);
+              } catch {
+                // The Home details error remains the visible retry signal. Social
+                // state is left untouched so a failed independent load cannot
+                // replace the last verified feed with an authoritative empty one.
+              }
               timer.end({
                 hydrated: false,
                 playerCount: summary.home.players.length,
@@ -274,7 +287,6 @@ export function Home({ auth }: { auth: AuthState }) {
                 // permission or network request fails. Mark the attempt settled
                 // so Home does not present an infinite loading state.
                 setLoadedHomeDetailsUserId(user.uid);
-                setSocial(emptySocialHome());
                 setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
                 return;
               }

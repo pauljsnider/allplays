@@ -760,6 +760,7 @@
             ],
             "cloudFunctions": [
                 "claimOpenOfficiatingSlot",
+                "respondToOfficiatingAssignment",
                 "listOfficialLinkedTeamIds",
                 "notifyOfficiatingNotificationCreated",
                 "notifyOpenOfficiatingSlots"

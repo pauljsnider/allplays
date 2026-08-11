@@ -99,6 +99,7 @@ import {
 } from './tournamentScheduleStandings';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { callNativeFirebaseFunction } from './nativeCallable';
 import { startUxTimer } from './uxTiming';
 import { isNativeRuntime } from './nativeRuntime';
 import { listNativeFirestoreCollectionPages } from './nativeFirestoreListPager';
@@ -7333,10 +7334,27 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 }
 
 export async function respondToOfficialAssignmentItem(item: OfficialAssignmentItem, status: 'accepted' | 'declined') {
+  if (isNativeRuntime()) {
+    await callNativeFirebaseFunction('respondToOfficiatingAssignment', {
+      teamId: item.teamId,
+      gameId: item.gameId,
+      slotId: item.slotId,
+      status
+    }, { errorLabel: 'Officiating response' });
+    return;
+  }
   await withTimeout(Promise.resolve(respondToOfficiatingAssignment(item.teamId, item.gameId, item.slotId, status)), 'Officiating response');
 }
 
 export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, user: AuthUser) {
+  if (isNativeRuntime()) {
+    await callNativeFirebaseFunction('claimOpenOfficiatingSlot', {
+      teamId: item.teamId,
+      gameId: item.gameId,
+      slotId: item.slotId
+    }, { errorLabel: 'Officiating claim' });
+    return;
+  }
   await withTimeout(Promise.resolve(claimOpenOfficiatingSlot(item.teamId, item.gameId, item.slotId, user)), 'Officiating claim');
 }
 

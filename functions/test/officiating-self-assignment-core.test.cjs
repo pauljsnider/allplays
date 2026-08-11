@@ -2,12 +2,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     normalizeOpenOfficiatingSlotClaimInput,
+    normalizeOfficiatingAssignmentResponseInput,
     isEligibleOpenOfficiatingSlotParticipant,
     decodeSharedGameSyntheticId,
     resolveOfficiatingGamePath,
     isTeamLinkedToSharedGame,
     buildOpenOfficiatingSlotClaimUpdate,
-    buildOfficiatingSelfAssignmentNotificationRecord
+    buildOfficiatingSelfAssignmentNotificationRecord,
+    buildOfficiatingAssignmentResponseUpdate,
+    buildOfficiatingAssignmentResponseNotificationRecord
 } = require('../officiating-self-assignment-core.cjs');
 
 test('normalizeOpenOfficiatingSlotClaimInput requires document-safe IDs', () => {
@@ -28,6 +31,31 @@ test('normalizeOpenOfficiatingSlotClaimInput requires document-safe IDs', () => 
         gameId: 'games/game-1',
         slotId: 'line-judge'
     }), /Game ID is required/);
+    assert.throws(() => normalizeOpenOfficiatingSlotClaimInput({
+        teamId: 't'.repeat(129),
+        gameId: 'game-1',
+        slotId: 'line-judge'
+    }), /Team ID is required/);
+});
+
+test('normalizeOfficiatingAssignmentResponseInput allows only bounded accept or decline actions', () => {
+    assert.deepEqual(normalizeOfficiatingAssignmentResponseInput({
+        teamId: ' team-1 ',
+        gameId: 'game-1',
+        slotId: 'center',
+        status: 'ACCEPTED'
+    }), {
+        teamId: 'team-1',
+        gameId: 'game-1',
+        slotId: 'center',
+        status: 'accepted'
+    });
+    assert.throws(() => normalizeOfficiatingAssignmentResponseInput({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        slotId: 'center',
+        status: 'open'
+    }), /must be accepted or declined/);
 });
 
 test('resolveOfficiatingGamePath decodes shared synthetic game ids', () => {
@@ -167,4 +195,76 @@ test('buildOfficiatingSelfAssignmentNotificationRecord targets assigners for aud
         location: 'Field 2',
         date: '2026-06-01T12:00:00.000Z'
     });
+});
+
+test('buildOfficiatingAssignmentResponseUpdate changes only the current UID assignment', () => {
+    const result = buildOfficiatingAssignmentResponseUpdate({
+        game: {
+            officiatingSlots: [
+                { id: 'center', position: 'Center Referee', officialUserId: 'official-1', officialEmail: 'old@example.com', status: 'pending', scheduleReviewRequired: true },
+                { id: 'line', position: 'Line Judge', officialUserId: 'official-2', officialEmail: 'other@example.com', status: 'pending' }
+            ]
+        },
+        slotId: 'center',
+        status: 'accepted',
+        official: { uid: 'official-1', email: '' },
+        now: 'server-now'
+    });
+
+    assert.equal(result.updatedSlot.status, 'accepted');
+    assert.equal(result.updatedSlot.scheduleReviewRequired, false);
+    assert.equal(result.update.officiatingSlots[1].status, 'pending');
+    assert.equal(result.update.officiatingCoverageStatus, 'needs_attention');
+    assert.equal(result.update.officiatingUpdatedAt, 'server-now');
+});
+
+test('buildOfficiatingAssignmentResponseUpdate accepts a verified-email identity supplied by the handler', () => {
+    const result = buildOfficiatingAssignmentResponseUpdate({
+        game: {
+            officiatingSlots: [{ id: 'center', position: 'Center Referee', officialEmail: 'current@example.com', status: 'pending' }]
+        },
+        slotId: 'center',
+        status: 'declined',
+        official: { uid: 'official-1', email: 'CURRENT@example.com' },
+        now: 'server-now'
+    });
+
+    assert.equal(result.updatedSlot.status, 'declined');
+});
+
+test('buildOfficiatingAssignmentResponseUpdate rejects another official and an absent email authority', () => {
+    const game = {
+        officiatingSlots: [{ id: 'center', position: 'Center Referee', officialEmail: 'current@example.com', status: 'pending' }]
+    };
+
+    assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: 'center',
+        status: 'accepted',
+        official: { uid: 'other-user', email: 'other@example.com' }
+    }), /belongs to another official/);
+    assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: 'center',
+        status: 'accepted',
+        official: { uid: 'current-user', email: '' }
+    }), /belongs to another official/);
+});
+
+test('buildOfficiatingAssignmentResponseNotificationRecord targets the assigner', () => {
+    const record = buildOfficiatingAssignmentResponseNotificationRecord({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        game: { opponent: 'Lions', location: 'Field 2', date: '2026-06-01T12:00:00.000Z' },
+        slot: { id: 'center', position: 'Center Referee', officialUserId: 'official-1', officialEmail: 'Current@Example.com', status: 'declined' },
+        status: 'declined',
+        actor: { uid: 'official-1', email: 'Current@Example.com', displayName: 'Casey Current' },
+        timestamp: 'server-now'
+    });
+
+    assert.equal(record.event, 'declined');
+    assert.equal(record.status, 'declined');
+    assert.equal(record.recipientType, 'assigner');
+    assert.equal(record.actorUserId, 'official-1');
+    assert.equal(record.actorEmail, 'current@example.com');
 });

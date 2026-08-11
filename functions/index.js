@@ -303,11 +303,14 @@ const {
 } = require('./schedule-notification-utils.cjs');
 const {
   normalizeOpenOfficiatingSlotClaimInput,
+  normalizeOfficiatingAssignmentResponseInput,
   isEligibleOpenOfficiatingSlotParticipant,
   resolveOfficiatingGamePath,
   isTeamLinkedToSharedGame,
   buildOpenOfficiatingSlotClaimUpdate,
-  buildOfficiatingSelfAssignmentNotificationRecord
+  buildOfficiatingSelfAssignmentNotificationRecord,
+  buildOfficiatingAssignmentResponseUpdate,
+  buildOfficiatingAssignmentResponseNotificationRecord
 } = require('./officiating-self-assignment-core.cjs');
 const {
   assertSportsConnectSyncConfig,
@@ -3337,6 +3340,77 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
       gameId: input.gameId,
       slotId: input.slotId,
       ...result
+    };
+  } catch (error) {
+    throw toHttpsError(error, error?.code || 'internal');
+  }
+});
+
+exports.respondToOfficiatingAssignment = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before responding to an officiating assignment.');
+  }
+
+  let input;
+  try {
+    input = normalizeOfficiatingAssignmentResponseInput(data || {});
+  } catch (error) {
+    throw toHttpsError(error, 'invalid-argument');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = context.auth.token?.email_verified === true
+    ? String(context.auth.token?.email || '').trim().toLowerCase()
+    : '';
+  const displayName = String(context.auth.token?.name || callerEmail || 'Official').trim();
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+
+      const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
+      const { update, updatedSlot } = buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: input.slotId,
+        status: input.status,
+        official: { uid, email: callerEmail, displayName },
+        now
+      });
+      const notificationRecord = buildOfficiatingAssignmentResponseNotificationRecord({
+        teamId: input.teamId,
+        gameId: input.gameId,
+        game,
+        slot: updatedSlot,
+        status: input.status,
+        actor: { uid, email: callerEmail, displayName },
+        timestamp: now
+      });
+
+      transaction.update(gameRef, update);
+      transaction.set(notificationRef, {
+        ...notificationRecord,
+        createdAt: now
+      });
+
+      return updatedSlot;
+    });
+
+    return {
+      success: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      slotId: input.slotId,
+      status: result.status
     };
   } catch (error) {
     throw toHttpsError(error, error?.code || 'internal');

@@ -12,10 +12,16 @@ const capacitorCoreMock = vi.hoisted(() => ({
   httpPost: vi.fn()
 }));
 
+const nativeCallableMock = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: capacitorCoreMock,
   CapacitorHttp: { post: capacitorCoreMock.httpPost }
 }));
+
+vi.mock('./nativeCallable', () => nativeCallableMock);
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -2180,6 +2186,10 @@ describe('official assignments app service', () => {
     ] as any);
   });
 
+  afterEach(() => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+  });
+
   it('loads upcoming assigned and eligible open slots from linked official teams', async () => {
     const result = await loadOfficialAssignments(user);
 
@@ -2463,6 +2473,46 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(1, 'team-alpha', 'game-assigned', 'center', 'accepted');
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
+  });
+
+  it('routes native accept, decline, and claim actions through authenticated callables', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    const item = {
+      kind: 'assigned',
+      teamId: 'team-alpha',
+      teamName: 'Alpha FC',
+      gameId: 'game-assigned',
+      slotId: 'center',
+      position: 'Center Referee',
+      status: 'pending',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: new Date(futureDate),
+      canClaim: false,
+      scheduleReviewRequired: false
+    } as any;
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', slotId: 'line', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'line' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
   });
 });
 

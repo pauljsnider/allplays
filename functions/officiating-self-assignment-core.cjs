@@ -1,4 +1,5 @@
 const OFFICIATING_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open']);
+const OFFICIATING_RESPONSE_STATUSES = new Set(['accepted', 'declined']);
 const SHARED_GAME_ID_PREFIX = 'shared_';
 const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
 
@@ -18,7 +19,7 @@ function createClaimError(code, message) {
 
 function normalizeDocId(value, label) {
     const normalized = normalizeString(value);
-    if (!normalized || normalized.includes('/')) {
+    if (!normalized || normalized.length > 128 || normalized.includes('/')) {
         throw createClaimError('invalid-argument', `${label} is required.`);
     }
     return normalized;
@@ -60,6 +61,19 @@ function normalizeOpenOfficiatingSlotClaimInput(data = {}) {
         gameId: normalizeDocId(data.gameId, 'Game ID'),
         slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
         displayName: normalizeString(data.displayName || data.name)
+    };
+}
+
+function normalizeOfficiatingAssignmentResponseInput(data = {}) {
+    const status = normalizeString(data.status).toLowerCase();
+    if (!OFFICIATING_RESPONSE_STATUSES.has(status)) {
+        throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
+    }
+    return {
+        teamId: normalizeDocId(data.teamId, 'Team ID'),
+        gameId: normalizeDocId(data.gameId, 'Game ID'),
+        slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
+        status
     };
 }
 
@@ -214,6 +228,49 @@ function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {},
     };
 }
 
+function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, official = {}, now = null } = {}) {
+    const normalizedSlotId = normalizeDocId(slotId, 'Officiating slot ID');
+    const normalizedStatus = normalizeString(status).toLowerCase();
+    if (!OFFICIATING_RESPONSE_STATUSES.has(normalizedStatus)) {
+        throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
+    }
+    const officialUserId = normalizeString(official.uid || official.userId);
+    const officialEmail = normalizeEmail(official.email);
+    if (!officialUserId) {
+        throw createClaimError('unauthenticated', 'Sign in before responding to an officiating assignment.');
+    }
+
+    let updatedSlot = null;
+    const officiatingSlots = normalizeOfficiatingSlots(game.officiatingSlots || []).map((slot) => {
+        if (slot.id !== normalizedSlotId) return slot;
+        const uidMatches = Boolean(slot.officialUserId && slot.officialUserId === officialUserId);
+        const emailMatches = Boolean(officialEmail && slot.officialEmail && slot.officialEmail === officialEmail);
+        if (!uidMatches && !emailMatches) {
+            throw createClaimError('permission-denied', 'This officiating assignment belongs to another official.');
+        }
+        updatedSlot = {
+            ...slot,
+            status: normalizedStatus,
+            scheduleReviewRequired: false,
+            scheduleReviewReason: '',
+            scheduleReviewMarkedAt: null
+        };
+        return updatedSlot;
+    });
+
+    if (!updatedSlot) {
+        throw createClaimError('not-found', 'Officiating slot not found.');
+    }
+    return {
+        update: {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: now
+        },
+        updatedSlot
+    };
+}
+
 function buildOfficiatingSelfAssignmentNotificationRecord({
     teamId,
     gameId,
@@ -259,8 +316,56 @@ function buildOfficiatingSelfAssignmentNotificationRecord({
     };
 }
 
+function buildOfficiatingAssignmentResponseNotificationRecord({
+    teamId,
+    gameId,
+    game = {},
+    slot = {},
+    status,
+    actor = {},
+    timestamp = null
+} = {}) {
+    const normalizedSlot = normalizeOfficiatingSlots([slot])[0] || slot;
+    const actorUserId = normalizeString(actor.uid || actor.userId);
+    const actorEmail = normalizeEmail(actor.email);
+    const actorName = normalizeString(actor.displayName || actor.name);
+    const normalizedStatus = normalizeString(status).toLowerCase();
+
+    return {
+        type: 'officiating_assignment',
+        assignmentType: normalizedSlot.position || null,
+        event: normalizedStatus === 'declined' ? 'declined' : 'accepted',
+        gameReference: {
+            teamId: normalizeString(teamId),
+            gameId: normalizeString(gameId || game.id),
+            opponent: normalizeString(game.opponent) || null,
+            location: normalizeString(game.location) || null,
+            date: game.date || null
+        },
+        gameId: normalizeString(gameId || game.id),
+        slotId: normalizedSlot.id || null,
+        position: normalizedSlot.position || null,
+        status: normalizedStatus || normalizedSlot.status || null,
+        timestamp,
+        actor: {
+            userId: actorUserId,
+            name: actorName,
+            email: actorEmail
+        },
+        actorUserId: actorUserId || null,
+        actorEmail: actorEmail || null,
+        recipientType: 'assigner',
+        recipientOfficialId: normalizedSlot.officialId || null,
+        recipientOfficialUserId: normalizedSlot.officialUserId || null,
+        recipientOfficialName: normalizedSlot.officialName || null,
+        recipientOfficialEmail: normalizedSlot.officialEmail || null,
+        read: false
+    };
+}
+
 module.exports = {
     normalizeOpenOfficiatingSlotClaimInput,
+    normalizeOfficiatingAssignmentResponseInput,
     normalizeOfficiatingSlots,
     computeOfficiatingCoverageStatus,
     isEligibleOpenOfficiatingSlotParticipant,
@@ -270,5 +375,7 @@ module.exports = {
     isTeamLinkedToSharedGame,
     claimOpenOfficiatingSlotForOfficial,
     buildOpenOfficiatingSlotClaimUpdate,
-    buildOfficiatingSelfAssignmentNotificationRecord
+    buildOfficiatingSelfAssignmentNotificationRecord,
+    buildOfficiatingAssignmentResponseUpdate,
+    buildOfficiatingAssignmentResponseNotificationRecord
 };
