@@ -86,6 +86,18 @@ describe('bulk RSVP helpers', () => {
     ).map((row) => row.eventKey)).toEqual([second.eventKey]);
   });
 
+  it('preserves reversed display order when limiting visible past groups', () => {
+    const oldest = event(1);
+    const middle = event(2);
+    const newest = event(3);
+
+    expect(getScheduleRsvpHydrationTargets(
+      [oldest, middle, newest],
+      [newest, middle, oldest],
+      1
+    ).map((row) => row.eventKey)).toEqual([newest.eventKey]);
+  });
+
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
     const knownEmptyNote = event(1, { myRsvpNote: null, myRsvpNoteHydrated: true });
     const unknownNote = event(2, { myRsvpNote: null, myRsvpNoteHydrated: false });

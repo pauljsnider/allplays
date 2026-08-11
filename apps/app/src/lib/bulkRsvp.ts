@@ -42,12 +42,10 @@ export function getScheduleRsvpHydrationTargets(
   hydratedGroupKeys: ReadonlySet<string> = new Set()
 ) {
   const visibleGroupKeys = new Set<string>();
-  [...visibleEvents]
-    .sort((left, right) => left.date.getTime() - right.date.getTime())
-    .forEach((event) => {
-      if (visibleGroupKeys.size >= visibleGroupLimit) return;
-      visibleGroupKeys.add(getRsvpGroupKey(event));
-    });
+  visibleEvents.forEach((event) => {
+    if (visibleGroupKeys.size >= visibleGroupLimit) return;
+    visibleGroupKeys.add(getRsvpGroupKey(event));
+  });
 
   return getBulkRsvpCandidates(events).filter((event) => (
     visibleGroupKeys.has(getRsvpGroupKey(event))
