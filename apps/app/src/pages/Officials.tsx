@@ -32,6 +32,12 @@ export function Officials({ auth }: { auth: AuthState }) {
       }
       setHasAccess(true);
       setItems(result.assignments);
+      if (result.isPartial) {
+        setStatus({
+          tone: 'error',
+          message: 'This team loaded, but other linked official teams could not be verified. Retry to refresh the complete list.'
+        });
+      }
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to load officials assignments.' });
       setItems([]);

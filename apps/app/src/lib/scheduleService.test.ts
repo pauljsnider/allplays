@@ -58,6 +58,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getTeam: vi.fn(),
   getTeams: vi.fn(),
   getStaffTeams: vi.fn(),
+  getOfficialLinkedTeamIds: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
   buildSingleLegacyTournamentGameDocument: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => {
@@ -231,7 +232,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
@@ -2141,16 +2142,7 @@ describe('official assignments app service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockImplementation(async (request: any) => {
-      const filter = request?.filters?.[0];
-      if (filter?.field === 'email' && filter?.value === 'ref@example.com') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      if (filter?.field === 'phone' && filter?.value === '5551234567') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      return { docs: [] } as any;
-    });
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: ['team-alpha'], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -2223,22 +2215,31 @@ describe('official assignments app service', () => {
   });
 
   it('hides officials access when no official link matches the signed-in user', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
 
     const result = await loadOfficialAssignments(user);
 
-    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, assignments: [] });
+    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, isPartial: false, assignments: [] });
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('surfaces discovery failure instead of treating a partial-empty result as no official access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow('Official team access could not be verified.');
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
   });
 
   it('loads assigned slots for a requested team when official directory queries are denied', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
 
     const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
 
     expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
     expect(result.teamIds).toEqual(['team-alpha']);
     expect(result.assignments).toEqual([
       expect.objectContaining({
@@ -2256,7 +2257,7 @@ describe('official assignments app service', () => {
   });
 
   it('allows an eligible team participant to view requested-team open slots without an official directory link', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue(null as any);
     vi.mocked(getGames).mockResolvedValue([
       {

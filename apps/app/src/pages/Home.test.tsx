@@ -430,7 +430,7 @@ describe('Home', () => {
       thumbnailUrl: null,
       storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
     });
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0, isPartial: false });
     opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
   });
 
@@ -681,7 +681,7 @@ describe('Home', () => {
   });
 
   it('uses official context when assignments are available', async () => {
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
     renderHome({ ...signedInAuth, roles: [], isParent: false } as AuthState);
 
     expect(await screen.findByText(/Official assignments/)).toBeTruthy();
@@ -866,7 +866,7 @@ describe('Home', () => {
   it('makes officials access primary for first-run users with no linked players or teams', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
 
     renderHome(signedInAuth);
 
@@ -883,7 +883,7 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(emptyHome);
     scheduleServiceMocks.loadOfficialAssignmentsAccess
-      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1 })
+      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false })
       .mockImplementationOnce(() => new Promise(() => {}));
 
     const { rerender } = render(
@@ -914,6 +914,18 @@ describe('Home', () => {
     });
     expect(screen.queryByRole('heading', { name: 'Manage assignments' })).toBeNull();
     expect(screen.queryByRole('link', { name: /Officials Manage assignments/i })).toBeNull();
+  });
+
+  it('shows a retryable officials state instead of treating discovery failure as authoritative absence', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockRejectedValueOnce(new Error('access unavailable'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Assignments could not refresh' })).toBeTruthy();
+    expect(screen.getByText('Open Officials to retry. Your linked teams were not treated as empty.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
   });
 
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {

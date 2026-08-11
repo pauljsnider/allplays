@@ -77,11 +77,11 @@ const firebaseMocks = vi.hoisted(() => {
         db: {},
         functions: { name: 'functions' },
         httpsCallable: vi.fn((_functions, name) => async () => ({
-            data: {
-                items: name === 'listManagedTeams'
-                    ? await managedTeamMocks.listManagedTeams()
-                    : []
-            }
+            data: name === 'listManagedTeams'
+                ? { items: await managedTeamMocks.listManagedTeams(), isPartial: false }
+                : (name === 'listOfficialLinkedTeamIds'
+                    ? { teamIds: [], isPartial: false }
+                    : {})
         })),
         doc: vi.fn((...parts) => ({
             path: parts.filter((part) => typeof part === 'string').join('/')
@@ -559,6 +559,19 @@ describe('React app schedule service contract integration', () => {
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
         expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
         expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');
+    });
+
+    it('discovers official teams through one authenticated callable and rejects partial-empty responses', () => {
+        const officialSource = getScheduleServiceSlice(
+            'function normalizeOfficialLinkedTeamIdsResponse',
+            'export async function respondToOfficialAssignmentItem'
+        );
+
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds')");
+        expect(officialSource).toContain('source.isPartial !== false');
+        expect(officialSource).toContain('readWithNativeFallback(');
+        expect(officialSource).not.toContain("collectionGroup(db, 'officials')");
+        expect(officialSource).not.toContain('Promise.allSettled');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {

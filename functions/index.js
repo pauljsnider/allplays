@@ -337,6 +337,8 @@ const {
   serializeManagedTeamProfile,
   serializeStaffTeamProfile
 } = require('./managed-team-projection-core.cjs');
+const { createOfficialTeamDiscoveryHandler } = require('./official-team-discovery-core.cjs');
+const { createStatConfigManagementHandlers } = require('./stat-config-management-core.cjs');
 const { createDelegatedTeamContextHandler } = require('./delegated-team-context-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
@@ -396,6 +398,17 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const listOfficialLinkedTeamIdsHandler = createOfficialTeamDiscoveryHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError
+});
+const statConfigManagementHandlers = createStatConfigManagementHandlers({
+  firestore,
+  auth: admin.auth(),
+  hasTeamAdminAccess,
+  HttpsError: functions.https.HttpsError
+});
 function assertPaymentsEnabled() {
   if (process.env.PAYMENTS_ENABLED !== 'true') {
     throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
@@ -18331,6 +18344,10 @@ exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) =>
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
   return { items, isPartial: staffTeams.isPartial === true };
 });
+
+exports.listOfficialLinkedTeamIds = functions.https.onCall(listOfficialLinkedTeamIdsHandler);
+exports.deleteStatConfig = functions.https.onCall(statConfigManagementHandlers.deleteStatConfig);
+exports.resetTeamStatConfigs = functions.https.onCall(statConfigManagementHandlers.resetTeamStatConfigs);
 
 exports.getDelegatedTeamContext = functions.https.onCall(delegatedTeamContextHandler);
 

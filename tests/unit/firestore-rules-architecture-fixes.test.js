@@ -84,7 +84,13 @@ describe('firestore.rules architecture fixes', () => {
             )
             .map((override) => override.fieldPath);
 
-        expect(indexedOfficialFields).toEqual(expect.arrayContaining(['email', 'name', 'phone']));
+        expect(indexedOfficialFields).toEqual(expect.arrayContaining([
+            'email',
+            'emailLower',
+            'name',
+            'phone',
+            'phoneDigits'
+        ]));
     });
 
     it('removes public canonical team lists while keeping managed and admin lists bounded', () => {

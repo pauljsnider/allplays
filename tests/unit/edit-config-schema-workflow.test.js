@@ -269,8 +269,7 @@ describe('edit config schema workflow', () => {
         expect(source).toContain('export async function updateConfig(teamId, configId, configData) {');
         expect(source).toContain('await updateDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId), normalizedConfig);');
         expect(source).toContain('export async function resetTeamStatConfigs(teamId) {');
-        expect(source).toContain('const batch = writeBatch(db);');
-        expect(source).toContain('batch.delete(doc(db, `teams/${teamId}/statTrackerConfigs`, config.id));');
-        expect(source).toContain("throw new Error('One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.')");
+        expect(source).toContain("httpsCallable(functions, 'resetTeamStatConfigs')");
+        expect(source).toContain('await callable({ teamId })');
     });
 });

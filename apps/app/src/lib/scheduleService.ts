@@ -16,6 +16,7 @@ import {
   getTeam,
   getDelegatedTeamContext,
   getStaffTeams,
+  getOfficialLinkedTeamIds,
   addGame,
   addPractice,
   buildLegacyTournamentGameDocuments,
@@ -46,7 +47,6 @@ import {
   db,
   doc,
   collection,
-  collectionGroup,
   getDoc,
   getDocs,
   query,
@@ -65,7 +65,6 @@ import { getCalendarOccurrenceTrackingId, isCalendarOccurrenceTracked } from './
 import {
   sendPublicRsvpReminderEmails,
   normalizeOfficialLinkEmail,
-  normalizeOfficialLinkPhone,
   getAssignedOfficiatingSlots,
   getOpenOfficiatingSlots,
   expandRecurrence,
@@ -457,6 +456,7 @@ export type OfficialAssignmentsAccess = {
   hasAccess: boolean;
   teamIds: string[];
   teamCount: number;
+  isPartial: boolean;
 };
 
 export type OfficialAssignmentItem = {
@@ -7025,12 +7025,6 @@ async function nativeReleaseAssignment(event: ParentScheduleEvent, role: string)
   await nativeDeleteDocument(path);
 }
 
-function extractTeamIdFromOfficialRefPath(path: string) {
-  const parts = String(path || '').split('/').filter(Boolean);
-  const teamIndex = parts.indexOf('teams');
-  return teamIndex >= 0 ? compactString(parts[teamIndex + 1]) : '';
-}
-
 // Look-behind buffer for the officials game query so same-day / in-progress games stay
 // in range while still bounding the read (avoids scanning a team's full game history).
 const officialAssignmentsLookBehindMs = 24 * 60 * 60 * 1000;
@@ -7057,49 +7051,62 @@ function isEligibleOpenOfficiatingSlotParticipant(
   return false;
 }
 
-async function loadOfficialLinkedTeamIds(user: AuthUser, userProfile?: Record<string, any> | null) {
-  const email = normalizeOfficialLinkEmail(user?.email || '');
-  const phone = normalizeOfficialLinkPhone(userProfile?.phone || '');
-  const officialsRef = collectionGroup(db, 'officials');
-  const requests: Promise<any>[] = [];
-
-  if (email) {
-    requests.push(getDocs(query(officialsRef, where('email', '==', email))));
+function normalizeOfficialLinkedTeamIdsResponse(source: any) {
+  if (!source || source.isPartial !== false || !Array.isArray(source.teamIds)) {
+    throw new Error('Official team discovery returned an incomplete response.');
   }
-  if (phone) {
-    requests.push(getDocs(query(officialsRef, where('phone', '==', phone))));
+  const teamIds = source.teamIds.map(compactString);
+  if (teamIds.some((teamId: string) => !teamId || teamId.length > 128 || teamId.includes('/'))) {
+    throw new Error('Official team discovery returned an invalid response.');
   }
-
-  if (!requests.length) {
-    return [];
-  }
-
-  const teamIds = new Set<string>();
-  const results = await Promise.allSettled(requests);
-  results.forEach((result) => {
-    if (result.status !== 'fulfilled') return;
-    result.value.docs.forEach((docSnap: any) => {
-      const teamId = extractTeamIdFromOfficialRefPath(docSnap?.ref?.path || '');
-      if (teamId) teamIds.add(teamId);
-    });
-  });
-  return Array.from(teamIds);
+  return [...new Set<string>(teamIds)].sort();
 }
 
-export async function loadOfficialAssignmentsAccess(user: AuthUser): Promise<OfficialAssignmentsAccess> {
-  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
-  const teamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
+async function loadOfficialLinkedTeamIdsFromNativeCallable() {
+  const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listOfficialLinkedTeamIds`;
+  const response = await withTimeout(fetch(requestUrl, {
+    method: 'POST',
+    headers: await getNativeHeaders(requestUrl),
+    body: JSON.stringify({ data: {} })
+  }), 'Official team discovery', staffTeamDiscoveryTimeoutMs);
+  const payload = await response.json().catch(() => ({}));
+  const result = payload?.result || payload?.data;
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'Official team access could not be verified.');
+  }
+  return normalizeOfficialLinkedTeamIdsResponse(result);
+}
+
+async function loadOfficialLinkedTeamIds() {
+  return readWithNativeFallback(
+    'official team discovery',
+    async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
+    loadOfficialLinkedTeamIdsFromNativeCallable,
+    staffTeamDiscoveryTimeoutMs
+  );
+}
+
+export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<OfficialAssignmentsAccess> {
+  const teamIds = await loadOfficialLinkedTeamIds();
   return {
     hasAccess: teamIds.length > 0,
     teamIds,
-    teamCount: teamIds.length
+    teamCount: teamIds.length,
+    isPartial: false
   };
 }
 
 export async function loadOfficialAssignments(user: AuthUser, options: { teamId?: string } = {}): Promise<OfficialAssignmentsResult> {
-  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
-  const linkedTeamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
   const requestedTeamId = compactString(options.teamId);
+  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
+  let linkedTeamIds: string[] = [];
+  let discoveryError: unknown = null;
+  try {
+    linkedTeamIds = await loadOfficialLinkedTeamIds();
+  } catch (error) {
+    if (!requestedTeamId) throw error;
+    discoveryError = error;
+  }
   const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
   const teamIds = linkedRequestedTeamIds.length
     ? linkedRequestedTeamIds
@@ -7110,6 +7117,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
       hasAccess: false,
       teamIds: [],
       teamCount: 0,
+      isPartial: false,
       assignments: []
     };
   }
@@ -7189,10 +7197,12 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     .map((result) => result.teamId);
 
   if (!accessibleTeamIds.length) {
+    if (discoveryError) throw discoveryError;
     return {
       hasAccess: false,
       teamIds: [],
       teamCount: 0,
+      isPartial: false,
       assignments: []
     };
   }
@@ -7201,6 +7211,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     hasAccess: true,
     teamIds: accessibleTeamIds,
     teamCount: accessibleTeamIds.length,
+    isPartial: discoveryError !== null,
     assignments: teamResults
       .filter((result) => result.hasAccess)
       .flatMap((result) => result.assignments)

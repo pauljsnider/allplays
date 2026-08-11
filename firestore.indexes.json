@@ -630,6 +630,13 @@
     },
     {
       "collectionGroup": "officials",
+      "fieldPath": "emailLower",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "officials",
       "fieldPath": "name",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
@@ -638,6 +645,13 @@
     {
       "collectionGroup": "officials",
       "fieldPath": "phone",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "officials",
+      "fieldPath": "phoneDigits",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
@@ -691,6 +705,20 @@
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "fieldPath": "teamIds",
+      "indexes": [
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "fieldPath": "statTrackerConfigId",
+      "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     },

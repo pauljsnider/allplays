@@ -66,7 +66,7 @@ vi.mock('@legacy/firebase.js', () => ({
 
 import { addGame as legacyAddGame, getConfigs as legacyGetConfigs, getTeam as legacyGetTeam, getTeams as legacyGetTeams } from '@legacy/db.js';
 import { collection, doc, getDoc, getDocs, httpsCallable, query, where } from '@legacy/firebase.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, getDelegatedTeamContext, getOfficialLinkedTeamIds, getStaffTeams, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -316,5 +316,30 @@ describe('legacyScheduleDb staff team reads', () => {
         vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockRejectedValue(new Error('callable unavailable')) as never);
 
         await expect(getStaffTeams({ userId: 'user-1' })).rejects.toThrow('callable unavailable');
+    });
+});
+
+describe('legacyScheduleDb official team reads', () => {
+    it('returns a complete, validated, deduplicated team-id projection', async () => {
+        const callable = vi.fn().mockResolvedValue({
+            data: { teamIds: ['team-b', 'team-a', 'team-a'], isPartial: false }
+        });
+        vi.mocked(httpsCallable).mockReturnValue(callable as never);
+
+        await expect(getOfficialLinkedTeamIds()).resolves.toEqual({
+            teamIds: ['team-a', 'team-b'],
+            isPartial: false
+        });
+        expect(httpsCallable).toHaveBeenCalledWith({ name: 'functions' }, 'listOfficialLinkedTeamIds');
+        expect(callable).toHaveBeenCalledWith({});
+    });
+
+    it.each([
+        { teamIds: [], isPartial: true },
+        { teamIds: ['bad/team'], isPartial: false },
+        { teamIds: null, isPartial: false }
+    ])('rejects incomplete or malformed official projections: %j', async (data) => {
+        vi.mocked(httpsCallable).mockReturnValue(vi.fn().mockResolvedValue({ data }) as never);
+        await expect(getOfficialLinkedTeamIds()).rejects.toThrow('Official team discovery response is invalid.');
     });
 });

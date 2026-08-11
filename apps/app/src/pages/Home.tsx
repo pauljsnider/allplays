@@ -181,7 +181,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
-  const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
+  const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number; isPartial: boolean } | null>(null);
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -339,12 +339,12 @@ export function Home({ auth }: { auth: AuthState }) {
     loadOfficialAssignmentsAccess(user)
       .then((result) => {
         if (!cancelled) {
-          setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount });
+          setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount, isPartial: result.isPartial });
         }
       })
       .catch(() => {
         if (!cancelled && typeof window !== 'undefined') {
-          setOfficialsAccess({ hasAccess: false, teamCount: 0 });
+          setOfficialsAccess({ hasAccess: false, teamCount: 0, isPartial: true });
         }
       });
     return () => {
@@ -384,7 +384,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
   const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
   const homeDetailsRefreshFailed = Boolean(authUserId) && authUserId === failedHomeDetailsUserId;
-  const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
+  const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0, isPartial: false };
 
   useViewLoadTimer({
     viewName: `home ${activeSection}`,
@@ -669,7 +669,7 @@ function PublicBenefitCard({ icon: Icon, title, detail }: { icon: LucideIcon; ti
   );
 }
 
-function getHomeRoleContext(auth: AuthState, officialsAccess: { hasAccess: boolean; teamCount: number } | null) {
+function getHomeRoleContext(auth: AuthState, officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null) {
   if (auth.isPlatformAdmin || auth.isAdmin) return 'Administration';
   if (auth.isCoach) return 'Coach home';
   if (officialsAccess?.hasAccess) return 'Official assignments';
@@ -690,7 +690,7 @@ function TodaySection({
   socialLoading: boolean;
   hasLoadedHomeDetails: boolean;
   onOpenComposer: (type?: SocialPostType) => void;
-  officialsAccess: { hasAccess: boolean; teamCount: number } | null;
+  officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null;
 }) {
   const unreadTeams = home.teams
     .filter((team) => Number(team.unreadCount || 0) > 0)
@@ -709,6 +709,9 @@ function TodaySection({
   if (isFirstRunParent) {
     if (!hasLoadedHomeDetails || officialsAccess === null) {
       return <HomePageSkeleton />;
+    }
+    if (officialsAccess.isPartial) {
+      return <OfficialsAccessCard officialsAccess={officialsAccess} />;
     }
     if (officialsAccess.hasAccess) {
       return <TeamOperationsFirstRunSection officialsAccess={officialsAccess} />;
@@ -1104,7 +1107,7 @@ function FirstRunAccessSection() {
   );
 }
 
-function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number } }) {
+function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } }) {
   return (
     <section className="home-section-content space-y-3">
       <OfficialsAccessCard officialsAccess={officialsAccess} />
@@ -1123,7 +1126,19 @@ function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: {
   );
 }
 
-function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number } | null }) {
+function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null }) {
+  if (officialsAccess?.isPartial) {
+    return (
+      <Link
+        to="/officials"
+        className="app-card block border-amber-200 bg-amber-50 p-4 text-amber-950 transition hover:border-amber-300"
+      >
+        <div className="app-label text-amber-800">Officials</div>
+        <h2 className="mt-1 app-section-title">Assignments could not refresh</h2>
+        <div className="mt-1 text-sm font-semibold text-amber-900">Open Officials to retry. Your linked teams were not treated as empty.</div>
+      </Link>
+    );
+  }
   if (!officialsAccess?.hasAccess) return null;
 
   return (

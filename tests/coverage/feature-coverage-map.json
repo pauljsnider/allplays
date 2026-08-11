@@ -613,9 +613,12 @@
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "deleteStatConfig",
+                "resetTeamStatConfigs",
                 "notifyLiveEventCreated"
             ],
             "unitTests": [
+                "functions/test/stat-config-management-core.test.cjs",
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",
                 "tests/unit/app-game-report-service.test.js",
                 "tests/unit/app-live-game-announcer.test.js",
@@ -745,10 +748,12 @@
             ],
             "cloudFunctions": [
                 "claimOpenOfficiatingSlot",
+                "listOfficialLinkedTeamIds",
                 "notifyOfficiatingNotificationCreated",
                 "notifyOpenOfficiatingSlots"
             ],
             "unitTests": [
+                "functions/test/official-team-discovery-core.test.cjs",
                 "functions/test/officiating-self-assignment-core.test.cjs",
                 "tests/unit/admin-officials-directory.test.js",
                 "tests/unit/app-officials.test.tsx",
