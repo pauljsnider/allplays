@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
+const { canProjectChatConversation } = require('./chat-conversation-access-core.cjs');
 const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
 const {
   createPublicProfileAuthDeleteHandler,
@@ -18392,6 +18393,14 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
         const conversation = conversationSnap.data() || {};
         const conversationId = String(conversationSnap.id || '').trim();
         if (!conversationId || conversationId.includes('/') || conversationId.length > 1500) return null;
+        if (!canProjectChatConversation({
+          callerUid: caller.uid,
+          callerEmail: caller.email,
+          canManageTeam: canManage,
+          hasTeamChatAccess: hasCallableChatTeamAccess(caller, teamSnap.id, team),
+          conversationId,
+          conversation
+        })) return null;
         return {
           id: conversationId,
           type: cleanOpportunityText(conversation.type, 32) || null,

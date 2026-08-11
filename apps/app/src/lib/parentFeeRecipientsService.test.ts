@@ -86,6 +86,29 @@ describe('parentFeeRecipientsService native access', () => {
       .rejects.toThrow('Fee discovery unavailable.');
   });
 
+  it('recursively decodes callable Firestore timestamps for native fee history', async () => {
+    httpMocks.post.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          items: [{
+            id: 'recipient-1',
+            dueAt: { seconds: 1_783_321_200, nanoseconds: 123_000_000 },
+            paymentLedger: [{
+              refundedAt: { _seconds: 1_783_407_600, _nanoseconds: 456_000_000 }
+            }]
+          }]
+        }
+      }
+    });
+
+    const [fee] = await listParentTeamFeeRecipientsForApp('parent-1', childLinks) as Array<Record<string, unknown>>;
+    const paymentLedger = fee.paymentLedger as Array<Record<string, unknown>>;
+
+    expect(fee.dueAt).toEqual(new Date(1_783_321_200_123));
+    expect(paymentLedger[0].refundedAt).toEqual(new Date(1_783_407_600_456));
+  });
+
   it('does not invoke the server when no user is signed in', async () => {
     await expect(listParentTeamFeeRecipientsForApp('', [])).resolves.toEqual([]);
     expect(httpMocks.post).not.toHaveBeenCalled();
