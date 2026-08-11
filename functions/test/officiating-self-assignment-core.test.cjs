@@ -313,6 +313,25 @@ test('buildOfficiatingAssignmentResponseUpdate does not let a reassigned legacy 
     }), /belongs to another official/);
 });
 
+test('buildOfficiatingAssignmentResponseUpdate rejects a non-string stored UID before comparison or email fallback', () => {
+    const game = {
+        officiatingSlots: [{
+            id: 'center',
+            position: 'Center Referee',
+            officialUserId: 12345,
+            officialEmail: 'current@example.com',
+            status: 'pending'
+        }]
+    };
+
+    assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: 'center',
+        status: 'accepted',
+        official: { uid: '12345', email: 'current@example.com' }
+    }), /invalid user binding/);
+});
+
 test('buildOfficiatingAssignmentResponseNotificationRecord targets the assigner', () => {
     const record = buildOfficiatingAssignmentResponseNotificationRecord({
         teamId: 'team-1',

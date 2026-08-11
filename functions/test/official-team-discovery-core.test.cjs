@@ -532,6 +532,41 @@ test('official assignment projection prefers the canonical slot UID over a reass
   assert.deepEqual(result.assignments.map((assignment) => assignment.slotId), ['canonical-uid']);
 });
 
+test('official assignment projection rejects a non-string stored UID before comparison or email fallback', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: '12345',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/12345': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSlots: [{
+            id: 'malformed-uid',
+            position: 'Center',
+            officialUserId: 12345,
+            officialEmail: 'current@example.com',
+            status: 'pending'
+          }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, { auth: { uid: '12345' } });
+  assert.deepEqual(result.assignments, []);
+});
+
 test('official assignment projection fails closed when a bounded game query overflows', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([

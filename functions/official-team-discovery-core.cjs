@@ -15,6 +15,11 @@ function normalizeBoundedId(value) {
   return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
 }
 
+function hasStoredPrincipalValue(value) {
+  if (value === null || value === undefined) return false;
+  return typeof value === 'string' ? Boolean(value.trim()) : true;
+}
+
 function normalizeOfficialEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 320) : '';
 }
@@ -83,7 +88,7 @@ function isAssignedToAuthUser(slot = {}, authUser = {}) {
   const uid = normalizeBoundedId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
   const assignedUid = normalizeBoundedId(slot.officialUserId);
-  if (assignedUid) return Boolean(uid && assignedUid === uid);
+  if (hasStoredPrincipalValue(slot.officialUserId)) return Boolean(assignedUid && uid && assignedUid === uid);
   return Boolean(email && normalizeOfficialEmail(slot.officialEmail || slot.email) === email);
 }
 
@@ -158,7 +163,7 @@ function projectOfficialGameAssignments({ teamId, teamName, gameId, sharedGamePa
   const open = canClaimOpen && game.officiatingSelfAssignmentEnabled === true
     ? slots
       .filter((slot) => slot && typeof slot === 'object' &&
-        !normalizeBoundedId(slot.officialUserId) &&
+        !hasStoredPrincipalValue(slot.officialUserId) &&
         !normalizeOfficialEmail(slot.officialEmail || slot.email) &&
         !String(slot.officialName || '').trim() &&
         String(slot.status || '').trim().toLowerCase() === 'open')

@@ -7,6 +7,7 @@ const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
 const HASHED_SHARED_GAME_ID_PREFIX = 'sharedh_';
 const MAX_SHARED_GAME_PATH_BYTES = 6144;
 const MAX_FIRESTORE_SEGMENT_BYTES = 1500;
+const INVALID_OFFICIAL_USER_ID = Symbol('invalidOfficialUserId');
 
 function normalizeString(value) {
     return String(value || '').trim();
@@ -14,6 +15,17 @@ function normalizeString(value) {
 
 function normalizeEmail(value) {
     return normalizeString(value).toLowerCase();
+}
+
+function normalizeStoredUserId(value) {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim();
+    return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
+}
+
+function hasStoredPrincipalValue(value) {
+    if (value === null || value === undefined) return false;
+    return typeof value === 'string' ? Boolean(value.trim()) : true;
 }
 
 function createClaimError(code, message) {
@@ -174,10 +186,12 @@ function normalizeOfficiatingSlots(slots = []) {
         if (!position) return null;
 
         const officialId = normalizeString(slot?.officialId);
-        const officialUserId = normalizeString(slot?.officialUserId);
+        const rawOfficialUserId = slot?.officialUserId;
+        const officialUserId = normalizeStoredUserId(rawOfficialUserId);
+        const hasOfficialUserIdBinding = hasStoredPrincipalValue(rawOfficialUserId);
         const officialEmail = normalizeEmail(slot?.officialEmail || slot?.email);
         const officialName = normalizeString(slot?.officialName || slot?.name);
-        const hasOfficial = Boolean(officialId || officialUserId || officialEmail || officialName);
+        const hasOfficial = Boolean(officialId || hasOfficialUserIdBinding || officialEmail || officialName);
         const requestedStatus = normalizeString(slot?.status);
         const status = OFFICIATING_ASSIGNMENT_STATUSES.has(requestedStatus)
             ? requestedStatus
@@ -187,7 +201,7 @@ function normalizeOfficiatingSlots(slots = []) {
             slot?.rescheduled === true ||
             status === 'needs_review';
 
-        return {
+        const normalizedSlot = {
             id: normalizeString(slot?.id || `slot-${index + 1}`),
             position,
             officialId,
@@ -201,6 +215,11 @@ function normalizeOfficiatingSlots(slots = []) {
             scheduleReviewMarkedAt: scheduleReviewRequired ? (slot?.scheduleReviewMarkedAt || null) : null,
             submittedResult: normalizeOfficiatingResult(slot?.submittedResult || null)
         };
+        Object.defineProperty(normalizedSlot, INVALID_OFFICIAL_USER_ID, {
+            value: hasOfficialUserIdBinding && !officialUserId,
+            enumerable: false
+        });
+        return normalizedSlot;
     }).filter(Boolean);
 }
 
@@ -208,6 +227,12 @@ function computeOfficiatingCoverageStatus(slots = []) {
     const normalized = normalizeOfficiatingSlots(slots);
     if (!normalized.length) return 'none';
     return normalized.every((slot) => slot.status === 'accepted') ? 'covered' : 'needs_attention';
+}
+
+function assertValidStoredOfficialUserIds(slots = []) {
+    if (slots.some((slot) => slot?.[INVALID_OFFICIAL_USER_ID] === true)) {
+        throw createClaimError('failed-precondition', 'An officiating assignment has an invalid user binding.');
+    }
 }
 
 function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = '', email = '', teamId = '' } = {}) {
@@ -233,7 +258,7 @@ function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = 
 
 function claimOpenOfficiatingSlotForOfficial(slots = [], slotId, official = {}) {
     const normalizedSlotId = normalizeString(slotId);
-    const officialUserId = normalizeString(official.uid || official.userId);
+    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
     const officialEmail = normalizeEmail(official.email);
     const officialName = normalizeString(official.displayName || official.name || officialEmail || 'Official');
     if (!officialUserId && !officialEmail) {
@@ -241,7 +266,9 @@ function claimOpenOfficiatingSlotForOfficial(slots = [], slotId, official = {}) 
     }
 
     let claimed = false;
-    const nextSlots = normalizeOfficiatingSlots(slots).map((slot) => {
+    const normalizedSlots = normalizeOfficiatingSlots(slots);
+    assertValidStoredOfficialUserIds(normalizedSlots);
+    const nextSlots = normalizedSlots.map((slot) => {
         if (slot.id !== normalizedSlotId) return slot;
         if (slot.officialUserId || slot.officialEmail || slot.officialName || slot.status !== 'open') {
             throw createClaimError('failed-precondition', 'This officiating slot is already filled.');
@@ -274,7 +301,7 @@ function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {},
 
     const officiatingSlots = claimOpenOfficiatingSlotForOfficial(game.officiatingSlots || [], slotId, official);
     const claimedSlot = officiatingSlots.find((slot) => slot.id === normalizeString(slotId)) || null;
-    const officialUserId = normalizeString(official.uid || official.userId);
+    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
     const officialEmail = normalizeEmail(official.email);
     const officiatingAuthorizedUserIds = uniqueStrings([
         ...uniqueStrings(game.officiatingAuthorizedUserIds),
@@ -303,14 +330,16 @@ function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, o
     if (!OFFICIATING_RESPONSE_STATUSES.has(normalizedStatus)) {
         throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
     }
-    const officialUserId = normalizeString(official.uid || official.userId);
+    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
     const officialEmail = normalizeEmail(official.email);
     if (!officialUserId) {
         throw createClaimError('unauthenticated', 'Sign in before responding to an officiating assignment.');
     }
 
     let updatedSlot = null;
-    const officiatingSlots = normalizeOfficiatingSlots(game.officiatingSlots || []).map((slot) => {
+    const normalizedSlots = normalizeOfficiatingSlots(game.officiatingSlots || []);
+    assertValidStoredOfficialUserIds(normalizedSlots);
+    const officiatingSlots = normalizedSlots.map((slot) => {
         if (slot.id !== normalizedSlotId) return slot;
         const uidMatches = Boolean(slot.officialUserId && slot.officialUserId === officialUserId);
         // A stable UID binding is canonical. The email is only a legacy
