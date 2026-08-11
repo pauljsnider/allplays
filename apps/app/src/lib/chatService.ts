@@ -76,6 +76,8 @@ const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
 const chatUnreadCountTimeoutMs = 3000;
+const nativeChatUnreadCountConcurrency = 6;
+const nativeChatUnreadConversationLimit = 26;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -449,6 +451,165 @@ async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
   return (Array.isArray(payload) ? payload : [])
     .map((entry) => mapFirestoreDocument(entry.document as NativeFirestoreDocument))
     .filter(Boolean) as FirestoreDocument[];
+}
+
+function buildNativeUnreadWhere(
+  conversationId: string,
+  userId: string,
+  lastReadAt: unknown,
+  ownMessagesOnly: boolean
+) {
+  const filters: Record<string, unknown>[] = [];
+  if (isDefaultTeamConversation(conversationId)) {
+    filters.push(
+      {
+        fieldFilter: {
+          field: { fieldPath: 'targetType' },
+          op: 'EQUAL',
+          value: encodeFirestoreValue('full_team')
+        }
+      },
+      {
+        fieldFilter: {
+          field: { fieldPath: 'recipientIds' },
+          op: 'EQUAL',
+          value: encodeFirestoreValue([])
+        }
+      }
+    );
+  }
+  const lastReadDate = toDate(lastReadAt);
+  if (lastReadDate) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'createdAt' },
+        op: 'GREATER_THAN',
+        value: encodeFirestoreValue(lastReadDate)
+      }
+    });
+  }
+  if (ownMessagesOnly) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'senderId' },
+        op: 'EQUAL',
+        value: encodeFirestoreValue(userId)
+      }
+    });
+  }
+  if (filters.length === 0) return undefined;
+  if (filters.length === 1) return filters[0];
+  return { compositeFilter: { op: 'AND', filters } };
+}
+
+async function nativeAggregateUnreadMessageCount({
+  teamId,
+  conversationId,
+  userId,
+  lastReadAt,
+  ownMessagesOnly
+}: {
+  teamId: string;
+  conversationId: string;
+  userId: string;
+  lastReadAt: unknown;
+  ownMessagesOnly: boolean;
+}) {
+  const parentPath = isDefaultTeamConversation(conversationId)
+    ? `teams/${encodeURIComponent(teamId)}`
+    : `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}`;
+  const where = buildNativeUnreadWhere(conversationId, userId, lastReadAt, ownMessagesOnly);
+  const structuredQuery: Record<string, unknown> = {
+    from: [{ collectionId: 'chatMessages' }],
+    ...(where ? { where } : {})
+  };
+  const payload = await nativeFirestoreRequest(`/${parentPath}:runAggregationQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredAggregationQuery: {
+        structuredQuery,
+        aggregations: [{ alias: 'messageCount', count: {} }]
+      }
+    })
+  });
+  const rows = Array.isArray(payload) ? payload : [payload];
+  const countValue = rows.find((row) => row?.result?.aggregateFields?.messageCount)
+    ?.result?.aggregateFields?.messageCount;
+  const rawCount = countValue?.integerValue ?? countValue?.doubleValue;
+  const count = Number(rawCount);
+  if (rawCount === undefined || !Number.isFinite(count) || count < 0) {
+    throw new Error('Native chat unread count response was invalid.');
+  }
+  return count;
+}
+
+async function nativeLoadUnreadChatCounts(
+  userId: string,
+  teamIds: string[],
+  profile: Record<string, any>,
+  conversationIdsByTeam: Record<string, string[]>
+) {
+  const uniqueTeamIds = Array.from(new Set(teamIds));
+  const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0])) as Record<string, number>;
+  let conversationOverflow = false;
+  const jobs = uniqueTeamIds.flatMap((teamId) => {
+    const storedConversationIds = Array.isArray(conversationIdsByTeam[teamId])
+      ? conversationIdsByTeam[teamId]
+      : [];
+    const allConversationIds = Array.from(new Set([DEFAULT_TEAM_CONVERSATION_ID, ...storedConversationIds]));
+    if (allConversationIds.length > nativeChatUnreadConversationLimit) conversationOverflow = true;
+    const conversationIds = allConversationIds.slice(0, nativeChatUnreadConversationLimit);
+    return conversationIds.map((conversationId) => async () => {
+      const teamState = getTeamChatStateEntry(profile, teamId);
+      const lastReadAt = isDefaultTeamConversation(conversationId)
+        ? teamState.lastReadAt || profile?.chatLastRead?.[teamId] || null
+        : teamState.lastReadByConversation?.[conversationId] || null;
+      const [totalUnread, ownUnread] = await Promise.all([
+        nativeAggregateUnreadMessageCount({
+          teamId,
+          conversationId,
+          userId,
+          lastReadAt,
+          ownMessagesOnly: false
+        }),
+        nativeAggregateUnreadMessageCount({
+          teamId,
+          conversationId,
+          userId,
+          lastReadAt,
+          ownMessagesOnly: true
+        })
+      ]);
+      return { teamId, count: Math.max(0, totalUnread - ownUnread) };
+    });
+  });
+  const results = new Array<PromiseSettledResult<{ teamId: string; count: number }>>(jobs.length);
+  let nextJobIndex = 0;
+  await Promise.all(Array.from(
+    { length: Math.min(nativeChatUnreadCountConcurrency, jobs.length) },
+    async () => {
+      while (nextJobIndex < jobs.length) {
+        const jobIndex = nextJobIndex;
+        nextJobIndex += 1;
+        try {
+          results[jobIndex] = { status: 'fulfilled', value: await jobs[jobIndex]() };
+        } catch (error) {
+          results[jobIndex] = { status: 'rejected', reason: error };
+        }
+      }
+    }
+  ));
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      counts[result.value.teamId] = Number(counts[result.value.teamId] || 0) + result.value.count;
+    } else {
+      logger.warn('Native chat unread count failed.', { error: result.reason });
+    }
+  });
+  return {
+    counts,
+    isPartial: conversationOverflow || results.some((result) => result.status === 'rejected')
+  };
 }
 
 async function nativeQueryTeamsByField(fieldPath: string, op: string, value: string) {
@@ -1118,14 +1279,21 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     ))
     .map((team) => team.id);
   const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
-  // Native uses authenticated REST for team and message discovery, while the
-  // web unread counter depends on the signed-in web Firestore SDK. Until the
-  // native path has an authenticated count projection, every nonempty native
-  // inbox has incomplete unread data rather than authoritative zeroes.
-  const unreadCountsPartial = nativeRuntime && accessibleTeams.length > 0;
-  const unreadCounts = nativeRuntime
-    ? {}
-    : await withTimeout(
+  const nativeUnreadResult = nativeRuntime
+    ? await withTimeout(
+      nativeLoadUnreadChatCounts(user.uid, unreadCandidateTeamIds, profile, conversationIdsByTeam),
+      'Native chat unread counts',
+      chatUnreadCountTimeoutMs
+    ).catch((error) => {
+      logger.warn('Native chat unread counts failed.', { error });
+      return {
+        counts: {} as Record<string, number>,
+        isPartial: unreadCandidateTeamIds.length > 0
+      };
+    })
+    : null;
+  const unreadCountsPartial = nativeUnreadResult?.isPartial === true;
+  const unreadCounts = nativeUnreadResult?.counts || await withTimeout(
       Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
         latestMessageAtByTeam,
         latestMessageAtByConversationByTeam,

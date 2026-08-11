@@ -463,6 +463,15 @@ describe('native chat team discovery fallback', () => {
           })
         }] : []);
       }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: '0' }
+            }
+          }
+        }]);
+      }
       if (String(url).includes('/documents/teams/team-parent')) {
         return jsonResponse(firestoreDocument('teams/team-parent', {
           name: { stringValue: 'Jr KC Current' },
@@ -560,7 +569,7 @@ describe('native chat team discovery fallback', () => {
     expect(result.teams).toEqual([
       expect.objectContaining({ id: 'team-admin', name: 'Admin Email Team' })
     ]);
-    expect(result.isPartial).toBe(true);
+    expect(result.isPartial).toBe(false);
     expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
   });
@@ -587,7 +596,7 @@ describe('native chat team discovery fallback', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-parent'))).toBe(true);
   });
 
-  it('marks native unread counts partial when message metadata can represent nonzero unread state', async () => {
+  it('loads native unread counts through authenticated aggregation queries', async () => {
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
       teams: [{
         id: 'team-admin',
@@ -598,7 +607,7 @@ describe('native chat team discovery fallback', () => {
       }],
       isPartial: false
     });
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, request?: RequestInit) => {
       if (String(url).includes('/documents/users/user-1')) {
         return jsonResponse(firestoreDocument('users/user-1', {
           teamChatState: {
@@ -616,6 +625,54 @@ describe('native chat team discovery fallback', () => {
           }
         }));
       }
+      if (String(url).includes(':runAggregationQuery')) {
+        const body = JSON.parse(String(request?.body || '{}'));
+        const isOwnCount = JSON.stringify(body).includes('senderId');
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: isOwnCount ? '2' : '3' }
+            }
+          }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 1 })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes(':runAggregationQuery'))).toHaveLength(2);
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+  });
+
+  it('marks native unread counts partial when an authenticated aggregation fails', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse({ error: { message: 'Unread count unavailable.' } }, 503);
+      }
       throw new Error(`Unexpected native request: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -632,7 +689,6 @@ describe('native chat team discovery fallback', () => {
       expect.objectContaining({ id: 'team-admin', unreadCount: 0 })
     ]);
     expect(result.isPartial).toBe(true);
-    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
   });
 
   it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {
