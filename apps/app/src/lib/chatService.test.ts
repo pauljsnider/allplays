@@ -484,6 +484,30 @@ describe('native chat team discovery fallback', () => {
     legacyChatServiceMocks.canModerateChat.mockReturnValue(false);
     legacyChatServiceMocks.isTeamActive.mockReturnValue(true);
     legacyChatServiceMocks.getUnreadChatCounts.mockResolvedValue({});
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  });
+
+  it('uses complete server-authoritative discovery for an admin-email-only native coach', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'team-admin', name: 'Admin Bears', active: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Bears' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
   });
 
   it('returns nonempty proven owner and parent teams when the legacy admin-email query is denied', async () => {

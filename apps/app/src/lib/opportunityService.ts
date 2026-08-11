@@ -19,11 +19,11 @@ async function call<T>(
 ): Promise<T> {
   if (isNativeRuntime()) {
     const projectId = String(firebaseAuth.app?.options?.projectId || '').trim();
-    const token = await getNativeAuthIdToken(true).catch((error) => {
-      if (options.allowAnonymous) return null;
-      throw error;
-    });
-    if (!projectId || (!token && !options.allowAnonymous)) {
+    const allowsAnonymousRead = name === 'listPublicOpportunities' || name === 'getPublicOpportunity';
+    const token = allowsAnonymousRead
+      ? await getNativeAuthIdToken(true).catch(() => null)
+      : await getNativeAuthIdToken(true);
+    if (!projectId || (!token && !allowsAnonymousRead)) {
       throw new Error('Native opportunity access is unavailable.');
     }
     const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/${name}`;

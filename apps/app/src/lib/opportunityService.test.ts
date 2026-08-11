@@ -24,7 +24,7 @@ vi.mock('./adapters/legacyFirebaseAppCheck', () => ({
   getPrimaryAppCheckHeaders: mocks.getPrimaryAppCheckHeaders
 }));
 
-import { createPublicOpportunity, getPublicOpportunity, listOpportunityInquiries, listPublicOpportunities } from './opportunityService';
+import { getPublicOpportunity, listOpportunityInquiries, listPublicOpportunities } from './opportunityService';
 
 describe('opportunity service native callables', () => {
   beforeEach(() => {
@@ -105,5 +105,42 @@ describe('opportunity service native callables', () => {
     });
 
     await expect(listOpportunityInquiries()).rejects.toThrow('Inquiry access denied.');
+  });
+
+  it('allows signed-out native visitors to browse public opportunities without an Authorization header', async () => {
+    mocks.isNativeRuntime.mockReturnValue(true);
+    mocks.getNativeAuthIdToken.mockResolvedValue(null);
+    mocks.httpPost
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { result: { items: [{ id: 'listing-1' }], nextCursor: null } },
+        headers: {},
+        url: ''
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { result: { item: { id: 'listing-1' } } },
+        headers: {},
+        url: ''
+      });
+
+    await expect(listPublicOpportunities()).resolves.toEqual({
+      items: [{ id: 'listing-1' }],
+      nextCursor: null
+    });
+    await expect(getPublicOpportunity('listing-1')).resolves.toEqual({ id: 'listing-1' });
+
+    expect(mocks.httpPost).toHaveBeenCalledTimes(2);
+    mocks.httpPost.mock.calls.forEach(([request]) => {
+      expect(request.headers).toEqual({ 'Content-Type': 'application/json' });
+    });
+  });
+
+  it('still requires native authentication for protected opportunity callables', async () => {
+    mocks.isNativeRuntime.mockReturnValue(true);
+    mocks.getNativeAuthIdToken.mockResolvedValue(null);
+
+    await expect(listOpportunityInquiries()).rejects.toThrow('Native opportunity access is unavailable.');
+    expect(mocks.httpPost).not.toHaveBeenCalled();
   });
 });

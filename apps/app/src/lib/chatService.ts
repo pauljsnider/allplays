@@ -714,6 +714,24 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
   };
 }
 
+async function nativeLoadParentTeams(profile: Record<string, any>) {
+  const parentTeamIds = [
+    ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
+    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+  ].map(compactString).filter(Boolean);
+  const results = await Promise.allSettled(
+    [...new Set(parentTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
+  );
+  return {
+    teams: results.flatMap((result) => {
+      if (result.status === 'fulfilled') return result.value ? [result.value] : [];
+      logger.warn('Native parent team read failed.', { error: result.reason });
+      return [];
+    }),
+    isPartial: results.some((result) => result.status === 'rejected')
+  };
+}
+
 function getMessageTime(message: ChatMessage | null) {
   return toDate(message?.createdAt)?.getTime() || 0;
 }
@@ -982,23 +1000,27 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   let teams: Record<string, any>[] = [];
   let teamDiscoveryPartial = false;
+  const serverAuthorizedStaffTeamIds = new Set<string>();
   if (nativeRuntime) {
     try {
-      const [managedTeams, linkedTeams] = await Promise.all([
+      const [managedResult, parentResult] = await Promise.all([
         loadManagedTeamsFromNativeCallable(),
-        nativeLoadLinkedTeams(profile)
+        nativeLoadParentTeams(profile)
       ]);
-      const teamsById = new Map<string, Record<string, any>>();
-      [...managedTeams.teams, ...linkedTeams.teams].forEach((team) => {
-        if (team?.id) teamsById.set(team.id, team);
+      const map = new Map<string, Record<string, any>>();
+      managedResult.teams.forEach((team: any) => {
+        if (team?.id) serverAuthorizedStaffTeamIds.add(team.id);
       });
-      teams = [...teamsById.values()];
-      teamDiscoveryPartial = managedTeams.isPartial || linkedTeams.isPartial;
+      [...managedResult.teams, ...parentResult.teams].forEach((team: any) => {
+        if (team?.id) map.set(team.id, team);
+      });
+      teams = [...map.values()];
+      teamDiscoveryPartial = managedResult.isPartial || parentResult.isPartial;
     } catch (error) {
-      logger.warn('Native managed team callable failed; using partial direct reads.', { error });
+      logger.warn('Native managed team discovery failed; using verified direct reads.', { error });
       const fallback = await nativeLoadUserTeams(user, profile);
       teams = fallback.teams;
-      teamDiscoveryPartial = fallback.isPartial;
+      teamDiscoveryPartial = true;
     }
   } else {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
@@ -1036,7 +1058,10 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   }
 
   const userWithProfile = mapUserWithProfile(user, profile);
-  const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const accessibleTeams = teams.filter((team) => isTeamActive(team) && (
+    serverAuthorizedStaffTeamIds.has(team.id)
+    || canAccessTeamChat(userWithProfile, { ...team, id: team.id })
+  ));
   if (teamDiscoveryPartial && accessibleTeams.length === 0) {
     throw new Error('Chat team access could not be completely verified. Try again.');
   }

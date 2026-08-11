@@ -23,7 +23,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [busyPostId, setBusyPostId] = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     let disposed = false;
@@ -50,7 +50,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
     return () => {
       disposed = true;
     };
-  }, [auth.user, userId, refreshKey]);
+  }, [auth.user, reloadNonce, userId]);
 
   const updatePost = (postId: string, update: (post: SocialFeedItem) => SocialFeedItem) => {
     setProfile((current) => current ? {
@@ -192,7 +192,7 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
             ) : null}
           </div>
           <div className="mt-4 flex gap-5 border-t border-gray-100 pt-4 text-sm">
-            <div><span className="font-black text-gray-950">{profile.postsIncomplete ? '—' : profile.posts.length}</span> <span className="font-semibold text-gray-500">shared posts</span></div>
+            <div><span className="font-black text-gray-950">{profile.postsError ? '—' : profile.posts.length}</span> <span className="font-semibold text-gray-500">shared posts</span></div>
             <div><span className="font-black text-gray-950">{publicTeams.length}</span> <span className="font-semibold text-gray-500">public teams</span></div>
             <div><span className="font-black text-gray-950">{publicChildren.length}</span> <span className="font-semibold text-gray-500">public players</span></div>
           </div>
@@ -246,16 +246,16 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
           <span className="text-xs font-bold text-gray-500">Newest first</span>
         </div>
         <div className="mt-3 space-y-3">
-          {profile.postsIncomplete ? (
-            <div className="app-card border-amber-200 bg-amber-50 p-5" role="alert">
-              <h3 className="text-base font-black text-amber-950">Posts could not be loaded</h3>
-              <p className="mt-1 text-sm font-semibold text-amber-800">This is not an empty timeline. Try loading the profile again.</p>
-              <button type="button" className="secondary-button mt-3 !min-h-11 text-sm" onClick={() => setRefreshKey((value) => value + 1)}>
+          {profile.postsError ? (
+            <div className="app-card p-6 text-center" role="alert">
+              <AlertCircle className="mx-auto h-7 w-7 text-amber-600" aria-hidden="true" />
+              <h3 className="mt-2 text-base font-black text-gray-950">Posts could not load</h3>
+              <p className="mt-1 text-sm font-semibold text-gray-500">{profile.postsError}</p>
+              <button type="button" className="secondary-button mt-4 !min-h-11 text-sm" onClick={() => setReloadNonce((value) => value + 1)}>
                 Retry posts
               </button>
             </div>
-          ) : null}
-          {profile.posts.length ? profile.posts.map((post) => (
+          ) : profile.posts.length ? profile.posts.map((post) => (
             <article key={post.id} className="app-card overflow-hidden p-4 sm:p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-700">{getSocialTypeLabel(post.type)}</span>

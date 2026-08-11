@@ -88,7 +88,7 @@ export type FriendProfileModel = {
   messageRoute: string | null;
   isSelf: boolean;
   posts: SocialFeedItem[];
-  postsIncomplete: boolean;
+  postsError: string | null;
 };
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -371,7 +371,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     sport: team.sport,
     photoUrl: team.photoUrl
   })));
-  let postsIncomplete = false;
+  let postsError: string | null = null;
   const postDocs = await loadSocialPostQueryPages({
     buildQuery: (cursor) => query(
       collection(db, 'socialPosts'),
@@ -388,7 +388,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     visibleLimit: socialPostLimit
   }).catch((error) => {
     logger.warn('Unable to load profile posts.', { error, isSelf });
-    postsIncomplete = true;
+    postsError = 'Recent posts could not load. Try again.';
     return [];
   });
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
@@ -426,7 +426,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }),
     isSelf,
     posts: hydratedPosts,
-    postsIncomplete
+    postsError
   };
 }
 

@@ -78,7 +78,7 @@ describe('loadFriendProfile self-profile resilience', () => {
       photoUrl: 'https://cdn.example.test/pat.jpg',
       isSelf: true,
       posts: [],
-      postsIncomplete: true
+      postsError: 'Recent posts could not load. Try again.'
     });
     expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
     expect(firestoreMocks.getDoc).not.toHaveBeenCalled();
