@@ -224,6 +224,9 @@ describe('direct thread mount telemetry', () => {
     expect(source).toContain('onPreview: (previewUpdate) => {');
     expect(source).toContain('pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);');
     expect(source).toContain('schedulePreviewFlush();');
+    expect(source).toContain('onPreviewError: () => {');
+    expect(source).toContain('previewReadFailed = true;');
+    expect(source).toContain('isPartial: result.isPartial === true || previewReadFailed');
     expect(source).toContain('setTeams((current) => mergeInboxTeams(current, updates));');
     expect(source).not.toContain('mergeInboxPreview');
   });

@@ -768,6 +768,67 @@ describe('native chat team discovery fallback', () => {
     ))).toBe(false);
   });
 
+  it('marks failed native message previews partial and retries them instead of caching absence', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-preview-failure',
+        name: 'Preview Retry Team',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'direct-failure',
+          type: 'direct',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-failure/chatMessages')) {
+        return jsonResponse({ error: { message: 'Preview temporarily unavailable.' } }, 503);
+      }
+      if (String(url).includes('/teams/team-preview-failure/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+    const user = {
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    };
+
+    const firstResult = await loadChatInbox(user, { includeLastMessages: true });
+    const secondResult = await loadChatInbox(user, { includeLastMessages: true });
+
+    expect(firstResult).toEqual({
+      isPartial: true,
+      teams: [expect.objectContaining({
+        id: 'team-preview-failure',
+        lastMessage: null,
+        preferredConversationId: null
+      })]
+    });
+    expect(secondResult.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes('/chatConversations/direct-failure/chatMessages')
+    ))).toHaveLength(2);
+  });
+
   it('marks native unread counts partial when an authenticated aggregation fails', async () => {
     profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
       teams: [{

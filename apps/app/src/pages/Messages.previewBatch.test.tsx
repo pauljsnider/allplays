@@ -230,11 +230,24 @@ describe('Messages deferred inbox preview batching', () => {
     renderMessages();
 
     expect(await screen.findByText(
-      'Showing verified team chats. Additional linked teams may appear after the access service refreshes. Unread counts are unavailable until then.'
+      'Showing verified team chats. Additional linked teams may appear after the access service refreshes. Message previews and unread counts may be incomplete until then.'
     )).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Bears/ })).toBeInTheDocument();
     expect(screen.getByText(/unread counts unavailable/)).toBeInTheDocument();
     expect(screen.queryByText('7')).toBeNull();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
+  });
+
+  it('marks the inbox partial when a deferred message preview fails', async () => {
+    chatServiceMocks.loadChatInbox.mockImplementation(async (_user, options) => {
+      window.setTimeout(() => options.onPreviewError('team-1'), 0);
+      return { teams: [team()] };
+    });
+
+    renderMessages();
+
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(await screen.findByText(/Message previews and unread counts may be incomplete/)).toBeInTheDocument();
     expect(screen.queryByText('Messages couldn’t load')).toBeNull();
   });
 

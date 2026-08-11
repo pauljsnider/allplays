@@ -99,6 +99,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     setLoading(true);
     setInboxStatus((current) => ({ ...current, error: null }));
     setInquiryError(null);
+    let previewReadFailed = false;
     try {
       const [result, inquiryPage] = await Promise.all([
         loadChatInbox(auth.user, {
@@ -108,6 +109,11 @@ export function Messages({ auth }: { auth: AuthState }) {
             previewUpdates.set(previewUpdate.teamId, previewUpdate);
             pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);
             schedulePreviewFlush();
+          },
+          onPreviewError: () => {
+            previewReadFailed = true;
+            if (inboxRequestIdRef.current !== requestId) return;
+            setInboxStatus((current) => ({ ...current, isPartial: true }));
           }
         }),
         listOpportunityInquiries().catch((loadError: any) => {
@@ -123,7 +129,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
       cancelPreviewFlush();
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
-      setInboxStatus({ error: null, isPartial: result.isPartial === true });
+      setInboxStatus({ error: null, isPartial: result.isPartial === true || previewReadFailed });
       setInquiries(inquiryPage.items);
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       completeParentCoreWorkflowTimer('messages', {
@@ -360,7 +366,7 @@ export function Messages({ auth }: { auth: AuthState }) {
 function PartialInboxNotice() {
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800" role="status">
-      Showing verified team chats. Additional linked teams may appear after the access service refreshes. Unread counts are unavailable until then.
+      Showing verified team chats. Additional linked teams may appear after the access service refreshes. Message previews and unread counts may be incomplete until then.
     </div>
   );
 }

@@ -182,6 +182,7 @@ type TeamChatStateEntry = {
 export type ChatInboxLoadOptions = {
   includeLastMessages?: boolean;
   onPreview?: (update: ChatInboxPreviewUpdate) => void;
+  onPreviewError?: (teamId: string) => void;
 };
 
 export type ChatConversationLoadOptions = {
@@ -1011,7 +1012,7 @@ async function getLatestConversationMessage(teamId: string, conversationId: stri
     const [message] = await nativeListCollection(path, {
       orderBy: 'createdAt desc',
       pageSize: 1
-    }).catch(() => []);
+    });
     return mapChatMessageRecord(message, message?.id || '') || null;
   }
   try {
@@ -1096,6 +1097,9 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
         message: await getLatestConversationMessage(teamId, conversation.id)
       }))
   );
+  if (fallbackMessages.some((result) => result.status === 'rejected')) {
+    throw new Error(`Latest chat preview could not be completely loaded for team ${teamId}.`);
+  }
   const fallbackPreview = fallbackMessages.reduce<{ message: ChatMessage | null; conversationId: string | null }>((newest, result) => {
     if (result.status !== 'fulfilled') return newest;
     return getMessageTime(result.value.message) > getMessageTime(newest.message)
@@ -1146,6 +1150,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
   const onPreview = typeof options.onPreview === 'function' ? options.onPreview : null;
+  const onPreviewError = typeof options.onPreviewError === 'function' ? options.onPreviewError : null;
 
   const nativeRuntime = isNativeRuntime();
   const profile = (nativeRuntime
@@ -1296,12 +1301,26 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       chatUnreadCountTimeoutMs
     ).catch(() => ({} as Record<string, number>));
 
+  let previewReadsPartial = false;
   const previews = includeLastMessages
-    ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
+    ? (await Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => ({
       team,
       canModerate,
       preview: await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate)
-    })))
+    })))).map((result, index) => {
+      if (result.status === 'fulfilled') return result.value;
+      previewReadsPartial = true;
+      const { team, canModerate } = previewInputs[index];
+      logger.warn('Inbox preview failed; preserving the verified team as partial.', {
+        error: result.reason,
+        teamId: team.id
+      });
+      return {
+        team,
+        canModerate,
+        preview: { message: null, conversationId: null }
+      };
+    })
     : previewInputs.map(({ team, canModerate }) => ({
       team,
       canModerate,
@@ -1322,12 +1341,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
         });
       } catch (error) {
         logger.warn('Deferred inbox preview failed.', { error });
+        onPreviewError?.(team.id);
       }
     });
   }
 
   return {
-    isPartial: teamDiscoveryPartial || unreadCountsPartial,
+    isPartial: teamDiscoveryPartial || unreadCountsPartial || previewReadsPartial,
     teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
       name: team.name || 'Team',
