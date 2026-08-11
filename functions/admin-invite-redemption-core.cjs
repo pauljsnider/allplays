@@ -46,17 +46,9 @@ function createRedeemAdminInviteHandler({
       throw new HttpsError('permission-denied', 'You can only accept an invite for your own account.');
     }
 
-    if (context.auth.token?.email_verified !== true) {
-      throw new HttpsError(
-        'permission-denied',
-        'Verify your email before accepting an admin invite.',
-        { reason: 'email-verification-required' }
-      );
-    }
-
     const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email);
     if (!signedInEmail) {
-      throw new HttpsError('permission-denied', 'A verified email is required to accept an admin invite.');
+      throw new HttpsError('permission-denied', 'An account email is required to accept an admin invite.');
     }
 
     const codeId = normalizeFirestoreId(data?.codeId, 'codeId');
@@ -84,6 +76,16 @@ function createRedeemAdminInviteHandler({
       const invitedEmail = normalizeParentInviteEmail(codeData.email);
       if (!invitedEmail) {
         throw new HttpsError('failed-precondition', 'Admin invite is missing an invited email.');
+      }
+      if (invitedEmail !== signedInEmail) {
+        throw new HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+      }
+      if (context.auth.token?.email_verified !== true) {
+        throw new HttpsError(
+          'permission-denied',
+          'Verify your email before accepting an admin invite.',
+          { reason: 'email-verification-required' }
+        );
       }
 
       const issuerUid = normalizeStoredUid(codeData.generatedBy);
@@ -116,10 +118,6 @@ function createRedeemAdminInviteHandler({
         authUser: issuerAuthUser
       })) {
         throw new HttpsError('permission-denied', ISSUER_ACCESS_ERROR);
-      }
-
-      if (invitedEmail !== signedInEmail) {
-        throw new HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
       }
 
       const now = getTimestamp();

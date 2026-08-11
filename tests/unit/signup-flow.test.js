@@ -170,7 +170,8 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
-    it('preserves an admin invite for server-authoritative retry instead of checking the signup email', async () => {
+    it('rejects and cleans up an admin invite signup when the email does not match', async () => {
+        const mismatchError = new Error('This invite was sent to admin@example.com. Sign in with that email to accept it.');
         const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
@@ -187,7 +188,7 @@ describe('executeEmailPasswordSignup', () => {
                     delete: deleteAuthUser
                 }
             }),
-            redeemAdminInviteAcceptance: vi.fn()
+            redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(mismatchError)
         });
         const auth = {
             currentUser: {
@@ -196,21 +197,24 @@ describe('executeEmailPasswordSignup', () => {
             }
         };
 
-        const result = await executeEmailPasswordSignup({
+        await expect(executeEmailPasswordSignup({
             email: 'other@example.com',
             password: 'password123',
             activationCode: 'ADMIN003',
             auth,
             dependencies
-        });
+        })).rejects.toThrow('This invite was sent to admin@example.com. Sign in with that email to accept it.');
 
         expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
-        expect(dependencies.redeemAdminInviteAcceptance).not.toHaveBeenCalled();
-        expect(result.pendingFamilyInvite).toEqual({ code: 'ADMIN003', type: 'admin' });
-        expect(deleteAuthUser).not.toHaveBeenCalled();
-        expect(dependencies.signOut).not.toHaveBeenCalled();
-        expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
-        expect(dependencies.sendVerificationEmail).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123',
+            userEmail: 'other@example.com',
+            codeId: 'code-admin-3'
+        }));
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('passes the signup email through to parent invite redemption', async () => {
@@ -428,7 +432,7 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
     });
 
-    it('preserves admin invite signup without granting access or generically consuming the code', async () => {
+    it('routes admin invite signup through atomic redemption without generic code consumption', async () => {
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
                 valid: true,
@@ -453,8 +457,12 @@ describe('executeEmailPasswordSignup', () => {
             dependencies
         });
 
-        expect(dependencies.redeemAdminInviteAcceptance).not.toHaveBeenCalled();
-        expect(result.pendingFamilyInvite).toEqual({ code: 'ADMIN001', type: 'admin' });
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123',
+            userEmail: 'newadmin@example.com',
+            codeId: 'code-admin-1'
+        }));
+        expect(result.pendingFamilyInvite).toBeUndefined();
         expect(dependencies.updateUserProfile).toHaveBeenCalledWith('user-123', expect.objectContaining({
             email: 'newadmin@example.com',
             emailVerificationRequired: true
@@ -538,7 +546,11 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendVerificationEmail).not.toHaveBeenCalled();
     });
 
-    it('does not delete the auth account when admin invite redemption is deferred', async () => {
+    it('preserves a matching admin invite only when redemption requires email verification', async () => {
+        const verificationError = Object.assign(new Error('Verify your email before accepting an admin invite.'), {
+            code: 'functions/permission-denied',
+            details: { reason: 'email-verification-required' }
+        });
         const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
@@ -553,7 +565,7 @@ describe('executeEmailPasswordSignup', () => {
                     delete: deleteAuthUser
                 }
             }),
-            redeemAdminInviteAcceptance: vi.fn()
+            redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(verificationError)
         });
         const auth = {
             currentUser: {
@@ -571,7 +583,7 @@ describe('executeEmailPasswordSignup', () => {
         });
 
         expect(result.pendingFamilyInvite).toEqual({ code: 'ADMIN002', type: 'admin' });
-        expect(dependencies.redeemAdminInviteAcceptance).not.toHaveBeenCalled();
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledTimes(1);
         expect(deleteAuthUser).not.toHaveBeenCalled();
         expect(dependencies.signOut).not.toHaveBeenCalled();
         expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);

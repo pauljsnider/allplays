@@ -179,7 +179,7 @@ for (const [label, recipientToken] of [
   ['matching recipient with an unverified email', { email_verified: false }],
   ['matching recipient with a missing verification claim', {}]
 ]) {
-  test(`denies ${label} before starting the redemption transaction`, async () => {
+  test(`denies ${label} after confirming the invite recipient`, async () => {
     const harness = createHarness({
       team: { ownerId: 'issuer-1', adminEmails: [] },
       issuerAuthUser: { uid: 'issuer-1', email: 'owner@example.com' },
@@ -196,7 +196,7 @@ for (const [label, recipientToken] of [
       (error) => error.code === 'permission-denied' &&
         error.details?.reason === 'email-verification-required'
     );
-    assert.equal(harness.firestore.transactionCount, 0);
+    assert.equal(harness.firestore.transactionCount, 1);
     assert.deepEqual(harness.firestore.snapshot('accessCodes/invite-1'), before.code);
     assert.deepEqual(harness.firestore.snapshot('teams/team-1'), before.team);
     assert.deepEqual(harness.firestore.snapshot(`users/${harness.inviteeUid}`), before.user);
@@ -204,11 +204,11 @@ for (const [label, recipientToken] of [
   });
 }
 
-test('denies a verified recipient whose authenticated email does not match', async () => {
+test('denies an unverified recipient whose authenticated email does not match before allowing verification retry', async () => {
   const harness = createHarness({
     team: { ownerId: 'issuer-1', adminEmails: [] },
     issuerAuthUser: { uid: 'issuer-1', email: 'owner@example.com' },
-    recipientToken: { email: 'other@example.com', email_verified: true }
+    recipientToken: { email: 'other@example.com', email_verified: false }
   });
   const before = {
     code: harness.firestore.snapshot('accessCodes/invite-1'),
@@ -222,7 +222,9 @@ test('denies a verified recipient whose authenticated email does not match', asy
       userId: harness.inviteeUid,
       userEmail: 'invitee@example.com'
     }, harness.context),
-    (error) => error.code === 'permission-denied'
+    (error) => error.code === 'permission-denied' &&
+      error.details?.reason !== 'email-verification-required' &&
+      /sent to invitee@example.com/.test(error.message)
   );
   assert.equal(harness.firestore.transactionCount, 1);
   assert.deepEqual(harness.firestore.snapshot('accessCodes/invite-1'), before.code);

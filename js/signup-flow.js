@@ -10,11 +10,14 @@ export async function executeEmailPasswordSignup({
         createUserWithEmailAndPassword,
         redeemParentInvite,
         redeemFriendInvite,
+        redeemAdminInviteAcceptance,
         redeemHouseholdInvite,
         redeemCoParentInvite,
         updateUserProfile,
         markAccessCodeAsUsed,
         rollbackParentInviteRedemption,
+        getTeam,
+        getUserProfile,
         sendVerificationEmail,
         signOut
     } = dependencies;
@@ -139,8 +142,25 @@ export async function executeEmailPasswordSignup({
             throw e;
         }
     } else if (validation.type === 'admin_invite') {
-        preservePendingInvite('admin', validation.data?.code || activationCode);
-        await writeSignupProfile({ email });
+        try {
+            await redeemAdminInviteAcceptance({
+                userId,
+                userEmail: email,
+                codeId: validation.codeId,
+                getTeam,
+                getUserProfile
+            });
+            await writeSignupProfile({ email });
+        } catch (e) {
+            console.error('Error redeeming admin invite:', e);
+            if (isEmailVerificationRequired(e)) {
+                preservePendingInvite('admin', validation.data?.code || activationCode);
+                await writeSignupProfile({ email });
+            } else {
+                await cleanupFailedSignup(userCredential?.user);
+                throw e;
+            }
+        }
     } else if (validation.type === 'household_invite') {
         try {
             if (typeof redeemHouseholdInvite !== 'function') {
