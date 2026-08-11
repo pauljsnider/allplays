@@ -318,6 +318,14 @@
       "collectionGroup": "feeRecipients",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "playerKey", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "dueDate", "order": "ASCENDING" }
       ]

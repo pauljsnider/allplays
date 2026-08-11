@@ -125,19 +125,18 @@ async function nativeRunFeeRecipientQuery(teamId: string, fieldPath: string, val
 }
 
 async function listNativeParentTeamFeeRecipients(userId: string, children: ParentFeeChildLink[]) {
-  const parentPlayerKeys = new Set(children
-    .map((child) => {
-      const teamId = compactString(child?.teamId);
-      const playerId = compactString(child?.playerId);
-      return teamId && playerId ? `${teamId}::${playerId}` : '';
-    })
-    .filter(Boolean));
-  const childLinks = [...parentPlayerKeys].map((key) => {
-    const [teamId, playerId] = key.split('::');
-    return { teamId, playerId };
+  const childLinksByKey = new Map<string, { teamId: string; playerId: string; playerKey: string }>();
+  children.forEach((child) => {
+    const teamId = compactString(child?.teamId);
+    const playerId = compactString(child?.playerId);
+    if (!teamId || !playerId) return;
+    const playerKey = `${teamId}::${playerId}`;
+    childLinksByKey.set(playerKey, { teamId, playerId, playerKey });
   });
+  const childLinks = [...childLinksByKey.values()];
   if (!childLinks.length) return [];
 
+  const parentPlayerKeys = new Set(childLinks.map((child) => child.playerKey));
   const teamIds = [...new Set(childLinks.map((child) => child.teamId))];
   const queryJobs = [
     ...teamIds.flatMap((teamId) => [
@@ -145,7 +144,7 @@ async function listNativeParentTeamFeeRecipients(userId: string, children: Paren
       nativeRunFeeRecipientQuery(teamId, 'accountUserId', userId),
       nativeRunFeeRecipientQuery(teamId, 'userId', userId)
     ]),
-    ...childLinks.map((child) => nativeRunFeeRecipientQuery(child.teamId, 'playerId', child.playerId))
+    ...childLinks.map((child) => nativeRunFeeRecipientQuery(child.teamId, 'playerKey', child.playerKey))
   ];
 
   // A failed query means the result is incomplete. Reject the whole load so an

@@ -99,6 +99,18 @@ describe('parentFeeRecipientsService native access', () => {
         value: { stringValue: 'team-1' }
       }));
     }
+    const recipientFilters = fetchMock.mock.calls.map(([, init]) => {
+      const query = JSON.parse(String(init?.body || '{}'));
+      return query.structuredQuery.where.compositeFilter.filters[1].fieldFilter;
+    });
+    expect(recipientFilters).toContainEqual({
+      field: { fieldPath: 'playerKey' },
+      op: 'EQUAL',
+      value: { stringValue: 'team-1::player-1' }
+    });
+    expect(recipientFilters).not.toContainEqual(expect.objectContaining({
+      field: { fieldPath: 'playerId' }
+    }));
   });
 
   it('rejects the complete load when any bounded native query is denied', async () => {
