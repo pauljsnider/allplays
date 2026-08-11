@@ -562,16 +562,23 @@ describe('React app schedule service contract integration', () => {
     });
 
     it('discovers official teams through one authenticated callable and rejects partial-empty responses', () => {
-        const officialSource = getScheduleServiceSlice(
+        const officialDiscoverySource = getScheduleServiceSlice(
             'function normalizeOfficialLinkedTeamIdsResponse',
+            'export async function loadOfficialAssignmentsAccess'
+        );
+        const officialAssignmentsSource = getScheduleServiceSlice(
+            'export async function loadOfficialAssignments(user',
             'export async function respondToOfficialAssignmentItem'
         );
 
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds')");
-        expect(officialSource).toContain('source.isPartial !== false');
-        expect(officialSource).toContain('readWithNativeFallback(');
-        expect(officialSource).not.toContain("collectionGroup(db, 'officials')");
-        expect(officialSource).not.toContain('Promise.allSettled');
+        expect(officialDiscoverySource).toContain('source.isPartial !== false');
+        expect(officialDiscoverySource).toContain('readWithNativeFallback(');
+        expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
+        expect(officialDiscoverySource).not.toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
+        expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
