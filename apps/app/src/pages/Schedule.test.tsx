@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule, getGenericEventDetailPath } from './Schedule';
 import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
+import type { hydrateParentScheduleRsvps } from '../lib/scheduleService';
+
+type HydrateParentScheduleRsvps = typeof hydrateParentScheduleRsvps;
 
 const scheduleServiceMocks = vi.hoisted(() => ({
   addTeamCalendarUrl: vi.fn(),
@@ -16,7 +19,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   createScheduleImportGame: vi.fn(),
   createScheduleImportPractice: vi.fn(),
   finalizeScheduleImportBatch: vi.fn(),
-  hydrateParentScheduleRsvps: vi.fn(async (schedule: unknown, _user?: unknown, _options?: unknown) => schedule),
+  hydrateParentScheduleRsvps: vi.fn<HydrateParentScheduleRsvps>(async (schedule) => schedule),
   loadParentSchedule: vi.fn(),
   loadParentScheduleScope: vi.fn(),
   loadScheduleStatTrackerConfigsForApp: vi.fn().mockResolvedValue([]),
