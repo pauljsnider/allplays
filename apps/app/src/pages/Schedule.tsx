@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, MessageCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
@@ -802,7 +802,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   );
   const unavailableBulkRsvpCount = allBulkRsvpCandidates.length - bulkRsvpCandidates.length;
 
-  const handleOpenBulkRsvp = async () => {
+  const handleOpenBulkRsvp = useCallback(async () => {
     if (rsvpHydrationPending || scheduleReadLoading) return;
     setRsvpHydrationPending(true);
     await hydrateScheduleRsvpsInBackground({
@@ -812,7 +812,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     await Promise.all([...rsvpHydrationPromisesRef.current]);
     setBulkRsvpResult(null);
     setBulkRsvpOpen(true);
-  };
+  }, [auth.user, filter, rsvpHydrationPending, scheduleReadLoading, selectedPlayerId, selectedTeamId, timeRange]);
 
   useEffect(() => {
     if (searchParams.get('bulkRsvp') !== '1') {

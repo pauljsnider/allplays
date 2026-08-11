@@ -809,6 +809,7 @@ describe('Schedule', () => {
 
     act(() => finishHydration(hydratedSchedule));
     const dialog = await screen.findByRole('dialog', { name: 'Respond to multiple events' });
+    expect(scheduleServiceMocks.hydrateParentScheduleRsvps).toHaveBeenCalledTimes(1);
     expect(within(dialog).getByText('1 selected')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
