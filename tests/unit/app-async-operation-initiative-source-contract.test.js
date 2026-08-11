@@ -66,7 +66,8 @@ describe('app async operation initiative source contract', () => {
         expect(homeServiceSource).toContain("import { toAppServiceError, type AppServiceError } from './appErrors';");
         expect(homeServiceSource).toContain('return loadCachedAppData(');
         expect(homeServiceSource).toContain('function normalizeSecondaryError(error: unknown, fallbackMessage: string)');
-        expect(homeServiceSource).toContain('function throwIfAllSecondarySlicesFailed(errors: AppServiceError[])');
+        expect(homeServiceSource).toContain('function throwIfAnySecondarySliceFailed(errors: AppServiceError[])');
+        expect(homeServiceSource).toContain('throwIfAnySecondarySliceFailed(secondaryErrors);');
         expect(homeServiceSource).toContain("normalizeSecondaryError(error, 'Unable to load Home chat.')");
 
         expect(scheduleServiceSource).toContain("import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';");

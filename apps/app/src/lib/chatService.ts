@@ -34,7 +34,6 @@ import {
   upsertChatConversation
 } from './adapters/legacyChatService';
 import { firebaseAuth, getNativeAuthIdToken, getNativeAuthUserId } from './authService';
-import { loadManagedTeamsFromNativeCallable } from './profileService';
 import { loadCachedAppData } from './appDataCache';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
@@ -1003,6 +1002,9 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   const serverAuthorizedStaffTeamIds = new Set<string>();
   if (nativeRuntime) {
     try {
+      // Keep the larger profile adapter out of the web chat module graph. Native
+      // loads it only when the authenticated callable path is actually needed.
+      const { loadManagedTeamsFromNativeCallable } = await import('./profileService');
       const [managedResult, parentResult] = await Promise.all([
         loadManagedTeamsFromNativeCallable(),
         nativeLoadParentTeams(profile)

@@ -68,7 +68,7 @@ describe('Home async operation contract', () => {
         expect(homeServiceSource).toContain("logger.warn('Schedule hydration failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Chat inbox failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Fees failed.', { error: appError });");
-        expect(homeServiceSource).toContain('throwIfAllSecondarySlicesFailed(secondaryErrors);');
+        expect(homeServiceSource).toContain('throwIfAnySecondarySliceFailed(secondaryErrors);');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 
