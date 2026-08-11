@@ -41,11 +41,11 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain('onSuccess: (result) => {');
         expect(refreshSource).toContain('children: refreshedChildren!');
         expect(refreshSource).toContain('events: applyAuthoritativeScheduleScope(result.events, refreshedChildren!, refreshedStaffTeams)');
-        expect(refreshSource).toContain('applyScheduleResult(authoritativeResult);');
+        expect(refreshSource).toContain('applyScheduleResult(authoritativeResult, { authoritative: true });');
         expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
         expect(refreshSource).toContain('onError: (loadError) => {');
         expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
-        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [] });\n          }');
+        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [] }, { authoritative: true });\n          }');
         expect(refreshSource).not.toContain('setLoading(');
         expect(refreshSource).not.toContain('finally {');
     });

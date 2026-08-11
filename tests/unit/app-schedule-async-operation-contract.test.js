@@ -39,7 +39,7 @@ describe('Schedule async operation contract', () => {
         expect(refreshScheduleSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
         expect(refreshScheduleSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
         expect(refreshScheduleSource).toContain('if (!hasExistingSchedule) {');
-        expect(refreshScheduleSource).toContain('applyScheduleResult({ children: [], events: [] });');
+        expect(refreshScheduleSource).toContain('applyScheduleResult({ children: [], events: [] }, { authoritative: true });');
         expect(refreshScheduleSource).toContain('setLoadedScheduleUserId(auth.user?.uid || null);');
     });
 
