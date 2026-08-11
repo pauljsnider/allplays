@@ -367,6 +367,112 @@ test('official assignment projection preserves long shared-game paths with bound
   assert.equal(result.assignments[0].sharedGamePath, sharedPath);
 });
 
+test('requested-team projection includes shared slots for a current parent without an official directory row', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedPath = 'tournaments/tournament-1/sharedGames/shared-requested';
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: ['team-requested'] },
+      'teams/team-requested': { name: 'Requested FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-requested',
+        awayTeamId: 'team-2',
+        awayTeamName: 'Visitors',
+        officiatingSelfAssignmentEnabled: true,
+        officiatingSlots: [{ id: 'open', position: 'Center', status: 'open' }]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true, requestedTeamId: 'team-requested' }, context);
+
+  assert.deepEqual(result.teamIds, ['team-requested']);
+  assert.equal(result.assignmentsComplete, true);
+  assert.deepEqual(result.assignments.map((assignment) => ({
+    kind: assignment.kind,
+    slotId: assignment.slotId,
+    sharedGamePath: assignment.sharedGamePath
+  })), [{ kind: 'open', slotId: 'open', sharedGamePath: sharedPath }]);
+});
+
+test('requested-team projection excludes a team when current access cannot be proven', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: [] },
+      'teams/unrelated': { name: 'Unrelated FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      unrelated: [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSlots: [{ id: 'other', officialUserId: 'someone-else', status: 'accepted' }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true, requestedTeamId: 'unrelated' }, context);
+
+  assert.deepEqual(result.teamIds, []);
+  assert.deepEqual(result.teams, []);
+  assert.deepEqual(result.assignments, []);
+  assert.equal(result.assignmentsComplete, true);
+});
+
+test('official assignment projection deduplicates one shared slot linked through both teams', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedPath = 'tournaments/tournament-1/sharedGames/shared-both-teams';
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } },
+    { path: 'teams/team-2/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Home FC' },
+      'teams/team-2': { name: 'Away FC' }
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-1',
+        awayTeamId: 'team-2',
+        homeTeamName: 'Home FC',
+        awayTeamName: 'Away FC',
+        officiatingSlots: [{ id: 'mine', officialUserId: 'official-1', status: 'pending' }]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.teamIds, ['team-1', 'team-2']);
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].sharedGamePath, sharedPath);
+  assert.equal(result.assignments[0].slotId, 'mine');
+});
+
 test('official assignment projection fails closed when shared-game membership exceeds the bound', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([

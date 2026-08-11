@@ -1624,6 +1624,8 @@ describe('scheduled practice writes', () => {
 });
 
 describe('parent game route resolution', () => {
+  const routeUser = { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] };
+
   beforeEach(() => {
     (globalThis as any).window = globalThis as any;
     vi.clearAllMocks();
@@ -1700,6 +1702,54 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('resolves an opaque shared-game route through its exact bounded document path', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
+      if (teamId === 'team-bravo' && gameId === `shared_${encodeURIComponent(sharedGamePath)}`) {
+        return { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') };
+      }
+      return null;
+    });
+
+    const result = await resolveParentGameRoute(
+      routeUser,
+      opaqueGameId,
+      { expandStaffPlayers: false, targetTeamId: 'team-bravo', sharedGamePath }
+    );
+
+    expect(result).toEqual({
+      teamId: 'team-bravo',
+      eventId: opaqueGameId,
+      childId: 'child-2'
+    });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', `shared_${encodeURIComponent(sharedGamePath)}`);
+  });
+
+  it('hydrates opaque shared-game details through the reversible data identity and restores the route id', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-bravo', name: 'Bravo', active: true });
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: opaqueGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].id).toBe(opaqueGameId);
+    expect(getMyRsvps).toHaveBeenCalledWith('team-bravo', reversibleGameId, 'parent-1', ['child-2']);
   });
 });
 
@@ -2232,7 +2282,7 @@ describe('official assignments app service', () => {
 
   it('loads native linked-team assignments from the authenticated bounded callable projection', async () => {
     capacitorCoreMock.isNativePlatform.mockReturnValue(true);
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     capacitorCoreMock.httpPost.mockResolvedValue({
@@ -2295,6 +2345,56 @@ describe('official assignments app service', () => {
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('loads a requested native team and its shared assignments only from the complete callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-requested';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-requested'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-requested', name: 'Requested FC' }],
+          assignments: [{
+            kind: 'open',
+            teamId: 'team-requested',
+            teamName: 'Requested FC',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'line',
+            position: 'Line Judge',
+            status: 'open',
+            opponent: 'Visitors',
+            location: 'Field 3',
+            date: futureDate,
+            canClaim: true,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-requested' });
+
+    expect(result).toEqual(expect.objectContaining({
+      hasAccess: true,
+      teamIds: ['team-requested'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [expect.objectContaining({ sharedGamePath, slotId: 'line' })]
+    }));
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      data: { data: { includeAssignments: true, requestedTeamId: 'team-requested' } }
+    }));
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
   });
 
   it('marks a verified linked-team result partial when its games cannot load', async () => {

@@ -195,6 +195,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
+  const sharedGamePath = String(searchParams.get('sharedGamePath') || '').trim();
   const [GameHubSection, setGameHubSection] = useState(() => LazyScheduleGameHubSection);
   const retryScheduleGameHubSection = useCallback(() => {
     resetScheduleGameHubSectionLoader();
@@ -320,7 +321,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     const hasExistingEvent = hasLoadedEventRef.current;
     try {
       await runPrimaryLoad(
-        () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
+        () => loadParentScheduleEventDetail(auth.user, {
+          teamId: decodedTeamId,
+          eventId: decodedEventId,
+          ...(sharedGamePath ? { sharedGamePath } : {})
+        }),
         {
           getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
             toAppServiceError(loadError, 'Unable to load event details.'),
@@ -341,7 +346,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     } finally {
       setInitialLoadPending(false);
     }
-  }, [applyLoadedEvent, auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad]);
+  }, [applyLoadedEvent, auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad, sharedGamePath]);
 
   useEffect(() => {
     hasLoadedEventRef.current = false;

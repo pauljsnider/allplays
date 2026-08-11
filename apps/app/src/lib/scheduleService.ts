@@ -485,6 +485,8 @@ export type OfficialAssignmentsResult = OfficialAssignmentsAccess & {
 export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
   teamId: string;
   eventId: string;
+  /** Exact bounded shared-game document path for opaque sharedh_ route ids. */
+  sharedGamePath?: string;
 };
 
 export type ParentPlayerScheduleLoadOptions = ParentScheduleLoadOptions & {
@@ -3324,7 +3326,32 @@ async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promis
   );
 }
 
-async function loadGameById(teamId: string, gameId: string): Promise<ScheduleEventFirestoreRecord | null> {
+async function loadGameById(teamId: string, gameId: string, sharedGamePath = ''): Promise<ScheduleEventFirestoreRecord | null> {
+  const normalizedSharedGamePath = normalizeSharedGameDocumentPath(sharedGamePath);
+  if (sharedGamePath && !normalizedSharedGamePath) {
+    throw new Error('The shared game path is invalid.');
+  }
+  if (normalizedSharedGamePath) {
+    const reversibleGameId = `shared_${encodeURIComponent(normalizedSharedGamePath)}`;
+    const preserveRouteIdentity = (game: ScheduleEventFirestoreRecord | null) => game
+      ? { ...game, id: gameId }
+      : null;
+    return readWithNativeFallback(
+      `shared game ${teamId}/${gameId}`,
+      async () => preserveRouteIdentity(mapScheduleEventRecord(await getGame(teamId, reversibleGameId), gameId)),
+      async () => {
+        const encodedPath = normalizedSharedGamePath.split('/').map(encodeURIComponent).join('/');
+        const decoded = await nativeGetDocument(encodedPath);
+        if (!decoded) return null;
+        const projected = projectSharedGameForTeam({
+          ...decoded,
+          id: normalizedSharedGamePath.split('/').pop() || '',
+          _sharedGamePath: normalizedSharedGamePath
+        }, teamId) || { ...decoded, id: gameId, type: decoded.type || 'game' };
+        return preserveRouteIdentity(mapScheduleEventRecord(projected, gameId));
+      }
+    );
+  }
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
     async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId),
@@ -4130,12 +4157,13 @@ async function buildTargetedTeamScheduleEvent(
   eventId: string,
   teamChildren: ParentScheduleChild[],
   user: AuthUser,
-  delegatedTeamContext: Record<string, unknown> | null = null
+  delegatedTeamContext: Record<string, unknown> | null = null,
+  sharedGamePath = ''
 ) {
   const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
   const [team, initialGame] = await Promise.all([
     delegatedTeamContext ? Promise.resolve(delegatedTeamContext) : loadTeam(teamId),
-    loadGameById(teamId, eventId)
+    loadGameById(teamId, eventId, sharedGamePath)
   ]);
   if (!team) return [];
 
@@ -4701,6 +4729,11 @@ export function resolveCachedParentScheduleEvents(
 export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
   const requestedTeamId = compactString(options?.teamId);
   const requestedEventId = compactString(options?.eventId);
+  const sharedGamePath = normalizeSharedGameDocumentPath(options?.sharedGamePath);
+
+  if (options?.sharedGamePath && !sharedGamePath) {
+    throw new Error('The shared game path is invalid.');
+  }
 
   if (!user?.uid || !requestedTeamId || !requestedEventId) {
     return { children: [], events: [] };
@@ -4733,7 +4766,8 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       requestedEventId,
       teamChildren,
       user,
-      delegatedTeamContext
+      delegatedTeamContext,
+      sharedGamePath
     );
     if (!events.length && !delegatedTeamContext) {
       fallback = true;
@@ -4747,9 +4781,25 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
-    const authoritativeEvents = hydrateDetails && events.length
-      ? await hydrateEventDetails(events, user, false)
-      : [];
+    let authoritativeEvents: ParentScheduleEvent[] = [];
+    if (hydrateDetails && events.length) {
+      const routeEventIds = sharedGamePath
+        ? events.map((event) => event.id)
+        : [];
+      if (sharedGamePath) {
+        const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+        events.forEach((event) => {
+          event.id = reversibleGameId;
+        });
+      }
+      try {
+        authoritativeEvents = await hydrateEventDetails(events, user, false);
+      } finally {
+        routeEventIds.forEach((eventId, index) => {
+          if (events[index]) events[index].id = eventId;
+        });
+      }
+    }
     finalizeSessionRsvpHydration(events, authoritativeEvents, user.uid);
     timer.end({
       hydrateDetails,
@@ -4839,8 +4889,14 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
   }
 }
 
-export async function resolveParentGameRoute(user: AuthUser | null, gameId: string, options: ParentScheduleLoadOptions = {}): Promise<ParentGameRouteResolution | null> {
+export async function resolveParentGameRoute(user: AuthUser | null, gameId: string, options: ParentScheduleLoadOptions & { sharedGamePath?: string } = {}): Promise<ParentGameRouteResolution | null> {
   const requestedGameId = compactString(gameId);
+  const requestedTeamId = compactString(options.targetTeamId);
+  const sharedGamePath = normalizeSharedGameDocumentPath(options.sharedGamePath);
+
+  if (options.sharedGamePath && (!sharedGamePath || !requestedTeamId)) {
+    throw new Error('The shared game route is invalid.');
+  }
 
   if (!user?.uid || !requestedGameId) {
     return null;
@@ -4853,6 +4909,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
     compactString(event?.id) === requestedGameId
     && event?.type === 'game'
     && compactString(event?.teamId)
+    && (!requestedTeamId || compactString(event?.teamId) === requestedTeamId)
   ));
 
   if (cachedMatch) {
@@ -4869,12 +4926,16 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      expandStaffPlayers,
+      targetTeamId: requestedTeamId || undefined,
+      delegatedGameId: requestedGameId
+    });
     const teamEntries = [...byTeam.entries()];
 
     const matches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        const game = await loadGameById(teamId, requestedGameId);
+        const game = await loadGameById(teamId, requestedGameId, sharedGamePath);
         const eventId = compactString(game?.id || game?.gameId || requestedGameId);
         if (!game || eventId !== requestedGameId) return null;
         const childId = (teamChildren || [])
@@ -7062,6 +7123,16 @@ type OfficialLinkedTeamDiscoveryResult = {
   assignmentsComplete: boolean;
 };
 
+function normalizeSharedGameDocumentPath(value: unknown) {
+  const path = compactString(value);
+  if (!path || path.length > 6144) return '';
+  const parts = path.split('/');
+  return parts.length >= 4 && parts.length % 2 === 0 && parts[parts.length - 2] === 'sharedGames' &&
+    parts.every((part) => part && part !== '.' && part !== '..' && part.length <= 1500)
+    ? path
+    : '';
+}
+
 function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireAssignments?: boolean } = {}): OfficialLinkedTeamDiscoveryResult {
   if (!source || source.isPartial !== false || !Array.isArray(source.teamIds)) {
     throw new Error('Official team discovery returned an incomplete response.');
@@ -7080,22 +7151,15 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireA
       const kind = compactString(item?.kind);
       const teamId = compactString(item?.teamId);
       const gameId = compactString(item?.gameId);
-      const sharedGamePath = compactString(item?.sharedGamePath);
+      const sharedGamePath = normalizeSharedGameDocumentPath(item?.sharedGamePath);
       const slotId = compactString(item?.slotId);
       const date = normalizeScheduleDate(item?.date);
-      const sharedGamePathParts = sharedGamePath.split('/');
       if (!['assigned', 'open'].includes(kind) ||
         !teamId || !normalizedTeamIds.includes(teamId) || teamId.length > 128 || teamId.includes('/') ||
         !gameId || gameId.length > 128 || gameId.includes('/') ||
         (gameId.startsWith('sharedh_') && !sharedGamePath) ||
-        (sharedGamePath && (
-          sharedGamePath.length > 6144 ||
-          sharedGamePathParts.length < 4 ||
-          sharedGamePathParts.length % 2 !== 0 ||
-          sharedGamePathParts[sharedGamePathParts.length - 2] !== 'sharedGames' ||
-          sharedGamePathParts.some((part) => !part || part === '.' || part === '..' || part.length > 1500) ||
-          !gameId.startsWith('shared_') && !gameId.startsWith('sharedh_') && !gameId.startsWith('shared::')
-        )) ||
+        (item?.sharedGamePath && !sharedGamePath) ||
+        (sharedGamePath && !gameId.startsWith('shared_') && !gameId.startsWith('sharedh_') && !gameId.startsWith('shared::')) ||
         !slotId || slotId.length > 128 || slotId.includes('/') ||
         !date) {
         throw new Error('Official assignment discovery returned an invalid response.');
@@ -7125,12 +7189,17 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireA
   };
 }
 
-async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAssignments?: boolean } = {}) {
+async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAssignments?: boolean; requestedTeamId?: string } = {}) {
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listOfficialLinkedTeamIds`;
   const response = await withTimeout(CapacitorHttp.post({
     url: requestUrl,
     headers: await getNativeHeaders(requestUrl) as Record<string, string>,
-    data: { data: { includeAssignments: options.includeAssignments === true } },
+    data: {
+      data: {
+        includeAssignments: options.includeAssignments === true,
+        ...(compactString(options.requestedTeamId) ? { requestedTeamId: compactString(options.requestedTeamId) } : {})
+      }
+    },
     connectTimeout: staffTeamDiscoveryTimeoutMs,
     readTimeout: staffTeamDiscoveryTimeoutMs
   }), 'Official team discovery', staffTeamDiscoveryTimeoutMs);
@@ -7144,7 +7213,7 @@ async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAss
   });
 }
 
-async function loadOfficialLinkedTeamIds(options: { includeAssignments?: boolean } = {}): Promise<OfficialLinkedTeamDiscoveryResult> {
+async function loadOfficialLinkedTeamIds(options: { includeAssignments?: boolean; requestedTeamId?: string } = {}): Promise<OfficialLinkedTeamDiscoveryResult> {
   if (isNativeRuntime()) {
     return loadOfficialLinkedTeamIdsFromNativeCallable(options);
   }
@@ -7192,6 +7261,7 @@ export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<Of
 
 export async function loadOfficialAssignments(user: AuthUser, options: { teamId?: string } = {}): Promise<OfficialAssignmentsResult> {
   const requestedTeamId = compactString(options.teamId);
+  const nativeRuntime = isNativeRuntime();
   const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
   let linkedAssignments: OfficialAssignmentItem[] = [];
   let linkedAssignmentsComplete = false;
@@ -7199,17 +7269,20 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   let linkedTeamIdsPartial = false;
   let discoveryError: unknown = null;
   try {
-    const linkedTeamResult = await loadOfficialLinkedTeamIds({ includeAssignments: isNativeRuntime() });
+    const linkedTeamResult = await loadOfficialLinkedTeamIds({
+      includeAssignments: nativeRuntime,
+      ...(nativeRuntime && requestedTeamId ? { requestedTeamId } : {})
+    });
     linkedTeamIds = linkedTeamResult.teamIds;
     linkedTeamIdsPartial = linkedTeamResult.isPartial;
     linkedAssignments = linkedTeamResult.assignments;
     linkedAssignmentsComplete = linkedTeamResult.assignmentsComplete;
   } catch (error) {
-    if (!requestedTeamId) throw error;
+    if (nativeRuntime || !requestedTeamId) throw error;
     discoveryError = error;
   }
   const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
-  if (isNativeRuntime() && linkedAssignmentsComplete && (!requestedTeamId || linkedRequestedTeamIds.length > 0)) {
+  if (nativeRuntime && linkedAssignmentsComplete) {
     const nativeTeamIds = requestedTeamId ? linkedRequestedTeamIds : linkedTeamIds;
     const nativeAssignments = linkedAssignments
       .filter((item) => nativeTeamIds.includes(item.teamId))

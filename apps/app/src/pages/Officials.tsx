@@ -181,7 +181,13 @@ function AssignmentCard({
   onDecline?: () => void;
   onClaim?: () => void;
 }) {
-  const detailPath = getEventDetailPath({ teamId: item.teamId, id: item.gameId, childId: '' }, 'game');
+  const baseDetailPath = getEventDetailPath({ teamId: item.teamId, id: item.gameId, childId: '' }, 'game');
+  const detailPath = item.sharedGamePath
+    ? `${baseDetailPath}${baseDetailPath.includes('?') ? '&' : '?'}${new URLSearchParams({
+      teamId: item.teamId,
+      sharedGamePath: item.sharedGamePath
+    }).toString()}`
+    : baseDetailPath;
   const showResponseActions = item.kind === 'assigned' && (item.status === 'pending' || item.status === 'needs_review');
 
   return (

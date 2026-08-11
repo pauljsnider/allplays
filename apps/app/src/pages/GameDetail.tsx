@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { getGenericEventDetailPath } from '../lib/scheduleLogic'
 import { storeScheduleEventDetailHandoff } from '../lib/scheduleEventDetailHandoff'
 import { loadParentScheduleEventDetail, resolveParentGameRoute } from '../lib/scheduleService'
@@ -14,6 +14,9 @@ type ResolutionState = {
 
 export function GameDetail({ auth }: { auth: AuthState }) {
   const { gameId = '' } = useParams()
+  const [searchParams] = useSearchParams()
+  const targetTeamId = String(searchParams.get('teamId') || '').trim()
+  const sharedGamePath = String(searchParams.get('sharedGamePath') || '').trim()
   const [state, setState] = useState<ResolutionState>({
     loading: true,
     redirectTarget: '',
@@ -34,7 +37,11 @@ export function GameDetail({ auth }: { auth: AuthState }) {
       setState({ loading: true, redirectTarget: '', error: null })
 
       try {
-        const targetRoute = await resolveParentGameRoute(auth.user, gameId, { expandStaffPlayers: false })
+        const targetRoute = await resolveParentGameRoute(auth.user, gameId, {
+          expandStaffPlayers: false,
+          ...(targetTeamId ? { targetTeamId } : {}),
+          ...(sharedGamePath ? { sharedGamePath } : {})
+        })
 
         if (cancelled) return
 
@@ -52,6 +59,7 @@ export function GameDetail({ auth }: { auth: AuthState }) {
           fallbackParams.set('childId', targetRoute.childId)
         }
         fallbackParams.set('section', 'game')
+        if (sharedGamePath) fallbackParams.set('sharedGamePath', sharedGamePath)
         const fallbackQuery = fallbackParams.toString()
         const fallbackTarget = `/schedule/${encodeURIComponent(targetRoute.teamId)}/${encodeURIComponent(targetRoute.eventId)}${fallbackQuery ? `?${fallbackQuery}` : ''}`
 
@@ -59,7 +67,8 @@ export function GameDetail({ auth }: { auth: AuthState }) {
           const detail = await loadParentScheduleEventDetail(auth.user, {
             teamId: targetRoute.teamId,
             eventId: targetRoute.eventId,
-            expandStaffPlayers: false
+            expandStaffPlayers: false,
+            ...(sharedGamePath ? { sharedGamePath } : {})
           })
 
           if (cancelled) return
@@ -69,7 +78,9 @@ export function GameDetail({ auth }: { auth: AuthState }) {
 
           setState({
             loading: false,
-            redirectTarget: matchedEvent ? getGenericEventDetailPath(matchedEvent, true) : fallbackTarget,
+            redirectTarget: matchedEvent
+              ? appendSharedGamePath(getGenericEventDetailPath(matchedEvent, true), sharedGamePath)
+              : fallbackTarget,
             error: null
           })
         } catch {
@@ -95,7 +106,7 @@ export function GameDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true
     }
-  }, [auth.user, gameId])
+  }, [auth.user, gameId, sharedGamePath, targetTeamId])
 
   if (state.redirectTarget) {
     return <Navigate to={state.redirectTarget} replace />
@@ -130,4 +141,10 @@ export function GameDetail({ auth }: { auth: AuthState }) {
       </div>
     </div>
   )
+}
+
+function appendSharedGamePath(path: string, sharedGamePath: string) {
+  if (!sharedGamePath) return path
+  const separator = path.includes('?') ? '&' : '?'
+  return `${path}${separator}${new URLSearchParams({ sharedGamePath }).toString()}`
 }

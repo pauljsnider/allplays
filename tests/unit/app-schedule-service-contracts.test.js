@@ -579,7 +579,8 @@ describe('React app schedule service contract integration', () => {
         expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
         expect(officialDiscoverySource).not.toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain('linkedAssignmentsComplete');
-        expect(officialAssignmentsSource).toContain('loadOfficialLinkedTeamIds({ includeAssignments: isNativeRuntime() })');
+        expect(officialAssignmentsSource).toContain('includeAssignments: nativeRuntime');
+        expect(officialAssignmentsSource).toContain('requestedTeamId');
         expect(officialAssignmentsSource).toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
         expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');
@@ -600,7 +601,7 @@ describe('React app schedule service contract integration', () => {
         expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
         expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');
-        expect(targetedSource).toContain('loadGameById(teamId, eventId)');
+        expect(targetedSource).toContain('loadGameById(teamId, eventId, sharedGamePath)');
         expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
         expect(targetedSource).toContain('createScheduleEvent({');
         expect(detailSource).toContain('const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;');

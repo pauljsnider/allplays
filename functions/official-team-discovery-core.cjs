@@ -205,7 +205,7 @@ function createOfficialTeamDiscoveryHandler({
     }
   }
 
-  async function loadAssignmentProjection(teamIds, authUser) {
+  async function loadAssignmentProjection(teamIds, authUser, directoryTeamIds = new Set()) {
     if (teamIds.length > boundedAssignmentTeamLimit) {
       throw new HttpsError(
         'resource-exhausted',
@@ -311,15 +311,25 @@ function createOfficialTeamDiscoveryHandler({
           });
         });
         const assignments = [...directAssignments, ...sharedAssignments];
-        return { team: { id: teamId, name: teamName }, assignments };
+        const hasAccess = directoryTeamIds.has(teamId) || canClaimOpen ||
+          assignments.some((assignment) => assignment.kind === 'assigned');
+        return { team: { id: teamId, name: teamName }, assignments, hasAccess };
       }));
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       throw new HttpsError('unavailable', 'Official assignment details could not be verified. Try again.');
     }
+    const accessibleProjections = projections.filter((projection) => projection.hasAccess);
+    const deduplicatedAssignments = new Map();
+    accessibleProjections.flatMap((projection) => projection.assignments).forEach((assignment) => {
+      const key = assignment.sharedGamePath
+        ? `shared:${assignment.sharedGamePath}:${assignment.slotId}`
+        : `direct:${assignment.teamId}:${assignment.gameId}:${assignment.slotId}`;
+      if (!deduplicatedAssignments.has(key)) deduplicatedAssignments.set(key, assignment);
+    });
     return {
-      teams: projections.map((projection) => projection.team),
-      assignments: projections.flatMap((projection) => projection.assignments)
+      teams: accessibleProjections.map((projection) => projection.team),
+      assignments: [...deduplicatedAssignments.values()]
         .sort((left, right) => left.date.localeCompare(right.date) || left.teamId.localeCompare(right.teamId)),
       assignmentsComplete: true
     };
@@ -353,13 +363,9 @@ function createOfficialTeamDiscoveryHandler({
       ['phoneDigits', normalizedPhone ? [normalizedPhone] : []]
     ].filter(([, values]) => values.length > 0);
 
-    if (!queryPlans.length) {
-      return { teamIds: [], teamCount: 0, isPartial: false };
-    }
-
-    const snapshots = await Promise.all(
-      queryPlans.map(([field, values]) => loadOfficialDocuments(field, values))
-    );
+    const snapshots = queryPlans.length
+      ? await Promise.all(queryPlans.map(([field, values]) => loadOfficialDocuments(field, values)))
+      : [];
     const teamIds = [...new Set(
       snapshots.flat().map(extractOfficialTeamId).filter(Boolean)
     )].sort();
@@ -370,9 +376,18 @@ function createOfficialTeamDiscoveryHandler({
       isPartial: false
     };
     if (data?.includeAssignments !== true) return result;
+    const requestedTeamId = normalizeBoundedId(data?.requestedTeamId);
+    if (data?.requestedTeamId != null && !requestedTeamId) {
+      throw new HttpsError('invalid-argument', 'The requested official team is invalid.');
+    }
+    const projectionTeamIds = [...new Set([...teamIds, ...(requestedTeamId ? [requestedTeamId] : [])])].sort();
+    const projection = await loadAssignmentProjection(projectionTeamIds, authUser, new Set(teamIds));
+    const accessibleTeamIds = projection.teams.map((team) => team.id);
     return {
-      ...result,
-      ...(await loadAssignmentProjection(teamIds, authUser))
+      teamIds: accessibleTeamIds,
+      teamCount: accessibleTeamIds.length,
+      isPartial: false,
+      ...projection
     };
   };
 }
