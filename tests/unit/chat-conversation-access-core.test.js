@@ -2,7 +2,10 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { canProjectChatConversation } = require('../../functions/chat-conversation-access-core.cjs');
+const {
+    canProjectChatConversation,
+    serializeChatConversationProjection
+} = require('../../functions/chat-conversation-access-core.cjs');
 
 function canProject(overrides = {}) {
     return canProjectChatConversation({
@@ -84,5 +87,46 @@ describe('chat conversation callable projection access', () => {
 
     it('fails closed without verified team chat access', () => {
         expect(canProject({ hasTeamChatAccess: false })).toBe(false);
+    });
+});
+
+describe('chat conversation callable projection serialization', () => {
+    it('returns only bounded fields needed to hydrate an authorized thread', () => {
+        const projection = serializeChatConversationProjection('direct-1', {
+            type: 'direct',
+            name: 'Parents',
+            participantIds: ['user-1', 'user:friend-1', 'user-1'],
+            participantRoles: ['parent'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'friend-1'],
+            friendshipId: 'friend-1__user-1',
+            initiatedBy: 'user-1',
+            mutedBy: ['private-other-user'],
+            lastMessagePreview: 'private preview',
+            updatedAt: '2026-08-11T12:00:00.000Z',
+            lastMessageAt: '2026-08-11T12:01:00.000Z'
+        });
+
+        expect(projection).toEqual({
+            id: 'direct-1',
+            type: 'direct',
+            name: 'Parents',
+            participantIds: ['user-1', 'user:friend-1'],
+            participantRoles: ['parent'],
+            directAccess: 'accepted_friend',
+            directUserIds: ['user-1', 'friend-1'],
+            friendshipId: 'friend-1__user-1',
+            initiatedBy: 'user-1',
+            updatedAt: '2026-08-11T12:00:00.000Z',
+            lastMessageAt: '2026-08-11T12:01:00.000Z',
+            isDefault: false,
+            isLegacy: false
+        });
+        expect(projection).not.toHaveProperty('mutedBy');
+        expect(projection).not.toHaveProperty('lastMessagePreview');
+    });
+
+    it('rejects document-unsafe conversation IDs', () => {
+        expect(serializeChatConversationProjection('group/unsafe', {})).toBeNull();
     });
 });

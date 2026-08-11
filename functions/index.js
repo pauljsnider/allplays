@@ -3,7 +3,10 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
-const { canProjectChatConversation } = require('./chat-conversation-access-core.cjs');
+const {
+  canProjectChatConversation,
+  serializeChatConversationProjection
+} = require('./chat-conversation-access-core.cjs');
 const {
   canReadSocialPostForCaller,
   getNextSocialPostLikeState,
@@ -18411,6 +18414,12 @@ function hasCallableChatTeamAccess(caller, teamId, team = {}) {
     .some((value) => normalizeStablePrincipalUid(value) === teamId);
 }
 
+function getVerifiedEmailAuthorizationCaller(caller, context = {}) {
+  return context.auth?.token?.email_verified === true
+    ? caller
+    : { ...caller, email: '', rawEmail: '' };
+}
+
 async function requireCallableSocialPostAccess(transaction, postRef, caller) {
   const postSnap = await transaction.get(postRef);
   if (!postSnap.exists) {
@@ -18442,7 +18451,7 @@ async function requireCallableSocialPostAccess(transaction, postRef, caller) {
 }
 
 exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
-  const caller = await getOpportunityCaller(context);
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const staffTeams = await listStaffTeamDocuments(caller);
   const conversationLimit = 100;
   const includeChatMetadata = data?.includeChatMetadata === true;
@@ -18530,6 +18539,64 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     items,
     isPartial: staffTeams.isPartial === true || chatTeamDiscoveryPartial || chatMetadataPartial
   };
+});
+
+exports.listAuthorizedChatConversations = functions.https.onCall(async (data, context = {}) => {
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const teamId = normalizeStablePrincipalUid(data?.teamId);
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team is required.');
+  }
+  const requestedConversationId = String(data?.activeConversationId || '').trim();
+  if (requestedConversationId && (requestedConversationId.includes('/') || requestedConversationId.length > 1500)) {
+    throw new functions.https.HttpsError('invalid-argument', 'The requested conversation is invalid.');
+  }
+
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const canManage = hasOpportunityTeamAdminAccess(caller, team);
+  const hasTeamChatAccess = hasCallableChatTeamAccess(caller, teamId, team);
+  if (!hasTeamChatAccess) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team chat.');
+  }
+
+  const conversationLimit = 100;
+  const conversationSnap = await firestore.collection(`teams/${teamId}/chatConversations`)
+    .limit(conversationLimit + 1)
+    .get();
+  if (conversationSnap.docs.length > conversationLimit) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'This team has too many conversations to verify completely. Contact support.'
+    );
+  }
+  const items = conversationSnap.docs.map((conversationDoc) => {
+    const conversation = conversationDoc.data() || {};
+    if (!canProjectChatConversation({
+      callerUid: caller.uid,
+      callerEmail: caller.email,
+      canManageTeam: canManage,
+      hasTeamChatAccess,
+      conversationId: conversationDoc.id,
+      conversation
+    })) return null;
+    return serializeChatConversationProjection(conversationDoc.id, conversation);
+  }).filter(Boolean);
+
+  if (
+    requestedConversationId &&
+    requestedConversationId !== 'team' &&
+    !items.some((conversation) => conversation.id === requestedConversationId)
+  ) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'The requested conversation is no longer available to this account.'
+    );
+  }
+  return { items, isPartial: false };
 });
 
 exports.toggleSocialPostReaction = functions.https.onCall(async (data, context = {}) => {

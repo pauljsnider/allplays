@@ -244,7 +244,14 @@ function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, o
     const officiatingSlots = normalizeOfficiatingSlots(game.officiatingSlots || []).map((slot) => {
         if (slot.id !== normalizedSlotId) return slot;
         const uidMatches = Boolean(slot.officialUserId && slot.officialUserId === officialUserId);
-        const emailMatches = Boolean(officialEmail && slot.officialEmail && slot.officialEmail === officialEmail);
+        // A stable UID binding is canonical. The email is only a legacy
+        // fallback for assignments that have never been bound to a user ID.
+        const emailMatches = Boolean(
+            !slot.officialUserId &&
+            officialEmail &&
+            slot.officialEmail &&
+            slot.officialEmail === officialEmail
+        );
         if (!uidMatches && !emailMatches) {
             throw createClaimError('permission-denied', 'This officiating assignment belongs to another official.');
         }

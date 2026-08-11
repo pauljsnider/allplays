@@ -77,10 +77,31 @@ function isCancelledGame(game = {}) {
 function isAssignedToAuthUser(slot = {}, authUser = {}) {
   const uid = normalizeBoundedId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
-  return Boolean(
-    (uid && normalizeBoundedId(slot.officialUserId) === uid) ||
-    (email && normalizeOfficialEmail(slot.officialEmail || slot.email) === email)
-  );
+  const assignedUid = normalizeBoundedId(slot.officialUserId);
+  if (assignedUid) return Boolean(uid && assignedUid === uid);
+  return Boolean(email && normalizeOfficialEmail(slot.officialEmail || slot.email) === email);
+}
+
+function getSharedGamePath(docSnapshot) {
+  const path = String(docSnapshot?.ref?.path || '').trim();
+  const parts = path.split('/').filter(Boolean);
+  return parts.length >= 4 && parts[parts.length - 2] === 'sharedGames' ? path : '';
+}
+
+function buildSharedGameSyntheticId(docSnapshot) {
+  const path = getSharedGamePath(docSnapshot);
+  return path ? normalizeBoundedId(`shared_${encodeURIComponent(path)}`) : '';
+}
+
+function projectSharedGameForTeam(game = {}, teamId = '') {
+  const isHome = normalizeBoundedId(game.homeTeamId) === teamId;
+  const isAway = normalizeBoundedId(game.awayTeamId) === teamId;
+  const opponent = isHome
+    ? game.awayTeamName || game.opponentTeamName || game.opponent
+    : isAway
+      ? game.homeTeamName || game.opponentTeamName || game.opponent
+      : game.opponent;
+  return { ...game, opponent };
 }
 
 function canClaimOpenOfficialSlots(teamId, team = {}, user = {}, authUser = {}) {
@@ -192,15 +213,53 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('unavailable', 'Official assignment details could not be verified. Try again.');
     }
     const user = userSnap?.exists ? userSnap.data() || {} : {};
+    const assignmentStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    async function loadSharedGameDocuments(teamId) {
+      const membershipQueries = [
+        ['homeTeamId', '=='],
+        ['awayTeamId', '=='],
+        ['teamIds', 'array-contains']
+      ];
+      const queries = membershipQueries.map(([field, operator]) => firestore
+        .collectionGroup('sharedGames')
+        .where(field, operator, teamId)
+        .where('date', '>=', assignmentStartDate)
+        .limit(boundedGameLimit + 1));
+      const snapshots = await Promise.all(queries.map((query) => query.get()));
+      if (snapshots.some((snapshot) => (snapshot.size ?? snapshot.docs?.length ?? 0) > boundedGameLimit)) {
+        throw new HttpsError(
+          'resource-exhausted',
+          'Official shared-game history is too large to verify completely. Contact support.'
+        );
+      }
+      const documentsByPath = new Map();
+      snapshots.forEach((snapshot) => {
+        (Array.isArray(snapshot.docs) ? snapshot.docs : []).forEach((docSnap) => {
+          const path = getSharedGamePath(docSnap);
+          if (!path) {
+            throw new HttpsError('failed-precondition', 'Official shared-game identity could not be verified.');
+          }
+          documentsByPath.set(path, docSnap);
+        });
+      });
+      if (documentsByPath.size > boundedGameLimit) {
+        throw new HttpsError(
+          'resource-exhausted',
+          'Official shared-game history is too large to verify completely. Contact support.'
+        );
+      }
+      return [...documentsByPath.values()];
+    }
     let projections;
     try {
       projections = await Promise.all(teamIds.map(async (teamId) => {
-        const [teamSnap, gamesSnap] = await Promise.all([
+        const [teamSnap, gamesSnap, sharedGameDocs] = await Promise.all([
           firestore.doc(`teams/${teamId}`).get(),
           firestore.collection(`teams/${teamId}/games`)
-            .where('date', '>=', new Date(Date.now() - 24 * 60 * 60 * 1000))
+            .where('date', '>=', assignmentStartDate)
             .limit(boundedGameLimit + 1)
-            .get()
+            .get(),
+          loadSharedGameDocuments(teamId)
         ]);
         if ((gamesSnap.size ?? gamesSnap.docs?.length ?? 0) > boundedGameLimit) {
           throw new HttpsError(
@@ -211,7 +270,7 @@ function createOfficialTeamDiscoveryHandler({
         const team = teamSnap?.exists ? teamSnap.data() || {} : {};
         const teamName = String(team.name || 'Team').trim().slice(0, 200) || 'Team';
         const canClaimOpen = canClaimOpenOfficialSlots(teamId, team, user, authUser);
-        const assignments = (Array.isArray(gamesSnap.docs) ? gamesSnap.docs : []).flatMap((gameSnap) => (
+        const directAssignments = (Array.isArray(gamesSnap.docs) ? gamesSnap.docs : []).flatMap((gameSnap) => (
           projectOfficialGameAssignments({
             teamId,
             teamName,
@@ -221,6 +280,21 @@ function createOfficialTeamDiscoveryHandler({
             canClaimOpen
           })
         ));
+        const sharedAssignments = sharedGameDocs.flatMap((gameSnap) => {
+          const gameId = buildSharedGameSyntheticId(gameSnap);
+          if (!gameId) {
+            throw new HttpsError('failed-precondition', 'Official shared-game identity could not be represented safely.');
+          }
+          return projectOfficialGameAssignments({
+            teamId,
+            teamName,
+            gameId,
+            game: projectSharedGameForTeam(gameSnap.data() || {}, teamId),
+            authUser,
+            canClaimOpen
+          });
+        });
+        const assignments = [...directAssignments, ...sharedAssignments];
         return { team: { id: teamId, name: teamName }, assignments };
       }));
     } catch (error) {
@@ -293,6 +367,7 @@ module.exports = {
   DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM,
   buildOfficialEmailCandidates,
   buildOfficialPhoneCandidates,
+  buildSharedGameSyntheticId,
   canClaimOpenOfficialSlots,
   createOfficialTeamDiscoveryHandler,
   extractOfficialTeamId,

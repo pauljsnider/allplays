@@ -55,6 +55,7 @@ import {
 } from './chatLogic';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import { canMessageAcceptedFriend, sendAuthorizedDirectMessage } from './friendMessageService';
+import { callNativeFirebaseFunction } from './nativeCallable';
 import {
   mapChatConversationRecords,
   mapChatMessageRecord,
@@ -1411,6 +1412,36 @@ export async function loadChatConversations(
   canModerate: boolean,
   options: ChatConversationLoadOptions = {}
 ): Promise<ChatConversation[]> {
+  if (isNativeRuntime()) {
+    const result = await callNativeFirebaseFunction<{
+      items?: unknown[];
+      isPartial?: boolean;
+    }>('listAuthorizedChatConversations', {
+      teamId,
+      activeConversationId: options.activeConversationId || null
+    }, { errorLabel: 'Chat conversations' });
+    if (!result || result.isPartial !== false || !Array.isArray(result.items)) {
+      throw new Error('Chat conversations could not be completely verified. Try again.');
+    }
+    const projectedConversations = mapChatConversationRecords(result.items as ChatConversation[]);
+    const conversationsById = new Map<string, ChatConversation>([
+      [DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation(team) as ChatConversation]
+    ]);
+    projectedConversations.forEach((conversation) => {
+      if (conversation.id && !isDefaultTeamConversation(conversation.id)) {
+        conversationsById.set(conversation.id, conversation);
+      }
+    });
+    const activeConversationId = compactString(options.activeConversationId);
+    if (
+      activeConversationId &&
+      !isDefaultTeamConversation(activeConversationId) &&
+      !conversationsById.has(activeConversationId)
+    ) {
+      throw new Error('The requested conversation is no longer available to this account.');
+    }
+    return [...conversationsById.values()];
+  }
   try {
     const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
       team,
@@ -1434,6 +1465,10 @@ export async function loadChatConversationById(
   const requestedConversationId = compactString(conversationId);
   if (!requestedConversationId || isDefaultTeamConversation(requestedConversationId) || requestedConversationId.includes('/')) {
     return null;
+  }
+  if (isNativeRuntime()) {
+    const conversations = await loadChatConversations(teamId, user, team, canModerate);
+    return conversations.find((conversation) => conversation.id === requestedConversationId) || null;
   }
   let conversations: ChatConversation[];
   try {

@@ -251,6 +251,25 @@ test('buildOfficiatingAssignmentResponseUpdate rejects another official and an a
     }), /belongs to another official/);
 });
 
+test('buildOfficiatingAssignmentResponseUpdate does not let a reassigned legacy email override the canonical UID', () => {
+    const game = {
+        officiatingSlots: [{
+            id: 'center',
+            position: 'Center Referee',
+            officialUserId: 'canonical-official',
+            officialEmail: 'reassigned@example.com',
+            status: 'pending'
+        }]
+    };
+
+    assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: 'center',
+        status: 'accepted',
+        official: { uid: 'different-user', email: 'reassigned@example.com' }
+    }), /belongs to another official/);
+});
+
 test('buildOfficiatingAssignmentResponseNotificationRecord targets the assigner', () => {
     const record = buildOfficiatingAssignmentResponseNotificationRecord({
         teamId: 'team-1',

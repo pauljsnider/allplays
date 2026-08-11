@@ -23,6 +23,7 @@ describe('public opportunity callable wiring', () => {
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
       'listManagedTeams',
+      'listAuthorizedChatConversations',
       'listParentTeamFeeRecipients',
       'listOfficialLinkedTeamIds',
       'deleteStatConfig',

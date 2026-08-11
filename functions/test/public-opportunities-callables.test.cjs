@@ -692,6 +692,95 @@ test('managed-team discovery marks chat metadata partial when a thread query fai
     assert.equal('chatConversations' in managed.items[0], false);
 });
 
+test('authorized chat conversation projection hydrates only caller-readable allow-listed threads', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: ['team-parent'] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/direct-parent': {
+            type: 'direct',
+            name: 'Coach Taylor',
+            participantIds: ['parent-1', 'user:coach-1'],
+            directUserIds: ['parent-1', 'coach-1'],
+            directAccess: 'team_admin',
+            initiatedBy: 'coach-1',
+            updatedAt: new FakeTimestamp(2000),
+            lastMessageAt: new FakeTimestamp(1900),
+            mutedBy: ['coach-1'],
+            privateNote: 'must-not-leak'
+        },
+        'teams/team-parent/chatConversations/direct-other': {
+            type: 'direct',
+            participantIds: ['user-2', 'user-3'],
+            directUserIds: ['user-2', 'user-3'],
+            directAccess: 'accepted_friend'
+        }
+    });
+
+    const result = await callables.listAuthorizedChatConversations(
+        { teamId: 'team-parent', activeConversationId: 'direct-parent' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.items, [{
+        id: 'direct-parent',
+        type: 'direct',
+        name: 'Coach Taylor',
+        participantIds: ['parent-1', 'user:coach-1'],
+        participantRoles: [],
+        directAccess: 'team_admin',
+        directUserIds: ['parent-1', 'coach-1'],
+        friendshipId: null,
+        initiatedBy: 'coach-1',
+        updatedAt: '1970-01-01T00:00:02.000Z',
+        lastMessageAt: '1970-01-01T00:00:01.900Z',
+        isDefault: false,
+        isLegacy: false
+    }]);
+    assert.equal('mutedBy' in result.items[0], false);
+    assert.equal('privateNote' in result.items[0], false);
+});
+
+test('authorized chat conversation projection fails closed for unavailable threads and unverified email grants', async () => {
+    const { callables } = loadCallables({
+        'users/email-admin': {},
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', adminEmails: ['admin@example.com'], active: true },
+        'teams/team-1/chatConversations/group-1': { type: 'group' }
+    });
+
+    await assert.rejects(
+        callables.listAuthorizedChatConversations(
+            { teamId: 'team-1', activeConversationId: 'group-1' },
+            authContext('email-admin', { email: 'admin@example.com', verified: false })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.listAuthorizedChatConversations(
+            { teamId: 'team-1', activeConversationId: 'missing-thread' },
+            authContext('owner-1')
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('authorized chat conversation projection rejects an incomplete bounded scan', async () => {
+    const conversations = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [
+        `teams/team-1/chatConversations/group-${index}`,
+        { type: 'group', participantIds: ['owner-1'] }
+    ]));
+    const { callables } = loadCallables({
+        'users/owner-1': {},
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true },
+        ...conversations
+    });
+
+    await assert.rejects(
+        callables.listAuthorizedChatConversations({ teamId: 'team-1' }, authContext('owner-1')),
+        (error) => error.code === 'resource-exhausted'
+    );
+});
+
 test('parent fee discovery returns bounded modern and legacy player assignments without private checkout state', async () => {
     const { firestore, callables } = loadCallables({
         'users/parent-1': {

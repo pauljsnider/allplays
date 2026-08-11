@@ -14,7 +14,7 @@ class HttpsError extends Error {
   }
 }
 
-function makeFirestore(records = [], { failField = null, documents = {}, gamesByTeam = {} } = {}) {
+function makeFirestore(records = [], { failField = null, documents = {}, gamesByTeam = {}, sharedGames = [] } = {}) {
   return {
     doc(path) {
       return {
@@ -54,7 +54,7 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
       };
     },
     collectionGroup(name) {
-      assert.equal(name, 'officials');
+      assert.ok(['officials', 'sharedGames'].includes(name), `Unexpected collection group: ${name}`);
       const filters = [];
       let queryLimit = Infinity;
       return {
@@ -68,10 +68,13 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
         },
         async get() {
           if (filters.some(({ field }) => field === failField)) throw new Error('query failed');
-          const docs = records
+          const source = name === 'officials' ? records : sharedGames;
+          const docs = source
             .filter(({ data }) => filters.every(({ field, operator, value }) => {
               if (operator === '==') return data[field] === value;
               if (operator === 'in') return value.includes(data[field]);
+              if (operator === 'array-contains') return Array.isArray(data[field]) && data[field].includes(value);
+              if (operator === '>=') return new Date(data[field]).getTime() >= value.getTime();
               return false;
             }))
             .slice(0, queryLimit)
@@ -229,6 +232,119 @@ test('official assignment projection does not expose open slots without current 
   const result = await handler({ includeAssignments: true }, context);
 
   assert.deepEqual(result.assignments.map((assignment) => assignment.slotId), ['mine']);
+});
+
+test('official assignment projection includes bounded shared games without duplicating membership-query matches', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedPath = 'tournaments/tournament-1/sharedGames/shared-1';
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: ['team-1'] },
+      'teams/team-1': { name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-1',
+        awayTeamId: 'team-2',
+        teamIds: ['team-1', 'team-2'],
+        awayTeamName: 'Tigers',
+        location: 'Tournament Field',
+        officiatingSelfAssignmentEnabled: true,
+        officiatingSlots: [
+          { id: 'mine', position: 'Center', officialUserId: 'official-1', status: 'pending' },
+          { id: 'open', position: 'Line', status: 'open' }
+        ]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.equal(result.assignmentsComplete, true);
+  assert.deepEqual(result.assignments.map((assignment) => ({
+    kind: assignment.kind,
+    gameId: assignment.gameId,
+    slotId: assignment.slotId,
+    opponent: assignment.opponent
+  })), [{
+    kind: 'assigned',
+    gameId: `shared_${encodeURIComponent(sharedPath)}`,
+    slotId: 'mine',
+    opponent: 'Tigers'
+  }, {
+    kind: 'open',
+    gameId: `shared_${encodeURIComponent(sharedPath)}`,
+    slotId: 'open',
+    opponent: 'Tigers'
+  }]);
+});
+
+test('official assignment projection fails closed when shared-game membership exceeds the bound', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    maxGamesPerTeam: 1,
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    sharedGames: [1, 2].map((index) => ({
+      path: `tournaments/tournament-1/sharedGames/shared-${index}`,
+      data: { date: futureDate, homeTeamId: 'team-1', officiatingSlots: [] }
+    }))
+  });
+
+  await assert.rejects(
+    handler({ includeAssignments: true }, context),
+    (error) => error.code === 'resource-exhausted'
+  );
+});
+
+test('official assignment projection prefers the canonical slot UID over a reassigned email', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSlots: [
+            { id: 'stale-email', position: 'Center', officialUserId: 'other-user', officialEmail: 'current@example.com' },
+            { id: 'canonical-uid', position: 'Line', officialUserId: 'official-1', officialEmail: 'old@example.com' }
+          ]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+  assert.deepEqual(result.assignments.map((assignment) => assignment.slotId), ['canonical-uid']);
 });
 
 test('official assignment projection fails closed when a bounded game query overflows', async () => {

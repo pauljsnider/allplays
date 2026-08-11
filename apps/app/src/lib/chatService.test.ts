@@ -71,6 +71,9 @@ const nativeStorageMocks = vi.hoisted(() => ({
 const profileServiceMocks = vi.hoisted(() => ({
   loadManagedTeamsFromNativeCallable: vi.fn()
 }));
+const nativeCallableMocks = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -104,6 +107,7 @@ vi.mock('./uxTiming', () => ({
 vi.mock('./friendMessageService', () => friendMessageMocks);
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
 vi.mock('./profileService', () => profileServiceMocks);
+vi.mock('./nativeCallable', () => nativeCallableMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -176,6 +180,7 @@ beforeEach(() => {
   friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
   friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
   profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  nativeCallableMocks.callNativeFirebaseFunction.mockRejectedValue(new Error('Native callable is unavailable.'));
   vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
 });
 
@@ -611,6 +616,71 @@ describe('native chat team discovery fallback', () => {
     expect(fetchMock.mock.calls.some(([url]) => (
       String(url).includes('/chatConversations/parent-group:runAggregationQuery')
     ))).toBe(true);
+  });
+
+  it('hydrates the preferred native conversation through the authenticated server projection', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{
+        id: 'direct-1',
+        type: 'direct',
+        name: 'Coach Taylor',
+        participantIds: ['user-1', 'user:coach-1'],
+        directUserIds: ['user-1', 'coach-1'],
+        directAccess: 'team_admin'
+      }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.getChatConversations.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    const { loadChatConversations } = await import('./chatService');
+
+    const conversations = await loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    );
+
+    expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'listAuthorizedChatConversations',
+      { teamId: 'team-parent', activeConversationId: 'direct-1' },
+      { errorLabel: 'Chat conversations' }
+    );
+    expect(conversations).toEqual([
+      expect.objectContaining({ id: 'team', type: 'team' }),
+      expect.objectContaining({ id: 'direct-1', directUserIds: ['user-1', 'coach-1'] })
+    ]);
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
+  });
+
+  it('rejects a partial native conversation projection instead of resetting to default chat', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ items: [], isPartial: true });
+    const { loadChatConversations } = await import('./chatService');
+
+    await expect(loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    )).rejects.toThrow('completely verified');
+  });
+
+  it('uses the same native projection for exact conversation lookup', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{ id: 'group-1', type: 'group', participantIds: ['user-1'] }],
+      isPartial: false
+    });
+    const { loadChatConversationById } = await import('./chatService');
+
+    await expect(loadChatConversationById(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      'group-1'
+    )).resolves.toEqual(expect.objectContaining({ id: 'group-1' }));
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
   });
 
   it('does not bypass chat authorization for an unverified staff projection', async () => {

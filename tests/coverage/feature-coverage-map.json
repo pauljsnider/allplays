@@ -501,6 +501,7 @@
             ],
             "cloudFunctions": [
                 "checkAcceptedFriendMessageAccess",
+                "listAuthorizedChatConversations",
                 "markAllNotificationInboxRead",
                 "markNotificationInboxItemRead",
                 "notifyConversationChatMessageCreated",
@@ -527,6 +528,7 @@
                 "tests/unit/app-messages-accessibility.test.tsx",
                 "tests/unit/app-notification-inbox-review.test.tsx",
                 "tests/unit/chat-notification-delivery-contract.test.js",
+                "tests/unit/chat-conversation-access-core.test.js",
                 "tests/unit/friend-message-access-core.test.js"
             ],
             "integrationTests": [
