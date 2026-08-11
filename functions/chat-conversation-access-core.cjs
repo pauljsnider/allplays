@@ -4,6 +4,11 @@ function normalizeString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function normalizeCallerUid(value) {
+  if (typeof value !== 'string' || value !== value.trim()) return '';
+  return value.length > 0 && value.length <= 128 && !value.includes('/') ? value : '';
+}
+
 function stringList(value) {
   return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 }
@@ -71,7 +76,7 @@ function canProjectChatConversation({
   conversationId,
   conversation
 }) {
-  const uid = normalizeString(callerUid);
+  const uid = normalizeCallerUid(callerUid);
   const email = normalizeString(callerEmail).toLowerCase();
   const id = normalizeString(conversationId);
   const data = conversation && typeof conversation === 'object' && !Array.isArray(conversation)

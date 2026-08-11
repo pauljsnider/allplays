@@ -741,6 +741,38 @@ test('authorized chat conversation projection hydrates only caller-readable allo
     assert.equal('privateNote' in result.items[0], false);
 });
 
+test('chat metadata callables do not repair a whitespace-distinct caller into another participant', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1 ': { parentTeamIds: ['team-parent'] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/group-parent': {
+            type: 'group',
+            participantIds: ['parent-1']
+        },
+        'teams/team-parent/chatConversations/direct-parent': {
+            type: 'direct',
+            directAccess: 'accepted_friend',
+            participantIds: ['parent-1', 'friend-1'],
+            directUserIds: ['parent-1', 'friend-1']
+        }
+    });
+    const context = authContext('parent-1 ', { email: 'parent@example.com' });
+
+    const managed = await callables.listManagedTeams({ includeChatMetadata: true }, context);
+    assert.equal(managed.isPartial, false);
+    assert.equal('chatConversations' in managed.items[0], false);
+
+    const authorized = await callables.listAuthorizedChatConversations({ teamId: 'team-parent' }, context);
+    assert.deepEqual(authorized, { items: [], isPartial: false });
+    await assert.rejects(
+        callables.listAuthorizedChatConversations({
+            teamId: 'team-parent',
+            activeConversationId: 'group-parent'
+        }, context),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
 test('authorized chat conversation projection fails closed for unavailable threads and unverified email grants', async () => {
     const { callables } = loadCallables({
         'users/email-admin': {},

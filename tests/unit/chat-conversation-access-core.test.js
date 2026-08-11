@@ -48,6 +48,24 @@ describe('chat conversation callable projection access', () => {
         })).toBe(false);
     });
 
+    it('does not repair a whitespace-distinct caller UID into another participant', () => {
+        expect(canProject({
+            callerUid: 'parent-1 ',
+            conversationId: 'selected-parent',
+            conversation: { type: 'group', participantIds: ['parent-1'] }
+        })).toBe(false);
+        expect(canProject({
+            callerUid: 'parent-1 ',
+            conversationId: 'direct-parent',
+            conversation: {
+                type: 'direct',
+                directAccess: 'accepted_friend',
+                participantIds: ['parent-1', 'friend-1'],
+                directUserIds: ['parent-1', 'friend-1']
+            }
+        })).toBe(false);
+    });
+
     it('keeps accepted-friend projections participant-only even for team administrators', () => {
         expect(canProject({
             canManageTeam: true,

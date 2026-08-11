@@ -120,6 +120,7 @@ test('isEligibleOpenOfficiatingSlotParticipant accepts staff and linked parents 
     const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
 
     assert.equal(isEligibleOpenOfficiatingSlotParticipant({ team, uid: 'coach-1', teamId: 'team-1' }), true);
+    assert.equal(isEligibleOpenOfficiatingSlotParticipant({ team, uid: 'coach-1 ', teamId: 'team-1' }), false);
     assert.equal(isEligibleOpenOfficiatingSlotParticipant({
         team,
         user: { email: 'assistant@example.com' },
@@ -212,6 +213,17 @@ test('buildOpenOfficiatingSlotClaimUpdate rejects filled or disabled slots', () 
         slotId: 'center',
         official: { uid: 'parent-1' }
     }), /already filled/);
+});
+
+test('buildOpenOfficiatingSlotClaimUpdate rejects a caller UID repaired by trimming', () => {
+    assert.throws(() => buildOpenOfficiatingSlotClaimUpdate({
+        game: {
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [{ id: 'center', position: 'Center Referee', status: 'open' }]
+        },
+        slotId: 'center',
+        official: { uid: 'parent-1 ', email: 'parent@example.com' }
+    }), /signed-in account is invalid/);
 });
 
 test('buildOfficiatingSelfAssignmentNotificationRecord targets assigners for audit visibility', () => {

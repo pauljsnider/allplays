@@ -236,7 +236,7 @@ function assertValidStoredOfficialUserIds(slots = []) {
 }
 
 function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = '', email = '', teamId = '' } = {}) {
-    const normalizedUid = normalizeString(uid);
+    const normalizedUid = normalizeStoredUserId(uid);
     if (!normalizedUid) return false;
 
     const normalizedTeamId = normalizeString(teamId || team.id);
@@ -258,9 +258,13 @@ function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = 
 
 function claimOpenOfficiatingSlotForOfficial(slots = [], slotId, official = {}) {
     const normalizedSlotId = normalizeString(slotId);
-    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
+    const rawOfficialUserId = official.uid || official.userId;
+    const officialUserId = normalizeStoredUserId(rawOfficialUserId);
     const officialEmail = normalizeEmail(official.email);
     const officialName = normalizeString(official.displayName || official.name || officialEmail || 'Official');
+    if (hasStoredPrincipalValue(rawOfficialUserId) && !officialUserId) {
+        throw createClaimError('unauthenticated', 'The signed-in account is invalid.');
+    }
     if (!officialUserId && !officialEmail) {
         throw createClaimError('unauthenticated', 'Sign in before claiming an officiating slot.');
     }
