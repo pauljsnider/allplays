@@ -48,12 +48,13 @@ export function getScheduleRsvpHydrationTargets(
   hydratedGroupKeys: ReadonlySet<string> = new Set()
 ) {
   const visibleGroupKeys = new Set<string>();
-  [...visibleEvents]
-    .sort((left, right) => left.date.getTime() - right.date.getTime())
-    .forEach((event) => {
-      if (visibleGroupKeys.size >= visibleGroupLimit) return;
-      visibleGroupKeys.add(getRsvpGroupKey(event));
-    });
+  // `visibleEvents` is already in the filter's display order. In particular,
+  // past schedules are newest-first, so re-sorting here would hydrate rows
+  // that are off screen instead of the visible page.
+  visibleEvents.forEach((event) => {
+    if (visibleGroupKeys.size >= visibleGroupLimit) return;
+    visibleGroupKeys.add(getRsvpGroupKey(event));
+  });
 
   // Hydration is bounded by visible groups rather than rows. Keep every
   // eligible sibling in a selected group even when that crosses the bulk

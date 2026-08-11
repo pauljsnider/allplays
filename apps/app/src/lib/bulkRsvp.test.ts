@@ -102,6 +102,23 @@ describe('bulk RSVP helpers', () => {
     ).map((row) => row.eventKey)).toEqual([visible.eventKey, visibleSibling.eventKey]);
   });
 
+  it('hydrates the newest visible past-event groups before older off-screen groups', () => {
+    const now = Date.now();
+    const pastEvents = Array.from({ length: 12 }, (_, index) => event(index + 1, {
+      date: new Date(now - (140 - index * 10) * 60 * 1000)
+    }));
+    const visiblePastEvents = [...pastEvents].reverse();
+
+    expect(getScheduleRsvpHydrationTargets(
+      pastEvents,
+      visiblePastEvents,
+      10
+    ).map((row) => row.id)).toEqual([
+      'game-3', 'game-4', 'game-5', 'game-6', 'game-7',
+      'game-8', 'game-9', 'game-10', 'game-11', 'game-12'
+    ]);
+  });
+
   it('excludes rows whose private RSVP note did not finish hydrating', () => {
     const knownEmptyNote = event(1, { myRsvpNote: null, myRsvpNoteHydrated: true });
     const unknownNote = event(2, { myRsvpNote: null, myRsvpNoteHydrated: false });
