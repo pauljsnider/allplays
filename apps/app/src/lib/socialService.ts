@@ -54,6 +54,7 @@ const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
 const hiddenSocialPostPageSize = 200;
 const teamSocialPostLimit = 12;
+const teamSocialFeedTeamLimit = 8;
 const friendSuggestionLimit = 8;
 const publicUserProfileCollection = 'publicUserProfiles';
 const logger = createLogger('social-service');
@@ -463,6 +464,8 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
 }> {
   const hiddenPostIds = await loadHiddenSocialPostIds(user.uid);
   const postDocs = new Map<string, FirestoreDoc>();
+  const homeTeamIds = getHomeTeamIds(home);
+  const queriedTeamIds = homeTeamIds.slice(0, teamSocialFeedTeamLimit);
   const loadVisiblePosts = isNativeRuntime()
     ? loadNativeSocialPostQueryPages({
       filters: [{ fieldPath: 'visibleUserIds', op: 'ARRAY_CONTAINS', value: { stringValue: user.uid } }],
@@ -487,7 +490,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
     });
   const [visiblePosts, teamPostResults] = await Promise.all([
     loadVisiblePosts,
-    Promise.allSettled(getHomeTeamIds(home).slice(0, 8).map((teamId) => (
+    Promise.allSettled(queriedTeamIds.map((teamId) => (
       isNativeRuntime()
         ? loadNativeSocialPostQueryPages({
           filters: [{ fieldPath: 'teamId', op: 'EQUAL', value: { stringValue: teamId } }],
@@ -537,7 +540,9 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
         : viewerReactions.likedPostIds.has(post.id),
       viewerReactionError: viewerReactions.failedPostIds.has(post.id)
     })),
-    isPartial: failedTeamPostResults.length > 0 || viewerReactions.failedPostIds.size > 0
+    isPartial: homeTeamIds.length > queriedTeamIds.length ||
+      failedTeamPostResults.length > 0 ||
+      viewerReactions.failedPostIds.size > 0
   };
 }
 

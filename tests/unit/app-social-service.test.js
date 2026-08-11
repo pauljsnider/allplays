@@ -460,6 +460,30 @@ describe('React app social service', () => {
         expect(model.feedError).toContain('Some feed details could not load');
     });
 
+    it('marks team-post discovery partial when the bounded team fan-out is truncated', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        const teams = Array.from({ length: 9 }, (_, index) => ({
+            teamId: `team-${index + 1}`,
+            teamName: `Team ${index + 1}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
+        const queriedTeamIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'socialPosts')
+            .flatMap((queryRef) => queryRef.clauses
+                .filter((clause) => clause.field === 'teamId')
+                .map((clause) => clause.value));
+        expect(queriedTeamIds).toEqual(teams.slice(0, 8).map((team) => team.teamId));
+        expect(queriedTeamIds).not.toContain('team-9');
+    });
+
     it('keeps failed native reaction reads unknown so Like cannot invert an existing reaction', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         vi.stubGlobal('fetch', vi.fn(async (url) => {
