@@ -1,4 +1,4 @@
-import { deleteUploadedMediaObjects as legacyDeleteUploadedMediaObjects, getConfigs as legacyGetConfigs, getGame as legacyGetGame, getPlayers as legacyGetPlayers, getTeam as legacyGetTeam, uploadStatSheetPhoto as legacyUploadStatSheetPhoto } from '@legacy/db.js';
+import { deleteUploadedMediaObjects as legacyDeleteUploadedMediaObjects, getConfigs as legacyGetConfigs, getGame as legacyGetGame, getPlayers as legacyGetPlayers, getTeam as legacyGetTeam, uploadStatSheetPhoto as legacyUploadStatSheetPhoto, validateStatSheetPhotoUpload as legacyValidateStatSheetPhotoUpload } from '@legacy/db.js';
 import { collection as legacyCollection, db as legacyDb, deleteDoc as legacyDeleteDoc, doc as legacyDoc, getDocs as legacyGetDocs, writeBatch as legacyWriteBatch } from '@legacy/firebase.js';
 import { buildTrackStatsheetApplyPlan as legacyBuildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows as legacyValidateTrackStatsheetApplyRows } from '@legacy/track-statsheet-apply.js';
 import { addAggregatedStatsWritesToBatch as legacyAddAggregatedStatsWritesToBatch } from '@legacy/live-tracker-save-complete.js';
@@ -21,6 +21,9 @@ export function uploadStatSheetPhoto(
   options: { returnUpload?: true } = {}
 ): Promise<{ url: string; path: string; storage?: 'image' | 'primary' }> {
   return Promise.resolve(legacyUploadStatSheetPhoto(teamId, gameId, file, { ...options, returnUpload: true })) as Promise<{ url: string; path: string; storage?: 'image' | 'primary' }>
+}
+export function validateStatSheetPhotoUpload(teamId: string, gameId: string, file: File): void {
+  legacyValidateStatSheetPhotoUpload(teamId, gameId, file)
 }
 export const deleteUploadedMediaObjects = legacyDeleteUploadedMediaObjects as (...args: any[]) => Promise<any>
 export const collection = legacyCollection as (...args: any[]) => any
