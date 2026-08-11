@@ -2220,6 +2220,42 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
+  it('marks a verified linked-team result partial when its games cannot load', async () => {
+    vi.mocked(getGames).mockRejectedValue(new Error('Schedule unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: true,
+      assignments: []
+    });
+  });
+
+  it('preserves known assignments but marks them partial when linked-team details cannot load', async () => {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
+    expect(result.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'assigned', gameId: 'game-assigned', teamName: 'Team' })
+    ]));
+  });
+
+  it('rejects an incomplete empty requested-team read instead of proving no access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [] } as any);
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+    vi.mocked(getGames).mockResolvedValue([]);
+
+    await expect(loadOfficialAssignments(user, { teamId: 'team-alpha' }))
+      .rejects.toThrow('Official assignment details could not be completely loaded. Try again.');
+  });
+
   it('fails closed when native official discovery is unavailable despite an ordinary parent schedule link', async () => {
     capacitorCoreMock.isNativePlatform.mockReturnValue(true);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);

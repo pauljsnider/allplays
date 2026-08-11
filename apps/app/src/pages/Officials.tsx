@@ -35,7 +35,7 @@ export function Officials({ auth }: { auth: AuthState }) {
       if (result.isPartial) {
         setStatus({
           tone: 'warning',
-          message: `Showing assignments for ${result.teamCount} verified linked team${result.teamCount === 1 ? '' : 's'}. Retry later to refresh any additional official links.`
+          message: `Showing assignments for ${result.teamCount} verified linked team${result.teamCount === 1 ? '' : 's'}. Some linked-team data could not refresh; retry later for a complete list.`
         });
       }
     } catch (error: any) {

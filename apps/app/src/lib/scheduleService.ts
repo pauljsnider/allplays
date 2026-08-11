@@ -7140,10 +7140,13 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   // (whose stored date is the start time) in range; the filter below still trims to upcoming.
   const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
-    const [team, games] = await Promise.all([
-      getTeam(teamId, { includeInactive: true }).catch(() => null),
-      getGames(teamId, { startDate: officialGamesSince }).catch(() => [])
+    const [teamResult, gamesResult] = await Promise.allSettled([
+      getTeam(teamId, { includeInactive: true }),
+      getGames(teamId, { startDate: officialGamesSince })
     ]);
+    const team = teamResult.status === 'fulfilled' ? teamResult.value : null;
+    const games = gamesResult.status === 'fulfilled' ? gamesResult.value : [];
+    const isPartial = teamResult.status === 'rejected' || gamesResult.status === 'rejected';
     const canClaim = isEligibleOpenOfficiatingSlotParticipant(
       team || {},
       userProfile as Record<string, any>,
@@ -7199,6 +7202,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
         requestedTeamId === teamId &&
         (canClaim || assignments.some((item) => item.kind === 'assigned'))
       ),
+      isPartial,
       assignments
     };
   }));
@@ -7209,6 +7213,9 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 
   if (!accessibleTeamIds.length) {
     if (discoveryError) throw discoveryError;
+    if (teamResults.some((result) => result.isPartial)) {
+      throw new Error('Official assignment details could not be completely loaded. Try again.');
+    }
     return {
       hasAccess: false,
       teamIds: [],
@@ -7222,7 +7229,9 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     hasAccess: true,
     teamIds: accessibleTeamIds,
     teamCount: accessibleTeamIds.length,
-    isPartial: linkedTeamIdsPartial || discoveryError !== null,
+    isPartial: linkedTeamIdsPartial
+      || discoveryError !== null
+      || teamResults.some((result) => result.hasAccess && result.isPartial),
     assignments: teamResults
       .filter((result) => result.hasAccess)
       .flatMap((result) => result.assignments)

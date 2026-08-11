@@ -50,7 +50,7 @@ describe('Officials partial native access', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('Showing assignments for 1 verified linked team. Retry later to refresh any additional official links.')).toBeTruthy();
+    expect(await screen.findByText('Showing assignments for 1 verified linked team. Some linked-team data could not refresh; retry later for a complete list.')).toBeTruthy();
     expect(screen.queryByText(/could not be verified/i)).toBeNull();
     expect(screen.getByRole('heading', { name: 'Assignments' })).toBeTruthy();
   });
