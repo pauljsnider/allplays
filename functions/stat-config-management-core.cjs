@@ -11,6 +11,12 @@ function normalizeBoundedId(value) {
   return normalized && normalized.length <= 128 && !normalized.includes('/') ? normalized : '';
 }
 
+function normalizeAuthUid(value) {
+  if (typeof value !== 'string') return '';
+  if (!value || value.length > 128 || value.includes('/') || value !== value.trim()) return '';
+  return value;
+}
+
 function isSharedGameLinkedToTeam(game = {}, teamId) {
   return game.homeTeamId === teamId
     || game.awayTeamId === teamId
@@ -55,7 +61,7 @@ function createStatConfigManagementHandlers({
   const sharedGameLimit = Math.max(1, Math.min(Number(maxSharedGamesPerQuery) || DEFAULT_MAX_SHARED_GAMES_PER_QUERY, 1000));
 
   async function loadEnabledAuthUser(context) {
-    const uid = normalizeBoundedId(context.auth?.uid);
+    const uid = normalizeAuthUid(context.auth?.uid);
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in to manage stat configs.');
     let authUser;
     try {

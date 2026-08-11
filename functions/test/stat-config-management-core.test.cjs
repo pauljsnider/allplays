@@ -159,6 +159,22 @@ test('destructive config handlers deny disabled Auth users before mutation', asy
   assert.ok(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'));
 });
 
+test('destructive config handlers reject a caller UID that would change when trimmed', async () => {
+  const { firestore, handlers } = makeHandlers({
+    ...baseSeed,
+    'teams/team-1/statTrackerConfigs/config-1': { name: 'Basketball' }
+  });
+
+  await assert.rejects(
+    handlers.deleteStatConfig(
+      { teamId: 'team-1', configId: 'config-1' },
+      { auth: { uid: 'owner-1 ' } }
+    ),
+    (error) => error.code === 'unauthenticated'
+  );
+  assert.ok(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'));
+});
+
 test('reset blocks legacy shared history and deletes no configs', async () => {
   const { firestore, handlers } = makeHandlers({
     ...baseSeed,

@@ -130,6 +130,22 @@ test('official discovery supports normalized and common formatted Auth phone var
   assert.deepEqual((await handler({}, context)).teamIds, ['phone-team']);
 });
 
+test('official discovery rejects a caller UID that would change when trimmed', async () => {
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  });
+
+  await assert.rejects(
+    handler({}, { auth: { uid: 'official-1 ' } }),
+    (error) => error.code === 'unauthenticated'
+  );
+});
+
 test('official discovery returns only caller assignments and eligible open slots in its bounded projection', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([
@@ -422,6 +438,38 @@ test('requested-team projection excludes a team when current access cannot be pr
         data: {
           date: futureDate,
           officiatingSlots: [{ id: 'other', officialUserId: 'someone-else', status: 'accepted' }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true, requestedTeamId: 'unrelated' }, context);
+
+  assert.deepEqual(result.teamIds, []);
+  assert.deepEqual(result.teams, []);
+  assert.deepEqual(result.assignments, []);
+  assert.equal(result.assignmentsComplete, true);
+});
+
+test('requested-team projection rejects a stored owner UID that would change when trimmed', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: [] },
+      'teams/unrelated': { name: 'Unrelated FC', ownerId: 'official-1 ', adminEmails: [] }
+    },
+    gamesByTeam: {
+      unrelated: [{
+        id: 'game-1',
+        data: {
+          date: futureDate,
+          officiatingSelfAssignmentEnabled: true,
+          officiatingSlots: [{ id: 'open', position: 'Center', status: 'open' }]
         }
       }]
     }

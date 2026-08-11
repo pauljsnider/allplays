@@ -91,7 +91,7 @@ function isCancelledGame(game = {}) {
 }
 
 function isAssignedToAuthUser(slot = {}, authUser = {}) {
-  const uid = normalizeBoundedId(authUser.uid);
+  const uid = normalizeStoredUserId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
   const assignedUid = normalizeStoredUserId(slot.officialUserId);
   if (hasStoredPrincipalValue(slot.officialUserId)) return Boolean(assignedUid && uid && assignedUid === uid);
@@ -124,14 +124,14 @@ function projectSharedGameForTeam(game = {}, teamId = '') {
 }
 
 function canClaimOpenOfficialSlots(teamId, team = {}, user = {}, authUser = {}) {
-  const uid = normalizeBoundedId(authUser.uid);
+  const uid = normalizeStoredUserId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
   const adminEmails = Array.isArray(team.adminEmails)
     ? team.adminEmails.map(normalizeOfficialEmail).filter(Boolean)
     : [];
   return Boolean(
     user.isAdmin === true ||
-    normalizeBoundedId(team.ownerId) === uid ||
+    normalizeStoredUserId(team.ownerId) === uid ||
     (email && adminEmails.includes(email)) ||
     (Array.isArray(user.parentTeamIds) && user.parentTeamIds.map(normalizeBoundedId).includes(teamId))
   );
@@ -347,7 +347,7 @@ function createOfficialTeamDiscoveryHandler({
   }
 
   return async function listOfficialLinkedTeamIds(data, context = {}) {
-    const uid = normalizeBoundedId(context.auth?.uid);
+    const uid = normalizeStoredUserId(context.auth?.uid);
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in to view official assignments.');
 
     let authUser;
