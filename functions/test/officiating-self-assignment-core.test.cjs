@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+    buildSharedGameSyntheticId,
     normalizeOpenOfficiatingSlotClaimInput,
     normalizeOfficiatingAssignmentResponseInput,
     isEligibleOpenOfficiatingSlotParticipant,
@@ -64,6 +65,48 @@ test('resolveOfficiatingGamePath decodes shared synthetic game ids', () => {
     assert.equal(decodeSharedGameSyntheticId(syntheticId), 'organizations/org-1/sharedGames/game-1');
     assert.equal(resolveOfficiatingGamePath('team-1', syntheticId), 'organizations/org-1/sharedGames/game-1');
     assert.equal(resolveOfficiatingGamePath('team-1', 'game-1'), 'teams/team-1/games/game-1');
+});
+
+test('long shared-game paths use bounded opaque ids paired with a validated path', () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const gameId = buildSharedGameSyntheticId(sharedGamePath);
+
+    assert.match(gameId, /^sharedh_[A-Za-z0-9_-]+$/);
+    assert.ok(gameId.length <= 128);
+    assert.deepEqual(normalizeOpenOfficiatingSlotClaimInput({
+        teamId: 'team-1',
+        gameId,
+        sharedGamePath,
+        slotId: 'center'
+    }), {
+        teamId: 'team-1',
+        gameId,
+        sharedGamePath,
+        slotId: 'center',
+        displayName: ''
+    });
+    assert.equal(resolveOfficiatingGamePath('team-1', gameId, sharedGamePath), sharedGamePath);
+    assert.throws(() => normalizeOpenOfficiatingSlotClaimInput({
+        teamId: 'team-1',
+        gameId,
+        slotId: 'center'
+    }), /Shared game path is required/);
+    assert.throws(() => normalizeOfficiatingAssignmentResponseInput({
+        teamId: 'team-1',
+        gameId,
+        sharedGamePath: `organizations/other/sharedGames/${'g'.repeat(90)}`,
+        slotId: 'center',
+        status: 'accepted'
+    }), /does not match/);
+});
+
+test('shared synthetic ids cannot target a non-shared document path', () => {
+    const syntheticId = `shared_${encodeURIComponent('users/user-1/privateData/record-1')}`;
+    assert.throws(() => normalizeOpenOfficiatingSlotClaimInput({
+        teamId: 'team-1',
+        gameId: syntheticId,
+        slotId: 'center'
+    }), /Shared game identity is invalid/);
 });
 
 test('isTeamLinkedToSharedGame only accepts participating teams', () => {

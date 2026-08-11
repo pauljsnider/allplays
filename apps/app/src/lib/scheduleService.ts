@@ -467,6 +467,7 @@ export type OfficialAssignmentItem = {
   teamId: string;
   teamName: string;
   gameId: string;
+  sharedGamePath?: string;
   slotId: string;
   position: string;
   status: string;
@@ -7079,11 +7080,22 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireA
       const kind = compactString(item?.kind);
       const teamId = compactString(item?.teamId);
       const gameId = compactString(item?.gameId);
+      const sharedGamePath = compactString(item?.sharedGamePath);
       const slotId = compactString(item?.slotId);
       const date = normalizeScheduleDate(item?.date);
+      const sharedGamePathParts = sharedGamePath.split('/');
       if (!['assigned', 'open'].includes(kind) ||
         !teamId || !normalizedTeamIds.includes(teamId) || teamId.length > 128 || teamId.includes('/') ||
         !gameId || gameId.length > 128 || gameId.includes('/') ||
+        (gameId.startsWith('sharedh_') && !sharedGamePath) ||
+        (sharedGamePath && (
+          sharedGamePath.length > 6144 ||
+          sharedGamePathParts.length < 4 ||
+          sharedGamePathParts.length % 2 !== 0 ||
+          sharedGamePathParts[sharedGamePathParts.length - 2] !== 'sharedGames' ||
+          sharedGamePathParts.some((part) => !part || part === '.' || part === '..' || part.length > 1500) ||
+          !gameId.startsWith('shared_') && !gameId.startsWith('sharedh_') && !gameId.startsWith('shared::')
+        )) ||
         !slotId || slotId.length > 128 || slotId.includes('/') ||
         !date) {
         throw new Error('Official assignment discovery returned an invalid response.');
@@ -7093,6 +7105,7 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any, options: { requireA
         teamId,
         teamName: compactString(item.teamName) || 'Team',
         gameId,
+        ...(sharedGamePath ? { sharedGamePath } : {}),
         slotId,
         position: compactString(item.position) || 'Official',
         status: kind === 'open' ? 'open' : (compactString(item.status) || 'pending'),
@@ -7338,6 +7351,7 @@ export async function respondToOfficialAssignmentItem(item: OfficialAssignmentIt
     await callNativeFirebaseFunction('respondToOfficiatingAssignment', {
       teamId: item.teamId,
       gameId: item.gameId,
+      ...(item.sharedGamePath ? { sharedGamePath: item.sharedGamePath } : {}),
       slotId: item.slotId,
       status
     }, { errorLabel: 'Officiating response' });
@@ -7351,6 +7365,7 @@ export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, 
     await callNativeFirebaseFunction('claimOpenOfficiatingSlot', {
       teamId: item.teamId,
       gameId: item.gameId,
+      ...(item.sharedGamePath ? { sharedGamePath: item.sharedGamePath } : {}),
       slotId: item.slotId
     }, { errorLabel: 'Officiating claim' });
     return;

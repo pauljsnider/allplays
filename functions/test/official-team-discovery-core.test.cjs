@@ -288,6 +288,85 @@ test('official assignment projection includes bounded shared games without dupli
   }]);
 });
 
+test('official assignment projection removes local mirrors of returned shared games', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedPath = 'tournaments/tournament-1/sharedGames/shared-1';
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'local-mirror',
+        data: {
+          sharedGameId: 'shared-1',
+          date: futureDate,
+          opponent: 'Stale Tigers',
+          officiatingSlots: [{ id: 'mine', officialUserId: 'official-1' }]
+        }
+      }]
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-1',
+        awayTeamId: 'team-2',
+        awayTeamName: 'Current Tigers',
+        officiatingSlots: [{ id: 'mine', officialUserId: 'official-1' }]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].gameId, `shared_${encodeURIComponent(sharedPath)}`);
+  assert.equal(result.assignments[0].opponent, 'Current Tigers');
+  assert.equal(result.assignments[0].sharedGamePath, sharedPath);
+});
+
+test('official assignment projection preserves long shared-game paths with bounded opaque ids', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedPath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha FC' }
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-1',
+        officiatingSlots: [{ id: 'mine', officialUserId: 'official-1' }]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.equal(result.assignments.length, 1);
+  assert.match(result.assignments[0].gameId, /^sharedh_[A-Za-z0-9_-]+$/);
+  assert.ok(result.assignments[0].gameId.length <= 128);
+  assert.equal(result.assignments[0].sharedGamePath, sharedPath);
+});
+
 test('official assignment projection fails closed when shared-game membership exceeds the bound', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([

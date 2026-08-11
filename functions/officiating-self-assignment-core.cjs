@@ -1,7 +1,12 @@
+const crypto = require('node:crypto');
+
 const OFFICIATING_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open']);
 const OFFICIATING_RESPONSE_STATUSES = new Set(['accepted', 'declined']);
 const SHARED_GAME_ID_PREFIX = 'shared_';
 const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
+const HASHED_SHARED_GAME_ID_PREFIX = 'sharedh_';
+const MAX_SHARED_GAME_PATH_BYTES = 6144;
+const MAX_FIRESTORE_SEGMENT_BYTES = 1500;
 
 function normalizeString(value) {
     return String(value || '').trim();
@@ -25,21 +30,83 @@ function normalizeDocId(value, label) {
     return normalized;
 }
 
+function normalizeSharedGamePath(value) {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim();
+    if (!normalized || Buffer.byteLength(normalized, 'utf8') > MAX_SHARED_GAME_PATH_BYTES) return '';
+    const parts = normalized.split('/');
+    if (parts.length < 4 || parts.length % 2 !== 0 || parts[parts.length - 2] !== 'sharedGames') return '';
+    if (parts.some((part) => !part || part === '.' || part === '..' || Buffer.byteLength(part, 'utf8') > MAX_FIRESTORE_SEGMENT_BYTES)) {
+        return '';
+    }
+    return normalized;
+}
+
+function buildSharedGameSyntheticId(sharedGamePath) {
+    const normalizedPath = normalizeSharedGamePath(sharedGamePath);
+    if (!normalizedPath) return '';
+    const reversibleId = `${SHARED_GAME_ID_PREFIX}${encodeURIComponent(normalizedPath)}`;
+    if (reversibleId.length <= 128) return reversibleId;
+    const digest = crypto.createHash('sha256').update(normalizedPath, 'utf8').digest('base64url');
+    return `${HASHED_SHARED_GAME_ID_PREFIX}${digest}`;
+}
+
 function isSharedGameSyntheticId(gameId) {
     return typeof gameId === 'string'
-        && (gameId.startsWith(SHARED_GAME_ID_PREFIX) || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX));
+        && (
+            gameId.startsWith(SHARED_GAME_ID_PREFIX)
+            || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX)
+            || gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)
+        );
 }
 
 function decodeSharedGameSyntheticId(gameId) {
     if (!isSharedGameSyntheticId(gameId)) return null;
+    if (gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)) return null;
     const prefix = gameId.startsWith(SHARED_GAME_ID_PREFIX)
         ? SHARED_GAME_ID_PREFIX
         : LEGACY_SHARED_GAME_ID_PREFIX;
-    return decodeURIComponent(gameId.slice(prefix.length));
+    try {
+        return normalizeSharedGamePath(decodeURIComponent(gameId.slice(prefix.length))) || null;
+    } catch {
+        return null;
+    }
 }
 
-function resolveOfficiatingGamePath(teamId, gameId) {
+function normalizeOfficiatingGameReference(data = {}) {
+    const gameId = normalizeDocId(data.gameId, 'Game ID');
+    const rawSharedGamePath = typeof data.sharedGamePath === 'string' ? data.sharedGamePath.trim() : '';
+    const sharedGamePath = normalizeSharedGamePath(rawSharedGamePath);
+    if (rawSharedGamePath && !sharedGamePath) {
+        throw createClaimError('invalid-argument', 'Shared game path is invalid.');
+    }
+    if (sharedGamePath) {
+        if (!isSharedGameSyntheticId(gameId) || buildSharedGameSyntheticId(sharedGamePath) !== gameId) {
+            throw createClaimError('invalid-argument', 'Shared game identity does not match its path.');
+        }
+    } else if (gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)) {
+        throw createClaimError('invalid-argument', 'Shared game path is required.');
+    } else if (isSharedGameSyntheticId(gameId) && !decodeSharedGameSyntheticId(gameId)) {
+        throw createClaimError('invalid-argument', 'Shared game identity is invalid.');
+    }
+    return {
+        gameId,
+        ...(sharedGamePath ? { sharedGamePath } : {})
+    };
+}
+
+function resolveOfficiatingGamePath(teamId, gameId, sharedGamePath = '') {
+    const normalizedSharedGamePath = normalizeSharedGamePath(sharedGamePath);
+    if (normalizedSharedGamePath) {
+        if (buildSharedGameSyntheticId(normalizedSharedGamePath) !== gameId) {
+            throw createClaimError('invalid-argument', 'Shared game identity does not match its path.');
+        }
+        return normalizedSharedGamePath;
+    }
     const sharedPath = decodeSharedGameSyntheticId(gameId);
+    if (isSharedGameSyntheticId(gameId) && !sharedPath) {
+        throw createClaimError('invalid-argument', 'Shared game path is required.');
+    }
     return sharedPath || `teams/${teamId}/games/${gameId}`;
 }
 
@@ -56,9 +123,10 @@ function isTeamLinkedToSharedGame(game = {}, teamId = '') {
 }
 
 function normalizeOpenOfficiatingSlotClaimInput(data = {}) {
+    const gameReference = normalizeOfficiatingGameReference(data);
     return {
         teamId: normalizeDocId(data.teamId, 'Team ID'),
-        gameId: normalizeDocId(data.gameId, 'Game ID'),
+        ...gameReference,
         slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
         displayName: normalizeString(data.displayName || data.name)
     };
@@ -69,9 +137,10 @@ function normalizeOfficiatingAssignmentResponseInput(data = {}) {
     if (!OFFICIATING_RESPONSE_STATUSES.has(status)) {
         throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
     }
+    const gameReference = normalizeOfficiatingGameReference(data);
     return {
         teamId: normalizeDocId(data.teamId, 'Team ID'),
-        gameId: normalizeDocId(data.gameId, 'Game ID'),
+        ...gameReference,
         slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
         status
     };
@@ -371,6 +440,8 @@ function buildOfficiatingAssignmentResponseNotificationRecord({
 }
 
 module.exports = {
+    buildSharedGameSyntheticId,
+    normalizeSharedGamePath,
     normalizeOpenOfficiatingSlotClaimInput,
     normalizeOfficiatingAssignmentResponseInput,
     normalizeOfficiatingSlots,

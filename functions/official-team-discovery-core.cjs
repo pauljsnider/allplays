@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  buildSharedGameSyntheticId: buildSyntheticSharedGameId,
+  normalizeSharedGamePath
+} = require('./officiating-self-assignment-core.cjs');
+
 const DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS = 200;
 const DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS = 50;
 const DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM = 100;
@@ -83,14 +88,17 @@ function isAssignedToAuthUser(slot = {}, authUser = {}) {
 }
 
 function getSharedGamePath(docSnapshot) {
-  const path = String(docSnapshot?.ref?.path || '').trim();
-  const parts = path.split('/').filter(Boolean);
-  return parts.length >= 4 && parts[parts.length - 2] === 'sharedGames' ? path : '';
+  return normalizeSharedGamePath(docSnapshot?.ref?.path) || '';
 }
 
 function buildSharedGameSyntheticId(docSnapshot) {
   const path = getSharedGamePath(docSnapshot);
-  return path ? normalizeBoundedId(`shared_${encodeURIComponent(path)}`) : '';
+  return path ? buildSyntheticSharedGameId(path) : '';
+}
+
+function getSharedGameDocumentId(docSnapshot) {
+  const path = getSharedGamePath(docSnapshot);
+  return path ? path.split('/').pop() || '' : '';
 }
 
 function projectSharedGameForTeam(game = {}, teamId = '') {
@@ -118,7 +126,7 @@ function canClaimOpenOfficialSlots(teamId, team = {}, user = {}, authUser = {}) 
   );
 }
 
-function serializeOfficialAssignment({ teamId, teamName, gameId, game, slot, kind }) {
+function serializeOfficialAssignment({ teamId, teamName, gameId, sharedGamePath = '', game, slot, kind }) {
   const date = toDate(game.date);
   const slotId = normalizeBoundedId(slot.id) || normalizeBoundedId(slot.slotId);
   if (!date || !normalizeBoundedId(teamId) || !normalizeBoundedId(gameId) || !slotId) return null;
@@ -134,17 +142,18 @@ function serializeOfficialAssignment({ teamId, teamName, gameId, game, slot, kin
     location: String(game.location || 'Location TBD').trim().slice(0, 500) || 'Location TBD',
     date: date.toISOString(),
     canClaim: kind === 'open',
-    scheduleReviewRequired: kind === 'assigned' && slot.scheduleReviewRequired === true
+    scheduleReviewRequired: kind === 'assigned' && slot.scheduleReviewRequired === true,
+    ...(sharedGamePath ? { sharedGamePath } : {})
   };
 }
 
-function projectOfficialGameAssignments({ teamId, teamName, gameId, game, authUser, canClaimOpen }) {
+function projectOfficialGameAssignments({ teamId, teamName, gameId, sharedGamePath = '', game, authUser, canClaimOpen }) {
   const date = toDate(game.date);
   if (!date || date.getTime() < Date.now() || isCancelledGame(game)) return [];
   const slots = Array.isArray(game.officiatingSlots) ? game.officiatingSlots : [];
   const assigned = slots
     .filter((slot) => slot && typeof slot === 'object' && isAssignedToAuthUser(slot, authUser))
-    .map((slot) => serializeOfficialAssignment({ teamId, teamName, gameId, game, slot, kind: 'assigned' }))
+    .map((slot) => serializeOfficialAssignment({ teamId, teamName, gameId, sharedGamePath, game, slot, kind: 'assigned' }))
     .filter(Boolean);
   const open = canClaimOpen && game.officiatingSelfAssignmentEnabled === true
     ? slots
@@ -153,7 +162,7 @@ function projectOfficialGameAssignments({ teamId, teamName, gameId, game, authUs
         !normalizeOfficialEmail(slot.officialEmail || slot.email) &&
         !String(slot.officialName || '').trim() &&
         String(slot.status || '').trim().toLowerCase() === 'open')
-      .map((slot) => serializeOfficialAssignment({ teamId, teamName, gameId, game, slot, kind: 'open' }))
+      .map((slot) => serializeOfficialAssignment({ teamId, teamName, gameId, sharedGamePath, game, slot, kind: 'open' }))
       .filter(Boolean)
     : [];
   return [...assigned, ...open];
@@ -270,25 +279,32 @@ function createOfficialTeamDiscoveryHandler({
         const team = teamSnap?.exists ? teamSnap.data() || {} : {};
         const teamName = String(team.name || 'Team').trim().slice(0, 200) || 'Team';
         const canClaimOpen = canClaimOpenOfficialSlots(teamId, team, user, authUser);
-        const directAssignments = (Array.isArray(gamesSnap.docs) ? gamesSnap.docs : []).flatMap((gameSnap) => (
-          projectOfficialGameAssignments({
+        const sharedGameDocumentIds = new Set(sharedGameDocs.map(getSharedGameDocumentId).filter(Boolean));
+        const directAssignments = (Array.isArray(gamesSnap.docs) ? gamesSnap.docs : []).flatMap((gameSnap) => {
+          const game = gameSnap.data() || {};
+          if (typeof game.sharedGameId === 'string' && sharedGameDocumentIds.has(game.sharedGameId.trim())) {
+            return [];
+          }
+          return projectOfficialGameAssignments({
             teamId,
             teamName,
             gameId: normalizeBoundedId(gameSnap.id),
-            game: gameSnap.data() || {},
+            game,
             authUser,
             canClaimOpen
-          })
-        ));
+          });
+        });
         const sharedAssignments = sharedGameDocs.flatMap((gameSnap) => {
+          const sharedGamePath = getSharedGamePath(gameSnap);
           const gameId = buildSharedGameSyntheticId(gameSnap);
-          if (!gameId) {
+          if (!gameId || !sharedGamePath) {
             throw new HttpsError('failed-precondition', 'Official shared-game identity could not be represented safely.');
           }
           return projectOfficialGameAssignments({
             teamId,
             teamName,
             gameId,
+            sharedGamePath,
             game: projectSharedGameForTeam(gameSnap.data() || {}, teamId),
             authUser,
             canClaimOpen

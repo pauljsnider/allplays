@@ -3294,7 +3294,7 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
   }
 
-  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
   const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -3366,7 +3366,7 @@ exports.respondToOfficiatingAssignment = functions.https.onCall(async (data, con
     ? String(context.auth.token?.email || '').trim().toLowerCase()
     : '';
   const displayName = String(context.auth.token?.name || callerEmail || 'Official').trim();
-  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
   const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
