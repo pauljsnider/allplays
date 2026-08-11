@@ -47,9 +47,9 @@ function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
   return toAppServiceError(error, fallbackMessage);
 }
 
-function throwIfAnySecondarySliceFailed(errors: AppServiceError[]) {
-  if (errors.length > 0) {
-    throw errors[0];
+function requireCompleteChatInbox<T extends { isPartial?: boolean }>(chatInbox: T): T {
+  if (chatInbox.isPartial === true) {
+    throw new Error('Home chat access is incomplete. Try loading Home again.');
   }
   return chatInbox;
 }
@@ -229,10 +229,9 @@ export async function loadParentHomeWithSecondaryData(
     // Stream each secondary slice independently so Home renders schedule cards
     // immediately and fills in chat badges / fee items / hydrated RSVP states as
     // each arrives, instead of blocking on all of them before any update (#2037).
-    // A per-slice failure preserves successful streamed slices, then rejects the
-    // aggregate so Home can show a retryable partial-state notice and avoid
-    // caching an incomplete result as authoritative absence.
-    const secondaryErrors: AppServiceError[] = [];
+    // A failed slice leaves the streamed preview available, but the final load
+    // rejects so Home labels it retryable and never caches empty fallback data
+    // as authoritative chat, fee, or schedule state.
     const results = await Promise.allSettled([
       hydrateParentScheduleDetails(schedule, user).then((hydratedSchedule) => {
         const nextSchedule = hydratedSchedule || schedule;
@@ -247,12 +246,10 @@ export async function loadParentHomeWithSecondaryData(
         logger.warn('Schedule hydration failed.', { error: appError });
         throw appError;
       }),
-      loadChatInbox(user).then(requireCompleteChatInbox).then((chatInbox) => {
+      loadChatInbox(user).then((chatInbox) => {
         const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
         emit({ inboxTeams: nextInboxTeams });
-        if (chatInbox.isPartial === true) {
-          throw new Error('Home chat access discovery is incomplete. Try again.');
-        }
+        requireCompleteChatInbox(chatInbox);
         return nextInboxTeams;
       }).catch((error) => {
         const appError = normalizeSecondaryError(error, 'Unable to load Home chat.');
@@ -270,7 +267,10 @@ export async function loadParentHomeWithSecondaryData(
       })
     ]);
 
-    throwIfAnySecondarySliceFailed(secondaryErrors);
+    const failedSlice = results.find((result) => result.status === 'rejected');
+    if (failedSlice?.status === 'rejected') {
+      throw failedSlice.reason;
+    }
 
     const [scheduleResult, chatResult, feesResult] = results;
     return buildParentHomeModel({

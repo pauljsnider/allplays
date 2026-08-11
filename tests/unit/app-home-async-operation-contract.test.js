@@ -68,7 +68,8 @@ describe('Home async operation contract', () => {
         expect(homeServiceSource).toContain("logger.warn('Schedule hydration failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Chat inbox failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Fees failed.', { error: appError });");
-        expect(homeServiceSource).toContain('throwIfAnySecondarySliceFailed(secondaryErrors);');
+        expect(homeServiceSource).toContain("const failedSlice = results.find((result) => result.status === 'rejected');");
+        expect(homeServiceSource).toContain('throw failedSlice.reason;');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 

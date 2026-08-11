@@ -288,12 +288,12 @@ export function FriendProfile({ auth, profileUserId }: { auth: AuthState; profil
                 {post.teamName ? <span className="text-xs font-bold text-gray-500">{post.teamName}</span> : null}
               </div>
             </article>
-          )) : !profile.postsIncomplete ? (
+          )) : (
             <div className="app-card p-8 text-center">
               <h3 className="text-base font-black text-gray-950">Nothing shared yet</h3>
               <p className="mt-1 text-sm font-semibold text-gray-500">Posts shared with you will appear here.</p>
             </div>
-          ) : null}
+          )}
         </div>
       </section> : null}
     </div>

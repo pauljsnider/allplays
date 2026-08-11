@@ -14,8 +14,7 @@ import type {
 
 async function call<T>(
   name: string,
-  data: Record<string, unknown> = {},
-  options: { allowAnonymous?: boolean } = {}
+  data: Record<string, unknown> = {}
 ): Promise<T> {
   if (isNativeRuntime()) {
     const projectId = String(firebaseAuth.app?.options?.projectId || '').trim();
@@ -51,16 +50,14 @@ async function call<T>(
 export async function listPublicOpportunities(filters: OpportunityFilters = {}, cursor: string | null = null) {
   return call<{ items: PublicOpportunity[]; nextCursor: string | null }>(
     'listPublicOpportunities',
-    { filters, cursor, pageSize: 24 },
-    { allowAnonymous: true }
+    { filters, cursor, pageSize: 24 }
   );
 }
 
 export async function getPublicOpportunity(listingId: string) {
   const result = await call<{ item: PublicOpportunity }>(
     'getPublicOpportunity',
-    { listingId },
-    { allowAnonymous: true }
+    { listingId }
   );
   return result.item;
 }

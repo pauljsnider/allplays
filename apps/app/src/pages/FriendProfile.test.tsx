@@ -121,30 +121,6 @@ describe('FriendProfile', () => {
     expect(screen.queryByRole('heading', { name: 'Recent posts' })).toBeNull();
   });
 
-  it('labels a failed posts slice as incomplete and retries the profile load', async () => {
-    socialMocks.loadFriendProfile
-      .mockResolvedValueOnce({ ...profile, postsIncomplete: true })
-      .mockResolvedValueOnce(profile);
-
-    render(
-      <MemoryRouter initialEntries={['/profile?section=posts']}>
-        <Routes>
-          <Route path="/profile" element={<FriendProfile auth={auth} profileUserId="user-1" />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('This is not an empty timeline.');
-    expect(screen.queryByText('Nothing shared yet')).toBeNull();
-    expect(screen.getByText('—')).toBeVisible();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Retry posts' }));
-
-    await waitFor(() => expect(socialMocks.loadFriendProfile).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Nothing shared yet')).toBeVisible();
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
   it('shows a direct message action for an accepted friend profile', async () => {
     socialMocks.loadFriendProfile.mockResolvedValue({
       ...profile,

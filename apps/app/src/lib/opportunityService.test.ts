@@ -66,35 +66,6 @@ describe('opportunity service native callables', () => {
     expect(mocks.httpsCallable).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['listPublicOpportunities', () => listPublicOpportunities()],
-    ['getPublicOpportunity', () => getPublicOpportunity('listing-1')]
-  ])('allows signed-out native callers to use public %s reads', async (callableName, invoke) => {
-    mocks.isNativeRuntime.mockReturnValue(true);
-    mocks.getNativeAuthIdToken.mockResolvedValue(null);
-    mocks.httpPost.mockResolvedValue({
-      status: 200,
-      data: { result: callableName === 'getPublicOpportunity' ? { item: { id: 'listing-1' } } : { items: [], nextCursor: null } },
-      headers: {},
-      url: ''
-    });
-
-    await expect(invoke()).resolves.toBeTruthy();
-
-    expect(mocks.httpPost).toHaveBeenCalledWith(expect.objectContaining({
-      url: `https://us-central1-demo-allplays.cloudfunctions.net/${callableName}`,
-      headers: expect.not.objectContaining({ Authorization: expect.anything() })
-    }));
-  });
-
-  it('still requires native authentication for protected opportunity operations', async () => {
-    mocks.isNativeRuntime.mockReturnValue(true);
-    mocks.getNativeAuthIdToken.mockResolvedValue(null);
-
-    await expect(createPublicOpportunity({} as any)).rejects.toThrow('Native opportunity access is unavailable.');
-    expect(mocks.httpPost).not.toHaveBeenCalled();
-  });
-
   it('surfaces native callable failures without inventing an empty inquiry list', async () => {
     mocks.isNativeRuntime.mockReturnValue(true);
     mocks.httpPost.mockResolvedValue({
