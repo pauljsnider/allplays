@@ -1,4 +1,9 @@
+import { CapacitorHttp } from '@capacitor/core';
+
+import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { functions, httpsCallable } from './adapters/legacyOpportunityDb';
+import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { isNativeRuntime } from './nativeRuntime';
 import type {
   ManagedOpportunityTeam,
   OpportunityFilters,
@@ -8,6 +13,30 @@ import type {
 } from './opportunityLogic';
 
 async function call<T>(name: string, data: Record<string, unknown> = {}): Promise<T> {
+  if (isNativeRuntime()) {
+    const projectId = String(firebaseAuth.app?.options?.projectId || '').trim();
+    const token = await getNativeAuthIdToken(true);
+    if (!projectId || !token) {
+      throw new Error('Native opportunity access is unavailable.');
+    }
+    const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/${name}`;
+    const headers = await getPrimaryAppCheckHeaders({
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }, requestUrl);
+    const response = await CapacitorHttp.post({
+      url: requestUrl,
+      headers: headers as Record<string, string>,
+      data: { data },
+      connectTimeout: 10000,
+      readTimeout: 10000
+    });
+    const payload = response.data && typeof response.data === 'object' ? response.data : {};
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(payload?.error?.message || `Opportunity request failed (${response.status}).`);
+    }
+    return (payload?.result || payload?.data) as T;
+  }
   const result = await httpsCallable(functions, name)(data);
   return result.data as T;
 }

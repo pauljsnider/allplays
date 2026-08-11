@@ -1127,7 +1127,7 @@ function TeamOperationsFirstRunSection({ officialsAccess }: { officialsAccess: {
 }
 
 function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess: boolean; teamCount: number; isPartial: boolean } | null }) {
-  if (officialsAccess?.isPartial) {
+  if (officialsAccess?.isPartial && !officialsAccess.hasAccess) {
     return (
       <Link
         to="/officials"
@@ -1155,7 +1155,9 @@ function OfficialsAccessCard({ officialsAccess }: { officialsAccess: { hasAccess
           <div className="app-label">Officials</div>
           <h2 className="mt-1 app-section-title">Manage assignments</h2>
           <div className="mt-1 text-sm font-semibold text-gray-600">Review upcoming games, respond to pending slots, and claim open officiating assignments.</div>
-          <div className="mt-2 text-xs font-black uppercase tracking-[0.04em] text-primary-700">{officialsAccess.teamCount} linked team{officialsAccess.teamCount === 1 ? '' : 's'}</div>
+          <div className="mt-2 text-xs font-black uppercase tracking-[0.04em] text-primary-700">
+            {officialsAccess.teamCount} {officialsAccess.isPartial ? 'verified linked' : 'linked'} team{officialsAccess.teamCount === 1 ? '' : 's'}
+          </div>
         </div>
         <ChevronRight className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
       </div>

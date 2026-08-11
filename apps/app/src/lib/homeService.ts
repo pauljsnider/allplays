@@ -43,12 +43,8 @@ type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
   onPartial?: (result: ParentHomeSummaryBootstrapResult) => void;
 };
 
-function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
-  const appError = toAppServiceError(error, fallbackMessage);
-  if (appError.type === 'permission') {
-    throw appError;
-  }
-  return appError;
+function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
+  return toAppServiceError(error, fallbackMessage);
 }
 
 function throwIfAllSecondarySlicesFailed(errors: AppServiceError[]) {
@@ -243,7 +239,7 @@ export async function loadParentHomeWithSecondaryData(
         emit(patch);
         return patch;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.');
+        const appError = normalizeSecondaryError(error, 'Unable to hydrate Home schedule.');
         secondaryErrors.push(appError);
         logger.warn('Schedule hydration failed.', { error: appError });
         return null;
@@ -253,7 +249,7 @@ export async function loadParentHomeWithSecondaryData(
         emit({ inboxTeams: nextInboxTeams });
         return nextInboxTeams;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to load Home chat.');
+        const appError = normalizeSecondaryError(error, 'Unable to load Home chat.');
         secondaryErrors.push(appError);
         logger.warn('Chat inbox failed.', { error: appError });
         return [];
@@ -263,7 +259,7 @@ export async function loadParentHomeWithSecondaryData(
         emit({ fees: nextFees });
         return nextFees;
       }).catch((error) => {
-        const appError = rethrowIfPermissionError(error, 'Unable to load Home fees.');
+        const appError = normalizeSecondaryError(error, 'Unable to load Home fees.');
         secondaryErrors.push(appError);
         logger.warn('Fees failed.', { error: appError });
         return [];

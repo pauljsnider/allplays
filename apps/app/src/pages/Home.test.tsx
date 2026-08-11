@@ -928,6 +928,22 @@ describe('Home', () => {
     expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
   });
 
+  it('shows verified officials access without an error card when discovery is nonempty but partial', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({
+      hasAccess: true,
+      teamCount: 1,
+      isPartial: true
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
+    expect(screen.getByText('1 verified linked team')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Assignments could not refresh' })).toBeNull();
+  });
+
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
     renderHome(signedInAuth);
 

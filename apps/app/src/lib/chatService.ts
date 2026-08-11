@@ -161,6 +161,7 @@ export type TeamEmailSavedPage<T> = {
 
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
+  isPartial?: boolean;
 };
 
 export type ChatInboxPreviewUpdate = {
@@ -672,20 +673,37 @@ function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<
 }
 
 async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
-  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid);
-  const adminTeams = user.email ? await nativeQueryTeamsByField('adminEmails', 'ARRAY_CONTAINS', user.email.toLowerCase()) : [];
-  const parentTeamIds = [
+  const isPartial = true;
+  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid).catch((error) => {
+    logger.warn('Native owner team query failed.', { error });
+    return [];
+  });
+  const linkedTeamIds = [
     ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
-    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : []),
+    ...(Array.isArray(profile.coachOf) ? profile.coachOf.map((entry: any) => entry?.teamId || entry) : [])
   ].map(compactString).filter(Boolean);
-  const parentTeams = await Promise.all([...new Set(parentTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)));
+  const linkedTeamResults = await Promise.allSettled(
+    [...new Set(linkedTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`))
+  );
+  const linkedTeams = linkedTeamResults.flatMap((result) => {
+    if (result.status === 'fulfilled') return result.value ? [result.value] : [];
+    logger.warn('Native linked team read failed.', { error: result.reason });
+    return [];
+  });
   const map = new Map<string, FirestoreDocument>();
-  [...ownedTeams, ...adminTeams, ...parentTeams].forEach((team) => {
+  [...ownedTeams, ...linkedTeams].forEach((team) => {
     if (team?.id) map.set(team.id, team);
   });
-  return [...map.values()]
-    .filter(isTeamActive)
-    .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+  return {
+    teams: [...map.values()]
+      .filter(isTeamActive)
+      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id))),
+    // The denied adminEmails collection query cannot be made provable under
+    // Firestore rules. Owner/direct linked reads preserve verified records,
+    // but only the server callable can prove the result is complete.
+    isPartial
+  };
 }
 
 function getMessageTime(message: ChatMessage | null) {
@@ -817,11 +835,7 @@ function getTeamConversationMetadata(team: Record<string, any>) {
 }
 
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
-  try {
-    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
-    return mapChatMessageRecord(message, message?.id || '') || null;
-  } catch (error) {
-    if (!isNativeRuntime()) return null;
+  if (isNativeRuntime()) {
     const path = isDefaultTeamConversation(conversationId)
       ? `teams/${encodeURIComponent(teamId)}/chatMessages`
       : `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}/chatMessages`;
@@ -831,11 +845,18 @@ async function getLatestConversationMessage(teamId: string, conversationId: stri
     }).catch(() => []);
     return mapChatMessageRecord(message, message?.id || '') || null;
   }
+  try {
+    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
+    return mapChatMessageRecord(message, message?.id || '') || null;
+  } catch {
+    return null;
+  }
 }
 
 async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<{ message: ChatMessage | null; conversationId: string | null }> {
   let conversations: ChatConversation[] = [buildDefaultTeamConversation(team)];
   try {
+    if (isNativeRuntime()) throw new Error('Native inbox previews use verified team chat metadata.');
     const loadedConversations = await withTimeout(
       Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
       `latest chat conversations ${teamId}`,
@@ -946,13 +967,18 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   const includeLastMessages = options.includeLastMessages !== false;
   const onPreview = typeof options.onPreview === 'function' ? options.onPreview : null;
 
-  const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
-    if (!isNativeRuntime()) throw error;
-    return nativeGetDocument(`users/${encodeURIComponent(user.uid)}`);
-  }) as Record<string, any> || {};
+  const nativeRuntime = isNativeRuntime();
+  const profile = (nativeRuntime
+    ? await nativeGetDocument(`users/${encodeURIComponent(user.uid)}`)
+    : await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load')) as Record<string, any> || {};
 
   let teams: Record<string, any>[] = [];
-  try {
+  let teamDiscoveryPartial = false;
+  if (nativeRuntime) {
+    const fallback = await nativeLoadUserTeams(user, profile);
+    teams = fallback.teams;
+    teamDiscoveryPartial = fallback.isPartial;
+  } else {
     const [memberTeamsResult, parentTeamsResult] = await withTimeout(Promise.allSettled([
       getUserTeamsWithAccess(user.uid, user.email || ''),
       getParentTeams(user.uid)
@@ -961,12 +987,14 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       throw memberTeamsResult.reason || parentTeamsResult.reason;
     }
     if (memberTeamsResult.status === 'rejected') {
+      teamDiscoveryPartial = true;
       if (!isPermissionDeniedError(memberTeamsResult.reason)) {
         throw memberTeamsResult.reason;
       }
       logger.warn('Chat member team load failed; using parent teams only.', { error: memberTeamsResult.reason });
     }
     if (parentTeamsResult.status === 'rejected') {
+      teamDiscoveryPartial = true;
       if (!isPermissionDeniedError(parentTeamsResult.reason)) {
         throw parentTeamsResult.reason;
       }
@@ -983,14 +1011,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       if (team?.id) map.set(team.id, team);
     });
     teams = [...map.values()];
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logger.warn('Falling back to REST team load.', { error });
-    teams = await nativeLoadUserTeams(user, profile);
   }
 
   const userWithProfile = mapUserWithProfile(user, profile);
   const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  if (teamDiscoveryPartial && accessibleTeams.length === 0) {
+    throw new Error('Chat team access could not be completely verified. Try again.');
+  }
   const latestMessageAtByTeam = accessibleTeams.reduce<Record<string, unknown>>((acc, team) => {
     const latestMessageAt = getTeamLatestMessageTime(team);
     if (latestMessageAt) {
@@ -1042,18 +1069,20 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     ))
     .map((team) => team.id);
   const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
-  const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
-      latestMessageAtByTeam,
-      latestMessageAtByConversationByTeam,
-      conversationIdsByTeam,
-      conversationLookupByTeam,
-      defaultConversationOnly: !includeLastMessages,
-      deadlineAt: unreadDeadlineAt
-    })),
-    'Chat unread counts',
-    chatUnreadCountTimeoutMs
-  ).catch(() => ({} as Record<string, number>));
+  const unreadCounts = nativeRuntime
+    ? {}
+    : await withTimeout(
+      Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
+        latestMessageAtByTeam,
+        latestMessageAtByConversationByTeam,
+        conversationIdsByTeam,
+        conversationLookupByTeam,
+        defaultConversationOnly: !includeLastMessages,
+        deadlineAt: unreadDeadlineAt
+      })),
+      'Chat unread counts',
+      chatUnreadCountTimeoutMs
+    ).catch(() => ({} as Record<string, number>));
 
   const previews = includeLastMessages
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
@@ -1086,6 +1115,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   }
 
   return {
+    isPartial: teamDiscoveryPartial,
     teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
       name: team.name || 'Team',

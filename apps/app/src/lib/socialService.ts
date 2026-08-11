@@ -23,6 +23,7 @@ import type { ParentHomeModel } from './homeLogic';
 import { deleteTeamChatAttachments, uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
 import { getPublicTeamDetail } from './publicTeamsService';
+import { loadProfileDocument } from './profileService';
 import { buildAthleteProfileShareUrl } from './adapters/legacyPlayerProfile';
 import { getPublicBaseUrl } from './inviteUrls';
 import {
@@ -348,8 +349,11 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }
   }
 
-  const [profileSnap, hiddenPostIds, publicChildSnap] = await Promise.all([
-    withTimeout(getDoc(doc(db, publicUserProfileCollection, targetUserId)), 'Friend profile'),
+  const [profile, hiddenPostIds, publicChildSnap] = await Promise.all([
+    isSelf
+      ? loadProfileDocument(targetUserId)
+      : withTimeout(getDoc(doc(db, publicUserProfileCollection, targetUserId)), 'Friend profile')
+        .then((profileSnap) => profileSnap?.exists?.() ? profileSnap.data() || {} : {}),
     loadHiddenSocialPostIds(viewerId),
     withTimeout(getDocs(query(
       collection(db, 'athleteProfiles'),
@@ -358,7 +362,6 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
       limit(12)
     )), 'Public athlete profiles').catch(() => null)
   ]);
-  const profile = profileSnap?.exists?.() ? profileSnap.data() || {} : {};
   const publicTeamsPromise = Promise.all(
     uniqueStrings(profile.discoveryTeamIds || []).slice(0, 12).map((teamId) => getPublicTeamDetail(teamId).catch(() => null))
   ).then((teams) => teams.filter((team): team is NonNullable<typeof team> => Boolean(team)).map((team) => ({
@@ -381,6 +384,9 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     hiddenPostIds,
     pageSize: socialPostLimit,
     visibleLimit: socialPostLimit
+  }).catch((error) => {
+    logger.warn('Unable to load profile posts.', { error, isSelf });
+    return [];
   });
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
   const publicChildren = publicChildSnap ? snapshotToDocs(publicChildSnap).map((child) => ({

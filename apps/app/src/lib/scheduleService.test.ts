@@ -8,10 +8,14 @@ const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '.
 
 const capacitorCoreMock = vi.hoisted(() => ({
   isNativePlatform: vi.fn(() => false),
-  getPlatform: vi.fn(() => 'web')
+  getPlatform: vi.fn(() => 'web'),
+  httpPost: vi.fn()
 }));
 
-vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
+vi.mock('@capacitor/core', () => ({
+  Capacitor: capacitorCoreMock,
+  CapacitorHttp: { post: capacitorCoreMock.httpPost }
+}));
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -239,7 +243,7 @@ import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2140,7 +2144,9 @@ describe('official assignments app service', () => {
   const pastDate = new Date(Date.now() - 86400000).toISOString();
 
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
     vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: ['team-alpha'], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
@@ -2212,6 +2218,54 @@ describe('official assignments app service', () => {
     expect(range.startDate).toBeInstanceOf(Date);
     expect(range.startDate.getTime()).toBeLessThanOrEqual(Date.now());
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
+  });
+
+  it('uses nonempty verified schedule scope when a native official callable is not deployed', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-alpha', playerId: 'player-alpha', teamName: 'Alpha FC' }],
+      parentTeamIds: ['team-alpha']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', active: true } as any);
+    mocks.getDoc.mockResolvedValue(playerSnapshot('player-alpha', { name: 'Avery Ace', active: true }) as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignmentsAccess(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: true
+    });
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: {} }
+    }));
+  });
+
+  it('rejects a native partial-empty schedule fallback when official discovery is unavailable', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], parentTeamIds: [] } as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
   });
 
   it('hides officials access when no official link matches the signed-in user', async () => {

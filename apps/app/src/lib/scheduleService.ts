@@ -1,3 +1,5 @@
+import { CapacitorHttp } from '@capacitor/core';
+
 import {
   getAssignmentClaims,
   claimOpenOfficiatingSlot,
@@ -7064,35 +7066,63 @@ function normalizeOfficialLinkedTeamIdsResponse(source: any) {
 
 async function loadOfficialLinkedTeamIdsFromNativeCallable() {
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listOfficialLinkedTeamIds`;
-  const response = await withTimeout(fetch(requestUrl, {
-    method: 'POST',
-    headers: await getNativeHeaders(requestUrl),
-    body: JSON.stringify({ data: {} })
+  const response = await withTimeout(CapacitorHttp.post({
+    url: requestUrl,
+    headers: await getNativeHeaders(requestUrl) as Record<string, string>,
+    data: { data: {} },
+    connectTimeout: staffTeamDiscoveryTimeoutMs,
+    readTimeout: staffTeamDiscoveryTimeoutMs
   }), 'Official team discovery', staffTeamDiscoveryTimeoutMs);
-  const payload = await response.json().catch(() => ({}));
+  const payload = response.data && typeof response.data === 'object' ? response.data : {};
   const result = payload?.result || payload?.data;
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(payload?.error?.message || 'Official team access could not be verified.');
   }
   return normalizeOfficialLinkedTeamIdsResponse(result);
 }
 
-async function loadOfficialLinkedTeamIds() {
-  return readWithNativeFallback(
-    'official team discovery',
-    async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
-    loadOfficialLinkedTeamIdsFromNativeCallable,
-    staffTeamDiscoveryTimeoutMs
-  );
+async function loadOfficialLinkedTeamIds(user: AuthUser) {
+  try {
+    return {
+      teamIds: await readWithNativeFallback(
+        'official team discovery',
+        async () => normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds()),
+        loadOfficialLinkedTeamIdsFromNativeCallable,
+        staffTeamDiscoveryTimeoutMs
+      ),
+      isPartial: false
+    };
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    const scope = await loadParentScheduleScope(user);
+    const verifiedTeamIds = [...new Set([
+      ...(scope.children || []).map((child) => compactString(child.teamId)),
+      ...(scope.staffTeams || []).map((team) => compactString(team.teamId))
+    ].filter(Boolean))].sort();
+    if (verifiedTeamIds.length === 0) {
+      throw error;
+    }
+    logScheduleWarning(
+      'Official callable unavailable; using verified linked schedule teams.',
+      'official-team-discovery-partial',
+      error,
+      { fallback: 'verified_schedule_scope', teamCount: verifiedTeamIds.length }
+    );
+    return {
+      teamIds: verifiedTeamIds,
+      isPartial: true
+    };
+  }
 }
 
-export async function loadOfficialAssignmentsAccess(_user: AuthUser): Promise<OfficialAssignmentsAccess> {
-  const teamIds = await loadOfficialLinkedTeamIds();
+export async function loadOfficialAssignmentsAccess(user: AuthUser): Promise<OfficialAssignmentsAccess> {
+  const result = await loadOfficialLinkedTeamIds(user);
+  const teamIds = result.teamIds;
   return {
     hasAccess: teamIds.length > 0,
     teamIds,
     teamCount: teamIds.length,
-    isPartial: false
+    isPartial: result.isPartial
   };
 }
 
@@ -7100,9 +7130,12 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   const requestedTeamId = compactString(options.teamId);
   const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
   let linkedTeamIds: string[] = [];
+  let linkedTeamIdsPartial = false;
   let discoveryError: unknown = null;
   try {
-    linkedTeamIds = await loadOfficialLinkedTeamIds();
+    const linkedTeamResult = await loadOfficialLinkedTeamIds(user);
+    linkedTeamIds = linkedTeamResult.teamIds;
+    linkedTeamIdsPartial = linkedTeamResult.isPartial;
   } catch (error) {
     if (!requestedTeamId) throw error;
     discoveryError = error;
@@ -7211,7 +7244,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     hasAccess: true,
     teamIds: accessibleTeamIds,
     teamCount: accessibleTeamIds.length,
-    isPartial: discoveryError !== null,
+    isPartial: linkedTeamIdsPartial || discoveryError !== null,
     assignments: teamResults
       .filter((result) => result.hasAccess)
       .flatMap((result) => result.assignments)

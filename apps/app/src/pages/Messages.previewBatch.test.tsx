@@ -224,6 +224,18 @@ describe('Messages deferred inbox preview batching', () => {
     expect(screen.getByText(/1 team chat · 1 opportunity/)).toBeInTheDocument();
   });
 
+  it('labels a nonempty partial inbox without treating verified teams as an error', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team()], isPartial: true });
+
+    renderMessages();
+
+    expect(await screen.findByText(
+      'Showing verified team chats. Additional linked teams may appear after the access service refreshes.'
+    )).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
+  });
+
   it('announces inbox failures and retries them in place', async () => {
     chatServiceMocks.loadChatInbox
       .mockRejectedValueOnce(new Error('Network unavailable.'))

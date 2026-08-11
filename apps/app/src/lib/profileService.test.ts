@@ -25,6 +25,9 @@ const telemetryMocks = vi.hoisted(() => {
         createAppTimer: vi.fn(() => ({ end: timerEnd }))
     };
 });
+const capacitorHttpMocks = vi.hoisted(() => ({
+    post: vi.fn()
+}));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/notification-preferences.js', () => ({
@@ -45,6 +48,9 @@ vi.mock('@capacitor/camera', () => ({
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: vi.fn(() => false)
+    },
+    CapacitorHttp: {
+        post: capacitorHttpMocks.post
     }
 }));
 vi.mock('./authService', () => ({
@@ -259,20 +265,17 @@ describe('native parent-team fallback hydration', () => {
     });
 
     function mockNativeProfileFallbackFetch({ managedIsPartial = false } = {}) {
+        capacitorHttpMocks.post.mockResolvedValue({
+            status: 200,
+            data: {
+                result: {
+                    items: [{ id: 'legacy-team', name: 'Legacy Lions', ownerEmail: 'parent@example.com' }],
+                    isPartial: managedIsPartial
+                }
+            }
+        });
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
-
-            if (url.endsWith('.cloudfunctions.net/listManagedTeams')) {
-                return {
-                    ok: true,
-                    json: async () => ({
-                        result: {
-                            items: [{ id: 'legacy-team', name: 'Legacy Lions', ownerEmail: 'parent@example.com' }],
-                            isPartial: managedIsPartial
-                        }
-                    })
-                };
-            }
 
             if (url.endsWith('/documents/users/user-1')) {
                 return {
@@ -364,7 +367,11 @@ describe('native parent-team fallback hydration', () => {
             { id: 'legacy-team', name: 'Legacy Lions' }
         ]);
 
-        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('.cloudfunctions.net/listManagedTeams'))).toBe(true);
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            url: 'https://us-central1-demo-project.cloudfunctions.net/listManagedTeams',
+            data: { data: {} }
+        }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('.cloudfunctions.net/listManagedTeams'))).toBe(false);
         expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || '').includes('"fieldPath":"__name__"'))).toBe(false);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(true);

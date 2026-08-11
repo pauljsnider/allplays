@@ -37,11 +37,16 @@ const athleteProfileMocks = vi.hoisted(() => ({
     buildAthleteProfileShareUrl: vi.fn((origin, profileId) => `${origin}/athlete-profile.html?profileId=${encodeURIComponent(profileId)}`)
 }));
 
+const profileMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
 vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
 vi.mock(import('../../apps/app/src/lib/publicTeamsService.ts'), () => publicTeamMocks);
 vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => athleteProfileMocks);
+vi.mock(import('../../apps/app/src/lib/profileService.ts'), () => profileMocks);
 
 const user = {
     uid: 'user-1',
@@ -100,6 +105,11 @@ beforeEach(() => {
         path: 'chat-attachments/team-1/social/upload.png'
     });
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
+    profileMocks.loadProfileDocument.mockResolvedValue({
+        displayName: 'Pat Parent',
+        photoUrl: 'https://img.example.test/user.png',
+        discoveryTeamIds: []
+    });
 });
 
 describe('React app social service', () => {
@@ -718,15 +728,11 @@ describe('React app social service', () => {
 
     it('allows a user to load their own profile without a friendship lookup', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
-        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
-            id: ref.path[1],
-            exists: () => ref.path[0] === 'publicUserProfiles',
-            data: () => ({ displayName: 'Pat Parent' })
-        }));
 
         const profile = await loadFriendProfile(user, 'user-1');
 
         expect(profile).toMatchObject({ userId: 'user-1', name: 'Pat Parent', isSelf: true });
+        expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(firebaseMocks.doc).not.toHaveBeenCalledWith(firebaseMocks.db, 'friendships', expect.anything());
     });
 

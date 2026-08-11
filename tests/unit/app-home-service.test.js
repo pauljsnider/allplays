@@ -224,11 +224,11 @@ describe('React app Home service', () => {
         });
     });
 
-    it('throws a typed permission error when Home fees are denied', async () => {
+    it('keeps rendering Home when only the fees slice is denied', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Permission denied for fees'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
 
-        await expect(loadParentHomeWithSecondaryData(user, {
+        const home = await loadParentHomeWithSecondaryData(user, {
             schedule: {
                 children: [
                     {
@@ -240,11 +240,14 @@ describe('React app Home service', () => {
                 ],
                 events: [event()]
             }
-        })).rejects.toMatchObject({
-            name: 'AppServiceError',
-            type: 'permission',
-            message: 'Permission denied for fees'
         });
+
+        expect(home.fees).toEqual([]);
+        expect(home.players).toEqual([expect.objectContaining({ playerId: 'player-1' })]);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1' }),
+            expect.objectContaining({ teamId: 'team-staff' })
+        ]));
     });
 
     it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {

@@ -45,7 +45,11 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [inquiries, setInquiries] = useState<OpportunityInquiry[]>([]);
   const [inquiryError, setInquiryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [inboxStatus, setInboxStatus] = useState<{ error: string | null; isPartial: boolean }>({
+    error: null,
+    isPartial: false
+  });
+  const { error, isPartial: inboxPartial } = inboxStatus;
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
@@ -93,7 +97,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     });
     inboxRequestIdRef.current = requestId;
     setLoading(true);
-    setError(null);
+    setInboxStatus((current) => ({ ...current, error: null }));
     setInquiryError(null);
     try {
       const [result, inquiryPage] = await Promise.all([
@@ -119,6 +123,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
       cancelPreviewFlush();
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
+      setInboxStatus({ error: null, isPartial: result.isPartial === true });
       setInquiries(inquiryPage.items);
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       completeParentCoreWorkflowTimer('messages', {
@@ -142,7 +147,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
       cancelPreviewFlush();
       const message = loadError?.message || 'Unable to load messages.';
-      setError(message);
+      setInboxStatus({ error: message, isPartial: false });
       setTeams([]);
       setInquiries([]);
       timer.end({
@@ -164,7 +169,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (!shouldLoadInbox) {
       setLoading(false);
-      setError(null);
+      setInboxStatus({ error: null, isPartial: false });
       setTeams([]);
       const directThreadTeamId = inboxLoadRouteKey;
       if (auth.user && shouldRecordDirectThreadMount(directThreadMountRecordedTeamIdRef.current, directThreadTeamId)) {
@@ -256,6 +261,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     return (
       <div className="messages-page messages-page-web">
         <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
+        {inboxPartial ? <PartialInboxNotice /> : null}
         <section className="messages-two-pane mt-4">
           <aside className="messages-list-pane">
             <InboxSearch query={query} onChange={setQuery} />
@@ -331,6 +337,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     <PullToRefresh onRefresh={() => refreshInbox()} disabled={!auth.user?.uid}>
     <div className="messages-page space-y-4">
       <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
+      {inboxPartial ? <PartialInboxNotice /> : null}
       <InboxSearch query={query} onChange={setQuery} />
       <OpportunityInboxList inquiries={filteredInquiries} activeInquiryId="" error={inquiryError} />
       <InboxList
@@ -345,6 +352,14 @@ export function Messages({ auth }: { auth: AuthState }) {
       />
     </div>
     </PullToRefresh>
+  );
+}
+
+function PartialInboxNotice() {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800" role="status">
+      Showing verified team chats. Additional linked teams may appear after the access service refreshes.
+    </div>
   );
 }
 

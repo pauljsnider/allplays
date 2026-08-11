@@ -413,6 +413,114 @@ describe('chat Firestore mappers', () => {
   });
 });
 
+describe('native chat team discovery fallback', () => {
+  function jsonResponse(payload: unknown, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: vi.fn().mockResolvedValue(payload)
+    };
+  }
+
+  function firestoreDocument(path: string, fields: Record<string, unknown>) {
+    return {
+      name: `projects/demo-allplays/databases/(default)/documents/${path}`,
+      fields
+    };
+  }
+
+  function installNativeTeamFetch({ includeTeams }: { includeTeams: boolean }) {
+    const fetchMock = vi.fn(async (url: string, request: RequestInit = {}) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          parentOf: {
+            arrayValue: {
+              values: includeTeams ? [{
+                mapValue: {
+                  fields: { teamId: { stringValue: 'team-parent' } }
+                }
+              }] : []
+            }
+          }
+        }));
+      }
+      if (String(url).endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(request.body || '{}'));
+        const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
+        if (fieldPath === 'adminEmails') {
+          return jsonResponse({ error: { message: 'Missing or insufficient permissions.' } }, 403);
+        }
+        return jsonResponse(includeTeams ? [{
+          document: firestoreDocument('teams/team-owned', {
+            name: { stringValue: 'Vipers' },
+            ownerId: { stringValue: 'user-1' },
+            active: { booleanValue: true }
+          })
+        }] : []);
+      }
+      if (String(url).includes('/documents/teams/team-parent')) {
+        return jsonResponse(firestoreDocument('teams/team-parent', {
+          name: { stringValue: 'Jr KC Current' },
+          active: { booleanValue: true }
+        }));
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.getUserProfile.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+    legacyChatServiceMocks.getParentTeams.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(true);
+    legacyChatServiceMocks.canModerateChat.mockReturnValue(false);
+    legacyChatServiceMocks.isTeamActive.mockReturnValue(true);
+    legacyChatServiceMocks.getUnreadChatCounts.mockResolvedValue({});
+  });
+
+  it('returns nonempty proven owner and parent teams when the legacy admin-email query is denied', async () => {
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-parent', name: 'Jr KC Current' }),
+      expect.objectContaining({ id: 'team-owned', name: 'Vipers' })
+    ]);
+    expect(result.isPartial).toBe(true);
+    expect(legacyChatServiceMocks.getUserProfile).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getParentTeams).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+    const requestedFields = fetchMock.mock.calls
+      .map(([, request]) => JSON.parse(String((request as RequestInit | undefined)?.body || '{}')))
+      .map((body) => body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath)
+      .filter(Boolean);
+    expect(requestedFields).toEqual(['ownerId']);
+  });
+
+  it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    await expect(loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false })).rejects.toThrow(/could not be completely verified/i);
+  });
+});
+
 describe('sendTeamChatMessage attachment uploads', () => {
   it('uses authenticated native Storage cleanup instead of the signed-out web SDK', async () => {
     nativeRuntime.isNativePlatform = true;
