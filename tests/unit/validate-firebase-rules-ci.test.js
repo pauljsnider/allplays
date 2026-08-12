@@ -312,11 +312,16 @@ concurrency:
           }
           activate_firestore_ruleset_with_retry() {
             [[ "$ruleset_name" =~ ^projects/game-flow-c6311/rulesets/[A-Za-z0-9_-]+$ ]] || return 1
-            curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
-            jq 'updateMask:"rulesetName"'
-            [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]
-            verify_active_firestore_release_name "$ruleset_name"
-            firestore_rules_api_error "Firestore release update"
+            for attempt in 1 2 3 4 5 6 7 8; do
+              curl --request PATCH "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/releases/cloud.firestore"
+              jq 'updateMask:"rulesetName"'
+              [[ "$(jq -r '.rulesetName // ""' "$response_file")" == "$ruleset_name" ]]
+              firestore_rules_api_error "Firestore release update"
+              if verify_active_firestore_release_name "$ruleset_name"; then return 0; fi
+              retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+              retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))
+              if (( retry_delay_seconds > 120 )); then retry_delay_seconds=120; fi
+            done
           }
           write_firestore_configuration_blocked_summary() {
             {
