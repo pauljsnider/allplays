@@ -13,6 +13,9 @@ describe('production role-smoke gate', () => {
         expect(deployWorkflow).toContain('SMOKE_PARENT_EMAIL: ${{ secrets.SMOKE_PARENT_EMAIL }}');
         expect(deployWorkflow).toContain('Missing protected configuration names: $missing_csv');
         expect(deployWorkflow).toContain('needs: production-validation-gate');
+        expect(deployWorkflow).toContain(
+            "if: always() && needs.production-validation-gate.result == 'success'"
+        );
         expect(deployWorkflow).toContain('needs: [production-validation-gate, validate-production-smoke-config]');
         expect(deployWorkflow.indexOf('validate-production-smoke-config:')).toBeLessThan(
             deployWorkflow.indexOf('  prepare-deploy:')

@@ -253,6 +253,9 @@ jobs:
 
   validate-production-smoke-config:
     needs: production-validation-gate
+    # The gate intentionally depends on duplicate validation jobs that may be
+    # skipped when exact-head PR evidence is reusable. Override GitHub's
+    # transitive skipped-job propagation, but remain fail-closed on the gate.
     if: always() && needs.production-validation-gate.result == 'success'
     runs-on: ubuntu-latest
     environment:

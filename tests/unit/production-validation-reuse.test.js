@@ -177,6 +177,10 @@ describe('production exact-head validation reuse', () => {
         expect(workflow.jobs['regression-guards'].needs).toBe('validation-source');
         expect(workflow.jobs['regression-guards'].if).toContain("reuse_pr_validation != 'true'");
         expect(workflow.jobs['production-validation-gate'].if).toBe('always()');
+        expect(workflow.jobs['validate-production-smoke-config'].if).toContain('always()');
+        expect(workflow.jobs['validate-production-smoke-config'].if).toContain(
+            "needs.production-validation-gate.result == 'success'"
+        );
     });
 
     it('continues the fail-closed deploy chain after reusable validation skips duplicate jobs', () => {
