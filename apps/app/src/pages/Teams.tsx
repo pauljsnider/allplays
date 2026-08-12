@@ -83,10 +83,10 @@ export function Teams({ auth }: { auth: AuthState }) {
 
     let teamSummaryBootstrap: Awaited<ReturnType<typeof loadParentTeamsSummaryBootstrap>> | null = null;
     let hasStreamedTeams = false;
-    const applyTeamSummary = (fastHome: ParentHomeModel) => {
+    const applyTeamSummary = (fastHome: ParentHomeModel, preserveExisting = false) => {
       if (loadId !== activeLoadIdRef.current) return;
       hasStreamedTeams = hasStreamedTeams || fastHome.teams.length > 0;
-      setHome(fastHome);
+      setHome((current) => preserveExisting ? mergeStreamedTeamSummary(current, fastHome) : fastHome);
       setLoadedTeamSummaryUserId(user.uid);
       setTeamsLoadError(null);
     };
@@ -94,7 +94,7 @@ export function Teams({ auth }: { auth: AuthState }) {
       async () => {
         teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, {
           force: !showLoading,
-          onPartial: applyTeamSummary
+          onPartial: (partialHome) => applyTeamSummary(partialHome, true)
         });
         return teamSummaryBootstrap.home;
       },
@@ -258,6 +258,24 @@ function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): 
     teams: mergedTeams,
     metrics: {
       ...enriched.metrics,
+      teams: mergedTeams.length,
+      players: mergedTeams.reduce((total, team) => total + team.players.length, 0)
+    }
+  };
+}
+
+function mergeStreamedTeamSummary(current: ParentHomeModel, streamed: ParentHomeModel): ParentHomeModel {
+  if (!streamed.teams.length) return current;
+  const currentTeamIds = new Set(current.teams.map((team) => team.teamId));
+  const mergedTeams = [
+    ...current.teams,
+    ...streamed.teams.filter((team) => !currentTeamIds.has(team.teamId))
+  ];
+  return {
+    ...current,
+    teams: mergedTeams,
+    metrics: {
+      ...current.metrics,
       teams: mergedTeams.length,
       players: mergedTeams.reduce((total, team) => total + team.players.length, 0)
     }
