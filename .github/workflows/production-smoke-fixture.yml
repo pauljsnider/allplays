@@ -21,9 +21,7 @@ concurrency:
 
 jobs:
   maintain-production-fixtures:
-    if: >-
-      github.ref == 'refs/heads/master' ||
-      (github.ref == 'refs/heads/codex/audit-managed-team-callable' && inputs.mode == 'audit')
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment:
