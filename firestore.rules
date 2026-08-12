@@ -3015,10 +3015,13 @@ service cloud.firestore {
 
       match /hiddenSocialPosts/{postId} {
         allow get: if isOwner(userId);
+        // Keep the previous app's 200-item page size working during the staged rollout.
+        // The current app uses 10-item candidate queries, so this can be tightened after
+        // older web caches and native releases are no longer supported.
         allow list: if isOwner(userId) &&
                        request.query.limit != null &&
                        request.query.limit > 0 &&
-                       request.query.limit <= 10;
+                       request.query.limit <= 200;
         allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
         allow create, update: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                               request.resource.data.keys().hasOnly(['postId', 'hiddenAt']) &&

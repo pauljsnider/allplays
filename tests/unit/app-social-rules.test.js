@@ -130,7 +130,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /reactions/{userId}');
         expect(source).toContain('match /hiddenSocialPosts/{postId}');
         expect(source).toContain('allow get: if isOwner(userId);');
-        expect(source).toContain('request.query.limit <= 10');
+        expect(source).toContain('request.query.limit <= 200');
         expect(source).not.toContain('match /hiddenSocialPosts/{postId} {\n        allow read: if isOwner(userId);');
         expect(source).toContain('match /friendships/{friendshipId}');
         expect(source).toContain('match /socialReports/{reportId}');
@@ -392,7 +392,7 @@ describe('React app social Firestore rules', () => {
             }));
         });
 
-        it('allows only owner get and bounded owner candidate lists for hidden posts', async () => {
+        it('allows legacy owner pages while bounding hidden-post list reads', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 const adminDb = context.firestore();
                 await Promise.all(Array.from({ length: 11 }, (_, index) => setDoc(
@@ -414,8 +414,9 @@ describe('React app social Firestore rules', () => {
                 where(documentId(), 'in', candidateIds),
                 limit(10)
             )))).size).toBe(10);
+            expect((await assertSucceeds(getDocs(query(ownerHides, limit(200))))).size).toBe(11);
             await assertFails(getDocs(ownerHides));
-            await assertFails(getDocs(query(ownerHides, limit(11))));
+            await assertFails(getDocs(query(ownerHides, limit(201))));
             await assertFails(getDocs(query(
                 collection(unauthenticatedDb, 'users', 'viewer-1', 'hiddenSocialPosts'),
                 where(documentId(), 'in', candidateIds),
