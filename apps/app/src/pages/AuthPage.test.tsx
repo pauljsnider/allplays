@@ -275,6 +275,11 @@ describe('AuthPage native post-login routing', () => {
 
   it('does not let a late native email completion reload over a newer team route', async () => {
     const hydration = createDeferred<{ user: AuthUser; profile: Record<string, unknown> }>();
+    const refreshedUser: AuthUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+    auth.refresh = vi.fn(async () => {
+      auth.user = refreshedUser;
+      return refreshedUser;
+    });
     authServiceMocks.signInWithEmail.mockResolvedValue({
       user: { uid: 'coach-1', email: 'coach@example.com' },
       nativeRest: true
@@ -297,6 +302,8 @@ describe('AuthPage native post-login routing', () => {
       await hydration.promise;
     });
 
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(auth.user).toEqual(refreshedUser);
     expect(window.location.hash).toBe('#/teams/team-1');
     expect(window.location.reload).not.toHaveBeenCalled();
   });
@@ -328,8 +335,47 @@ describe('AuthPage native post-login routing', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
   });
 
+  it('refreshes late native Google completion without reloading a newer team route', async () => {
+    const hydration = createDeferred<{ user: AuthUser; profile: Record<string, unknown> }>();
+    const refreshedUser: AuthUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+    auth.refresh = vi.fn(async () => {
+      auth.user = refreshedUser;
+      return refreshedUser;
+    });
+    authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: true,
+      wasNewUser: false
+    });
+    authServiceMocks.hydrateFirebaseUser.mockReturnValue(hydration.promise);
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+
+    await waitFor(() => expect(authServiceMocks.hydrateFirebaseUser).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      hydration.resolve({
+        user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+        profile: {}
+      });
+      await hydration.promise;
+    });
+
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(auth.user).toEqual(refreshedUser);
+    expect(window.location.hash).toBe('#/teams/team-1');
+    expect(window.location.reload).not.toHaveBeenCalled();
+  });
+
   it('does not let late Apple completion reload over a newer team route', async () => {
     const hydration = createDeferred<{ user: AuthUser; profile: Record<string, unknown> }>();
+    const refreshedUser: AuthUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+    auth.refresh = vi.fn(async () => {
+      auth.user = refreshedUser;
+      return refreshedUser;
+    });
     authServiceMocks.signInWithAppleAccount.mockResolvedValue({
       user: { uid: 'coach-1', email: 'coach@example.com' },
       nativeRest: true,
@@ -351,6 +397,8 @@ describe('AuthPage native post-login routing', () => {
       await hydration.promise;
     });
 
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(auth.user).toEqual(refreshedUser);
     expect(window.location.hash).toBe('#/teams/team-1');
     expect(window.location.reload).not.toHaveBeenCalled();
   });

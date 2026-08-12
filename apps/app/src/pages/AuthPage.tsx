@@ -186,6 +186,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
       const postLoginRoute = inviteCode || requestedNextRoute ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
       if (credential.nativeRest) {
+        await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
@@ -231,6 +232,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
             ? postAuthRoute
             : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
         if (result.nativeRest) {
+          await auth.refresh();
           if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
             return;
           }
@@ -276,6 +278,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           : inviteCode
             ? postAuthRoute
             : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
+        await auth.refresh();
         if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
           return;
         }
