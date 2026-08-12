@@ -151,8 +151,8 @@ export async function loadParentTeamsSummaryBootstrap(
             throw toAppServiceError(error, 'Unable to load teams.');
           })
         ]);
-        const hasParentLinkedTeams = scheduleScope.children.length > 0;
-        if (scheduleScope.isPartial === true && !hasParentLinkedTeams) {
+        const hasDiscoveredTeams = scheduleScope.children.length > 0 || Boolean(scheduleScope.staffTeams?.length);
+        if (scheduleScope.isPartial === true && !hasDiscoveredTeams) {
           if (chatInboxResult.error) {
             throw chatInboxResult.error;
           }

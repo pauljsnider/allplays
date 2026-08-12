@@ -213,7 +213,7 @@ describe('homeService Teams bootstrap reuse', () => {
         ]);
     });
 
-    it('rejects a partial nonempty chooser so a later complete load cannot be masked', async () => {
+    it('renders a partial nonempty chooser without caching it as complete', async () => {
         scheduleServiceMocks.loadParentScheduleScope
             .mockResolvedValueOnce({
                 profile: {},
@@ -233,11 +233,13 @@ describe('homeService Teams bootstrap reuse', () => {
                 isPartial: false
             });
 
-        await expect(loadParentTeamsSummaryBootstrap(user)).rejects.toThrow(
-            'Team access discovery is incomplete'
-        );
+        const partial = await loadParentTeamsSummaryBootstrap(user);
         const complete = await loadParentTeamsSummaryBootstrap(user);
 
+        expect(partial.scheduleScope.isPartial).toBe(true);
+        expect(partial.home.teams).toEqual([
+            expect.objectContaining({ teamId: 'team-1', teamName: 'Vipers' })
+        ]);
         expect(complete.home.teams).toHaveLength(2);
         expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(2);
     });
