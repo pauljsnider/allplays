@@ -390,7 +390,6 @@ async function main() {
             `admin-query-failed=${staffQueryDiscovery.adminQueryFailed})`
         );
     }
-
     const playerPath = `teams/${teamId}/players/${playerId}`;
     const parentPath = `users/${parentSession.localId}`;
     let [playerDocument, parentDocument] = await Promise.all([
