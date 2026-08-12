@@ -112,6 +112,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 );
+                await storage.ref('stat-sheets/team-games/team-a/member-a/referenced-legacy.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                );
+                await storage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                );
             });
         });
 
@@ -180,6 +188,53 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 { contentType: 'image/jpeg' }
             ));
         }, 30000);
+
+        it('preserves bounded read and cleanup access for referenced game-less statsheets', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+            const parentObject = parentStorage.ref('stat-sheets/team-games/team-a/member-a/referenced-legacy.jpg');
+            const managerCleanupObject = ownerStorage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg');
+
+            await assertSucceeds(parentObject.getMetadata());
+            await assertFails(parentObject.put(new Uint8Array([1]), { contentType: 'image/jpeg' }));
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg').getMetadata());
+            await assertSucceeds(parentObject.delete());
+
+            await assertSucceeds(managerCleanupObject.getMetadata());
+            await assertFails(managerCleanupObject.put(new Uint8Array([1]), { contentType: 'image/jpeg' }));
+            await assertSucceeds(managerCleanupObject.delete());
+        });
+
+        it('denies ordinary team parents and cross-tenant actors from creating game-less statsheets', async () => {
+            const parentStorage = testEnv.authenticatedContext('member-a', {
+                email: 'member-a@example.com',
+                email_verified: true
+            }).storage();
+            const ownerStorage = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: true
+            }).storage();
+
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-a/member-a/new-legacy.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-b/member-a/cross-team.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(ownerStorage.ref('stat-sheets/team-games/team-a/owner-a/new-legacy.jpg').put(
+                new Uint8Array([1]),
+                { contentType: 'image/jpeg' }
+            ));
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg').delete());
+        });
 
         it('denies a scorekeeper crossing the statsheet team boundary', async () => {
             const selectedStorage = testEnv.authenticatedContext('selected-scorekeeper', {
