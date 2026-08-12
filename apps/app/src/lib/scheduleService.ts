@@ -1802,13 +1802,17 @@ async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
 
 async function loadStaffTeamsFromRestWithRetry(maxAttempts: number): Promise<StaffTeamsLoadResult> {
   let lastError: unknown = new Error('Managed team verification failed.');
+  let lastPartialResult: StaffTeamsLoadResult | null = null;
   for (let attempt = 0; attempt < Math.max(1, maxAttempts); attempt += 1) {
     try {
-      return await loadStaffTeamsFromRest();
+      const result = await loadStaffTeamsFromRest();
+      if (!result.isPartial) return result;
+      lastPartialResult = result;
     } catch (error) {
       lastError = error;
     }
   }
+  if (lastPartialResult) return lastPartialResult;
   throw lastError;
 }
 

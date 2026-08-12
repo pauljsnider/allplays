@@ -913,6 +913,33 @@ describe('parent schedule child scope', () => {
     expect(scope.staffTeamsPartial).toBe(false);
   });
 
+  it('retries an empty partial HTTP verification before returning staff scope', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable)
+      .mockResolvedValueOnce({ teams: [], isPartial: true })
+      .mockResolvedValueOnce({
+        teams: [
+          { id: 'team-visible', name: 'Visible Team', active: true },
+          { id: 'team-authoritative', name: 'Authoritative Team', active: true }
+        ],
+        isPartial: false
+      });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-authoritative', teamName: 'Authoritative Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+  });
+
   it('confirms an empty web SDK result even when the account lacks staff access signals', async () => {
     const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
