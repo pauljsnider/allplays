@@ -705,7 +705,7 @@ describe('parent schedule child scope', () => {
     }
   });
 
-  it('falls back to authenticated HTTP before a cold staff callable exhausts the production chooser wait', async () => {
+  it('budgets a measured cold authenticated staff response within the production chooser wait', async () => {
     vi.useFakeTimers();
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
@@ -714,16 +714,17 @@ describe('parent schedule child scope', () => {
       setTimeout(() => resolve({
         teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
         isPartial: false
-      }), 8000);
+      }), 11000);
     }));
 
     try {
       const scopePromise = loadParentScheduleScope(coachUser);
-      await vi.advanceTimersByTimeAsync(10000);
+      await vi.advanceTimersByTimeAsync(15000);
       const scope = await scopePromise;
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);
       expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledWith({ timeoutMs: 15000 });
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
       expect(scope.staffTeamsPartial).toBe(false);
     } finally {
