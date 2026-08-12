@@ -53,6 +53,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const [error, setError] = useState('');
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const signupTabRef = useRef<HTMLButtonElement>(null);
+  const authPageActiveRef = useRef(true);
 
   const signupBlockedByTerms = mode === 'signup' && !agreedToTerms;
   const title = mode === 'signup' ? 'Create your account' : 'Sign in';
@@ -66,6 +67,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     }
     return requestedNextRoute || getRouteForUser(auth.user);
   }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
+
+  useEffect(() => {
+    authPageActiveRef.current = true;
+    return () => {
+      authPageActiveRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     // Auth hydration can finish after the browser has already moved away from
@@ -93,6 +101,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           : inviteCode || requestedNextRoute
             ? postAuthRoute
             : '/home';
+        if (cancelled || !authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+          return;
+        }
         navigate(redirectRoute, { replace: true });
       } catch (redirectError: any) {
         if (!cancelled) {
@@ -161,6 +172,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
         await signUpWithEmail(normalizedEmail, password, code);
         await auth.refresh();
+        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+          return;
+        }
         navigate(requestedNextRoute ? `/verify-pending?next=${encodeURIComponent(requestedNextRoute)}` : '/verify-pending', { replace: true });
         return;
       }
@@ -172,12 +186,19 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
       const postLoginRoute = inviteCode || requestedNextRoute ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
       if (credential.nativeRest) {
+        await auth.refresh();
+        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+          return;
+        }
         window.location.hash = `#${postLoginRoute}`;
         window.location.reload();
         return;
       }
 
       await auth.refresh();
+      if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+        return;
+      }
       navigate(postLoginRoute, { replace: true });
     } catch (submitError: any) {
       setError(describeAuthError(submitError));
@@ -211,12 +232,19 @@ export function AuthPage({ auth }: { auth: AuthState }) {
             ? postAuthRoute
             : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
         if (result.nativeRest) {
+          await auth.refresh();
+          if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+            return;
+          }
           window.location.hash = `#${postGoogleRoute}`;
           window.location.reload();
           return;
         }
 
         await auth.refresh();
+        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+          return;
+        }
         navigate(postGoogleRoute, { replace: true });
       }
     } catch (googleError: any) {
@@ -250,6 +278,10 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           : inviteCode
             ? postAuthRoute
             : requestedNextRoute || getRouteForUser(hydrated?.user || auth.user);
+        await auth.refresh();
+        if (!authPageActiveRef.current || !isBrowserAuthRouteActive()) {
+          return;
+        }
         window.location.hash = `#${destination}`;
         window.location.reload();
       }
