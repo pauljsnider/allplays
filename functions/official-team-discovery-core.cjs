@@ -9,6 +9,7 @@ const {
 const DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS = 200;
 const DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS = 50;
 const DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM = 100;
+const DEFAULT_OFFICIAL_GAME_ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 function normalizeBoundedId(value) {
   if (typeof value !== 'string') return '';
@@ -112,6 +113,29 @@ function isCancelledGame(game = {}) {
     .some((value) => ['cancelled', 'canceled', 'deleted'].includes(value));
 }
 
+function isCurrentOrUpcomingOfficialGame(game = {}, now = new Date()) {
+  const startDate = toDate(game.date);
+  const nowDate = toDate(now);
+  if (!startDate || !nowDate || isCancelledGame(game)) return false;
+
+  const statuses = [game.status, game.liveStatus]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (statuses.some((value) => ['completed', 'complete', 'final', 'finished', 'ended'].includes(value))) return false;
+  if (statuses.some((value) => ['live', 'in_progress', 'in-progress', 'halftime'].includes(value))) return true;
+
+  const explicitEndValue = [game.endDate, game.endsAt, game.end, game.dtend]
+    .find((value) => value !== null && value !== undefined && value !== '');
+  const explicitEnd = explicitEndValue === undefined ? null : toDate(explicitEndValue);
+  if (explicitEnd) return explicitEnd.getTime() >= nowDate.getTime();
+
+  const durationMinutes = Number(game.durationMinutes || game.duration || 0);
+  const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes * 60 * 1000
+    : DEFAULT_OFFICIAL_GAME_ACTIVE_WINDOW_MS;
+  return startDate.getTime() + activeWindowMs >= nowDate.getTime();
+}
+
 function isAssignedToAuthUser(slot = {}, authUser = {}) {
   const uid = normalizeStoredUserId(authUser.uid);
   const email = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
@@ -181,8 +205,7 @@ function serializeOfficialAssignment({ teamId, teamName, gameId, sharedGamePath 
 }
 
 function projectOfficialGameAssignments({ teamId, teamName, gameId, sharedGamePath = '', game, authUser, canClaimOpen }) {
-  const date = toDate(game.date);
-  if (!date || date.getTime() < Date.now() || isCancelledGame(game)) return [];
+  if (!isCurrentOrUpcomingOfficialGame(game)) return [];
   const slots = Array.isArray(game.officiatingSlots) ? game.officiatingSlots : [];
   const assigned = slots
     .filter((slot) => slot && typeof slot === 'object' && isAssignedToAuthUser(slot, authUser))
@@ -508,6 +531,7 @@ module.exports = {
   createOfficialTeamDiscoveryHandler,
   extractOfficialTeamId,
   isAssignedToAuthUser,
+  isCurrentOrUpcomingOfficialGame,
   normalizeOfficialEmail,
   normalizeOfficialPhone,
   projectOfficialGameAssignments

@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
   buildOfficialPhoneCandidates,
-  createOfficialTeamDiscoveryHandler
+  createOfficialTeamDiscoveryHandler,
+  isCurrentOrUpcomingOfficialGame
 } = require('../official-team-discovery-core.cjs');
 
 class HttpsError extends Error {
@@ -105,6 +106,33 @@ function makeHandler(records, authUser, options = {}) {
 }
 
 const context = { auth: { uid: 'official-1', token: { email: 'stale@example.com' } } };
+
+test('official game activity uses terminal/live status, explicit end, duration, then a bounded fallback', () => {
+  const now = new Date('2026-08-12T12:00:00.000Z');
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T08:00:00.000Z',
+    end: '2026-08-12T12:30:00.000Z'
+  }, now), true);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T11:00:00.000Z',
+    endDate: '2026-08-12T11:30:00.000Z'
+  }, now), false);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-11T08:00:00.000Z',
+    liveStatus: 'live'
+  }, now), true);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T11:00:00.000Z',
+    liveStatus: 'finished'
+  }, now), false);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T10:00:00.000Z',
+    durationMinutes: 150
+  }, now), true);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T08:00:00.000Z'
+  }, now), false);
+});
 
 test('official discovery uses the current enabled Auth email instead of stale token or profile identity', async () => {
   const handler = makeHandler([
@@ -260,6 +288,45 @@ test('official discovery finds a direct canonical UID assignment without a direc
     teamId: 'team-uid',
     gameId: 'game-uid',
     slotId: 'center'
+  }]);
+});
+
+test('official discovery preserves a direct assignment after kickoff while the game is in progress', async () => {
+  const recentStartDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'teams/team-live-direct': { name: 'Live United', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      'team-live-direct': [{
+        id: 'game-live-direct',
+        data: {
+          date: recentStartDate,
+          opponent: 'Tigers',
+          officiatingAuthorizedUserIds: ['official-1'],
+          officiatingSlots: [{
+            id: 'center',
+            position: 'Center',
+            officialUserId: 'official-1',
+            status: 'accepted'
+          }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.teamIds, ['team-live-direct']);
+  assert.deepEqual(result.assignments.map(({ gameId, slotId, date }) => ({ gameId, slotId, date })), [{
+    gameId: 'game-live-direct',
+    slotId: 'center',
+    date: recentStartDate
   }]);
 });
 
@@ -506,6 +573,50 @@ test('official assignment projection includes bounded shared games without dupli
     slotId: 'open',
     opponent: 'Tigers'
   }]);
+});
+
+test('official discovery preserves assigned and eligible open shared slots after kickoff', async () => {
+  const recentStartDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const sharedPath = 'tournaments/tournament-1/sharedGames/shared-in-progress';
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { parentTeamIds: ['team-1'] },
+      'teams/team-1': { name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] }
+    },
+    sharedGames: [{
+      path: sharedPath,
+      data: {
+        date: recentStartDate,
+        homeTeamId: 'team-1',
+        awayTeamId: 'team-2',
+        awayTeamName: 'Tigers',
+        officiatingAuthorizedUserIds: ['official-1'],
+        officiatingSelfAssignmentEnabled: true,
+        officiatingSlots: [
+          { id: 'mine', position: 'Center', officialUserId: 'official-1', status: 'accepted' },
+          { id: 'open', position: 'Line', status: 'open' }
+        ]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.assignments.map(({ kind, slotId, sharedGamePath }) => ({
+    kind,
+    slotId,
+    sharedGamePath
+  })), [
+    { kind: 'assigned', slotId: 'mine', sharedGamePath: sharedPath },
+    { kind: 'open', slotId: 'open', sharedGamePath: sharedPath }
+  ]);
 });
 
 test('official assignment projection removes local mirrors of returned shared games', async () => {

@@ -7094,11 +7094,29 @@ async function nativeReleaseAssignment(event: ParentScheduleEvent, role: string)
 // Look-behind buffer for the officials game query so same-day / in-progress games stay
 // in range while still bounding the read (avoids scanning a team's full game history).
 const officialAssignmentsLookBehindMs = 24 * 60 * 60 * 1000;
+const officialGameActiveFallbackMs = 3 * 60 * 60 * 1000;
 
-function isUpcomingOfficialGame(game: any, now = new Date()) {
-  const date = normalizeScheduleDate(game?.date);
-  const status = compactString(game?.status).toLowerCase();
-  return Boolean(date && date.getTime() >= now.getTime() && status !== 'cancelled' && status !== 'canceled');
+function isCurrentOrUpcomingOfficialGame(game: any, now = new Date()) {
+  const startDate = normalizeScheduleDate(game?.date);
+  if (!startDate) return false;
+  const statuses = [game?.status, game?.liveStatus]
+    .map((value) => compactString(value).toLowerCase())
+    .filter(Boolean);
+  if (statuses.some((value) => ['cancelled', 'canceled', 'deleted', 'completed', 'complete', 'final', 'finished', 'ended'].includes(value))) {
+    return false;
+  }
+  if (statuses.some((value) => ['live', 'in_progress', 'in-progress', 'halftime'].includes(value))) return true;
+
+  const explicitEndValue = [game?.endDate, game?.endsAt, game?.end, game?.dtend]
+    .find((value) => value !== null && value !== undefined && value !== '');
+  const explicitEnd = explicitEndValue === undefined ? null : normalizeScheduleDate(explicitEndValue);
+  if (explicitEnd) return explicitEnd.getTime() >= now.getTime();
+
+  const durationMinutes = Number(game?.durationMinutes || game?.duration || 0);
+  const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
+    ? durationMinutes * 60 * 1000
+    : officialGameActiveFallbackMs;
+  return startDate.getTime() + activeWindowMs >= now.getTime();
 }
 
 function isEligibleOpenOfficiatingSlotParticipant(
@@ -7311,10 +7329,9 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   }
 
   const now = new Date();
-  // Only upcoming games are ever surfaced (isUpcomingOfficialGame requires date >= now),
-  // so bound the read to a small look-behind window instead of scanning the team's entire
-  // game history on every officials load. The look-behind keeps in-progress / same-day games
-  // (whose stored date is the start time) in range; the filter below still trims to upcoming.
+  // Bound the read to a small look-behind window instead of scanning the team's entire
+  // game history on every officials load. The filter below preserves games still in progress
+  // using their explicit end, duration, live status, or the shared three-hour fallback.
   const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
     const [teamResult, gamesResult] = await Promise.allSettled([
@@ -7337,7 +7354,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     const teamName = compactString(team?.name) || 'Team';
 
     const assignments = (Array.isArray(games) ? games : [])
-      .filter((game) => isUpcomingOfficialGame(game, now))
+      .filter((game) => isCurrentOrUpcomingOfficialGame(game, now))
       .flatMap((game) => {
         const eventDate = normalizeScheduleDate(game?.date);
         if (!eventDate) return [] as OfficialAssignmentItem[];

@@ -2280,6 +2280,27 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
+  it('keeps recently started assigned and open slots visible while the game is in progress', async () => {
+    const recentStartDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-in-progress',
+      date: recentStartDate,
+      opponent: 'Tigers',
+      officiatingSelfAssignmentEnabled: true,
+      officiatingSlots: [
+        { id: 'center', officialEmail: 'ref@example.com', status: 'accepted' },
+        { id: 'line', status: 'open' }
+      ]
+    }] as any);
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result.assignments.map(({ kind, gameId, slotId }) => ({ kind, gameId, slotId }))).toEqual([
+      { kind: 'assigned', gameId: 'game-in-progress', slotId: 'center' },
+      { kind: 'open', gameId: 'game-in-progress', slotId: 'line' }
+    ]);
+  });
+
   it('loads native linked-team assignments from the authenticated bounded callable projection', async () => {
     capacitorCoreMock.isNativePlatform.mockReturnValue(true);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
