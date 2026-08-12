@@ -710,14 +710,16 @@ describe('parent schedule child scope', () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
     vi.mocked(getStaffTeams).mockImplementation(() => new Promise(() => undefined));
-    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
-      teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
-      isPartial: false
-    });
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      }), 8000);
+    }));
 
     try {
       const scopePromise = loadParentScheduleScope(coachUser);
-      await vi.advanceTimersByTimeAsync(7000);
+      await vi.advanceTimersByTimeAsync(10000);
       const scope = await scopePromise;
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);

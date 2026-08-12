@@ -155,6 +155,7 @@ const primaryDataTimeoutMs = 5000;
 // grants. Give that one bounded callable enough time to finish on a cold web
 // start without raising the timeout for every schedule read.
 const staffTeamDiscoveryTimeoutMs = 7000;
+const staffTeamHttpHedgeDelayMs = 2000;
 const officialTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
@@ -1823,6 +1824,27 @@ async function loadStaffTeamsFromRestWithRetry(maxAttempts: number): Promise<Sta
 
 async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
   const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
+  const timers = getTimerScope();
+  let httpHedgeTimer: ReturnType<typeof setTimeout> | undefined;
+  let httpHedgePromise: Promise<StaffTeamsLoadResult> | null = null;
+  const startHttpHedge = () => {
+    if (!httpHedgePromise) httpHedgePromise = loadStaffTeamsFromRest();
+    return httpHedgePromise;
+  };
+  const cancelHttpHedge = () => {
+    if (httpHedgeTimer !== undefined) timers.clearTimeout(httpHedgeTimer);
+    httpHedgeTimer = undefined;
+  };
+  if (!isNativeRuntime()) {
+    // Start the equivalent authenticated HTTP transport while a cold SDK
+    // callable is still inside its timeout. If the SDK succeeds quickly the
+    // normal exact-result verification below remains unchanged; if it stalls,
+    // fallback latency overlaps instead of serializing two long waits.
+    httpHedgeTimer = timers.setTimeout(() => {
+      httpHedgeTimer = undefined;
+      void startHttpHedge().catch(() => {});
+    }, staffTeamHttpHedgeDelayMs);
+  }
   try {
     const staffTeamResult = await withTimeout(Promise.resolve(getStaffTeams({
       userId: user.uid,
@@ -1833,6 +1855,25 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
     staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
       if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
     });
+    const pendingHttpHedge = httpHedgePromise as Promise<StaffTeamsLoadResult> | null;
+    if (pendingHttpHedge) {
+      try {
+        const httpResult = await pendingHttpHedge;
+        httpResult.teams.forEach((team: any) => {
+          const teamId = compactString(team?.id);
+          if (teamId) teamsById.set(teamId, team);
+        });
+        return {
+          teams: [...teamsById.values()],
+          isPartial: staffTeamResult.isPartial || httpResult.isPartial,
+          verifiedByHttp: true,
+          httpAttempted: true
+        };
+      } catch {
+        // Preserve the successful SDK projection and let the caller's existing
+        // authoritative verification path retry the failed HTTP transport.
+      }
+    }
     return {
       teams: [...teamsById.values()],
       isPartial: staffTeamResult.isPartial,
@@ -1848,10 +1889,12 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
       fallback: 'authenticated-http'
     });
     try {
-      return await loadStaffTeamsFromRest();
+      return await startHttpHedge();
     } catch {
       return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
     }
+  } finally {
+    cancelHttpHedge();
   }
 }
 
