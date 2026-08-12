@@ -17,6 +17,11 @@ describe('profile photo Storage rule shape', () => {
         expect(storageRules).not.toContain('match /profile-photos/teams/{teamId}/team/{userId}/{fileName} {');
         expect(storageRules).toContain('match /certificate-signatures/teams/{teamId}/{fileName} {');
     });
+
+    it('uses only canonical user scope for linked-parent player photo authority', () => {
+        expect(storageRules).toContain("(teamId + '::' + playerId) in firestore.get(userPath).data.get('parentPlayerKeys', [])");
+        expect(storageRules).not.toContain("data.get('parentIds', [])");
+    });
 });
 
 describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_STORAGE_EMULATOR_HOST)(
@@ -85,7 +90,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     parentTeamIds: ['team-a'],
                     parentPlayerKeys: ['team-a::player-a']
                 });
-                await firestore.doc('teams/team-a/players/player-a').set({ parentIds: ['member-a'] });
+                await firestore.doc('users/revoked-parent').set({
+                    isAdmin: false,
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: []
+                });
+                await firestore.doc('users/revocable-parent').set({
+                    isAdmin: false,
+                    parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-a']
+                });
+                await firestore.doc('teams/team-a/players/player-a').set({
+                    parentIds: ['member-a', 'revoked-parent', 'revocable-parent']
+                });
                 await firestore.doc('teams/team-b/players/player-b').set({ parentIds: ['owner-b'] });
                 await firestore.doc('users/member-a-nonparticipant').set({
                     isAdmin: false,
@@ -412,6 +429,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'text/plain' }
                 )
             );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a/too-large.jpg').put(
+                    new Uint8Array((10 * 1024 * 1024) + 1),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                memberStorage.ref('profile-photos/teams/team-a/players/player-a').listAll()
+            );
 
             const secondParentStorage = testEnv.authenticatedContext('member-b', {
                 email: 'member-b@example.com',
@@ -422,6 +448,55 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
             await assertSucceeds(
                 secondParentStorage.ref('profile-photos/teams/team-a/players/player-a/replacement.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+        });
+
+        it('denies player photo create and delete when only stale player parentIds grants access', async () => {
+            const revokedParentStorage = testEnv.authenticatedContext('revoked-parent', {
+                email: 'revoked-parent@example.com',
+                email_verified: true
+            }).storage();
+
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.storage().ref('profile-photos/teams/team-a/players/player-a/existing.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                );
+            });
+
+            await assertFails(
+                revokedParentStorage.ref('profile-photos/teams/team-a/players/player-a/rejected.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                revokedParentStorage.ref('profile-photos/teams/team-a/players/player-a/existing.jpg').delete()
+            );
+        });
+
+        it('applies canonical linked-parent revocation immediately despite stale player parentIds', async () => {
+            const revocableParentStorage = testEnv.authenticatedContext('revocable-parent', {
+                email: 'revocable-parent@example.com',
+                email_verified: true
+            }).storage();
+            const existingPhoto = revocableParentStorage.ref(
+                'profile-photos/teams/team-a/players/player-a/revocable.jpg'
+            );
+
+            await assertSucceeds(
+                existingPhoto.put(new Uint8Array([1]), { contentType: 'image/jpeg' })
+            );
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await context.firestore().doc('users/revocable-parent').update({ parentPlayerKeys: [] });
+            });
+
+            await assertFails(existingPhoto.delete());
+            await assertFails(
+                revocableParentStorage.ref('profile-photos/teams/team-a/players/player-a/revoked.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
