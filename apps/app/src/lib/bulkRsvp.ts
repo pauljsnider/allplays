@@ -7,7 +7,33 @@ import {
 
 export const maxBulkRsvpEvents = 50;
 export const maxGroupedRsvpPlayerIds = 10;
+/** Keep each bulk RSVP persistence workflow small enough to avoid client-side write bursts. */
+export const bulkRsvpSubmissionConcurrency = 4;
 const recentlyStartedEventWindowMs = 3 * 60 * 60 * 1000;
+
+export async function runBulkRsvpSubmissionQueue<T, R>(
+  items: T[],
+  worker: (item: T) => Promise<R>,
+  concurrency = bulkRsvpSubmissionConcurrency
+) {
+  const results = new Array<R>(items.length);
+  const maxConcurrency = Math.max(1, Math.floor(concurrency) || 1);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex]);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(maxConcurrency, items.length) }, runWorker)
+  );
+  return results;
+}
 
 export function getBulkRsvpCandidates(
   events: ParentScheduleEvent[],

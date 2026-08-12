@@ -68,7 +68,8 @@ import {
   getBulkRsvpNoteReadyCandidates,
   getBulkRsvpResultMessage,
   getNeededBulkRsvpEventKeys,
-  groupBulkRsvpSubmissions
+  groupBulkRsvpSubmissions,
+  runBulkRsvpSubmissionQueue
 } from '../lib/bulkRsvp';
 
 const logger = createLogger('schedule');
@@ -1028,7 +1029,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     selectedEventKeys.forEach((eventKey) => pendingRsvpEventKeysRef.current.add(eventKey));
     updateScheduleEvents((current) => applyBulkRsvpResponse(current, selectedKeySet, response));
 
-    const settledGroups = await Promise.all(groupBulkRsvpSubmissions(targetEvents, eventsRef.current).map(async (group) => {
+    const settledGroups = await runBulkRsvpSubmissionQueue(groupBulkRsvpSubmissions(targetEvents, eventsRef.current), async (group) => {
       try {
         const savedNote = String(group[0]?.myRsvpNote || '');
         if (group.length > 1) {
@@ -1040,7 +1041,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       } catch {
         return { ok: false as const, eventKeys: group.map((event) => event.eventKey) };
       }
-    }));
+    });
     const failedEventKeys = settledGroups.filter((result) => !result.ok).flatMap((result) => result.eventKeys);
     const failedKeySet = new Set(failedEventKeys);
     updateScheduleEvents((current) => current.map((event) => {
