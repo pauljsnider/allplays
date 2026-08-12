@@ -178,4 +178,19 @@ describe('production exact-head validation reuse', () => {
         expect(workflow.jobs['regression-guards'].if).toContain("reuse_pr_validation != 'true'");
         expect(workflow.jobs['production-validation-gate'].if).toBe('always()');
     });
+
+    it('continues the fail-closed deploy chain after reusable validation skips duplicate jobs', () => {
+        expect(workflow.jobs['validate-production-smoke-config'].if).toBe(
+            "always() && needs.production-validation-gate.result == 'success'"
+        );
+        expect(workflow.jobs['prepare-deploy'].if).toBe(
+            "always() && needs.production-validation-gate.result == 'success' && needs.validate-production-smoke-config.result == 'success'"
+        );
+        expect(workflow.jobs.deploy.if).toBe(
+            "!cancelled() && needs.prepare-deploy.result == 'success'"
+        );
+        expect(workflow.jobs['deploy-pages'].if).toBe(
+            "always() && needs.prepare-deploy.result == 'success' && needs.deploy.result == 'success' && vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'"
+        );
+    });
 });
