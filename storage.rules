@@ -66,12 +66,9 @@ service firebase.storage {
 
     function isParentForPlayer(teamId, playerId) {
       let userPath = /databases/(default)/documents/users/$(request.auth.uid);
-      let playerPath = /databases/(default)/documents/teams/$(teamId)/players/$(playerId);
       return isSignedIn() &&
         firestore.exists(userPath) &&
-        ((teamId + '::' + playerId) in firestore.get(userPath).data.get('parentPlayerKeys', []) ||
-         (firestore.exists(playerPath) &&
-          request.auth.uid in firestore.get(playerPath).data.get('parentIds', [])));
+        (teamId + '::' + playerId) in firestore.get(userPath).data.get('parentPlayerKeys', []);
     }
 
     function chatConversationPath(teamId, conversationId) {
