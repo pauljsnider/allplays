@@ -7480,7 +7480,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 }
 
 export async function respondToOfficialAssignmentItem(item: OfficialAssignmentItem, status: 'accepted' | 'declined') {
-  if (isNativeRuntime()) {
+  if (isNativeRuntime() || item.sharedGamePath) {
     await callNativeFirebaseFunction('respondToOfficiatingAssignment', {
       teamId: item.teamId,
       gameId: item.gameId,
@@ -7494,7 +7494,7 @@ export async function respondToOfficialAssignmentItem(item: OfficialAssignmentIt
 }
 
 export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, user: AuthUser) {
-  if (isNativeRuntime()) {
+  if (isNativeRuntime() || item.sharedGamePath) {
     await callNativeFirebaseFunction('claimOpenOfficiatingSlot', {
       teamId: item.teamId,
       gameId: item.gameId,

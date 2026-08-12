@@ -2485,6 +2485,8 @@ describe('official assignments app service', () => {
 
   it('loads web linked-team assignments from the authenticated bounded HTTP projection', async () => {
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-assigned';
+    const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
     capacitorCoreMock.httpPost.mockResolvedValue({
       status: 200,
       data: {
@@ -2498,7 +2500,8 @@ describe('official assignments app service', () => {
             kind: 'assigned',
             teamId: 'team-alpha',
             teamName: 'Alpha FC',
-            gameId: 'game-assigned',
+            gameId,
+            sharedGamePath,
             slotId: 'center',
             position: 'Center Referee',
             status: 'pending',
@@ -2520,7 +2523,7 @@ describe('official assignments app service', () => {
       hasAccess: true,
       teamIds: ['team-alpha'],
       isPartial: false,
-      assignments: [expect.objectContaining({ gameId: 'game-assigned', slotId: 'center' })]
+      assignments: [expect.objectContaining({ gameId, sharedGamePath, slotId: 'center' })]
     }));
     expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
       data: { data: { includeAssignments: true, requestedTeamId: 'team-alpha' } },
@@ -2529,6 +2532,29 @@ describe('official assignments app service', () => {
     expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
+
+    const [item] = result.assignments;
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
   });
 
   it('loads a requested native team and its shared assignments only from the complete callable projection', async () => {
