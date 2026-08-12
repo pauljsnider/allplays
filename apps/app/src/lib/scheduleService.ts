@@ -1800,6 +1800,26 @@ async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
   };
 }
 
+async function loadStaffTeamsFromRestWithRetry(maxAttempts: number): Promise<StaffTeamsLoadResult> {
+  let lastError: unknown = new Error('Managed team verification failed.');
+  let lastPartialResult: StaffTeamsLoadResult | null = null;
+  const partialTeamsById = new Map<string, any>();
+  for (let attempt = 0; attempt < Math.max(1, maxAttempts); attempt += 1) {
+    try {
+      const result = await loadStaffTeamsFromRest();
+      if (!result.isPartial) return result;
+      result.teams.forEach((team: any) => partialTeamsById.set(team.id, team));
+      lastPartialResult = result;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastPartialResult) {
+    return { ...lastPartialResult, teams: [...partialTeamsById.values()] };
+  }
+  throw lastError;
+}
+
 async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
   const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
   try {
@@ -3156,7 +3176,11 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     : staffTeamResult.verifiedByHttp !== true && staffTeamResult.httpAttempted !== true;
   if (shouldVerifyStaffResultWithHttp) {
     try {
-      const restResult = await loadStaffTeamsFromRest();
+      // A production function deployment or cold start can outlive the first
+      // browser request even when the SDK returns a nonempty (but incomplete)
+      // result. Give the authoritative projection one bounded retry before
+      // allowing a partial chooser to render.
+      const restResult = await loadStaffTeamsFromRestWithRetry(nativeRuntime ? 1 : 2);
       const teamsById = new Map<string, any>();
       [...staffTeamResult.teams, ...restResult.teams].forEach((team: any) => {
         const teamId = compactString(team?.id);
