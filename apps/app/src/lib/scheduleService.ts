@@ -3131,7 +3131,11 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   ));
   const shouldVerifyEmptyStaffResult = staffTeamResult.teams.length === 0
     && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
-  if (isNativeRuntime() && (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)) {
+  const nativeRuntime = isNativeRuntime();
+  const shouldVerifyStaffResultWithHttp = nativeRuntime
+    ? (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)
+    : (shouldVerifyEmptyStaffResult && staffTeamResult.isPartial !== true);
+  if (shouldVerifyStaffResultWithHttp) {
     try {
       const restResult = await loadStaffTeamsFromRest();
       const teamsById = new Map<string, any>();
