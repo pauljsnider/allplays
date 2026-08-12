@@ -13,7 +13,144 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation-source:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      reuse_pr_validation: ${{ steps.source.outputs.reuse_pr_validation }}
+      validated_head_sha: ${{ steps.source.outputs.validated_head_sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve exact production validation source
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "reuse_pr_validation=false" >> "$GITHUB_OUTPUT"
+          echo "validated_head_sha=" >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/master" ]]; then
+            echo "Production validation will run because this is not a master push."
+            exit 0
+          fi
+
+          pr_json=""
+          for attempt in 1 2 3; do
+            if pr_json="$(gh api --method GET \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" 2>/dev/null)"; then
+              break
+            fi
+            pr_json=""
+            sleep $((attempt * 2))
+          done
+          if [[ -z "$pr_json" ]]; then
+            echo "::warning::Could not resolve the merged PR; running production validation."
+            exit 0
+          fi
+
+          matching_prs="$(jq --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '[
+            .[]
+            | select(
+                .state == "closed"
+                and .merged_at != null
+                and .merge_commit_sha == $sha
+                and .base.ref == "master"
+                and .base.repo.full_name == $repo
+                and .head.repo.full_name == $repo
+              )
+          ]' <<< "$pr_json")"
+          if [[ "$(jq 'length' <<< "$matching_prs")" != "1" ]]; then
+            echo "Production validation will run because the commit is not bound to exactly one merged same-repository PR."
+            exit 0
+          fi
+
+          pr_number="$(jq -r '.[0].number' <<< "$matching_prs")"
+          head_sha="$(jq -r '.[0].head.sha' <<< "$matching_prs")"
+          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::Merged PR #${pr_number} did not expose a valid exact head SHA; running production validation."
+            exit 0
+          fi
+
+          evidence_dir="$RUNNER_TEMP/production-validation-evidence"
+          mkdir -p "$evidence_dir"
+          printf '%s\n' "$pr_json" > "$evidence_dir/pulls.json"
+
+          fetch_json() {
+            local output_path="$1"
+            shift
+            for attempt in 1 2 3; do
+              if gh api --method GET "$@" > "$output_path" 2>/dev/null; then
+                return 0
+              fi
+              sleep $((attempt * 2))
+            done
+            return 1
+          }
+
+          if ! fetch_json "$evidence_dir/merge-commit.json" \
+              "repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}" ||
+            ! fetch_json "$evidence_dir/head-commit.json" \
+              "repos/${GITHUB_REPOSITORY}/git/commits/${head_sha}" ||
+            ! fetch_json "$evidence_dir/pr-fast-runs.json" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/pr-fast.yml/runs" \
+              -f head_sha="$head_sha" -f event=pull_request -f status=success -F per_page=20 ||
+            ! fetch_json "$evidence_dir/pr-integration-runs.json" \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/pr-integration.yml/runs" \
+              -f head_sha="$head_sha" -f event=pull_request -f status=success -F per_page=20 ||
+            ! fetch_json "$evidence_dir/statuses.json" \
+              "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/statuses"; then
+            echo "::warning::Could not load complete exact-head evidence; running production validation."
+            exit 0
+          fi
+
+          printf '{}\n' > "$evidence_dir/run-jobs.json"
+          while IFS= read -r run_id; do
+            if [[ ! "$run_id" =~ ^[0-9]+$ ]] ||
+              ! fetch_json "$evidence_dir/run-${run_id}-jobs.json" \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs" -f filter=latest -F per_page=100; then
+              echo "::warning::Could not load required-job evidence; running production validation."
+              exit 0
+            fi
+            jq --arg run_id "$run_id" --slurpfile jobs "$evidence_dir/run-${run_id}-jobs.json" \
+              '. + {($run_id): $jobs[0]}' "$evidence_dir/run-jobs.json" > "$evidence_dir/run-jobs.next.json"
+            mv "$evidence_dir/run-jobs.next.json" "$evidence_dir/run-jobs.json"
+          done < <(jq -r '.workflow_runs[]?.id' \
+            "$evidence_dir/pr-fast-runs.json" "$evidence_dir/pr-integration-runs.json" | sort -u)
+
+          verification="$(node scripts/verify-production-validation-reuse.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --merge-sha "$GITHUB_SHA" \
+            --pulls "$evidence_dir/pulls.json" \
+            --merge-commit "$evidence_dir/merge-commit.json" \
+            --head-commit "$evidence_dir/head-commit.json" \
+            --pr-fast-runs "$evidence_dir/pr-fast-runs.json" \
+            --pr-integration-runs "$evidence_dir/pr-integration-runs.json" \
+            --run-jobs "$evidence_dir/run-jobs.json" \
+            --statuses "$evidence_dir/statuses.json")"
+          if [[ "$(jq -r '.reusable' <<< "$verification")" != "true" ]]; then
+            echo "Production validation will run: $(jq -r '.reason' <<< "$verification")"
+            exit 0
+          fi
+
+          echo "reuse_pr_validation=true" >> "$GITHUB_OUTPUT"
+          echo "validated_head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "Reusing exact-head validation for merged PR #${pr_number} at ${head_sha:0:12}; PR identity, tree, required jobs, and trusted PaulBot approval match."
+
   unit-tests:
+    needs: validation-source
+    if: needs.validation-source.outputs.reuse_pr_validation != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,6 +187,8 @@ jobs:
         run: npm run test:functions:auth-email
 
   regression-guards:
+    needs: validation-source
+    if: needs.validation-source.outputs.reuse_pr_validation != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,8 +227,32 @@ jobs:
           name: prod-regression-guards-http-log
           path: /tmp/allplays-prod-regression-guards.log
 
+  production-validation-gate:
+    needs: [validation-source, unit-tests, regression-guards]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require reusable or freshly successful validation
+        env:
+          REUSE_PR_VALIDATION: ${{ needs.validation-source.outputs.reuse_pr_validation }}
+          UNIT_TEST_RESULT: ${{ needs.unit-tests.result }}
+          REGRESSION_GUARD_RESULT: ${{ needs.regression-guards.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$REUSE_PR_VALIDATION" == "true" ]]; then
+            echo "Exact-head PR validation is reusable for this identical production tree."
+            exit 0
+          fi
+          if [[ "$UNIT_TEST_RESULT" != "success" || "$REGRESSION_GUARD_RESULT" != "success" ]]; then
+            echo "::error::Fresh production validation did not complete successfully."
+            exit 1
+          fi
+          echo "Fresh production validation passed."
+
   validate-production-smoke-config:
-    needs: [unit-tests, regression-guards]
+    needs: production-validation-gate
     runs-on: ubuntu-latest
     environment:
       name: production-smoke
@@ -147,7 +310,7 @@ jobs:
           fi
 
   prepare-deploy:
-    needs: [unit-tests, regression-guards, validate-production-smoke-config]
+    needs: [production-validation-gate, validate-production-smoke-config]
     runs-on: ubuntu-latest
     permissions:
       actions: read

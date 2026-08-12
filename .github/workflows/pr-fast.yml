@@ -1,4 +1,5 @@
 name: pr-fast
+run-name: "pr-fast #${{ github.event.pull_request.number }} -> ${{ github.event.pull_request.base.ref }} @ ${{ github.event.pull_request.head.sha }}"
 
 on:
   pull_request:

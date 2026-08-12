@@ -1068,7 +1068,16 @@ export function validateFirebaseRulesCi() {
         'Production migration local application-default fallback'
     );
     validateFirebaseDeployWorkloadIdentity(deployProd, 'Production deploy');
-    assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
+    assertIncludes(
+        deployProd,
+        'needs: [validation-source, unit-tests, regression-guards]',
+        'Production validation aggregate gate'
+    );
+    assertIncludes(
+        deployProd,
+        'needs: [production-validation-gate, validate-production-smoke-config]',
+        'Production deploy gate'
+    );
 
     assertIncludes(deployPreviewBuild, 'workflow_call:', 'Untrusted preview reusable workflow');
     assertIncludes(prIntegration, 'uses: ./.github/workflows/regression-guards.yml', 'PR integration regression gate');
