@@ -435,6 +435,7 @@ test('officiating claim and response callables reject terminal and historical di
     const teamId = 'team-officiating';
     const lifecycleCases = [
         { key: 'past', date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() },
+        { key: 'stale-live', date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), liveStatus: 'live' },
         { key: 'cancelled', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), status: 'cancelled' },
         { key: 'completed', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), liveStatus: 'completed' }
     ];

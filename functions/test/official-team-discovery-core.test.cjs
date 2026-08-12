@@ -143,7 +143,7 @@ function makeBindingFirestore(documents = {}) {
 
 const context = { auth: { uid: 'official-1', token: { email: 'stale@example.com' } } };
 
-test('official game activity uses terminal/live status, explicit end, duration, then a bounded fallback', () => {
+test('official game activity applies explicit end, duration, and fallback windows even to live status', () => {
   const now = new Date('2026-08-12T12:00:00.000Z');
   assert.equal(isCurrentOrUpcomingOfficialGame({
     date: '2026-08-12T08:00:00.000Z',
@@ -155,6 +155,10 @@ test('official game activity uses terminal/live status, explicit end, duration, 
   }, now), false);
   assert.equal(isCurrentOrUpcomingOfficialGame({
     date: '2026-08-11T08:00:00.000Z',
+    liveStatus: 'live'
+  }, now), false);
+  assert.equal(isCurrentOrUpcomingOfficialGame({
+    date: '2026-08-12T11:00:00.000Z',
     liveStatus: 'live'
   }, now), true);
   assert.equal(isCurrentOrUpcomingOfficialGame({

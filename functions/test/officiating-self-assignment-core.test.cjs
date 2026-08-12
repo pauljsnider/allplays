@@ -250,6 +250,7 @@ test('officiating claim and response updates reject past, cancelled, and complet
     const currentTime = new Date('2026-08-12T12:00:00.000Z');
     const lifecycleCases = [
         { label: 'past', date: '2026-08-11T12:00:00.000Z' },
+        { label: 'stale live', date: '2026-08-11T12:00:00.000Z', liveStatus: 'live' },
         { label: 'cancelled', date: '2026-08-13T12:00:00.000Z', status: 'cancelled' },
         { label: 'completed', date: '2026-08-13T12:00:00.000Z', liveStatus: 'completed' }
     ];

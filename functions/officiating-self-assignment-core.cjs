@@ -172,8 +172,6 @@ function isCurrentOrUpcomingOfficiatingGame(game = {}, now = new Date()) {
     if (statuses.some((value) => [
         'cancelled', 'canceled', 'deleted', 'completed', 'complete', 'final', 'finished', 'ended'
     ].includes(value))) return false;
-    if (statuses.some((value) => ['live', 'in_progress', 'in-progress', 'halftime'].includes(value))) return true;
-
     const explicitEndValue = [game.endDate, game.endsAt, game.end, game.dtend]
         .find((value) => value !== null && value !== undefined && value !== '');
     const explicitEnd = explicitEndValue === undefined ? null : toOfficiatingDate(explicitEndValue);
