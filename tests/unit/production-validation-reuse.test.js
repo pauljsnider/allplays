@@ -187,7 +187,7 @@ describe('production exact-head validation reuse', () => {
             "always() && needs.production-validation-gate.result == 'success' && needs.validate-production-smoke-config.result == 'success'"
         );
         expect(workflow.jobs.deploy.if).toBe(
-            "always() && needs.prepare-deploy.result == 'success'"
+            "!cancelled() && needs.prepare-deploy.result == 'success'"
         );
         expect(workflow.jobs['deploy-pages'].if).toBe(
             "always() && needs.prepare-deploy.result == 'success' && needs.deploy.result == 'success' && vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'"
