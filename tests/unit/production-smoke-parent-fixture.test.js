@@ -8,7 +8,8 @@ import {
     buildCanonicalStaffProfilePatch,
     buildParentMembershipPatch,
     inspectParentFixture,
-    inspectStaffTeamDiscovery
+    inspectStaffTeamDiscovery,
+    loadManagedTeamCallable
 } from '../../scripts/maintain-production-smoke-parent-fixture.mjs';
 
 const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.yml', 'utf8');
@@ -88,6 +89,47 @@ const teamId = 'allplays-smoke-team-v1';
 const playerId = 'allplays-smoke-player-v1';
 
 describe('production parent smoke fixture maintenance', () => {
+    it('retries a partial managed-team result that omits the fixture', async () => {
+        const payloads = [
+            { result: { items: [{ id: 'other-team' }], isPartial: true } },
+            { result: { items: [{ id: teamId }], isPartial: false } }
+        ];
+        let requestCount = 0;
+        const result = await loadManagedTeamCallable(
+            { projectId: 'project-1', idToken: 'token-1' },
+            teamId,
+            async () => ({
+                ok: true,
+                status: 200,
+                json: async () => payloads[requestCount++]
+            })
+        );
+
+        expect(requestCount).toBe(2);
+        expect(result).toEqual({ items: [{ id: teamId }], isPartial: false });
+    });
+
+    it('bounds retries when partial managed-team results keep omitting the fixture', async () => {
+        let requestCount = 0;
+        const loadResult = loadManagedTeamCallable(
+            { projectId: 'project-1', idToken: 'token-1' },
+            teamId,
+            async () => {
+                requestCount += 1;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        result: { items: [{ id: 'other-team' }], isPartial: true }
+                    })
+                };
+            }
+        );
+
+        await expect(loadResult).rejects.toThrow(/inconclusive and retryable after a partial retry/);
+        expect(requestCount).toBe(2);
+    });
+
     it('requires the exact normalized admin value used by app discovery and Firestore rules', () => {
         const legacyTeam = buildTeamDocument({
             ownerId: 'other-owner',
@@ -372,5 +414,23 @@ describe('production parent smoke fixture maintenance', () => {
         expect(authenticatedCoreSource).not.toContain(
             "page.getByText('Create invite', { exact: true })"
         );
+    });
+
+    it('restores the desktop viewport before asserting the desktop messages header', () => {
+        const mobileViewport = authenticatedCoreSource.indexOf(
+            'page.setViewportSize({ width: 390, height: 844 })'
+        );
+        const desktopViewport = authenticatedCoreSource.indexOf(
+            'page.setViewportSize({ width: 1280, height: 720 })',
+            mobileViewport + 1
+        );
+        const conversationsHeading = authenticatedCoreSource.indexOf(
+            "heading: 'Conversations'",
+            mobileViewport + 1
+        );
+
+        expect(mobileViewport).toBeGreaterThan(-1);
+        expect(desktopViewport).toBeGreaterThan(mobileViewport);
+        expect(conversationsHeading).toBeGreaterThan(desktopViewport);
     });
 });
