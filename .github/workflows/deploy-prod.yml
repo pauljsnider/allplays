@@ -1431,7 +1431,7 @@ jobs:
                 updateMask:"rulesetName"
               }' > "$payload_file"
 
-            for attempt in 1 2 3 4 5; do
+            for attempt in 1 2 3 4 5 6 7 8; do
               set +e
               http_status="$(
                 curl --silent --show-error \
@@ -1467,9 +1467,19 @@ jobs:
               if (( curl_status == 0 )) && [[ ! "$http_status" =~ ^(408|409|429|500|502|503|504)$ ]]; then
                 break
               fi
-              if (( attempt < 5 )); then
-                retry_delay_seconds=$((15 * attempt))
-                echo "Transient Firestore release update failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/5)." >&2
+              # A timeout or 5xx can arrive after the release PATCH commits.
+              # Re-read the exact release before sending another mutation.
+              if verify_active_firestore_release_name "$ruleset_name"; then
+                rm -f "$payload_file" "$response_file"
+                return 0
+              fi
+              if (( attempt < 8 )); then
+                retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+                retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))
+                if (( retry_delay_seconds > 120 )); then
+                  retry_delay_seconds=120
+                fi
+                echo "Transient Firestore release update failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/8)." >&2
                 sleep "$retry_delay_seconds"
               fi
             done

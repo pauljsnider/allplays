@@ -583,6 +583,16 @@ export function validateProductionDeployCommand(deployProd) {
         'firestore_rules_api_error "Firestore release update"',
         'Production Firestore structured release failure diagnostics'
     );
+    assertMatches(
+        deployProd,
+        /activate_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3 4 5 6 7 8; do[\s\S]{0,5000}--request PATCH/,
+        'Production Firestore bounded release update'
+    );
+    assertMatches(
+        deployProd,
+        /activate_firestore_ruleset_with_retry\(\)[\s\S]{0,7000}firestore_rules_api_error "Firestore release update"[\s\S]{0,2000}verify_active_firestore_release_name "\$ruleset_name"[\s\S]{0,2000}retry_delay_seconds=\$\(\(15 \* \(2 \*\* \(attempt - 1\)\)\)\)/,
+        'Production Firestore ambiguous-release reconciliation precedes exponential retry'
+    );
     assertIncludes(
         deployProd,
         'Created or reused and activated the exact staged Firestore ruleset.',
