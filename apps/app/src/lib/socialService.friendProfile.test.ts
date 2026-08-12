@@ -147,8 +147,8 @@ describe('loadFriendProfile self-profile resilience', () => {
     nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.includes('/hiddenSocialPosts?')) {
-        return { ok: true, status: 200, json: async () => ({ documents: [] }) };
+      if (url.endsWith('/users/user-1:runQuery')) {
+        return { ok: true, status: 200, json: async () => [] };
       }
       if (url.includes('/publicUserProfiles/user-1')) {
         return {
@@ -359,9 +359,10 @@ describe('loadFriendProfile self-profile resilience', () => {
     expect(firestoreMocks.getDocs).not.toHaveBeenCalled();
   });
 
-  it('bounds native hidden-post pagination and surfaces an incomplete retry state', async () => {
+  it('checks native hidden state only for bounded friend-profile candidates', async () => {
     nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
-    const hiddenRequests: string[] = [];
+    const candidateIds = Array.from({ length: 12 }, (_, index) => `post-${index}`);
+    const hiddenQueryBodies: any[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes('/publicUserProfiles/user-1')) {
@@ -374,18 +375,15 @@ describe('loadFriendProfile self-profile resilience', () => {
           })
         };
       }
-      if (url.includes('/hiddenSocialPosts?')) {
-        hiddenRequests.push(url);
-        const page = hiddenRequests.length;
+      if (url.endsWith('/users/user-1:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        hiddenQueryBodies.push(body);
+        const values = body.structuredQuery.where.fieldFilter.value.arrayValue.values;
+        const hiddenValue = values.find((value: any) => value.referenceValue.endsWith('/post-0'));
         return {
           ok: true,
           status: 200,
-          json: async () => ({
-            documents: Array.from({ length: 200 }, (_, index) => ({
-              name: `projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/hidden-${page}-${index}`
-            })),
-            nextPageToken: `page-${page + 1}`
-          })
+          json: async () => hiddenValue ? [{ document: { name: hiddenValue.referenceValue } }] : []
         };
       }
       if (url.endsWith('/documents:runQuery')) {
@@ -393,7 +391,24 @@ describe('loadFriendProfile self-profile resilience', () => {
         if (body.structuredQuery.from?.[0]?.collectionId === 'athleteProfiles') {
           return { ok: true, status: 200, json: async () => [] };
         }
-        throw new Error('Post discovery must not run with incomplete hidden-post state.');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => candidateIds.map((id, index) => ({
+            document: {
+              name: `projects/demo-project/databases/(default)/documents/socialPosts/${id}`,
+              fields: {
+                authorId: { stringValue: 'user-1' },
+                title: { stringValue: `Post ${index}` },
+                hidden: { booleanValue: false },
+                createdAt: { timestampValue: new Date(Date.UTC(2026, 7, 10, 15, 0, index)).toISOString() }
+              }
+            }
+          }))
+        };
+      }
+      if (url.includes('/socialPosts/post-') && url.includes('/reactions/user-1')) {
+        return { ok: false, status: 404, json: async () => ({ error: { message: 'Not found' } }) };
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -406,12 +421,13 @@ describe('loadFriendProfile self-profile resilience', () => {
       roles: []
     } as any, 'user-1');
 
-    expect(hiddenRequests).toHaveLength(3);
-    expect(hiddenRequests[2]).toContain('pageToken=page-3');
-    expect(profile).toMatchObject({
-      posts: [],
-      postsError: 'Recent posts could not load completely. Try again.'
-    });
+    expect(hiddenQueryBodies).toHaveLength(2);
+    expect(hiddenQueryBodies.map((body) => body.structuredQuery.limit)).toEqual([10, 10]);
+    expect(hiddenQueryBodies.map((body) => (
+      body.structuredQuery.where.fieldFilter.value.arrayValue.values.length
+    ))).toEqual([10, 2]);
+    expect(profile.posts.map((post) => post.id)).toEqual(candidateIds.slice(1).reverse());
+    expect(profile.postsError).toBeNull();
   });
 
   it('bounds native post scans when every matching post is hidden and surfaces retry', async () => {
@@ -430,15 +446,15 @@ describe('loadFriendProfile self-profile resilience', () => {
           })
         };
       }
-      if (url.includes('/hiddenSocialPosts?')) {
+      if (url.endsWith('/users/user-1:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        const values = body.structuredQuery.where.fieldFilter.value.arrayValue.values;
         return {
           ok: true,
           status: 200,
-          json: async () => ({
-            documents: hiddenIds.map((id) => ({
-              name: `projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/${id}`
-            }))
-          })
+          json: async () => values.map((value: any) => ({
+            document: { name: value.referenceValue }
+          }))
         };
       }
       if (url.endsWith('/documents:runQuery')) {
