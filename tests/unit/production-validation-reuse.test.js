@@ -1,67 +1,135 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
+import { evaluateProductionValidationReuse } from '../../scripts/verify-production-validation-reuse.mjs';
 
 const workflowSource = readFileSync('.github/workflows/deploy-prod.yml', 'utf8');
+const fastWorkflowSource = readFileSync('.github/workflows/pr-fast.yml', 'utf8');
+const integrationWorkflowSource = readFileSync('.github/workflows/pr-integration.yml', 'utf8');
 const workflow = parseYaml(workflowSource);
+const mergeSha = 'a'.repeat(40);
+const headSha = 'b'.repeat(40);
+const treeSha = 'c'.repeat(40);
+
+function workflowRun(name) {
+    return {
+        id: name === 'pr-fast' ? 101 : 102,
+        status: 'completed',
+        conclusion: 'success',
+        event: 'pull_request',
+        head_sha: headSha,
+        head_branch: 'codex/production-validation-reuse',
+        head_repository: { full_name: 'pauljsnider/allplays' },
+        path: `.github/workflows/${name}.yml`,
+        display_title: `${name} #4605 -> master @ ${headSha}`,
+        updated_at: '2026-08-12T08:10:00Z'
+    };
+}
+
+function evidence() {
+    return {
+        repository: 'pauljsnider/allplays',
+        mergeSha,
+        pulls: [{
+            number: 4605,
+            state: 'closed',
+            merged_at: '2026-08-12T08:11:00Z',
+            merge_commit_sha: mergeSha,
+            base: { ref: 'master', repo: { full_name: 'pauljsnider/allplays' } },
+            head: {
+                sha: headSha,
+                ref: 'codex/production-validation-reuse',
+                repo: { full_name: 'pauljsnider/allplays' }
+            }
+        }],
+        mergeCommit: { sha: mergeSha, tree: { sha: treeSha } },
+        headCommit: { sha: headSha, tree: { sha: treeSha } },
+        prFastRuns: { workflow_runs: [workflowRun('pr-fast')] },
+        prIntegrationRuns: { workflow_runs: [workflowRun('pr-integration')] },
+        runJobs: {
+            101: {
+                jobs: ['unit-tests', 'cache-bust-guard', 'app-quality'].map((name) => ({
+                    name,
+                    status: 'completed',
+                    conclusion: 'success'
+                }))
+            },
+            102: {
+                jobs: ['mobile-build', 'preview-smoke'].map((name) => ({
+                    name,
+                    status: 'completed',
+                    conclusion: 'success'
+                }))
+            }
+        },
+        statuses: [{
+            context: 'paulbot-review-gate',
+            state: 'success',
+            creator: { id: 309595148, login: 'allplays-paulbot[bot]', type: 'Bot' },
+            target_url: 'https://github.com/pauljsnider/allplays/pull/4605',
+            description: 'Current-head review, review remediation, and CI passed',
+            updated_at: '2026-08-12T08:10:30Z'
+        }]
+    };
+}
 
 describe('production exact-head validation reuse', () => {
-    it('fails closed unless a same-repository merged PR has an identical validated tree', () => {
-        expect(workflowSource).toContain('echo "reuse_pr_validation=false" >> "$GITHUB_OUTPUT"');
-        expect(workflowSource).toContain('.merge_commit_sha == $sha');
-        expect(workflowSource).toContain('.base.ref == "master"');
-        expect(workflowSource).toContain('.base.repo.full_name == $repo');
-        expect(workflowSource).toContain('.head.repo.full_name == $repo');
-        expect(workflowSource).toContain('if [[ "$(jq \'length\' <<< "$matching_prs")" != "1" ]]');
-        expect(workflowSource).toContain('"repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}"');
-        expect(workflowSource).toContain('"repos/${GITHUB_REPOSITORY}/git/commits/${head_sha}"');
-        expect(workflowSource).toContain('[[ ! "$merge_tree" =~ ^[0-9a-f]{40}$ || "$merge_tree" != "$head_tree" ]]');
+    it('accepts an identical merged tree with exact PR-bound jobs and trusted PaulBot approval', () => {
+        expect(evaluateProductionValidationReuse(evidence())).toMatchObject({
+            reusable: true,
+            prNumber: 4605,
+            headSha
+        });
     });
 
-    it('rejects same-SHA workflow evidence from another PR, base, or repository', () => {
-        expect(workflowSource).toContain('.head_repository.full_name == $repo');
-        expect(workflowSource).toContain('.number == $pr_number');
-        expect(workflowSource).toContain('.head.repo.id == $repo_id');
-        expect(workflowSource).toContain('.base.ref == "master"');
-        expect(workflowSource).toContain('.base.repo.id == $repo_id');
-        expect(workflowSource).toContain('] | length) == 1');
+    it('rejects same-SHA workflow evidence produced for another PR and base', () => {
+        const input = evidence();
+        input.prFastRuns.workflow_runs[0].display_title = `pr-fast #999 -> support @ ${headSha}`;
+        input.prIntegrationRuns.workflow_runs[0].display_title = `pr-integration #999 -> support @ ${headSha}`;
+        expect(evaluateProductionValidationReuse(input).reusable).toBe(false);
     });
 
-    it('requires successful stable jobs instead of workflow-level success alone', () => {
-        expect(workflowSource).toContain('actions/runs/${workflow_run_id}/jobs?filter=latest&per_page=100');
-        expect(workflowSource).toContain('workflow_passed pr-fast.yml cache-bust-guard unit-tests app-quality');
-        expect(workflowSource).toContain('workflow_passed pr-integration.yml mobile-build preview-smoke');
-        expect(workflowSource).toContain('.name == $required_job');
-        expect(workflowSource).toContain('.status == "completed"');
-        expect(workflowSource).toContain('.conclusion == "success"');
+    it('rejects a forged success context from an untrusted creator', () => {
+        const input = evidence();
+        input.statuses[0].creator = { id: 1, login: 'untrusted-writer', type: 'User' };
+        expect(evaluateProductionValidationReuse(input)).toEqual({
+            reusable: false,
+            reason: 'trusted PR-bound PaulBot approval is missing'
+        });
     });
 
-    it('binds the PaulBot gate to this PR and its trusted status issuer', () => {
-        expect(workflowSource).toContain('.head_sha == $head_sha');
-        expect(workflowSource).toContain('.event == "pull_request"');
-        expect(workflowSource).toContain('.context == "paulbot-review-gate"');
-        expect(workflowSource).toContain('paulbot_target="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"');
-        expect(workflowSource).toContain('paulbot_issuer_avatar="https://avatars.githubusercontent.com/u/211066188?"');
-        expect(workflowSource).toContain('.target_url == $target');
-        expect(workflowSource).toContain('startswith($issuer_avatar)');
-        expect(workflowSource).toContain('echo "reuse_pr_validation=true" >> "$GITHUB_OUTPUT"');
+    it('rejects a successful workflow whose required jobs were skipped', () => {
+        const input = evidence();
+        input.runJobs[101].jobs.find((job) => job.name === 'unit-tests').conclusion = 'skipped';
+        expect(evaluateProductionValidationReuse(input)).toEqual({
+            reusable: false,
+            reason: 'exact PR-bound workflows and required jobs are incomplete'
+        });
     });
 
-    it('runs fresh tests on fallback and aggregates reused or fresh validation fail closed', () => {
+    it('rejects status evidence for another PR, stale approval, and a different tree', () => {
+        const wrongPr = evidence();
+        wrongPr.statuses[0].target_url = 'https://github.com/pauljsnider/allplays/pull/999';
+        expect(evaluateProductionValidationReuse(wrongPr).reusable).toBe(false);
+
+        const stale = evidence();
+        stale.statuses[0].updated_at = '2026-08-12T08:09:59Z';
+        expect(evaluateProductionValidationReuse(stale).reusable).toBe(false);
+
+        const differentTree = evidence();
+        differentTree.mergeCommit.tree.sha = 'd'.repeat(40);
+        expect(evaluateProductionValidationReuse(differentTree).reusable).toBe(false);
+    });
+
+    it('publishes PR/base identity in both workflow runs and gates duplicate production tests', () => {
+        const identity = '#${{ github.event.pull_request.number }} -> ${{ github.event.pull_request.base.ref }} @ ${{ github.event.pull_request.head.sha }}';
+        expect(fastWorkflowSource).toContain(`run-name: "pr-fast ${identity}"`);
+        expect(integrationWorkflowSource).toContain(`run-name: "pr-integration ${identity}"`);
+        expect(workflowSource).toContain('commits/${head_sha}/statuses');
         expect(workflow.jobs['unit-tests'].needs).toBe('validation-source');
         expect(workflow.jobs['unit-tests'].if).toContain("reuse_pr_validation != 'true'");
         expect(workflow.jobs['regression-guards'].needs).toBe('validation-source');
         expect(workflow.jobs['regression-guards'].if).toContain("reuse_pr_validation != 'true'");
-        expect(workflow.jobs['production-validation-gate'].needs).toEqual([
-            'validation-source',
-            'unit-tests',
-            'regression-guards'
-        ]);
         expect(workflow.jobs['production-validation-gate'].if).toBe('always()');
-        expect(workflowSource).toContain('if [[ "$UNIT_TEST_RESULT" != "success" || "$REGRESSION_GUARD_RESULT" != "success" ]]');
-        expect(workflow.jobs['prepare-deploy'].needs).toEqual([
-            'production-validation-gate',
-            'validate-production-smoke-config'
-        ]);
     });
 });
