@@ -88,8 +88,27 @@ describe('firestore.rules architecture fixes', () => {
             'email',
             'emailLower',
             'name',
+            'officialUserId',
             'phone',
             'phoneDigits'
+        ]));
+        const officialNameIndexes = indexes.fieldOverrides
+            .find((override) =>
+                override.collectionGroup === 'officials' &&
+                override.fieldPath === 'name'
+            )?.indexes || [];
+        expect(officialNameIndexes).toEqual(expect.arrayContaining([
+            { order: 'ASCENDING', queryScope: 'COLLECTION' },
+            { order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' }
+        ]));
+        const collectionGroupAscendingFields = indexes.fieldOverrides
+            .filter((override) => override.indexes.some((index) =>
+                index.order === 'ASCENDING' && index.queryScope === 'COLLECTION_GROUP'
+            ))
+            .map((override) => `${override.collectionGroup}.${override.fieldPath}`);
+        expect(collectionGroupAscendingFields).toEqual(expect.arrayContaining([
+            'games.scheduleNotifications.nextReminderAt',
+            'registrations.paymentReminder.nextReminderAt'
         ]));
         const assignmentIndexes = indexes.indexes
             .filter((index) => ['games', 'sharedGames'].includes(index.collectionGroup))
