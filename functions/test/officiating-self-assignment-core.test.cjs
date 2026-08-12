@@ -107,6 +107,20 @@ test('shared synthetic ids cannot target a non-shared document path', () => {
         gameId: syntheticId,
         slotId: 'center'
     }), /Shared game identity is invalid/);
+
+    for (const sharedGamePath of [
+        'users/user-1/sharedGames/game-1',
+        'events/event-1/sharedGames/game-1',
+        'organizations/org-1/seasons/season-1/sharedGames/game-1',
+        'tournaments/tournament-1/rounds/round-1/sharedGames/game-1'
+    ]) {
+        assert.equal(buildSharedGameSyntheticId(sharedGamePath), '');
+        assert.throws(() => normalizeOpenOfficiatingSlotClaimInput({
+            teamId: 'team-1',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            slotId: 'center'
+        }), /Shared game identity is invalid/);
+    }
 });
 
 test('isTeamLinkedToSharedGame only accepts participating teams', () => {
@@ -168,6 +182,7 @@ test('isEligibleOpenOfficiatingSlotParticipant accepts staff and canonical or pa
 test('buildOpenOfficiatingSlotClaimUpdate changes exactly the requested open slot', () => {
     const result = buildOpenOfficiatingSlotClaimUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSelfAssignmentEnabled: true,
             officiatingSlots: [
                 { id: 'center', position: 'Center Referee', status: 'open' },
@@ -212,6 +227,7 @@ test('buildOpenOfficiatingSlotClaimUpdate changes exactly the requested open slo
 test('buildOpenOfficiatingSlotClaimUpdate rejects filled or disabled slots', () => {
     assert.throws(() => buildOpenOfficiatingSlotClaimUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSelfAssignmentEnabled: false,
             officiatingSlots: [{ id: 'center', position: 'Center Referee', status: 'open' }]
         },
@@ -221,6 +237,7 @@ test('buildOpenOfficiatingSlotClaimUpdate rejects filled or disabled slots', () 
 
     assert.throws(() => buildOpenOfficiatingSlotClaimUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSelfAssignmentEnabled: true,
             officiatingSlots: [{ id: 'center', position: 'Center Referee', officialUserId: 'official-1', status: 'accepted' }]
         },
@@ -229,9 +246,65 @@ test('buildOpenOfficiatingSlotClaimUpdate rejects filled or disabled slots', () 
     }), /already filled/);
 });
 
+test('officiating claim and response updates reject past, cancelled, and completed games', () => {
+    const currentTime = new Date('2026-08-12T12:00:00.000Z');
+    const lifecycleCases = [
+        { label: 'past', date: '2026-08-11T12:00:00.000Z' },
+        { label: 'cancelled', date: '2026-08-13T12:00:00.000Z', status: 'cancelled' },
+        { label: 'completed', date: '2026-08-13T12:00:00.000Z', liveStatus: 'completed' }
+    ];
+
+    for (const lifecycle of lifecycleCases) {
+        const game = {
+            ...lifecycle,
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [{
+                id: 'center',
+                position: 'Center Referee',
+                officialUserId: 'official-1',
+                status: 'pending'
+            }]
+        };
+        assert.throws(() => buildOpenOfficiatingSlotClaimUpdate({
+            game: {
+                ...game,
+                officiatingSlots: [{ id: 'line', position: 'Line Judge', status: 'open' }]
+            },
+            slotId: 'line',
+            official: { uid: 'official-1' },
+            currentTime
+        }), /only change for current or upcoming games/i, `${lifecycle.label} claim`);
+        assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+            game,
+            slotId: 'center',
+            status: 'accepted',
+            official: { uid: 'official-1' },
+            currentTime
+        }), /only change for current or upcoming games/i, `${lifecycle.label} response`);
+    }
+});
+
+test('officiating responses only change assignments that are awaiting a response', () => {
+    assert.throws(() => buildOfficiatingAssignmentResponseUpdate({
+        game: {
+            date: '2099-06-01T12:00:00.000Z',
+            officiatingSlots: [{
+                id: 'center',
+                position: 'Center Referee',
+                officialUserId: 'official-1',
+                status: 'accepted'
+            }]
+        },
+        slotId: 'center',
+        status: 'declined',
+        official: { uid: 'official-1' }
+    }), /not awaiting a response/i);
+});
+
 test('buildOpenOfficiatingSlotClaimUpdate rejects a caller UID repaired by trimming', () => {
     assert.throws(() => buildOpenOfficiatingSlotClaimUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSelfAssignmentEnabled: true,
             officiatingSlots: [{ id: 'center', position: 'Center Referee', status: 'open' }]
         },
@@ -269,6 +342,7 @@ test('buildOfficiatingSelfAssignmentNotificationRecord targets assigners for aud
 test('buildOfficiatingAssignmentResponseUpdate changes only the current UID assignment', () => {
     const result = buildOfficiatingAssignmentResponseUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSlots: [
                 { id: 'center', position: 'Center Referee', officialUserId: 'official-1', officialEmail: 'old@example.com', status: 'pending', scheduleReviewRequired: true },
                 { id: 'line', position: 'Line Judge', officialUserId: 'official-2', officialEmail: 'other@example.com', status: 'pending' }
@@ -290,6 +364,7 @@ test('buildOfficiatingAssignmentResponseUpdate changes only the current UID assi
 test('buildOfficiatingAssignmentResponseUpdate accepts a verified-email identity supplied by the handler', () => {
     const result = buildOfficiatingAssignmentResponseUpdate({
         game: {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSlots: [{ id: 'center', position: 'Center Referee', officialEmail: 'current@example.com', status: 'pending' }]
         },
         slotId: 'center',
@@ -303,6 +378,7 @@ test('buildOfficiatingAssignmentResponseUpdate accepts a verified-email identity
 
 test('buildOfficiatingAssignmentResponseUpdate rejects another official and an absent email authority', () => {
     const game = {
+        date: '2099-06-01T12:00:00.000Z',
         officiatingSlots: [{ id: 'center', position: 'Center Referee', officialEmail: 'current@example.com', status: 'pending' }]
     };
 
@@ -322,6 +398,7 @@ test('buildOfficiatingAssignmentResponseUpdate rejects another official and an a
 
 test('buildOfficiatingAssignmentResponseUpdate does not let a reassigned legacy email override the canonical UID', () => {
     const game = {
+        date: '2099-06-01T12:00:00.000Z',
         officiatingSlots: [{
             id: 'center',
             position: 'Center Referee',
@@ -341,6 +418,7 @@ test('buildOfficiatingAssignmentResponseUpdate does not let a reassigned legacy 
 
 test('buildOfficiatingAssignmentResponseUpdate rejects a non-string stored UID before comparison or email fallback', () => {
     const game = {
+        date: '2099-06-01T12:00:00.000Z',
         officiatingSlots: [{
             id: 'center',
             position: 'Center Referee',
@@ -366,6 +444,7 @@ test('buildOfficiatingAssignmentResponseUpdate rejects stored UIDs repaired by t
 
     for (const { storedUid, callerUid } of cases) {
         const game = {
+            date: '2099-06-01T12:00:00.000Z',
             officiatingSlots: [{
                 id: 'center',
                 position: 'Center Referee',

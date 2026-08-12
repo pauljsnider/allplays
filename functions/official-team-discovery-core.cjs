@@ -3,6 +3,7 @@
 const {
   buildSharedGameSyntheticId: buildSyntheticSharedGameId,
   getValidatedParentTeamIds,
+  isCurrentOrUpcomingOfficiatingGame,
   normalizeSharedGamePath
 } = require('./officiating-self-assignment-core.cjs');
 
@@ -12,7 +13,6 @@ const DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM = 100;
 const DEFAULT_MAX_OFFICIAL_PROJECTION_QUERIES = 60;
 const DEFAULT_MAX_OFFICIAL_PROJECTION_DOCUMENTS = 2000;
 const DEFAULT_OFFICIAL_PROJECTION_CONCURRENCY = 6;
-const DEFAULT_OFFICIAL_GAME_ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 function normalizeBoundedId(value) {
   if (typeof value !== 'string') return '';
@@ -248,33 +248,8 @@ function toDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function isCancelledGame(game = {}) {
-  return [game.status, game.liveStatus]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .some((value) => ['cancelled', 'canceled', 'deleted'].includes(value));
-}
-
 function isCurrentOrUpcomingOfficialGame(game = {}, now = new Date()) {
-  const startDate = toDate(game.date);
-  const nowDate = toDate(now);
-  if (!startDate || !nowDate || isCancelledGame(game)) return false;
-
-  const statuses = [game.status, game.liveStatus]
-    .map((value) => String(value || '').trim().toLowerCase())
-    .filter(Boolean);
-  if (statuses.some((value) => ['completed', 'complete', 'final', 'finished', 'ended'].includes(value))) return false;
-  if (statuses.some((value) => ['live', 'in_progress', 'in-progress', 'halftime'].includes(value))) return true;
-
-  const explicitEndValue = [game.endDate, game.endsAt, game.end, game.dtend]
-    .find((value) => value !== null && value !== undefined && value !== '');
-  const explicitEnd = explicitEndValue === undefined ? null : toDate(explicitEndValue);
-  if (explicitEnd) return explicitEnd.getTime() >= nowDate.getTime();
-
-  const durationMinutes = Number(game.durationMinutes || game.duration || 0);
-  const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
-    ? durationMinutes * 60 * 1000
-    : DEFAULT_OFFICIAL_GAME_ACTIVE_WINDOW_MS;
-  return startDate.getTime() + activeWindowMs >= nowDate.getTime();
+  return isCurrentOrUpcomingOfficiatingGame(game, now);
 }
 
 function isAssignedToAuthUser(slot = {}, authUser = {}) {

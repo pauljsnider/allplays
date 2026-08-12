@@ -7,6 +7,8 @@ const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
 const HASHED_SHARED_GAME_ID_PREFIX = 'sharedh_';
 const MAX_SHARED_GAME_PATH_BYTES = 6144;
 const MAX_FIRESTORE_SEGMENT_BYTES = 1500;
+const DEFAULT_OFFICIATING_GAME_ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
+const SUPPORTED_SHARED_GAME_ROOTS = new Set(['organizations', 'tournaments']);
 const INVALID_OFFICIAL_USER_ID = Symbol('invalidOfficialUserId');
 
 function normalizeString(value) {
@@ -59,7 +61,11 @@ function normalizeSharedGamePath(value) {
     const normalized = value.trim();
     if (!normalized || Buffer.byteLength(normalized, 'utf8') > MAX_SHARED_GAME_PATH_BYTES) return '';
     const parts = normalized.split('/');
-    if (parts.length < 4 || parts.length % 2 !== 0 || parts[parts.length - 2] !== 'sharedGames') return '';
+    if (
+        parts.length !== 4 ||
+        !SUPPORTED_SHARED_GAME_ROOTS.has(parts[0]) ||
+        parts[2] !== 'sharedGames'
+    ) return '';
     if (parts.some((part) => !part || part === '.' || part === '..' || Buffer.byteLength(part, 'utf8') > MAX_FIRESTORE_SEGMENT_BYTES)) {
         return '';
     }
@@ -144,6 +150,46 @@ function isTeamLinkedToSharedGame(game = {}, teamId = '') {
         ? game.teamIds.map(normalizeString).filter(Boolean)
         : [];
     return teamIds.includes(normalizedTeamId);
+}
+
+function toOfficiatingDate(value) {
+    if (value instanceof Date) return value;
+    if (value && typeof value.toDate === 'function') return value.toDate();
+    if (value && typeof value.toMillis === 'function') return new Date(value.toMillis());
+    if (value && typeof value.seconds === 'number') return new Date(value.seconds * 1000);
+    const parsed = new Date(value || 0);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isCurrentOrUpcomingOfficiatingGame(game = {}, now = new Date()) {
+    const startDate = toOfficiatingDate(game.date);
+    const nowDate = toOfficiatingDate(now);
+    if (!startDate || !nowDate) return false;
+
+    const statuses = [game.status, game.liveStatus]
+        .map((value) => normalizeString(value).toLowerCase())
+        .filter(Boolean);
+    if (statuses.some((value) => [
+        'cancelled', 'canceled', 'deleted', 'completed', 'complete', 'final', 'finished', 'ended'
+    ].includes(value))) return false;
+    if (statuses.some((value) => ['live', 'in_progress', 'in-progress', 'halftime'].includes(value))) return true;
+
+    const explicitEndValue = [game.endDate, game.endsAt, game.end, game.dtend]
+        .find((value) => value !== null && value !== undefined && value !== '');
+    const explicitEnd = explicitEndValue === undefined ? null : toOfficiatingDate(explicitEndValue);
+    if (explicitEnd) return explicitEnd.getTime() >= nowDate.getTime();
+
+    const durationMinutes = Number(game.durationMinutes || game.duration || 0);
+    const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
+        ? durationMinutes * 60 * 1000
+        : DEFAULT_OFFICIATING_GAME_ACTIVE_WINDOW_MS;
+    return startDate.getTime() + activeWindowMs >= nowDate.getTime();
+}
+
+function assertOfficiatingGameIsCurrent(game = {}, now = new Date()) {
+    if (!isCurrentOrUpcomingOfficiatingGame(game, now)) {
+        throw createClaimError('failed-precondition', 'Officiating assignments can only change for current or upcoming games.');
+    }
 }
 
 function normalizeOpenOfficiatingSlotClaimInput(data = {}) {
@@ -307,10 +353,11 @@ function uniqueStrings(values = []) {
     return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeString).filter(Boolean)));
 }
 
-function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {}, now = null } = {}) {
+function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {}, now = null, currentTime = new Date() } = {}) {
     if (game.officiatingSelfAssignmentEnabled !== true) {
         throw createClaimError('failed-precondition', 'Self-assignment is not enabled for this game.');
     }
+    assertOfficiatingGameIsCurrent(game, currentTime);
 
     const officiatingSlots = claimOpenOfficiatingSlotForOfficial(game.officiatingSlots || [], slotId, official);
     const claimedSlot = officiatingSlots.find((slot) => slot.id === normalizeString(slotId)) || null;
@@ -337,7 +384,7 @@ function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {},
     };
 }
 
-function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, official = {}, now = null } = {}) {
+function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, official = {}, now = null, currentTime = new Date() } = {}) {
     const normalizedSlotId = normalizeDocId(slotId, 'Officiating slot ID');
     const normalizedStatus = normalizeString(status).toLowerCase();
     if (!OFFICIATING_RESPONSE_STATUSES.has(normalizedStatus)) {
@@ -348,6 +395,7 @@ function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, o
     if (!officialUserId) {
         throw createClaimError('unauthenticated', 'Sign in before responding to an officiating assignment.');
     }
+    assertOfficiatingGameIsCurrent(game, currentTime);
 
     let updatedSlot = null;
     const normalizedSlots = normalizeOfficiatingSlots(game.officiatingSlots || []);
@@ -365,6 +413,9 @@ function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, o
         );
         if (!uidMatches && !emailMatches) {
             throw createClaimError('permission-denied', 'This officiating assignment belongs to another official.');
+        }
+        if (!['pending', 'needs_review'].includes(slot.status) && slot.scheduleReviewRequired !== true) {
+            throw createClaimError('failed-precondition', 'This officiating assignment is not awaiting a response.');
         }
         updatedSlot = {
             ...slot,
@@ -494,6 +545,7 @@ module.exports = {
     decodeSharedGameSyntheticId,
     resolveOfficiatingGamePath,
     isTeamLinkedToSharedGame,
+    isCurrentOrUpcomingOfficiatingGame,
     claimOpenOfficiatingSlotForOfficial,
     buildOpenOfficiatingSlotClaimUpdate,
     buildOfficiatingSelfAssignmentNotificationRecord,

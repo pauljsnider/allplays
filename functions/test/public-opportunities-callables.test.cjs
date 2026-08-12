@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Module = require('node:module');
+const { buildSharedGameSyntheticId } = require('../officiating-self-assignment-core.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -427,6 +428,67 @@ test('opportunity writes require authentication and verified inquiry replies', a
     await assert.rejects(
         callables.replyToOpportunityInquiry({ inquiryId: 'inquiry-1', message: 'Hello' }, authContext('user-1', { verified: false })),
         (error) => error.code === 'failed-precondition'
+    );
+});
+
+test('officiating claim and response callables reject terminal and historical direct and shared games', async () => {
+    const teamId = 'team-officiating';
+    const lifecycleCases = [
+        { key: 'past', date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() },
+        { key: 'cancelled', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), status: 'cancelled' },
+        { key: 'completed', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), liveStatus: 'completed' }
+    ];
+    const seed = {
+        [`teams/${teamId}`]: { ownerId: 'official-1', adminEmails: [] },
+        'users/official-1': { email: 'official@example.com' }
+    };
+    const cases = [];
+    for (const lifecycle of lifecycleCases) {
+        for (const shared of [false, true]) {
+            const sharedGamePath = shared
+                ? `organizations/org-1/sharedGames/${lifecycle.key}`
+                : '';
+            const gameId = shared
+                ? buildSharedGameSyntheticId(sharedGamePath)
+                : `${lifecycle.key}-game`;
+            const documentPath = sharedGamePath || `teams/${teamId}/games/${gameId}`;
+            seed[documentPath] = {
+                ...lifecycle,
+                ...(shared ? { homeTeamId: teamId } : {}),
+                officiatingSelfAssignmentEnabled: true,
+                officiatingSlots: [
+                    { id: 'open', position: 'Line Judge', status: 'open' },
+                    { id: 'pending', position: 'Center Referee', officialUserId: 'official-1', status: 'pending' }
+                ]
+            };
+            cases.push({ ...lifecycle, sharedGamePath, gameId, documentPath });
+        }
+    }
+    const { firestore, callables } = loadCallables(seed);
+    const context = authContext('official-1', { email: 'official@example.com', verified: true });
+
+    for (const testCase of cases) {
+        const reference = {
+            teamId,
+            gameId: testCase.gameId,
+            ...(testCase.sharedGamePath ? { sharedGamePath: testCase.sharedGamePath } : {})
+        };
+        await assert.rejects(
+            callables.claimOpenOfficiatingSlot({ ...reference, slotId: 'open' }, context),
+            (error) => error.code === 'failed-precondition' && /current or upcoming games/i.test(error.message),
+            `${testCase.key} ${testCase.sharedGamePath ? 'shared' : 'direct'} claim`
+        );
+        await assert.rejects(
+            callables.respondToOfficiatingAssignment({ ...reference, slotId: 'pending', status: 'accepted' }, context),
+            (error) => error.code === 'failed-precondition' && /current or upcoming games/i.test(error.message),
+            `${testCase.key} ${testCase.sharedGamePath ? 'shared' : 'direct'} response`
+        );
+        assert.equal(firestore.snapshot(testCase.documentPath).officiatingSlots[0].status, 'open');
+        assert.equal(firestore.snapshot(testCase.documentPath).officiatingSlots[1].status, 'pending');
+    }
+    assert.equal(
+        [...firestore._state.keys()].some((path) => path.includes('/officiatingNotifications/')),
+        false
     );
 });
 

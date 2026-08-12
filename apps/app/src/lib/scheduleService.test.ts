@@ -2688,6 +2688,40 @@ describe('official assignments app service', () => {
       { errorLabel: 'Officiating claim' }
     );
   });
+
+  it('rejects official assignment projections outside supported shared-game roots', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'users/user-1/sharedGames/game-1';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            date: futureDate
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow(
+      'Official assignment discovery returned an invalid response.'
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
+  });
 });
 
 it('releases parent assignment claims through the legacy adapter using the active auth user contract', async () => {

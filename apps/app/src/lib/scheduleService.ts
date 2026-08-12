@@ -7146,7 +7146,7 @@ function normalizeSharedGameDocumentPath(value: unknown) {
   const path = compactString(value);
   if (!path || path.length > 6144) return '';
   const parts = path.split('/');
-  return parts.length >= 4 && parts.length % 2 === 0 && parts[parts.length - 2] === 'sharedGames' &&
+  return parts.length === 4 && ['organizations', 'tournaments'].includes(parts[0]) && parts[2] === 'sharedGames' &&
     parts.every((part) => part && part !== '.' && part !== '..' && part.length <= 1500)
     ? path
     : '';
