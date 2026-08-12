@@ -559,7 +559,7 @@ describe('React app schedule service contract integration', () => {
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
         expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
         expect(scheduleServiceSource).toContain('const shouldVerifyStaffResultWithHttp = nativeRuntime');
-        expect(scheduleServiceSource).toContain(': ((staffTeamResult.teams.length === 0 || hasMissingDeclaredCoachTeam) && staffTeamResult.isPartial !== true)');
+        expect(scheduleServiceSource).toContain(': staffTeamResult.verifiedByHttp !== true && staffTeamResult.httpAttempted !== true;');
     });
 
     it('discovers official teams and native assignments through one authenticated bounded callable', () => {
@@ -580,7 +580,8 @@ describe('React app schedule service contract integration', () => {
         expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
         expect(officialDiscoverySource).not.toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain('linkedAssignmentsComplete');
-        expect(officialAssignmentsSource).toContain('includeAssignments: nativeRuntime');
+        expect(officialAssignmentsSource).toContain('includeAssignments: true');
+        expect(officialAssignmentsSource).toContain('if (linkedAssignmentsComplete)');
         expect(officialAssignmentsSource).toContain('requestedTeamId');
         expect(officialAssignmentsSource).toContain('Promise.allSettled');
         expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
