@@ -1780,10 +1780,12 @@ type StaffTeamsLoadResult = {
   isPartial: boolean;
 };
 
-async function loadStaffTeamsFromRest(user: AuthUser): Promise<StaffTeamsLoadResult> {
+async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
   const result = await loadManagedTeamsFromNativeCallable();
   return {
-    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team) && isTeamStaff(team, user)),
+    // The callable already applies the server-side ownership, admin, and coach
+    // checks; its serialized team profiles intentionally omit some of those fields.
+    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team)),
     isPartial: result.isPartial
   };
 }
@@ -1809,7 +1811,7 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
     logScheduleWarning('Falling back to authenticated HTTP for staff teams.', 'staff-team-callable-fallback', error, {
       fallback: 'authenticated-http'
     });
-    return loadStaffTeamsFromRest(user);
+    return loadStaffTeamsFromRest();
   }
 }
 
@@ -3125,7 +3127,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
   if (isNativeRuntime() && (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)) {
     try {
-      const restResult = await loadStaffTeamsFromRest(staffUser);
+      const restResult = await loadStaffTeamsFromRest();
       const teamsById = new Map<string, any>();
       [...staffTeamResult.teams, ...restResult.teams].forEach((team: any) => {
         const teamId = compactString(team?.id);

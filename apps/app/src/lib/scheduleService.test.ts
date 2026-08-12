@@ -779,6 +779,23 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
+  it('keeps an HTTP-authorized coach team when the initial user lacks the freshly loaded coach link', async () => {
+    const staleCoachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-coached'] } as any);
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('SDK callable unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(staleCoachUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
   it('accepts an empty complete web callable result without issuing permission-noise REST requests', async () => {
     const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
