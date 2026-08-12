@@ -36,5 +36,6 @@ describe('production role-smoke gate', () => {
         expect(baselineStart).toBeGreaterThan(-1);
         expect(coreStart).toBeGreaterThan(baselineStart);
         expect(baselineBlock).toContain('--retries=1');
+        expect(baselineBlock).toContain('--fail-on-flaky-tests');
     });
 });

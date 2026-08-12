@@ -705,6 +705,31 @@ describe('parent schedule child scope', () => {
     }
   });
 
+  it('falls back to authenticated HTTP before a cold staff callable exhausts the production chooser wait', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
+      teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+      isPartial: false
+    });
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(7000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
   it('marks parent scope partial when the authoritative staff-team read fails', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: ['team-owned'] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
@@ -2564,6 +2589,45 @@ describe('official assignments app service', () => {
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps cold native official discovery separate from the shorter staff discovery timeout', async () => {
+    vi.useFakeTimers();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    capacitorCoreMock.httpPost.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        status: 200,
+        data: {
+          result: {
+            teamIds: ['team-alpha'],
+            isPartial: false,
+            assignments: [],
+            assignmentsComplete: false
+          }
+        },
+        headers: {},
+        url: ''
+      }), 8000);
+    }));
+
+    try {
+      const accessPromise = loadOfficialAssignmentsAccess(user);
+      await vi.advanceTimersByTimeAsync(8000);
+
+      await expect(accessPromise).resolves.toEqual({
+        hasAccess: true,
+        teamIds: ['team-alpha'],
+        teamCount: 1,
+        isPartial: false
+      });
+      expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+        connectTimeout: 12000,
+        readTimeout: 12000
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('loads web linked-team assignments from the authenticated bounded HTTP projection', async () => {

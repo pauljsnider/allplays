@@ -167,6 +167,7 @@ jobs:
           --config=playwright.smoke.config.js
           --project=smoke
           --retries=1
+          --fail-on-flaky-tests
           --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
@@ -201,6 +202,7 @@ jobs:
           --project=smoke
           --workers=1
           --retries=1
+          --fail-on-flaky-tests
           --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
