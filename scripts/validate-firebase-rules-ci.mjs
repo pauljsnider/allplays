@@ -177,7 +177,7 @@ export function validateFirebaseDeployWorkloadIdentity(workflow, label) {
             deployStepCount += 1;
             const maxTimeoutMinutes = label === 'Production deploy' &&
                 step.name === 'Deploy Firebase production'
-                ? 20
+                ? 30
                 : 4;
             if (!Number.isInteger(step['timeout-minutes']) ||
                 step['timeout-minutes'] < 1 ||
@@ -430,8 +430,18 @@ export function validateProductionDeployCommand(deployProd) {
     );
     assertMatches(
         deployProd,
-        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3; do[\s\S]{0,5000}--request POST/,
+        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,5000}for attempt in 1 2 3 4 5 6; do[\s\S]{0,5000}--request POST/,
         'Production Firestore bounded ruleset create'
+    );
+    assertMatches(
+        deployProd,
+        /create_firestore_ruleset_with_retry\(\)[\s\S]{0,7000}firestore_rules_api_error[\s\S]{0,2500}find_recent_matching_firestore_ruleset "\$expected_rules_source"[\s\S]{0,2500}retry_delay_seconds=\$\(\(15 \* \(2 \*\* \(attempt - 1\)\)\)\)/,
+        'Production Firestore ambiguous-create reconciliation precedes exponential retry'
+    );
+    assertIncludes(
+        deployProd,
+        'retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))',
+        'Production Firestore ruleset retry jitter'
     );
     assertIncludes(
         deployProd,

@@ -954,7 +954,7 @@ jobs:
         # Updating the full first-generation Functions fleet routinely takes
         # longer than four minutes. Leave enough room for one deployment plus
         # the bounded transient retries above without allowing an unbounded job.
-        timeout-minutes: 20
+        timeout-minutes: 30
         shell: bash
         env:
           ADMIN_USER_SEARCH_BACKFILL_NEEDED: ${{ needs.prepare-deploy.outputs.admin_user_search_backfill_needed }}
@@ -1299,7 +1299,7 @@ jobs:
                 }
               }' > "$payload_file"
 
-            for attempt in 1 2 3; do
+            for attempt in 1 2 3 4 5 6; do
               set +e
               http_status="$(
                 curl --silent --show-error \
@@ -1352,9 +1352,21 @@ jobs:
                 echo "Firestore ruleset creation failed with non-transient HTTP ${http_status}; not retrying." >&2
                 break
               fi
-              if (( attempt < 3 )); then
-                retry_delay_seconds=$((10 * attempt))
-                echo "Transient Firestore ruleset creation failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/3)." >&2
+              # A timeout or 5xx can arrive after the immutable create commits.
+              # Reconcile by exact source before sending another POST so a lost
+              # response resumes from the durable provider state.
+              if ruleset_name="$(find_recent_matching_firestore_ruleset "$expected_rules_source")"; then
+                rm -f "$payload_file" "$response_file"
+                printf '%s\n' "$ruleset_name"
+                return 0
+              fi
+              if (( attempt < 6 )); then
+                retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+                retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))
+                if (( retry_delay_seconds > 120 )); then
+                  retry_delay_seconds=120
+                fi
+                echo "Transient Firestore ruleset creation failure; retrying in ${retry_delay_seconds}s (attempt $((attempt + 1))/6)." >&2
                 sleep "$retry_delay_seconds"
               fi
             done
