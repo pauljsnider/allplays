@@ -101,6 +101,7 @@ test('staff account reaches every critical app workflow with smoke fixtures', as
         expect(trayBox.y + trayBox.height).toBeLessThanOrEqual(navBox.y);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await expect(page.getByRole('heading', { name: /Team settings|Edit team/ })).toBeVisible({ timeout: 20_000 });
+        await page.setViewportSize({ width: 1280, height: 720 });
         await openAuthenticatedAppRoute(page, config.appBaseUrl, `/schedule?teamId=${encodeURIComponent(config.teamId)}`, {
             heading: /Schedule|Your team calendar/,
             requiredHref: `/schedule/${encodeURIComponent(config.teamId)}/${encodeURIComponent(config.eventId)}`

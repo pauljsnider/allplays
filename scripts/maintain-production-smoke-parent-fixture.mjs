@@ -230,6 +230,46 @@ function queryContainsDocument(documents, documentPath) {
     return documents.some((document) => getFirestoreDocumentPath(document) === documentPath);
 }
 
+async function queryManagedTeamCallable(session, fetchImpl) {
+    const response = await fetchImpl(
+        `https://us-central1-${encodeURIComponent(session.projectId)}.cloudfunctions.net/listManagedTeams`,
+        {
+            method: 'POST',
+            headers: {
+                authorization: `Bearer ${session.idToken}`,
+                'content-type': 'application/json'
+            },
+            body: JSON.stringify({ data: {} }),
+            signal: AbortSignal.timeout(30_000)
+        }
+    );
+    const payload = await response.json().catch(() => ({}));
+    const result = payload?.result || payload?.data;
+    if (!response.ok || !Array.isArray(result?.items)) {
+        const errorStatus = String(payload?.error?.status || '').trim() || 'invalid-response';
+        throw new Error(`Managed-team callable failed with HTTP ${response.status} (${errorStatus})`);
+    }
+    return {
+        items: result.items.filter((item) => item && typeof item === 'object' && !Array.isArray(item)),
+        isPartial: result.isPartial === true
+    };
+}
+
+export async function loadManagedTeamCallable(session, teamId, fetchImpl = fetch) {
+    let result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        result = await queryManagedTeamCallable(session, fetchImpl);
+        const foundFixture = result.items.some(
+            (item) => String(item?.id || '').trim() === teamId
+        );
+        if (foundFixture || !result.isPartial) return result;
+    }
+    throw new Error(
+        `The app managed-team callable result is inconclusive and retryable after a partial retry ` +
+        `(items=${result.items.length}, partial=true)`
+    );
+}
+
 async function queryStaffTeamDiscovery(session, teamId, email) {
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const teamPath = `teams/${teamId}`;
@@ -388,6 +428,16 @@ async function main() {
             `coach-link=${staffDiscovery.hasCoachTeamId}, owner-query=${staffDiscovery.ownerQueryFound}, ` +
             `admin-query=${staffDiscovery.adminQueryFound}, owner-query-failed=${staffQueryDiscovery.ownerQueryFailed}, ` +
             `admin-query-failed=${staffQueryDiscovery.adminQueryFailed})`
+        );
+    }
+    const managedTeamResult = await loadManagedTeamCallable(staffSession, teamId);
+    const callableFoundFixture = managedTeamResult.items.some(
+        (item) => String(item?.id || '').trim() === teamId
+    );
+    if (!callableFoundFixture) {
+        throw new Error(
+            `The app managed-team callable omitted the fixture team ` +
+            `(items=${managedTeamResult.items.length}, partial=${managedTeamResult.isPartial})`
         );
     }
     const playerPath = `teams/${teamId}/players/${playerId}`;
