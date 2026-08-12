@@ -586,7 +586,47 @@ describe('React app social service', () => {
         expect(new Set(hideCandidateIds)).toEqual(new Set(['post-hidden', 'post-visible', 'post-newest']));
     });
 
-    it('shares one 120-candidate hide budget across all feed branches', async () => {
+    it('checks every all-visible candidate in the eight-team Home first-page fan-out', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') return snapshot([]);
+            if (path === 'socialPosts') {
+                const teamId = queryRef.clauses.find((clause) => clause.field === 'teamId')?.value || 'main';
+                const pageSize = queryRef.clauses.find((clause) => clause.count)?.count || 30;
+                return snapshot(Array.from({ length: pageSize }, (_, index) => ({
+                    id: `${teamId}-post-${index}`,
+                    authorId: 'friend-1',
+                    title: 'Visible candidate',
+                    createdAt: { seconds: 4102444900 - index },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                })));
+            }
+            return snapshot([]);
+        });
+        const teams = Array.from({ length: 8 }, (_, index) => ({
+            teamId: `team-${index}`,
+            teamName: `Team ${index}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        const checkedIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(checkedIds).toHaveLength(126);
+        expect(new Set(checkedIds).size).toBe(126);
+        expect(model.feedItems).toHaveLength(30);
+        expect(model.feedError).toBeNull();
+    });
+
+    it('shares one 126-candidate Home hide budget across all feed branches', async () => {
         const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
             const path = queryRef.collectionRef?.path?.join('/') || '';
@@ -624,8 +664,8 @@ describe('React app social service', () => {
             .map(([queryRef]) => queryRef)
             .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
             .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
-        expect(checkedIds).toHaveLength(120);
-        expect(new Set(checkedIds).size).toBe(120);
+        expect(checkedIds).toHaveLength(126);
+        expect(new Set(checkedIds).size).toBe(126);
         expect(model.feedItems).toEqual([]);
         expect(model.feedError).toContain('Some feed details could not load');
     });

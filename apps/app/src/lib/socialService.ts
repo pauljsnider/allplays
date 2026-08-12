@@ -56,12 +56,13 @@ const socialPostLimit = 30;
 // Firestore `in` queries historically support 10 values across every runtime
 // this shared web/native service supports. Rules enforce the same request cap.
 const hiddenSocialPostQueryLimit = 10;
-// A surface may inspect at most four full 30-post candidate pages per load.
-// The Home resolver is shared across its visible-user and team branches.
+// A single feed surface may inspect at most four full 30-post candidate pages per load.
 const socialPostCandidateBudget = 120;
 const socialPostPageBudget = 4;
 const teamSocialPostLimit = 12;
 const teamSocialFeedTeamLimit = 8;
+// Home concurrently loads one 30-post feed plus the first 12 posts for eight teams.
+const homeSocialPostCandidateBudget = socialPostLimit + (teamSocialPostLimit * teamSocialFeedTeamLimit);
 const friendSuggestionLimit = 8;
 const publicUserProfileCollection = 'publicUserProfiles';
 const logger = createLogger('social-service');
@@ -508,7 +509,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
   posts: SocialFeedItem[];
   isPartial: boolean;
 }> {
-  const hiddenPostResolver = createHiddenSocialPostResolver(user.uid, socialPostCandidateBudget);
+  const hiddenPostResolver = createHiddenSocialPostResolver(user.uid, homeSocialPostCandidateBudget);
   const postDocs = new Map<string, FirestoreDoc>();
   const homeTeamIds = getHomeTeamIds(home);
   const queriedTeamIds = homeTeamIds.slice(0, teamSocialFeedTeamLimit);
