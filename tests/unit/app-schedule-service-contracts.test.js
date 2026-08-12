@@ -551,7 +551,8 @@ describe('React app schedule service contract integration', () => {
 
         expect(staffTeamSource).toContain('getStaffTeams({');
         expect(staffTeamSource).not.toContain('getTeams(');
-        expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable()');
+        expect(staffTeamSource).toContain('loadManagedTeamsFromNativeCallable({ timeoutMs: staffTeamDiscoveryTimeoutMs })');
+        expect(scheduleServiceSource).toContain('const staffTeamDiscoveryTimeoutMs = 15000;');
         expect(staffTeamSource).not.toContain("nativeRunQuery('teams', 'ownerEmail'");
         expect(scheduleServiceSource).toContain('const hasCanonicalOwner = Boolean(compactString(team.ownerId));');
         expect(scheduleServiceSource).toContain('if (!hasCanonicalOwner && ownerEmails.length === 1 && email === ownerEmails[0])');
