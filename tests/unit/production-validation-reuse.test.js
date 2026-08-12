@@ -55,7 +55,12 @@ function evidence() {
                 }))
             },
             102: {
-                jobs: ['mobile-build', 'preview-smoke'].map((name) => ({
+                jobs: [
+                    'regression-integration / firebase-rules-deploy-guard',
+                    'regression-integration / roster-chat-media-replay-smoke',
+                    'mobile-build',
+                    'preview-smoke'
+                ].map((name) => ({
                     name,
                     status: 'completed',
                     conclusion: 'success'
@@ -105,6 +110,20 @@ describe('production exact-head validation reuse', () => {
             reusable: false,
             reason: 'exact PR-bound workflows and required jobs are incomplete'
         });
+    });
+
+    it('rejects integration reuse when either regression guard did not pass', () => {
+        for (const regressionJob of [
+            'regression-integration / firebase-rules-deploy-guard',
+            'regression-integration / roster-chat-media-replay-smoke'
+        ]) {
+            const input = evidence();
+            input.runJobs[102].jobs.find((job) => job.name === regressionJob).conclusion = 'skipped';
+            expect(evaluateProductionValidationReuse(input)).toEqual({
+                reusable: false,
+                reason: 'exact PR-bound workflows and required jobs are incomplete'
+            });
+        }
     });
 
     it('rejects status evidence for another PR, stale approval, and a different tree', () => {

@@ -98,7 +98,12 @@ export function evaluateProductionValidationReuse({
         title: `pr-integration #${prNumber} -> master @ ${headSha}`
     }).find((run) => requiredJobsPassed(
         runJobs?.[run.id],
-        ['mobile-build', 'preview-smoke']
+        [
+            'regression-integration / firebase-rules-deploy-guard',
+            'regression-integration / roster-chat-media-replay-smoke',
+            'mobile-build',
+            'preview-smoke'
+        ]
     ));
     if (!fastRun || !integrationRun) {
         return { reusable: false, reason: 'exact PR-bound workflows and required jobs are incomplete' };
