@@ -226,15 +226,29 @@ describe('Capacitor native config', () => {
     it('wires App Check into both native shells without a SwiftPM identity collision', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
         const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = parseYaml(readProjectFile('apps/app/pnpm-lock.yaml'));
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
         const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
         const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
 
-        expect(rootPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
-        expect(appPackage.dependencies['@capacitor-firebase/app-check']).toBe('8.3.0');
+        const appCheckPackage = '@capacitor-firebase/app-check';
+        const appCheckVersion = '8.4.0';
+
+        expect(rootPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(appPackage.dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(rootPackageLock.packages[''].dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(appPackageLock.packages[''].dependencies[appCheckPackage]).toBe(appCheckVersion);
+        expect(rootPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
+        expect(appPackageLock.packages[`node_modules/${appCheckPackage}`].version).toBe(appCheckVersion);
+        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].specifier).toBe(appCheckVersion);
+        expect(appPnpmLock.importers['.'].dependencies[appCheckPackage].version).toMatch(/^8\.4\.0(?:$|\()/);
+        expect(appPnpmLock.packages[`${appCheckPackage}@${appCheckVersion}`]).toBeDefined();
+        expect(Object.keys(appPnpmLock.snapshots)).toContainEqual(expect.stringMatching(/^@capacitor-firebase\/app-check@8\.4\.0\(/));
         expect(androidSettings).toContain("include ':capacitor-firebase-app-check'");
         expect(androidBuild).toContain("implementation project(':capacitor-firebase-app-check')");
         expect(config.experimental.ios.spm.packageOptions['@capacitor-firebase/app-check']).toEqual({
@@ -325,14 +339,15 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain('firebase@12.17.1:');
         expect(appPnpmLock).not.toContain('firebase@12.17.0:');
         expect(appPnpmLock).toContain('web-vitals@6.1.0:');
-        [
-            '@capacitor-firebase/app-check',
-            '@capacitor-firebase/authentication',
-            '@capacitor-firebase/messaging',
-            '@capacitor-firebase/performance'
-        ].forEach((plugin) => {
-            expect(appPnpmLock).toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.1)`);
-            expect(appPnpmLock).not.toContain(`${plugin}@8.3.0(@capacitor/core@8.5.0)(firebase@12.17.0)`);
+        const expectedPluginVersions = {
+            '@capacitor-firebase/app-check': '8.4.0',
+            '@capacitor-firebase/authentication': '8.3.0',
+            '@capacitor-firebase/messaging': '8.3.0',
+            '@capacitor-firebase/performance': '8.3.0'
+        };
+        Object.entries(expectedPluginVersions).forEach(([plugin, version]) => {
+            expect(appPnpmLock).toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.1)`);
+            expect(appPnpmLock).not.toContain(`${plugin}@${version}(@capacitor/core@8.5.0)(firebase@12.17.0)`);
         });
     });
 
