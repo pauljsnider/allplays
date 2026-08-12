@@ -558,7 +558,8 @@ describe('React app schedule service contract integration', () => {
         expect(scheduleServiceSource).toContain('ownerEmails.length === 1 && email === ownerEmails[0]');
         expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams')");
         expect(legacyScheduleDbSource).not.toContain("legacyFirebaseWhere('ownerEmailLower', '==', normalizedEmail)");
-        expect(scheduleServiceSource).toContain('isNativeRuntime() && (staffTeamResult.isPartial');
+        expect(scheduleServiceSource).toContain('const shouldVerifyStaffResultWithHttp = nativeRuntime');
+        expect(scheduleServiceSource).toContain(': (shouldVerifyEmptyStaffResult && staffTeamResult.isPartial !== true)');
     });
 
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
