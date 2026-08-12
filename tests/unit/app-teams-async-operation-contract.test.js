@@ -38,7 +38,9 @@ describe('Teams async operation contract', () => {
         expect(loadTeamsSource).toContain("getTeamsLoadErrorMessage(toAppServiceError(loadError, 'Unable to load teams.'), hasExistingTeams)");
         expect(loadTeamsSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load teams.');");
         expect(loadTeamsSource).toContain('setTeamsLoadError(appError);');
-        expect(loadTeamsSource).toContain('if (!hasExistingTeams) {');
+        expect(loadTeamsSource).toContain('onPartial: (partialHome) => applyTeamSummary(partialHome, true)');
+        expect(loadTeamsSource).toContain('mergeStreamedTeamSummary(current, fastHome)');
+        expect(loadTeamsSource).toContain('if (!hasExistingTeams && !hasStreamedTeams) {');
         expect(loadTeamsSource).toContain('setHome(emptyHome());');
         expect(loadTeamsSource).toContain('const hasFastTeams = fastHome.teams.length > 0;');
         expect(loadTeamsSource).toContain("getTeamsLoadErrorMessage(toAppServiceError(enrichError, 'Unable to load teams.'), true)");

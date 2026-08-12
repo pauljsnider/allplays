@@ -68,6 +68,16 @@ function installTestLocalStorage() {
     });
 }
 
+function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
 describe('homeService Teams bootstrap reuse', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -144,6 +154,58 @@ describe('homeService Teams bootstrap reuse', () => {
             })
         ]));
         expect(summary.home.metrics.teams).toBe(2);
+    });
+
+    it('streams a verified chat team before slower family scope discovery completes', async () => {
+        const scheduleScope = deferred<any>();
+        const onPartial = vi.fn();
+        chatServiceMocks.loadChatInbox.mockResolvedValue({
+            teams: [{
+                id: 'team-owned',
+                name: 'Vipers',
+                role: 'Coach',
+                unreadCount: 0
+            }]
+        });
+        scheduleServiceMocks.loadParentScheduleScope.mockReturnValue(scheduleScope.promise);
+
+        const resultPromise = loadParentTeamsSummaryBootstrap(user, { force: true, onPartial });
+        await vi.waitFor(() => {
+            expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+                teams: [expect.objectContaining({ teamId: 'team-owned', teamName: 'Vipers' })]
+            }));
+        });
+
+        scheduleScope.resolve({
+            profile: {},
+            children: [],
+            staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+            isPartial: false
+        });
+        const result = await resultPromise;
+        expect(result.home.teams).toEqual([
+            expect.objectContaining({ teamId: 'team-owned', teamName: 'Vipers' })
+        ]);
+    });
+
+    it('does not stream an empty slice before complete access discovery', async () => {
+        const scheduleScope = deferred<any>();
+        const onPartial = vi.fn();
+        chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
+        scheduleServiceMocks.loadParentScheduleScope.mockReturnValue(scheduleScope.promise);
+
+        const resultPromise = loadParentTeamsSummaryBootstrap(user, { force: true, onPartial });
+        await vi.waitFor(() => expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(1));
+        expect(onPartial).not.toHaveBeenCalled();
+
+        scheduleScope.resolve({
+            profile: {},
+            children: [],
+            staffTeams: [],
+            isPartial: false
+        });
+        await expect(resultPromise).resolves.toMatchObject({ home: { teams: [] } });
+        expect(onPartial).not.toHaveBeenCalled();
     });
 
     it('surfaces a partial-empty staff scope and recovers on the next retry', async () => {

@@ -43,6 +43,11 @@ type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
   onPartial?: (result: ParentHomeSummaryBootstrapResult) => void;
 };
 
+type ParentTeamsSummaryBootstrapOptions = {
+  force?: boolean;
+  onPartial?: (home: ParentHomeModel) => void;
+};
+
 function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
   return toAppServiceError(error, fallbackMessage);
 }
@@ -123,7 +128,7 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
 
 export async function loadParentTeamsSummaryBootstrap(
   user: AuthUser | null,
-  options: { force?: boolean } = {}
+  options: ParentTeamsSummaryBootstrapOptions = {}
 ): Promise<{ home: ParentHomeModel; scheduleScope: ParentScheduleScope }> {
   if (!user?.uid) {
     return {
@@ -137,17 +142,44 @@ export async function loadParentTeamsSummaryBootstrap(
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
+        let availableChatTeams: any[] = [];
+        let availableScheduleScope: ParentScheduleScope | null = null;
+        const emitAvailableTeams = () => {
+          const model = buildParentHomeModel({
+            children: availableScheduleScope?.children || [],
+            events: [],
+            inboxTeams: mergeTeamSummaries(
+              normalizeStaffTeams({ children: [], events: [], staffTeams: availableScheduleScope?.staffTeams }),
+              normalizeInboxTeams(availableChatTeams)
+            ),
+            fees: []
+          });
+          // A verified nonempty result can unblock the chooser while slower,
+          // unrelated family-scope reads finish. Empty or failed slices stay
+          // fail-closed until the complete bootstrap result is known.
+          if (model.teams.length > 0) options.onPartial?.(model);
+        };
         const [chatInboxResult, scheduleScope] = await Promise.all([
           loadChatInbox(user, { includeLastMessages: false })
             .then(requireCompleteChatInbox)
-            .then((chatInbox) => ({ chatInbox, error: null }))
+            .then((chatInbox) => {
+              availableChatTeams = chatInbox.teams || [];
+              emitAvailableTeams();
+              return { chatInbox, error: null };
+            })
             .catch((error) => ({
               chatInbox: { teams: [] },
               error: toAppServiceError(error, 'Unable to load team chat.')
             })),
-          loadParentScheduleScope(user).catch((error) => {
-            throw toAppServiceError(error, 'Unable to load teams.');
-          })
+          loadParentScheduleScope(user)
+            .then((scheduleScope) => {
+              availableScheduleScope = scheduleScope;
+              emitAvailableTeams();
+              return scheduleScope;
+            })
+            .catch((error) => {
+              throw toAppServiceError(error, 'Unable to load teams.');
+            })
         ]);
         const hasDiscoveredTeams = scheduleScope.children.length > 0 || Boolean(scheduleScope.staffTeams?.length);
         if (scheduleScope.isPartial === true && !hasDiscoveredTeams) {
