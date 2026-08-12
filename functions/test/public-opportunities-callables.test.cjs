@@ -704,6 +704,37 @@ test('managed-team discovery marks chat metadata partial when a thread query fai
     assert.equal('chatConversations' in managed.items[0], false);
 });
 
+test('managed-team chat metadata enforces aggregate query and document budgets', async () => {
+    const teamIds = Array.from({ length: 31 }, (_, index) => `team-${String(index).padStart(2, '0')}`);
+    const teams = Object.fromEntries(teamIds.map((teamId) => [
+        `teams/${teamId}`,
+        { name: `Team ${teamId}`, ownerId: `owner-${teamId}`, active: true }
+    ]));
+    const conversations = Object.fromEntries(teamIds.slice(0, 10).flatMap((teamId) => (
+        Array.from({ length: 100 }, (_, index) => [
+            `teams/${teamId}/chatConversations/thread-${index}`,
+            { type: 'team' }
+        ])
+    )));
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: teamIds },
+        ...teams,
+        ...conversations
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(managed.items.length, 31);
+    assert.equal(managed.isPartial, true);
+    const conversationQueries = firestore._queryLog.filter(({ path }) => path.endsWith('/chatConversations'));
+    assert.equal(conversationQueries.length, 30);
+    assert.ok(conversationQueries.every(({ limitCount }) => limitCount > 0 && limitCount <= 101));
+    assert.ok(conversationQueries.reduce((total, { limitCount }) => total + limitCount, 0) <= 1000);
+});
+
 test('authorized chat conversation projection hydrates parentOf-only caller-readable allow-listed threads', async () => {
     const { callables } = loadCallables({
         'users/parent-1': { parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }] },
@@ -887,6 +918,26 @@ test('parent fee discovery fails closed when a bounded query overflows', async (
         callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
         (error) => error.code === 'resource-exhausted'
     );
+});
+
+test('parent fee discovery rejects multiplicative legacy scopes before issuing unbounded work', async () => {
+    const parentOf = Array.from({ length: 40 }, (_, index) => ({
+        teamId: `team-${index}`,
+        playerId: `player-${index}`
+    }));
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            parentOf,
+            parentTeamIds: parentOf.map(({ teamId }) => teamId),
+            parentPlayerKeys: parentOf.map(({ teamId, playerId }) => `${teamId}::${playerId}`)
+        }
+    });
+
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        (error) => error.code === 'resource-exhausted' && /too many queries/i.test(error.message)
+    );
+    assert.equal(firestore._queryLog.filter(({ path }) => path === '**/feeRecipients').length, 0);
 });
 
 test('parent fee legacy player discovery ignores unrelated global ID collisions', async () => {

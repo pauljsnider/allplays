@@ -18461,6 +18461,41 @@ async function requireCallableSocialPostAccess(transaction, postRef, caller) {
   return post;
 }
 
+const MAX_MANAGED_CHAT_METADATA_QUERIES = 30;
+const MAX_MANAGED_CHAT_METADATA_DOCUMENTS = 1000;
+const MAX_CALLABLE_DISCOVERY_CONCURRENCY = 6;
+
+function chunkCallableValues(values, size = 30) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function allocateBoundedQueryReadLimits(jobCount, totalDocumentLimit, perQueryLimit) {
+  const limits = [];
+  let remainingDocuments = Math.max(0, Number(totalDocumentLimit) || 0);
+  for (let index = 0; index < jobCount; index += 1) {
+    const remainingJobs = jobCount - index;
+    const fairShare = Math.floor(remainingDocuments / remainingJobs);
+    const queryLimit = Math.max(1, Math.min(perQueryLimit, fairShare));
+    limits.push(queryLimit);
+    remainingDocuments -= queryLimit;
+  }
+  return limits;
+}
+
+async function runSettledWithConcurrencyLimit(items, limit, worker) {
+  return runWithConcurrencyLimit(items, limit, async (item, index) => {
+    try {
+      return { status: 'fulfilled', value: await worker(item, index) };
+    } catch (reason) {
+      return { status: 'rejected', reason };
+    }
+  });
+}
+
 exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
   const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const staffTeams = await listStaffTeamDocuments(caller);
@@ -18480,8 +18515,10 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     const allParentTeamIds = parentTeamScope.teamIds;
     if (allParentTeamIds.length > parentTeamLimit) chatTeamDiscoveryPartial = true;
     const parentTeamIds = allParentTeamIds.slice(0, parentTeamLimit);
-    const parentTeamResults = await Promise.allSettled(
-      parentTeamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get())
+    const parentTeamResults = await runSettledWithConcurrencyLimit(
+      parentTeamIds,
+      MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+      (teamId) => firestore.doc(`teams/${teamId}`).get()
     );
     parentTeamResults.forEach((result) => {
       if (result.status === 'rejected') {
@@ -18497,14 +18534,25 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
     staffTeams.forEach((teamSnap) => teamSnapsById.set(teamSnap.id, teamSnap));
   }
   const teamSnaps = Array.from(teamSnapsById.values());
+  const conversationTeamSnaps = includeChatMetadata
+    ? teamSnaps.slice(0, MAX_MANAGED_CHAT_METADATA_QUERIES)
+    : [];
+  const conversationReadLimits = allocateBoundedQueryReadLimits(
+    conversationTeamSnaps.length,
+    MAX_MANAGED_CHAT_METADATA_DOCUMENTS,
+    conversationLimit + 1
+  );
   const conversationResults = includeChatMetadata
-    ? await Promise.allSettled(teamSnaps.map((teamSnap) => (
-      firestore.collection(`teams/${teamSnap.id}/chatConversations`)
-        .limit(conversationLimit + 1)
-        .get()
-    )))
+    ? await runSettledWithConcurrencyLimit(
+        conversationTeamSnaps,
+        MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+        (teamSnap, index) => firestore.collection(`teams/${teamSnap.id}/chatConversations`)
+          .limit(conversationReadLimits[index])
+          .get()
+      )
     : [];
   let chatMetadataPartial = false;
+  if (includeChatMetadata && conversationTeamSnaps.length < teamSnaps.length) chatMetadataPartial = true;
   const items = teamSnaps
     .map((teamSnap, index) => {
       const team = teamSnap.data() || {};
@@ -18516,6 +18564,13 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
       const conversationResult = conversationResults[index];
       if (includeChatMetadata && conversationResult?.status !== 'fulfilled') chatMetadataPartial = true;
       const conversationDocs = conversationResult?.status === 'fulfilled' ? conversationResult.value.docs : [];
+      const conversationReadLimit = conversationReadLimits[index] || 0;
+      if (
+        includeChatMetadata &&
+        conversationResult?.status === 'fulfilled' &&
+        conversationDocs.length >= conversationReadLimit &&
+        conversationReadLimit <= conversationLimit
+      ) chatMetadataPartial = true;
       if (conversationDocs.length > conversationLimit) chatMetadataPartial = true;
       const chatConversations = conversationDocs.slice(0, conversationLimit).map((conversationSnap) => {
         const conversation = conversationSnap.data() || {};
@@ -18821,24 +18876,54 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
   if (teamIds.size === 0) return { items: [] };
 
   const recipientQueryLimit = 100;
+  const maxRecipientQueries = 40;
+  const maxRecipientDocuments = 1000;
   const playerKeys = new Set(playerLinks.map((link) => link.playerKey));
+  const playerKeyChunks = chunkCallableValues(Array.from(playerKeys), 30);
+  const playerIdsByTeam = new Map();
+  playerLinks.forEach(({ teamId, playerId }) => {
+    if (!playerIdsByTeam.has(teamId)) playerIdsByTeam.set(teamId, []);
+    playerIdsByTeam.get(teamId).push(playerId);
+  });
+  const legacyPlayerChunks = Array.from(playerIdsByTeam.entries()).flatMap(([teamId, playerIds]) => (
+    chunkCallableValues([...new Set(playerIds)], 30).map((playerIdChunk) => ({ teamId, playerIds: playerIdChunk }))
+  ));
   const queryJobs = [
-    ...['parentUserId', 'accountUserId', 'userId'].map((field) => (
-      firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(recipientQueryLimit + 1).get()
+    ...['parentUserId', 'accountUserId', 'userId'].map((field) => (queryLimit) => (
+      firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(queryLimit).get()
     )),
-    ...Array.from(playerKeys).map((playerKey) => (
-      firestore.collectionGroup('feeRecipients').where('playerKey', '==', playerKey).limit(recipientQueryLimit + 1).get()
-    )),
-    ...playerLinks.map(({ teamId, playerId }) => (
-      firestore.collectionGroup('feeRecipients')
+    ...playerKeyChunks.map((playerKeyChunk) => (queryLimit) => {
+      const operator = playerKeyChunk.length === 1 ? '==' : 'in';
+      const value = playerKeyChunk.length === 1 ? playerKeyChunk[0] : playerKeyChunk;
+      return firestore.collectionGroup('feeRecipients').where('playerKey', operator, value).limit(queryLimit).get();
+    }),
+    ...legacyPlayerChunks.map(({ teamId, playerIds }) => (queryLimit) => {
+      const operator = playerIds.length === 1 ? '==' : 'in';
+      const value = playerIds.length === 1 ? playerIds[0] : playerIds;
+      return firestore.collectionGroup('feeRecipients')
         .where('teamId', '==', teamId)
-        .where('playerId', '==', playerId)
-        .limit(recipientQueryLimit + 1)
-        .get()
-    ))
+        .where('playerId', operator, value)
+        .limit(queryLimit)
+        .get();
+    })
   ];
-  const querySnapshots = await Promise.all(queryJobs);
-  if (querySnapshots.some((querySnap) => querySnap.docs.length > recipientQueryLimit)) {
+  if (queryJobs.length > maxRecipientQueries) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Linked fee history requires too many queries to verify safely.');
+  }
+  const queryReadLimits = allocateBoundedQueryReadLimits(
+    queryJobs.length,
+    maxRecipientDocuments,
+    recipientQueryLimit + 1
+  );
+  const querySnapshots = await runWithConcurrencyLimit(
+    queryJobs,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (queryJob, index) => queryJob(queryReadLimits[index])
+  );
+  if (querySnapshots.some((querySnap, index) => (
+    querySnap.docs.length > recipientQueryLimit ||
+    (queryReadLimits[index] <= recipientQueryLimit && querySnap.docs.length >= queryReadLimits[index])
+  ))) {
     throw new functions.https.HttpsError('resource-exhausted', 'Too many fee recipients to load safely.');
   }
   const recipients = new Map();

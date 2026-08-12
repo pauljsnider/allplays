@@ -9,6 +9,9 @@ const {
 const DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS = 200;
 const DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS = 50;
 const DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM = 100;
+const DEFAULT_MAX_OFFICIAL_PROJECTION_QUERIES = 60;
+const DEFAULT_MAX_OFFICIAL_PROJECTION_DOCUMENTS = 2000;
+const DEFAULT_OFFICIAL_PROJECTION_CONCURRENCY = 6;
 const DEFAULT_OFFICIAL_GAME_ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 function normalizeBoundedId(value) {
@@ -65,6 +68,60 @@ function buildOfficialPhoneCandidates(authUser = {}) {
     );
   }
   return uniqueStrings(candidates).slice(0, 10);
+}
+
+function chunkValues(values, size = 30) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+async function mapWithConcurrencyLimit(items, limit, worker) {
+  const values = Array.from(items || []);
+  const concurrency = Math.max(1, Math.min(Number(limit) || 1, values.length || 1));
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(values[currentIndex], currentIndex);
+    }
+  }));
+  return results;
+}
+
+function allocateProjectionQueryLimits(jobCount, totalDocumentLimit, reservedDocuments, perQueryLimit) {
+  let remainingDocuments = totalDocumentLimit - reservedDocuments;
+  if (jobCount > 0 && remainingDocuments < jobCount) return [];
+  const limits = [];
+  for (let index = 0; index < jobCount; index += 1) {
+    const remainingJobs = jobCount - index;
+    const queryLimit = Math.max(1, Math.min(perQueryLimit, Math.floor(remainingDocuments / remainingJobs)));
+    limits.push(queryLimit);
+    remainingDocuments -= queryLimit;
+  }
+  return limits;
+}
+
+function isOfficialDocumentAuthorizedForQuery(docSnapshot, authUser = {}, proof = 'auth') {
+  const official = docSnapshot?.data?.() || {};
+  const uid = normalizeStoredUserId(authUser.uid);
+  const storedOfficialUserId = normalizeStoredUserId(official.officialUserId);
+  if (hasStoredPrincipalValue(official.officialUserId)) {
+    return Boolean(uid && storedOfficialUserId && uid === storedOfficialUserId);
+  }
+  if (proof !== 'profile-phone') return true;
+  if (authUser.emailVerified !== true) return false;
+  const authEmail = normalizeOfficialEmail(authUser.email);
+  return Boolean(
+    authEmail &&
+    [official.emailLower, official.email]
+      .map(normalizeOfficialEmail)
+      .some((email) => email === authEmail)
+  );
 }
 
 function extractOfficialTeamId(docSnapshot) {
@@ -230,7 +287,10 @@ function createOfficialTeamDiscoveryHandler({
   HttpsError,
   maxDocumentsPerQuery = DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS,
   maxAssignmentTeams = DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS,
-  maxGamesPerTeam = DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM
+  maxGamesPerTeam = DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM,
+  maxProjectionQueries = DEFAULT_MAX_OFFICIAL_PROJECTION_QUERIES,
+  maxProjectionDocuments = DEFAULT_MAX_OFFICIAL_PROJECTION_DOCUMENTS,
+  projectionConcurrency = DEFAULT_OFFICIAL_PROJECTION_CONCURRENCY
 }) {
   if (!firestore || !auth || typeof HttpsError !== 'function') {
     throw new Error('Official team discovery dependencies are required.');
@@ -239,6 +299,9 @@ function createOfficialTeamDiscoveryHandler({
   const boundedLimit = Math.max(1, Math.min(Number(maxDocumentsPerQuery) || DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS, 500));
   const boundedAssignmentTeamLimit = Math.max(1, Math.min(Number(maxAssignmentTeams) || DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS, 100));
   const boundedGameLimit = Math.max(1, Math.min(Number(maxGamesPerTeam) || DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM, 500));
+  const boundedProjectionQueryLimit = Math.max(1, Math.min(Number(maxProjectionQueries) || DEFAULT_MAX_OFFICIAL_PROJECTION_QUERIES, 120));
+  const boundedProjectionDocumentLimit = Math.max(1, Math.min(Number(maxProjectionDocuments) || DEFAULT_MAX_OFFICIAL_PROJECTION_DOCUMENTS, 5000));
+  const boundedProjectionConcurrency = Math.max(1, Math.min(Number(projectionConcurrency) || DEFAULT_OFFICIAL_PROJECTION_CONCURRENCY, 12));
 
   async function loadOfficialDocuments(field, values) {
     if (!values.length) return [];
@@ -318,7 +381,7 @@ function createOfficialTeamDiscoveryHandler({
     return uniqueTeamIds;
   }
 
-  async function loadAssignmentProjection(teamIds, authUser, directoryTeamIds = new Set(), preferredTeamId = '') {
+  async function loadAssignmentProjection(teamIds, authUser, user = {}, directoryTeamIds = new Set(), preferredTeamId = '') {
     if (teamIds.length > boundedAssignmentTeamLimit) {
       throw new HttpsError(
         'resource-exhausted',
@@ -328,67 +391,122 @@ function createOfficialTeamDiscoveryHandler({
     if (teamIds.length === 0) {
       return { teams: [], assignments: [], assignmentsComplete: true };
     }
-    let userSnap;
-    try {
-      userSnap = await firestore.doc(`users/${authUser.uid}`).get();
-    } catch {
-      throw new HttpsError('unavailable', 'Official assignment details could not be verified. Try again.');
-    }
-    const user = userSnap?.exists ? userSnap.data() || {} : {};
     const assignmentStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    async function loadSharedGameDocuments(teamId) {
-      const membershipQueries = [
-        ['homeTeamId', '=='],
-        ['awayTeamId', '=='],
-        ['teamIds', 'array-contains']
-      ];
-      const queries = membershipQueries.map(([field, operator]) => firestore
-        .collectionGroup('sharedGames')
-        .where(field, operator, teamId)
-        .where('date', '>=', assignmentStartDate)
-        .limit(boundedGameLimit + 1));
-      const snapshots = await Promise.all(queries.map((query) => query.get()));
-      if (snapshots.some((snapshot) => (snapshot.size ?? snapshot.docs?.length ?? 0) > boundedGameLimit)) {
-        throw new HttpsError(
-          'resource-exhausted',
-          'Official shared-game history is too large to verify completely. Contact support.'
-        );
-      }
-      const documentsByPath = new Map();
-      snapshots.forEach((snapshot) => {
+    const teamRefs = teamIds.map((teamId) => firestore.doc(`teams/${teamId}`));
+    const sharedMembershipPlans = [
+      ['homeTeamId', 'in'],
+      ['awayTeamId', 'in'],
+      ['teamIds', 'array-contains-any']
+    ];
+    const queryJobs = [
+      ...teamIds.map((teamId) => ({
+        kind: 'direct',
+        teamId,
+        buildQuery: (queryLimit) => firestore.collection(`teams/${teamId}/games`)
+          .where('date', '>=', assignmentStartDate)
+          .limit(queryLimit)
+      })),
+      ...sharedMembershipPlans.flatMap(([field, operator]) => chunkValues(teamIds).map((teamIdChunk) => ({
+        kind: 'shared',
+        buildQuery: (queryLimit) => firestore.collectionGroup('sharedGames')
+          .where(field, operator, teamIdChunk)
+          .where('date', '>=', assignmentStartDate)
+          .limit(queryLimit)
+      })))
+    ];
+    if (queryJobs.length > boundedProjectionQueryLimit) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Official assignment projection requires too many queries to verify safely. Contact support.'
+      );
+    }
+    const queryReadLimits = allocateProjectionQueryLimits(
+      queryJobs.length,
+      boundedProjectionDocumentLimit,
+      teamIds.length,
+      boundedGameLimit + 1
+    );
+    if (queryReadLimits.length !== queryJobs.length) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Official assignment projection is too large to verify safely. Contact support.'
+      );
+    }
+    let projections;
+    try {
+      const teamSnapshots = typeof firestore.getAll === 'function'
+        ? await firestore.getAll(...teamRefs)
+        : await mapWithConcurrencyLimit(teamRefs, boundedProjectionConcurrency, (teamRef) => teamRef.get());
+      let projectionDocumentCount = teamSnapshots.length;
+      const querySnapshots = await mapWithConcurrencyLimit(
+        queryJobs,
+        boundedProjectionConcurrency,
+        async (job, index) => {
+          const queryReadLimit = queryReadLimits[index];
+          const snapshot = await job.buildQuery(queryReadLimit).get();
+          const snapshotSize = snapshot.size ?? snapshot.docs?.length ?? 0;
+          projectionDocumentCount += snapshot.size ?? snapshot.docs?.length ?? 0;
+          if (projectionDocumentCount > boundedProjectionDocumentLimit) {
+            throw new HttpsError(
+              'resource-exhausted',
+              'Official assignment projection is too large to verify safely. Contact support.'
+            );
+          }
+          if (
+            snapshotSize > boundedGameLimit ||
+            (queryReadLimit <= boundedGameLimit && snapshotSize >= queryReadLimit)
+          ) {
+            throw new HttpsError(
+              'resource-exhausted',
+              'Official assignment history is too large to verify completely. Contact support.'
+            );
+          }
+          return snapshot;
+        }
+      );
+      const teamSnapshotsById = new Map(teamSnapshots.map((teamSnap) => [teamSnap.id, teamSnap]));
+      const directSnapshotsByTeamId = new Map();
+      const sharedDocumentsByTeamId = new Map(teamIds.map((teamId) => [teamId, new Map()]));
+      querySnapshots.forEach((snapshot, index) => {
+        const job = queryJobs[index];
+        if (job.kind === 'direct') {
+          if ((snapshot.size ?? snapshot.docs?.length ?? 0) > boundedGameLimit) {
+            throw new HttpsError(
+              'resource-exhausted',
+              'Official assignment history is too large to verify completely. Contact support.'
+            );
+          }
+          directSnapshotsByTeamId.set(job.teamId, snapshot);
+          return;
+        }
         (Array.isArray(snapshot.docs) ? snapshot.docs : []).forEach((docSnap) => {
           const path = getSharedGamePath(docSnap);
           if (!path) {
             throw new HttpsError('failed-precondition', 'Official shared-game identity could not be verified.');
           }
-          documentsByPath.set(path, docSnap);
+          const sharedGame = docSnap.data() || {};
+          const rawTeamIds = [
+            sharedGame.homeTeamId,
+            sharedGame.awayTeamId,
+            ...(Array.isArray(sharedGame.teamIds) ? sharedGame.teamIds : [])
+          ].filter((value) => value !== null && value !== undefined && value !== '');
+          rawTeamIds.map(normalizeStoredUserId).filter(Boolean).forEach((teamId) => {
+            sharedDocumentsByTeamId.get(teamId)?.set(path, docSnap);
+          });
         });
       });
-      if (documentsByPath.size > boundedGameLimit) {
-        throw new HttpsError(
-          'resource-exhausted',
-          'Official shared-game history is too large to verify completely. Contact support.'
-        );
-      }
-      return [...documentsByPath.values()];
-    }
-    let projections;
-    try {
-      projections = await Promise.all(teamIds.map(async (teamId) => {
-        const [teamSnap, gamesSnap, sharedGameDocs] = await Promise.all([
-          firestore.doc(`teams/${teamId}`).get(),
-          firestore.collection(`teams/${teamId}/games`)
-            .where('date', '>=', assignmentStartDate)
-            .limit(boundedGameLimit + 1)
-            .get(),
-          loadSharedGameDocuments(teamId)
-        ]);
-        if ((gamesSnap.size ?? gamesSnap.docs?.length ?? 0) > boundedGameLimit) {
+      sharedDocumentsByTeamId.forEach((documentsByPath) => {
+        if (documentsByPath.size > boundedGameLimit) {
           throw new HttpsError(
             'resource-exhausted',
-            'Official assignment history is too large to verify completely. Contact support.'
+            'Official shared-game history is too large to verify completely. Contact support.'
           );
         }
+      });
+      projections = teamIds.map((teamId) => {
+        const teamSnap = teamSnapshotsById.get(teamId);
+        const gamesSnap = directSnapshotsByTeamId.get(teamId) || { docs: [] };
+        const sharedGameDocs = [...(sharedDocumentsByTeamId.get(teamId)?.values() || [])];
         const team = teamSnap?.exists ? teamSnap.data() || {} : {};
         const teamName = String(team.name || 'Team').trim().slice(0, 200) || 'Team';
         const canClaimOpen = canClaimOpenOfficialSlots(teamId, team, user, authUser);
@@ -427,7 +545,7 @@ function createOfficialTeamDiscoveryHandler({
         const hasAccess = directoryTeamIds.has(teamId) || canClaimOpen ||
           assignments.some((assignment) => assignment.kind === 'assigned');
         return { team: { id: teamId, name: teamName }, assignments, hasAccess };
-      }));
+      });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       throw new HttpsError('unavailable', 'Official assignment details could not be verified. Try again.');
@@ -471,20 +589,36 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('permission-denied', 'This account is not available.');
     }
 
+    let userSnap;
+    try {
+      userSnap = await firestore.doc(`users/${authUser.uid}`).get();
+    } catch {
+      throw new HttpsError('unavailable', 'Official profile identity could not be verified. Try again.');
+    }
+    const user = userSnap?.exists ? userSnap.data() || {} : {};
     const emailCandidates = authUser.emailVerified === true ? buildOfficialEmailCandidates(authUser) : [];
     const normalizedEmail = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
-    const phoneCandidates = buildOfficialPhoneCandidates(authUser);
+    const authPhoneCandidates = buildOfficialPhoneCandidates(authUser);
     const normalizedPhone = normalizeOfficialPhone(authUser.phoneNumber);
+    const profilePhoneCandidates = buildOfficialPhoneCandidates({ phoneNumber: user.phoneNumber || user.phone });
+    const normalizedProfilePhone = normalizeOfficialPhone(user.phoneNumber || user.phone);
     const queryPlans = [
-      ['email', emailCandidates],
-      ['emailLower', normalizedEmail ? [normalizedEmail] : []],
-      ['phone', phoneCandidates],
-      ['phoneDigits', normalizedPhone ? [normalizedPhone] : []]
-    ].filter(([, values]) => values.length > 0);
+      { field: 'email', values: emailCandidates, proof: 'auth' },
+      { field: 'emailLower', values: normalizedEmail ? [normalizedEmail] : [], proof: 'auth' },
+      { field: 'phone', values: authPhoneCandidates, proof: 'auth' },
+      { field: 'phoneDigits', values: normalizedPhone ? [normalizedPhone] : [], proof: 'auth' },
+      { field: 'phone', values: profilePhoneCandidates, proof: 'profile-phone' },
+      { field: 'phoneDigits', values: normalizedProfilePhone ? [normalizedProfilePhone] : [], proof: 'profile-phone' }
+    ].filter(({ values }, index, plans) => values.length > 0 && !plans.slice(0, index).some((plan) => (
+      plan.field === plans[index].field && JSON.stringify(plan.values) === JSON.stringify(values)
+    )));
 
     const [snapshots, assignedTeamIds] = await Promise.all([
       queryPlans.length
-        ? Promise.all(queryPlans.map(([field, values]) => loadOfficialDocuments(field, values)))
+        ? Promise.all(queryPlans.map(async ({ field, values, proof }) => {
+            const docs = await loadOfficialDocuments(field, values);
+            return docs.filter((docSnap) => isOfficialDocumentAuthorizedForQuery(docSnap, authUser, proof));
+          }))
         : Promise.resolve([]),
       loadAssignedTeamIds(authUser)
     ]);
@@ -507,6 +641,7 @@ function createOfficialTeamDiscoveryHandler({
     const projection = await loadAssignmentProjection(
       projectionTeamIds,
       authUser,
+      user,
       new Set(directoryTeamIds),
       requestedTeamId
     );
@@ -524,6 +659,8 @@ module.exports = {
   DEFAULT_MAX_OFFICIAL_LINK_DOCUMENTS,
   DEFAULT_MAX_OFFICIAL_ASSIGNMENT_TEAMS,
   DEFAULT_MAX_OFFICIAL_GAMES_PER_TEAM,
+  DEFAULT_MAX_OFFICIAL_PROJECTION_QUERIES,
+  DEFAULT_MAX_OFFICIAL_PROJECTION_DOCUMENTS,
   buildOfficialEmailCandidates,
   buildOfficialPhoneCandidates,
   buildSharedGameSyntheticId,

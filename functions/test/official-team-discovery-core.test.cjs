@@ -16,7 +16,7 @@ class HttpsError extends Error {
 }
 
 function makeFirestore(records = [], { failField = null, documents = {}, gamesByTeam = {}, sharedGames = [] } = {}) {
-  return {
+  const firestore = {
     doc(path) {
       return {
         async get() {
@@ -82,6 +82,7 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
               if (operator === '==') return data[field] === value;
               if (operator === 'in') return value.includes(data[field]);
               if (operator === 'array-contains') return Array.isArray(data[field]) && data[field].includes(value);
+              if (operator === 'array-contains-any') return Array.isArray(data[field]) && data[field].some((entry) => value.includes(entry));
               if (operator === '>=') return new Date(data[field]).getTime() >= value.getTime();
               return false;
             }))
@@ -92,6 +93,8 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
       };
     }
   };
+  firestore.getAll = async (...refs) => Promise.all(refs.map((ref) => ref.get()));
+  return firestore;
 }
 
 function makeHandler(records, authUser, options = {}) {
@@ -101,7 +104,10 @@ function makeHandler(records, authUser, options = {}) {
     HttpsError,
     maxDocumentsPerQuery: options.maxDocumentsPerQuery,
     maxAssignmentTeams: options.maxAssignmentTeams,
-    maxGamesPerTeam: options.maxGamesPerTeam
+    maxGamesPerTeam: options.maxGamesPerTeam,
+    maxProjectionQueries: options.maxProjectionQueries,
+    maxProjectionDocuments: options.maxProjectionDocuments,
+    projectionConcurrency: options.projectionConcurrency
   });
 }
 
@@ -163,6 +169,55 @@ test('official discovery supports normalized and common formatted Auth phone var
   });
 
   assert.deepEqual((await handler({}, context)).teamIds, ['phone-team']);
+});
+
+test('official discovery preserves a profile-phone match only with stable UID or verified Auth email proof', async () => {
+  const handler = makeHandler([
+    {
+      path: 'teams/email-bound/officials/phone',
+      data: { phone: '(816) 555-0123', emailLower: 'current@example.com' }
+    },
+    {
+      path: 'teams/uid-bound/officials/phone',
+      data: { phoneDigits: '8165550123', officialUserId: 'official-1' }
+    },
+    {
+      path: 'teams/unbound/officials/phone',
+      data: { phone: '(816) 555-0123' }
+    },
+    {
+      path: 'teams/other-user/officials/phone',
+      data: { phone: '(816) 555-0123', officialUserId: 'official-2', emailLower: 'current@example.com' }
+    }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { phone: '(816) 555-0123' }
+    }
+  });
+
+  assert.deepEqual((await handler({}, context)).teamIds, ['email-bound', 'uid-bound']);
+});
+
+test('official discovery does not treat a mutable profile phone alone as authority', async () => {
+  const handler = makeHandler([
+    { path: 'teams/unbound/officials/phone', data: { phone: '(816) 555-0123' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'users/official-1': { phone: '(816) 555-0123' }
+    }
+  });
+
+  assert.deepEqual((await handler({}, context)).teamIds, []);
 });
 
 test('official discovery rejects a caller UID that would change when trimmed', async () => {
@@ -1050,6 +1105,57 @@ test('official discovery fails closed when a bounded query cannot prove complete
   }, { maxDocumentsPerQuery: 2 });
 
   await assert.rejects(handler({}, context), (error) => error.code === 'resource-exhausted');
+});
+
+test('official assignment projection enforces an aggregate document budget', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    maxProjectionDocuments: 1,
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha' }
+    },
+    gamesByTeam: {
+      'team-1': [{
+        id: 'game-1',
+        data: { date: futureDate, officiatingSlots: [] }
+      }]
+    }
+  });
+
+  await assert.rejects(
+    handler({ includeAssignments: true }, context),
+    (error) => error.code === 'resource-exhausted' && /projection is too large/i.test(error.message)
+  );
+});
+
+test('official assignment projection enforces an aggregate query budget before reading games', async () => {
+  const handler = makeHandler([
+    { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    maxProjectionQueries: 3,
+    documents: {
+      'users/official-1': {},
+      'teams/team-1': { name: 'Alpha' }
+    }
+  });
+
+  await assert.rejects(
+    handler({ includeAssignments: true }, context),
+    (error) => error.code === 'resource-exhausted' && /too many queries/i.test(error.message)
+  );
 });
 
 test('official discovery ignores malformed collection-group paths', async () => {
