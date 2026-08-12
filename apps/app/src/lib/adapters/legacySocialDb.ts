@@ -11,6 +11,7 @@ import {
   where as legacyWhere,
   orderBy as legacyOrderBy,
   limit as legacyLimit,
+  documentId as legacyDocumentId,
   startAfter as legacyStartAfter,
   runTransaction as legacyRunTransaction,
   Timestamp as LegacyTimestamp,
@@ -33,6 +34,7 @@ export const query = legacyQuery as (...args: any[]) => any;
 export const where = legacyWhere as (...args: any[]) => any;
 export const orderBy = legacyOrderBy as (...args: any[]) => any;
 export const limit = legacyLimit as (...args: any[]) => any;
+export const documentId = legacyDocumentId as (...args: any[]) => any;
 export const startAfter = legacyStartAfter as (...args: any[]) => any;
 export const runTransaction = legacyRunTransaction as (...args: any[]) => Promise<any>;
 export const Timestamp = LegacyTimestamp as any;
