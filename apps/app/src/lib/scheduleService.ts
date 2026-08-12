@@ -1789,24 +1789,28 @@ async function loadStaffTeamsFromRest(user: AuthUser): Promise<StaffTeamsLoadRes
 }
 
 async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
-  return readWithNativeFallback(
-    'staff teams',
-    async () => {
-      const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const staffTeamResult = await getStaffTeams({
-        userId: user.uid,
-        email: user.email,
-        coachTeamIds
-      });
-      const teamsById = new Map<string, any>();
-      staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
-        if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
-      });
-      return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
-    },
-    () => loadStaffTeamsFromRest(user),
-    staffTeamDiscoveryTimeoutMs
-  );
+  const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
+  try {
+    const staffTeamResult = await withTimeout(Promise.resolve(getStaffTeams({
+      userId: user.uid,
+      email: user.email,
+      coachTeamIds
+    })), 'staff teams', staffTeamDiscoveryTimeoutMs);
+    const teamsById = new Map<string, any>();
+    staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
+      if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
+    });
+    return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
+  } catch (error) {
+    // The SDK callable and the authenticated HTTP callable reach the same
+    // server-authorized listManagedTeams function. Keep the HTTP transport as
+    // a web fallback too: a transient SDK/App Check transport failure must not
+    // erase an otherwise valid staff team from the chooser.
+    logScheduleWarning('Falling back to authenticated HTTP for staff teams.', 'staff-team-callable-fallback', error, {
+      fallback: 'authenticated-http'
+    });
+    return loadStaffTeamsFromRest(user);
+  }
 }
 
 async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {

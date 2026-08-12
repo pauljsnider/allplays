@@ -699,6 +699,7 @@ describe('parent schedule child scope', () => {
     vi.mocked(getStaffTeams)
       .mockRejectedValueOnce(new Error('network unavailable'))
       .mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValue(new Error('authenticated HTTP unavailable'));
 
     const scope = await loadParentScheduleScope(coachUser);
 
@@ -706,6 +707,7 @@ describe('parent schedule child scope', () => {
     expect(scope.staffTeamsPartial).toBe(true);
     expect(scope.staffTeams).toEqual([]);
     expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
   });
 
   it('retries partial staff discovery with coach links from the freshly loaded profile', async () => {
@@ -757,6 +759,24 @@ describe('parent schedule child scope', () => {
     } finally {
       globalThis.fetch = previousFetch;
     }
+  });
+
+  it('falls back to the authenticated HTTP callable when the web SDK callable fails', async () => {
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockRejectedValueOnce(new Error('SDK callable unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
   });
 
   it('accepts an empty complete web callable result without issuing permission-noise REST requests', async () => {
@@ -818,10 +838,12 @@ describe('parent schedule child scope', () => {
         teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
         isPartial: false
       } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValueOnce(new Error('initial HTTP read unavailable'));
 
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(getStaffTeams).toHaveBeenCalledTimes(2);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     expect(scope.staffTeamsPartial).toBe(false);
     expect(scope.isPartial).toBe(false);
@@ -849,6 +871,7 @@ describe('parent schedule child scope', () => {
     vi.mocked(getStaffTeams)
       .mockRejectedValueOnce(new Error('network unavailable'))
       .mockRejectedValueOnce(new Error('network unavailable'));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockRejectedValue(new Error('authenticated HTTP unavailable'));
 
     const firstRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
     const secondRefresh = await loadParentSchedule(coachUser, { hydrateDetails: false, expandStaffPlayers: false });
