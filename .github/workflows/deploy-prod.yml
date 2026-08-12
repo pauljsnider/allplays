@@ -872,7 +872,7 @@ jobs:
 
   deploy:
     needs: prepare-deploy
-    if: "!cancelled() && needs.prepare-deploy.result == 'success'"
+    if: always() && needs.prepare-deploy.result == 'success'
     runs-on: ubuntu-latest
     environment: production
     permissions:

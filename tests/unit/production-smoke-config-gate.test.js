@@ -17,6 +17,9 @@ describe('production role-smoke gate', () => {
             "if: always() && needs.production-validation-gate.result == 'success'"
         );
         expect(deployWorkflow).toContain('needs: [production-validation-gate, validate-production-smoke-config]');
+        expect(deployWorkflow).toContain(
+            "needs.validate-production-smoke-config.result == 'success'"
+        );
         expect(deployWorkflow.indexOf('validate-production-smoke-config:')).toBeLessThan(
             deployWorkflow.indexOf('  prepare-deploy:')
         );
