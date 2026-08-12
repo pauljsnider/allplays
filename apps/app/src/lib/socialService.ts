@@ -3,6 +3,7 @@ import {
   collection,
   db,
   doc,
+  documentId,
   getDoc,
   getDocs,
   limit,
@@ -52,8 +53,12 @@ import {
 
 const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
-const hiddenSocialPostPageSize = 200;
-const hiddenSocialPostPageBudget = 3;
+// Firestore `in` queries historically support 10 values across every runtime
+// this shared web/native service supports. Rules enforce the same request cap.
+const hiddenSocialPostQueryLimit = 10;
+// A surface may inspect at most four full 30-post candidate pages per load.
+// The Home resolver is shared across its visible-user and team branches.
+const socialPostCandidateBudget = 120;
 const socialPostPageBudget = 4;
 const teamSocialPostLimit = 12;
 const teamSocialFeedTeamLimit = 8;
@@ -62,6 +67,16 @@ const publicUserProfileCollection = 'publicUserProfiles';
 const logger = createLogger('social-service');
 
 type FirestoreDoc = Record<string, any> & { id: string };
+
+type HiddenSocialPostLookup = {
+  hiddenPostIds: Set<string>;
+  unresolvedPostIds: Set<string>;
+  budgetExhausted: boolean;
+};
+
+type HiddenSocialPostResolver = {
+  resolve: (postIds: string[]) => Promise<HiddenSocialPostLookup>;
+};
 
 export type CreateSocialPostInput = {
   type: SocialPostType;
@@ -151,6 +166,12 @@ function getNativeFirestoreBaseUrl() {
   const projectId = compactString(firebaseAuth.app?.options?.projectId);
   if (!projectId) throw new Error('Firebase project ID is missing.');
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
+}
+
+function getNativeFirestoreDocumentName(path: string) {
+  const projectId = compactString(firebaseAuth.app?.options?.projectId);
+  if (!projectId) throw new Error('Firebase project ID is missing.');
+  return `projects/${projectId}/databases/(default)/documents/${path}`;
 }
 
 async function getNativeFirestoreHeaders(requestUrl: string) {
@@ -265,13 +286,13 @@ function collectPrivateProfileTeamIds(profile: Record<string, any> = {}) {
 async function loadNativeSocialPostQueryPages({
   filters,
   label,
-  hiddenPostIds,
+  hiddenPostResolver,
   pageSize,
   visibleLimit
 }: {
   filters: Array<{ fieldPath: string; op: 'EQUAL' | 'ARRAY_CONTAINS'; value: Record<string, unknown> }>;
   label: string;
-  hiddenPostIds: Set<string>;
+  hiddenPostResolver: HiddenSocialPostResolver;
   pageSize: number;
   visibleLimit: number;
 }) {
@@ -326,12 +347,21 @@ async function loadNativeSocialPostQueryPages({
     const pageDocs: FirestoreDoc[] = (Array.isArray(payload) ? payload : [])
       .map((entry: any) => decodeNativeFirestoreDocument(entry.document))
       .filter((entry): entry is FirestoreDoc => Boolean(entry));
+    const hideResult = await hiddenPostResolver.resolve(pageDocs.map((post) => post.id));
     pageDocs.forEach((post: FirestoreDoc) => {
-      if (!post.hidden && !hiddenPostIds.has(post.id) && visiblePosts.length < visibleLimit) {
+      if (!post.hidden &&
+          !hideResult.hiddenPostIds.has(post.id) &&
+          !hideResult.unresolvedPostIds.has(post.id) &&
+          visiblePosts.length < visibleLimit) {
         visiblePosts.push(post);
       }
     });
+    if (hideResult.unresolvedPostIds.size > 0) isPartial = true;
     hasMore = pageDocs.length >= pageSize && visiblePosts.length < visibleLimit;
+    if (hideResult.budgetExhausted) {
+      isPartial = true;
+      break;
+    }
     if (!hasMore) break;
     const lastDoc: FirestoreDoc = pageDocs[pageDocs.length - 1];
     const documentName = compactString(lastDoc.__documentName);
@@ -478,11 +508,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
   posts: SocialFeedItem[];
   isPartial: boolean;
 }> {
-  const hiddenPostResult = await loadHiddenSocialPostIds(user.uid);
-  const hiddenPostIds = hiddenPostResult.ids;
-  if (hiddenPostResult.isPartial) {
-    return { posts: [], isPartial: true };
-  }
+  const hiddenPostResolver = createHiddenSocialPostResolver(user.uid, socialPostCandidateBudget);
   const postDocs = new Map<string, FirestoreDoc>();
   const homeTeamIds = getHomeTeamIds(home);
   const queriedTeamIds = homeTeamIds.slice(0, teamSocialFeedTeamLimit);
@@ -490,7 +516,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
     ? loadNativeSocialPostQueryPages({
       filters: [{ fieldPath: 'visibleUserIds', op: 'ARRAY_CONTAINS', value: { stringValue: user.uid } }],
       label: 'Social feed',
-      hiddenPostIds,
+      hiddenPostResolver,
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     })
@@ -504,7 +530,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
         limit(socialPostLimit)
       ),
       label: 'Social feed',
-      hiddenPostIds,
+      hiddenPostResolver,
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     });
@@ -515,7 +541,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
         ? loadNativeSocialPostQueryPages({
           filters: [{ fieldPath: 'teamId', op: 'EQUAL', value: { stringValue: teamId } }],
           label: `Team social feed ${teamId}`,
-          hiddenPostIds,
+          hiddenPostResolver,
           pageSize: teamSocialPostLimit,
           visibleLimit: teamSocialPostLimit
         })
@@ -529,7 +555,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
             limit(teamSocialPostLimit)
           ),
           label: `Team social feed ${teamId}`,
-          hiddenPostIds,
+          hiddenPostResolver,
           pageSize: teamSocialPostLimit,
           visibleLimit: teamSocialPostLimit
         })
@@ -549,7 +575,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
 
   const posts = sortSocialFeedItems([...postDocs.values()]
     .map(mapSocialPost)
-    .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)))
+    .filter((post) => !post.hidden))
     .slice(0, socialPostLimit);
   const viewerReactions = await loadViewerSocialPostReactions(posts, user.uid);
   return {
@@ -571,13 +597,13 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
 async function loadSocialPostQueryPages({
   buildQuery,
   label,
-  hiddenPostIds,
+  hiddenPostResolver,
   pageSize,
   visibleLimit
 }: {
   buildQuery: (cursor: any | null) => any;
   label: string;
-  hiddenPostIds: Set<string>;
+  hiddenPostResolver: HiddenSocialPostResolver;
   pageSize: number;
   visibleLimit: number;
 }) {
@@ -591,12 +617,22 @@ async function loadSocialPostQueryPages({
     loadedPages += 1;
     const snapshot = await withTimeout(getDocs(buildQuery(cursor)), label);
     const snapshotDocs = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
-    snapshotToDocs(snapshot).forEach((post) => {
-      if (!post.hidden && !hiddenPostIds.has(post.id) && visiblePosts.length < visibleLimit) {
+    const pageDocs = snapshotToDocs(snapshot);
+    const hideResult = await hiddenPostResolver.resolve(pageDocs.map((post) => post.id));
+    pageDocs.forEach((post) => {
+      if (!post.hidden &&
+          !hideResult.hiddenPostIds.has(post.id) &&
+          !hideResult.unresolvedPostIds.has(post.id) &&
+          visiblePosts.length < visibleLimit) {
         visiblePosts.push(post);
       }
     });
+    if (hideResult.unresolvedPostIds.size > 0) isPartial = true;
     hasMore = snapshotDocs.length >= pageSize && visiblePosts.length < visibleLimit;
+    if (hideResult.budgetExhausted) {
+      isPartial = true;
+      break;
+    }
     if (!hasMore) break;
     const nextCursor = snapshotDocs[snapshotDocs.length - 1];
     if (!nextCursor?.id || nextCursor.id === previousCursorId) {
@@ -612,54 +648,104 @@ async function loadSocialPostQueryPages({
   return { docs: visiblePosts, isPartial };
 }
 
-async function loadHiddenSocialPostIds(userId: string) {
-  const hiddenPostIds = new Set<string>();
-  if (isNativeRuntime()) {
-    let pageToken = '';
-    let loadedPages = 0;
-    do {
-      loadedPages += 1;
-      const params = new URLSearchParams({ pageSize: String(hiddenSocialPostPageSize) });
-      if (pageToken) params.set('pageToken', pageToken);
-      const payload = await nativeFirestoreRequest(`/users/${encodeURIComponent(userId)}/hiddenSocialPosts?${params.toString()}`);
-      (Array.isArray(payload?.documents) ? payload.documents : []).forEach((document: any) => {
-        const decoded = decodeNativeFirestoreDocument(document);
-        if (decoded?.id) hiddenPostIds.add(decoded.id);
+function createHiddenSocialPostResolver(userId: string, candidateBudget: number): HiddenSocialPostResolver {
+  type HideState = boolean | null;
+  type CacheEntry = {
+    promise: Promise<HideState>;
+    resolve: (state: HideState) => void;
+  };
+  const cache = new Map<string, CacheEntry>();
+  let admittedCandidateCount = 0;
+
+  function reserve(postId: string) {
+    let resolveState: (state: HideState) => void = () => undefined;
+    const promise = new Promise<HideState>((resolve) => {
+      resolveState = resolve;
+    });
+    const entry = { promise, resolve: resolveState };
+    cache.set(postId, entry);
+    admittedCandidateCount += 1;
+    return entry;
+  }
+
+  async function queryChunk(postIds: string[]) {
+    try {
+      let hiddenIds: Set<string>;
+      if (isNativeRuntime()) {
+        const values = postIds.map((postId) => ({
+          referenceValue: getNativeFirestoreDocumentName(
+            `users/${userId}/hiddenSocialPosts/${postId}`
+          )
+        }));
+        const payload = await nativeFirestoreRequest(`/users/${encodeURIComponent(userId)}:runQuery`, {
+          method: 'POST',
+          body: JSON.stringify({
+            structuredQuery: {
+              from: [{ collectionId: 'hiddenSocialPosts' }],
+              where: {
+                fieldFilter: {
+                  field: { fieldPath: '__name__' },
+                  op: 'IN',
+                  value: { arrayValue: { values } }
+                }
+              },
+              limit: hiddenSocialPostQueryLimit
+            }
+          })
+        });
+        hiddenIds = new Set((Array.isArray(payload) ? payload : [])
+          .map((entry: any) => decodeNativeFirestoreDocument(entry.document)?.id)
+          .filter((postId): postId is string => Boolean(postId)));
+      } else {
+        const snapshot = await withTimeout(getDocs(query(
+          collection(db, 'users', userId, 'hiddenSocialPosts'),
+          where(documentId(), 'in', postIds),
+          limit(hiddenSocialPostQueryLimit)
+        )), 'Hidden social post candidates');
+        hiddenIds = new Set(snapshotToDocs(snapshot).map((entry) => entry.id));
+      }
+      postIds.forEach((postId) => cache.get(postId)?.resolve(hiddenIds.has(postId)));
+    } catch (error) {
+      logger.warn('Unable to verify hidden social post candidates.', { error });
+      postIds.forEach((postId) => cache.get(postId)?.resolve(null));
+    }
+  }
+
+  return {
+    async resolve(postIds: string[]) {
+      const requestedIds = uniqueStrings(postIds);
+      const newlyReservedIds: string[] = [];
+      const budgetRejectedIds = new Set<string>();
+      requestedIds.forEach((postId) => {
+        if (cache.has(postId)) return;
+        if (admittedCandidateCount >= candidateBudget) {
+          budgetRejectedIds.add(postId);
+          return;
+        }
+        reserve(postId);
+        newlyReservedIds.push(postId);
       });
-      pageToken = compactString(payload?.nextPageToken);
-    } while (pageToken && loadedPages < hiddenSocialPostPageBudget);
-    return { ids: hiddenPostIds, isPartial: Boolean(pageToken) };
-  }
-  let cursor: any | null = null;
-  let previousCursorId = '';
-  let loadedPages = 0;
-  let isPartial = false;
-  let hasMore = false;
-  while (loadedPages < hiddenSocialPostPageBudget) {
-    loadedPages += 1;
-    const snapshot = await withTimeout(getDocs(query(
-      collection(db, 'users', userId, 'hiddenSocialPosts'),
-      ...(cursor ? [startAfter(cursor)] : []),
-      limit(hiddenSocialPostPageSize)
-    )), 'Hidden social posts').catch(() => null);
-    if (!snapshot) {
-      isPartial = true;
-      break;
+      const chunkQueries: Promise<void>[] = [];
+      for (let index = 0; index < newlyReservedIds.length; index += hiddenSocialPostQueryLimit) {
+        chunkQueries.push(queryChunk(newlyReservedIds.slice(index, index + hiddenSocialPostQueryLimit)));
+      }
+      await Promise.all(chunkQueries);
+      const hiddenPostIds = new Set<string>();
+      const unresolvedPostIds = new Set(budgetRejectedIds);
+      await Promise.all(requestedIds.map(async (postId) => {
+        const entry = cache.get(postId);
+        if (!entry) return;
+        const state = await entry.promise;
+        if (state === true) hiddenPostIds.add(postId);
+        if (state === null) unresolvedPostIds.add(postId);
+      }));
+      return {
+        hiddenPostIds,
+        unresolvedPostIds,
+        budgetExhausted: budgetRejectedIds.size > 0
+      };
     }
-    const snapshotDocs = Array.isArray(snapshot.docs) ? snapshot.docs : [];
-    snapshotToDocs(snapshot).forEach((entry) => hiddenPostIds.add(entry.id));
-    hasMore = snapshotDocs.length >= hiddenSocialPostPageSize;
-    if (!hasMore) break;
-    const nextCursor = snapshotDocs[snapshotDocs.length - 1];
-    if (!nextCursor?.id || nextCursor.id === previousCursorId) {
-      isPartial = true;
-      break;
-    }
-    cursor = nextCursor;
-    previousCursorId = nextCursor.id;
-  }
-  if (hasMore && loadedPages >= hiddenSocialPostPageBudget) isPartial = true;
-  return { ids: hiddenPostIds, isPartial };
+  };
 }
 
 async function loadViewerSocialPostReactions(posts: SocialFeedItem[], userId: string) {
@@ -711,16 +797,15 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }
   }
 
-  const [privateProfile, publicProfile, hiddenPostResult, publicChildrenDocs] = await Promise.all([
+  const hiddenPostResolver = createHiddenSocialPostResolver(viewerId, socialPostCandidateBudget);
+  const [privateProfile, publicProfile, publicChildrenDocs] = await Promise.all([
     isSelf ? loadProfileDocument(targetUserId) : Promise.resolve(null),
     loadPublicUserProfileDocument(targetUserId),
-    loadHiddenSocialPostIds(viewerId),
     loadPublicAthleteProfileDocuments(targetUserId).catch((error) => {
       logger.warn('Unable to load public athlete profiles.', { error, isSelf });
       return [];
     })
   ]);
-  const hiddenPostIds = hiddenPostResult.ids;
   const profile = isSelf
     ? {
         ...(publicProfile || {}),
@@ -740,18 +825,15 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     photoUrl: team.photoUrl
   })));
   let postsError: string | null = null;
-  let postResult = { docs: [] as FirestoreDoc[], isPartial: hiddenPostResult.isPartial };
-  if (hiddenPostResult.isPartial) {
-    postsError = 'Recent posts could not load completely. Try again.';
-  } else {
-    postResult = await (isNativeRuntime()
+  let postResult = { docs: [] as FirestoreDoc[], isPartial: false };
+  postResult = await (isNativeRuntime()
     ? loadNativeSocialPostQueryPages({
       filters: [
         { fieldPath: 'visibleUserIds', op: 'ARRAY_CONTAINS', value: { stringValue: viewerId } },
         { fieldPath: 'authorId', op: 'EQUAL', value: { stringValue: targetUserId } }
       ],
       label: 'Friend profile posts',
-      hiddenPostIds,
+      hiddenPostResolver,
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     })
@@ -766,7 +848,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
         limit(socialPostLimit)
       ),
       label: 'Friend profile posts',
-      hiddenPostIds,
+      hiddenPostResolver,
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     })).catch((error) => {
@@ -774,9 +856,8 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
       postsError = 'Recent posts could not load. Try again.';
       return { docs: [], isPartial: true };
     });
-    if (postResult.isPartial && !postsError) {
-      postsError = 'Recent posts could not load completely. Try again.';
-    }
+  if (postResult.isPartial && !postsError) {
+    postsError = 'Recent posts could not load completely. Try again.';
   }
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
   const publicChildren = publicChildrenDocs.map((child) => ({
@@ -788,7 +869,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
   }));
   const posts = sortSocialFeedItems(postResult.docs
     .map(mapSocialPost)
-    .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
+    .filter((post) => !post.hidden));
   const [publicTeams, viewerReactions] = await Promise.all([
     publicTeamsPromise,
     loadViewerSocialPostReactions(posts, viewerId)

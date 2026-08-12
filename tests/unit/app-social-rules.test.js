@@ -8,6 +8,7 @@ import {
 import {
     collection,
     doc,
+    documentId,
     getDoc,
     getDocs,
     limit,
@@ -128,6 +129,9 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('match /comments/{commentId}');
         expect(source).toContain('match /reactions/{userId}');
         expect(source).toContain('match /hiddenSocialPosts/{postId}');
+        expect(source).toContain('allow get: if isOwner(userId);');
+        expect(source).toContain('request.query.limit <= 10');
+        expect(source).not.toContain('match /hiddenSocialPosts/{postId} {\n        allow read: if isOwner(userId);');
         expect(source).toContain('match /friendships/{friendshipId}');
         expect(source).toContain('match /socialReports/{reportId}');
         expect(source).toContain("request.auth.uid in data.get('visibleUserIds', [])");
@@ -386,6 +390,42 @@ describe('React app social Firestore rules', () => {
                 postId: 'post-1',
                 hiddenAt: Timestamp.now()
             }));
+        });
+
+        it('allows only owner get and bounded owner candidate lists for hidden posts', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await Promise.all(Array.from({ length: 11 }, (_, index) => setDoc(
+                    doc(adminDb, 'users', 'viewer-1', 'hiddenSocialPosts', `post-${index}`),
+                    { postId: `post-${index}`, hiddenAt: Timestamp.now() }
+                )));
+            });
+            const ownerDb = viewerDb();
+            const otherDb = viewerDb('other-user');
+            const unauthenticatedDb = testEnv.unauthenticatedContext().firestore();
+            const ownerHides = collection(ownerDb, 'users', 'viewer-1', 'hiddenSocialPosts');
+            const otherUserHides = collection(otherDb, 'users', 'viewer-1', 'hiddenSocialPosts');
+            const candidateIds = Array.from({ length: 10 }, (_, index) => `post-${index}`);
+
+            await assertSucceeds(getDoc(doc(ownerDb, 'users', 'viewer-1', 'hiddenSocialPosts', 'post-0')));
+            await assertFails(getDoc(doc(otherDb, 'users', 'viewer-1', 'hiddenSocialPosts', 'post-0')));
+            expect((await assertSucceeds(getDocs(query(
+                ownerHides,
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )))).size).toBe(10);
+            await assertFails(getDocs(ownerHides));
+            await assertFails(getDocs(query(ownerHides, limit(11))));
+            await assertFails(getDocs(query(
+                collection(unauthenticatedDb, 'users', 'viewer-1', 'hiddenSocialPosts'),
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )));
+            await assertFails(getDocs(query(
+                otherUserHides,
+                where(documentId(), 'in', candidateIds),
+                limit(10)
+            )));
         });
 
         it('allows bounded visible-user and team feed queries that exclude globally hidden posts', async () => {

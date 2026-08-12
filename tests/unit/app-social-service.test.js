@@ -10,6 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     setDoc: vi.fn(),
     addDoc: vi.fn(),
     updateDoc: vi.fn(),
+    documentId: vi.fn(() => '__name__'),
     query: vi.fn((collectionRef, ...clauses) => ({ collectionRef, clauses })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
     orderBy: vi.fn((field, direction) => ({ field, direction })),
@@ -425,8 +426,14 @@ describe('React app social service', () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
         const fetchMock = vi.fn(async (url, request) => {
             const requestUrl = String(url);
-            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
-                return nativeJsonResponse({ documents: [] });
+            if (requestUrl.endsWith('/users/user-1:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                expect(body.structuredQuery).toMatchObject({
+                    from: [{ collectionId: 'hiddenSocialPosts' }],
+                    where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN' } },
+                    limit: 10
+                });
+                return nativeJsonResponse([]);
             }
             if (requestUrl.endsWith('/documents:runQuery')) {
                 const body = JSON.parse(String(request?.body || '{}'));
@@ -486,10 +493,14 @@ describe('React app social service', () => {
 
     it('keeps failed native reaction reads unknown so Like cannot invert an existing reaction', async () => {
         nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
-        vi.stubGlobal('fetch', vi.fn(async (url) => {
+        vi.stubGlobal('fetch', vi.fn(async (url, request) => {
             const requestUrl = String(url);
-            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
-                return nativeJsonResponse({ documents: [] });
+            if (requestUrl.endsWith('/users/user-1:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                expect(body.structuredQuery.where.fieldFilter.value.arrayValue.values).toEqual([
+                    { referenceValue: 'projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/unknown-reaction-post' }
+                ]);
+                return nativeJsonResponse([]);
             }
             if (requestUrl.endsWith('/documents:runQuery')) {
                 return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/unknown-reaction-post', {
@@ -567,6 +578,84 @@ describe('React app social service', () => {
         expect(firebaseMocks.orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(firebaseMocks.where).toHaveBeenCalledWith('teamId', '==', 'team-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('hidden', '==', false);
+        const hideCandidateIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(hideCandidateIds).toHaveLength(new Set(hideCandidateIds).size);
+        expect(new Set(hideCandidateIds)).toEqual(new Set(['post-hidden', 'post-visible', 'post-newest']));
+    });
+
+    it('shares one 120-candidate hide budget across all feed branches', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') {
+                const ids = queryRef.clauses.find((clause) => clause.field === '__name__')?.value || [];
+                return snapshot(ids.map((id) => ({ id })));
+            }
+            if (path === 'socialPosts') {
+                const teamId = queryRef.clauses.find((clause) => clause.field === 'teamId')?.value || 'main';
+                const pageSize = queryRef.clauses.find((clause) => clause.count)?.count || 30;
+                const page = queryRef.clauses.some((clause) => clause.cursor) ? 2 : 1;
+                return snapshot(Array.from({ length: pageSize }, (_, index) => ({
+                    id: `${teamId}-page-${page}-post-${index}`,
+                    authorId: 'friend-1',
+                    title: 'Hidden candidate',
+                    createdAt: { seconds: 4102444900 - index },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                })));
+            }
+            return snapshot([]);
+        });
+        const teams = Array.from({ length: 8 }, (_, index) => ({
+            teamId: `team-${index}`,
+            teamName: `Team ${index}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        const checkedIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts')
+            .flatMap((queryRef) => queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []);
+        expect(checkedIds).toHaveLength(120);
+        expect(new Set(checkedIds).size).toBe(120);
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
+    });
+
+    it('fails hidden-candidate lookup closed and surfaces a retryable feed state', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const path = queryRef.collectionRef?.path?.join('/') || '';
+            if (path === 'users/user-1/hiddenSocialPosts') throw new Error('Hide lookup unavailable');
+            if (path === 'socialPosts') {
+                return snapshot([{
+                    id: 'unverified-post',
+                    authorId: 'friend-1',
+                    title: 'Must not render',
+                    createdAt: { seconds: 4102444900 },
+                    playerIds: [],
+                    playerNames: [],
+                    media: []
+                }]);
+            }
+            return snapshot([]);
+        });
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
     });
 
     it('pages past a full hidden post window to return older visible feed items', async () => {
@@ -611,20 +700,27 @@ describe('React app social service', () => {
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
     });
 
-    it('loads every hidden-post page so hides beyond the first 200 stay durable', async () => {
+    it('checks only bounded candidate IDs so large hide histories do not add reads', async () => {
         const { loadVisibleSocialPosts } = await import('../../apps/app/src/lib/socialService.ts');
-        const firstHiddenPage = Array.from({ length: 200 }, (_, index) => ({ id: `hidden-${index}` }));
+        const candidatePosts = Array.from({ length: 12 }, (_, index) => ({
+            id: index === 11 ? 'hidden-beyond-history' : `visible-${index}`,
+            authorId: 'friend-1',
+            title: `Candidate ${index}`,
+            createdAt: { seconds: 4102444900 - index },
+            playerIds: [],
+            playerNames: [],
+            media: []
+        }));
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
             const path = queryRef.collectionRef?.path || [];
             if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
-                const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
-                return cursorClause ? snapshot([{ id: 'hidden-200' }]) : snapshot(firstHiddenPage);
+                const candidateClause = queryRef.clauses.find((clause) => clause.field === '__name__');
+                return snapshot(candidateClause?.value.includes('hidden-beyond-history')
+                    ? [{ id: 'hidden-beyond-history' }]
+                    : []);
             }
             if (path.join('/') === 'socialPosts') {
-                return snapshot([
-                    { id: 'hidden-200', authorId: 'friend-1', title: 'Still hidden', createdAt: { seconds: 4102444900 }, playerIds: [], playerNames: [], media: [] },
-                    { id: 'visible-post', authorId: 'friend-1', title: 'Visible', createdAt: { seconds: 4102444800 }, playerIds: [], playerNames: [], media: [] }
-                ]);
+                return snapshot(candidatePosts);
             }
             return snapshot([]);
         });
@@ -634,8 +730,21 @@ describe('React app social service', () => {
             metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
         });
 
-        expect(posts.map((post) => post.id)).toEqual(['visible-post']);
-        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-199' }));
+        expect(posts.map((post) => post.id)).toEqual(candidatePosts.slice(0, 11).map((post) => post.id));
+        const hideQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts');
+        expect(hideQueries).toHaveLength(2);
+        const requestedCandidateIds = hideQueries.flatMap((queryRef) => (
+            queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []
+        ));
+        expect(requestedCandidateIds).toEqual(candidatePosts.map((post) => post.id));
+        hideQueries.forEach((queryRef) => {
+            expect(queryRef.clauses).toContainEqual({ field: '__name__', op: 'in', value: expect.any(Array) });
+            expect(queryRef.clauses.find((clause) => clause.field === '__name__').value.length).toBeLessThanOrEqual(10);
+            expect(queryRef.clauses).toContainEqual({ count: 10 });
+            expect(queryRef.clauses.some((clause) => clause.cursor)).toBe(false);
+        });
     });
 
     it('merges requested and received friendship queries without duplicate friends', async () => {
@@ -789,8 +898,9 @@ describe('React app social service', () => {
         expect(profile.posts).toEqual([expect.objectContaining({ id: 'post-1', viewerHasLiked: true })]);
     });
 
-    it('pages past a full hidden post window on a friend profile', async () => {
+    it('checks only friend-profile candidates and pages to older visible posts', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
+        const unrelatedHistoricalIds = new Set(Array.from({ length: 250 }, (_, index) => `historical-${index}`));
         const hiddenPosts = Array.from({ length: 30 }, (_, index) => ({
             id: `hidden-${index}`,
             authorId: 'friend-1',
@@ -825,7 +935,10 @@ describe('React app social service', () => {
         firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
             const path = queryRef.collectionRef?.path || [];
             if (path.join('/') === 'users/user-1/hiddenSocialPosts') {
-                return snapshot(hiddenPosts.map(({ id }) => ({ id, postId: id })));
+                const candidateIds = queryRef.clauses.find((clause) => clause.field === '__name__')?.value || [];
+                return snapshot(candidateIds
+                    .filter((id) => id.startsWith('hidden-'))
+                    .map((id) => ({ id, postId: id })));
             }
             if (path.join('/') === 'socialPosts') {
                 const cursorClause = queryRef.clauses.find((clause) => clause.cursor);
@@ -839,6 +952,18 @@ describe('React app social service', () => {
         expect(profile.posts).toHaveLength(30);
         expect(profile.posts.map((post) => post.id)).toEqual(olderVisiblePosts.map((post) => post.id));
         expect(firebaseMocks.startAfter).toHaveBeenCalledWith(expect.objectContaining({ id: 'hidden-29' }));
+        const hideQueries = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'users/user-1/hiddenSocialPosts');
+        const checkedIds = hideQueries.flatMap((queryRef) => (
+            queryRef.clauses.find((clause) => clause.field === '__name__')?.value || []
+        ));
+        expect(checkedIds).toEqual([
+            ...hiddenPosts.map((post) => post.id),
+            ...olderVisiblePosts.map((post) => post.id)
+        ]);
+        expect(checkedIds.some((id) => unrelatedHistoricalIds.has(id))).toBe(false);
+        expect(hideQueries.every((queryRef) => queryRef.clauses.every((clause) => !clause.cursor))).toBe(true);
     });
 
     it('rejects non-friends before reading a profile or its posts', async () => {

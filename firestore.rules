@@ -3014,7 +3014,11 @@ service cloud.firestore {
       }
 
       match /hiddenSocialPosts/{postId} {
-        allow read: if isOwner(userId);
+        allow get: if isOwner(userId);
+        allow list: if isOwner(userId) &&
+                       request.query.limit != null &&
+                       request.query.limit > 0 &&
+                       request.query.limit <= 10;
         allow delete: if isVerifiedForSensitiveWrite() && isOwner(userId);
         allow create, update: if isVerifiedForSensitiveWrite() && isOwner(userId) &&
                               request.resource.data.keys().hasOnly(['postId', 'hiddenAt']) &&
