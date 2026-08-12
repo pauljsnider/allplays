@@ -233,15 +233,28 @@ export function Teams({ auth }: { auth: AuthState }) {
 function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): ParentHomeModel {
   if (!enriched.teams.length) return current;
   const currentByTeamId = new Map(current.teams.map((team) => [team.teamId, team]));
-  return {
-    ...enriched,
-    teams: enriched.teams.map((team) => ({
+  const enrichedTeamIds = new Set(enriched.teams.map((team) => team.teamId));
+  const mergedTeams = [
+    ...enriched.teams.map((team) => ({
       ...team,
       unreadCount: currentByTeamId.get(team.teamId)?.unreadCount || team.unreadCount,
       role: currentByTeamId.get(team.teamId)?.role || team.role,
       sport: currentByTeamId.get(team.teamId)?.sport || team.sport,
       photoUrl: currentByTeamId.get(team.teamId)?.photoUrl || team.photoUrl
-    }))
+    })),
+    // Enrichment is optional detail, not a new access authority. Never let a
+    // nonempty but incomplete enrichment response erase a team from the
+    // authoritative fast chooser that already rendered it.
+    ...current.teams.filter((team) => !enrichedTeamIds.has(team.teamId))
+  ];
+  return {
+    ...enriched,
+    teams: mergedTeams,
+    metrics: {
+      ...enriched.metrics,
+      teams: mergedTeams.length,
+      players: mergedTeams.reduce((total, team) => total + team.players.length, 0)
+    }
   };
 }
 

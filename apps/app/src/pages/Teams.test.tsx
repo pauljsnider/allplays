@@ -228,6 +228,37 @@ describe('Teams empty state', () => {
     expect(screen.queryByText('No teams available')).toBeNull();
   });
 
+  it('does not let a nonempty enrichment subset erase an authoritative fast team', async () => {
+    const authoritativeTeam = {
+      teamId: 'team-authoritative', teamName: 'Authoritative Aces', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+      players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+    };
+    const otherTeam = {
+      teamId: 'team-other', teamName: 'Other Owls', role: 'Coach' as const, sport: 'Soccer', photoUrl: null,
+      players: [], nextEvent: null, eventCount: 0, upcomingEventCount: 0, unreadCount: 0, openActions: 0
+    };
+    const fastHome = {
+      ...emptyHome,
+      teams: [authoritativeTeam, otherTeam],
+      metrics: { ...emptyHome.metrics, teams: 2 }
+    };
+    const incompleteEnrichment = {
+      ...emptyHome,
+      teams: [{ ...otherTeam, eventCount: 2 }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(fastHome));
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(incompleteEnrichment);
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Authoritative Aces' })).toBeTruthy();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('link', { name: 'Open Authoritative Aces' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Other Owls' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '2 teams ready' })).toBeTruthy();
+  });
+
   it('preserves the complete team chooser when a refresh returns incomplete access', async () => {
     const completeHome = {
       players: [],
