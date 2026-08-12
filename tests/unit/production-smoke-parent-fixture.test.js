@@ -373,4 +373,22 @@ describe('production parent smoke fixture maintenance', () => {
             "page.getByText('Create invite', { exact: true })"
         );
     });
+
+    it('restores the desktop viewport before asserting the desktop messages header', () => {
+        const mobileViewport = authenticatedCoreSource.indexOf(
+            'page.setViewportSize({ width: 390, height: 844 })'
+        );
+        const desktopViewport = authenticatedCoreSource.indexOf(
+            'page.setViewportSize({ width: 1280, height: 720 })',
+            mobileViewport + 1
+        );
+        const conversationsHeading = authenticatedCoreSource.indexOf(
+            "heading: 'Conversations'",
+            mobileViewport + 1
+        );
+
+        expect(mobileViewport).toBeGreaterThan(-1);
+        expect(desktopViewport).toBeGreaterThan(mobileViewport);
+        expect(conversationsHeading).toBeGreaterThan(desktopViewport);
+    });
 });
