@@ -22,6 +22,7 @@ const workflowSource = readFileSync('.github/workflows/production-smoke-fixture.
 function buildDocument({
     date = '2025-01-01T18:00:00.000Z',
     enabled = false,
+    liveStatus = '',
     slots = [],
     status = 'cancelled'
 } = {}) {
@@ -31,7 +32,8 @@ function buildDocument({
             date: { timestampValue: date },
             officiatingSelfAssignmentEnabled: { booleanValue: enabled },
             officiatingSlots: { arrayValue: { values: slots } },
-            status: { stringValue: status }
+            status: { stringValue: status },
+            ...(liveStatus ? { liveStatus: { stringValue: liveStatus } } : {})
         }
     };
 }
@@ -98,12 +100,49 @@ describe('production officials smoke fixture maintenance', () => {
             ready: true,
             isUpcoming: true,
             isCancelled: false,
+            isClosed: false,
+            status: 'scheduled',
+            liveStatus: '',
             openSlotCount: 1,
             selfAssignmentEnabled: true
         });
         expect(buildOfficialFixturePatch(document).fields).toEqual({
             officiatingSelfAssignmentEnabled: { booleanValue: true },
             officiatingSlots: document.fields.officiatingSlots
+        });
+    });
+
+    it.each([
+        ['completed', 'completed'],
+        ['scheduled', 'final']
+    ])('repairs a terminal %s/%s game that the app correctly hides', (status, liveStatus) => {
+        const document = buildDocument({
+            date: officialFixtureDate,
+            enabled: true,
+            status,
+            liveStatus,
+            slots: [
+                {
+                    mapValue: {
+                        fields: {
+                            id: { stringValue: officialFixtureSlotId },
+                            position: { stringValue: 'Smoke official' },
+                            status: { stringValue: 'open' }
+                        }
+                    }
+                }
+            ]
+        });
+
+        expect(inspectOfficialFixture(document)).toMatchObject({
+            ready: false,
+            isClosed: true,
+            status,
+            liveStatus
+        });
+        expect(buildOfficialFixturePatch(document).fields).toMatchObject({
+            ...(status === 'scheduled' ? {} : { status: { stringValue: 'scheduled' } }),
+            liveStatus: { stringValue: 'scheduled' }
         });
     });
 

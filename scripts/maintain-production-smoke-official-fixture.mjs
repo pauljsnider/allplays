@@ -34,8 +34,20 @@ function getGameDate(fields) {
     return String(value.timestampValue || value.stringValue || '');
 }
 
-function getGameStatus(fields) {
-    return getStringField(fields, 'status').trim().toLowerCase();
+function getGameStatus(fields, fieldName) {
+    return getStringField(fields, fieldName).trim().toLowerCase();
+}
+
+function isClosedGameStatus(status) {
+    return [
+        'cancelled',
+        'canceled',
+        'completed',
+        'complete',
+        'final',
+        'finished',
+        'ended'
+    ].includes(status);
 }
 
 export function assertSmokeFixtureIdentifier(value, label) {
@@ -48,19 +60,24 @@ export function inspectOfficialFixture(document, now = new Date()) {
     const fields = document?.fields || {};
     const dateValue = getGameDate(fields);
     const date = dateValue ? new Date(dateValue) : null;
-    const status = getGameStatus(fields);
+    const status = getGameStatus(fields, 'status');
+    const liveStatus = getGameStatus(fields, 'liveStatus');
     const slots = getArrayValues(fields.officiatingSlots);
     const openSlotCount = slots.filter(isUnassignedOpenSlot).length;
     const isUpcoming = Boolean(date && Number.isFinite(date.getTime()) && date.getTime() > now.getTime());
     const isCancelled = status === 'cancelled' || status === 'canceled';
+    const isClosed = isClosedGameStatus(status) || isClosedGameStatus(liveStatus);
 
     return {
         ready: fields.officiatingSelfAssignmentEnabled?.booleanValue === true &&
             isUpcoming &&
-            !isCancelled &&
+            !isClosed &&
             openSlotCount > 0,
         isUpcoming,
         isCancelled,
+        isClosed,
+        status,
+        liveStatus,
         openSlotCount,
         selfAssignmentEnabled: fields.officiatingSelfAssignmentEnabled?.booleanValue === true
     };
@@ -99,8 +116,11 @@ export function buildOfficialFixturePatch(document, now = new Date()) {
     if (!inspection.isUpcoming) {
         patch.date = { timestampValue: officialFixtureDate };
     }
-    if (inspection.isCancelled) {
+    if (isClosedGameStatus(inspection.status)) {
         patch.status = { stringValue: 'scheduled' };
+    }
+    if (isClosedGameStatus(inspection.liveStatus)) {
+        patch.liveStatus = { stringValue: 'scheduled' };
     }
 
     return { fields: patch };
@@ -162,7 +182,7 @@ async function main() {
         throw new Error(
             `Officials fixture is not ready (upcoming=${inspection.isUpcoming}, ` +
             `self-assignment=${inspection.selfAssignmentEnabled}, open-slots=${inspection.openSlotCount}, ` +
-            `cancelled=${inspection.isCancelled})`
+            `status=${inspection.status || 'unset'}, live-status=${inspection.liveStatus || 'unset'})`
         );
     }
 
