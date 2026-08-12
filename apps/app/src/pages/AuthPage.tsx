@@ -68,7 +68,10 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   }, [auth.user, inviteCode, inviteType, requestedNextRoute]);
 
   useEffect(() => {
-    if (!auth.loading && auth.user && !inviteCode) {
+    // Auth hydration can finish after the browser has already moved away from
+    // this route. An effect queued by the old AuthPage render must not replace
+    // that newer deep link with the signed-in default route.
+    if (!auth.loading && auth.user && !inviteCode && isBrowserAuthRouteActive()) {
       navigate(postAuthRoute, { replace: true });
     }
   }, [auth.loading, auth.user, inviteCode, navigate, postAuthRoute]);
@@ -470,6 +473,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       />
     </AuthFrame>
   );
+}
+
+function isBrowserAuthRouteActive() {
+  if (typeof window === 'undefined') return true;
+  const hash = window.location.hash;
+  if (!hash.startsWith('#/')) return true;
+  return hash.slice(1).split('?')[0] === '/auth';
 }
 
 function Field({ icon: Icon, label, htmlFor, children }: { icon: typeof Mail; label: string; htmlFor: string; children: ReactNode }) {
