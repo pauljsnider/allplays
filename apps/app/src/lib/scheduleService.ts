@@ -1786,33 +1786,39 @@ type StaffTeamsLoadResult = {
   isPartial: boolean;
 };
 
-async function loadStaffTeamsFromRest(user: AuthUser): Promise<StaffTeamsLoadResult> {
+async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
   const result = await loadManagedTeamsFromNativeCallable();
   return {
-    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team) && isTeamStaff(team, user)),
+    // The callable already applies the server-side ownership, admin, and coach
+    // checks; its serialized team profiles intentionally omit some of those fields.
+    teams: result.teams.filter((team: any) => team?.id && isTeamActive(team)),
     isPartial: result.isPartial
   };
 }
 
 async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
-  return readWithNativeFallback(
-    'staff teams',
-    async () => {
-      const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
-      const staffTeamResult = await getStaffTeams({
-        userId: user.uid,
-        email: user.email,
-        coachTeamIds
-      });
-      const teamsById = new Map<string, any>();
-      staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
-        if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
-      });
-      return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
-    },
-    () => loadStaffTeamsFromRest(user),
-    staffTeamDiscoveryTimeoutMs
-  );
+  const coachTeamIds = Array.isArray(user.coachOf) ? user.coachOf.map(compactString).filter(Boolean) : [];
+  try {
+    const staffTeamResult = await withTimeout(Promise.resolve(getStaffTeams({
+      userId: user.uid,
+      email: user.email,
+      coachTeamIds
+    })), 'staff teams', staffTeamDiscoveryTimeoutMs);
+    const teamsById = new Map<string, any>();
+    staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
+      if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
+    });
+    return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
+  } catch (error) {
+    // The SDK callable and the authenticated HTTP callable reach the same
+    // server-authorized listManagedTeams function. Keep the HTTP transport as
+    // a web fallback too: a transient SDK/App Check transport failure must not
+    // erase an otherwise valid staff team from the chooser.
+    logScheduleWarning('Falling back to authenticated HTTP for staff teams.', 'staff-team-callable-fallback', error, {
+      fallback: 'authenticated-http'
+    });
+    return loadStaffTeamsFromRest();
+  }
 }
 
 async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {
@@ -3127,7 +3133,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
     && (hasStaffRole || uniqueDeclaredCoachTeamIds.length > 0 || user.isAdmin === true || user.isPlatformAdmin === true);
   if (isNativeRuntime() && (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)) {
     try {
-      const restResult = await loadStaffTeamsFromRest(staffUser);
+      const restResult = await loadStaffTeamsFromRest();
       const teamsById = new Map<string, any>();
       [...staffTeamResult.teams, ...restResult.teams].forEach((team: any) => {
         const teamId = compactString(team?.id);
