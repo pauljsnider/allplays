@@ -622,9 +622,9 @@ test('managed-team discovery returns bounded chat thread summaries without parti
     assert.equal('participantIds' in managed.items[0].chatConversations[0], false);
 });
 
-test('managed-team chat discovery includes parent-only teams and their conversation summaries', async () => {
+test('managed-team chat discovery includes parentOf-only teams and their conversation summaries', async () => {
     const { callables } = loadCallables({
-        'users/parent-1': { parentTeamIds: ['team-parent'] },
+        'users/parent-1': { parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }] },
         'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
         'teams/team-parent/chatConversations/group-1': {
             type: 'group',
@@ -692,9 +692,9 @@ test('managed-team discovery marks chat metadata partial when a thread query fai
     assert.equal('chatConversations' in managed.items[0], false);
 });
 
-test('authorized chat conversation projection hydrates only caller-readable allow-listed threads', async () => {
+test('authorized chat conversation projection hydrates parentOf-only caller-readable allow-listed threads', async () => {
     const { callables } = loadCallables({
-        'users/parent-1': { parentTeamIds: ['team-parent'] },
+        'users/parent-1': { parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }] },
         'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
         'teams/team-parent/chatConversations/direct-parent': {
             type: 'direct',
@@ -925,7 +925,7 @@ test('social mutation callables authorize native post actions server-side', asyn
         'users/parent-1': {
             email: 'parent@example.com',
             isAdmin: false,
-            parentTeamIds: ['team-1'],
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
             photoUrl: 'https://img.example.test/parent.jpg'
         },
         'teams/team-1': {

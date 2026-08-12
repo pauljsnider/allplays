@@ -3347,7 +3347,8 @@ async function loadGameById(teamId: string, gameId: string, sharedGamePath = '')
           ...decoded,
           id: normalizedSharedGamePath.split('/').pop() || '',
           _sharedGamePath: normalizedSharedGamePath
-        }, teamId) || { ...decoded, id: gameId, type: decoded.type || 'game' };
+        }, teamId);
+        if (!projected) return null;
         return preserveRouteIdentity(mapScheduleEventRecord(projected, gameId));
       }
     );

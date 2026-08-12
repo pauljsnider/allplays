@@ -18408,10 +18408,21 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
+function getCallableParentTeamScope(user = {}) {
+  const rawTeamIds = [
+    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []),
+    ...(Array.isArray(user.parentOf) ? user.parentOf.map((link) => link?.teamId) : [])
+  ];
+  const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
+  return {
+    teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
+    isPartial: normalizedTeamIds.some((teamId) => !teamId)
+  };
+}
+
 function hasCallableChatTeamAccess(caller, teamId, team = {}) {
   if (hasOpportunityTeamAdminAccess(caller, team)) return true;
-  return (Array.isArray(caller.user?.parentTeamIds) ? caller.user.parentTeamIds : [])
-    .some((value) => normalizeStablePrincipalUid(value) === teamId);
+  return getCallableParentTeamScope(caller.user).teamIds.includes(teamId);
 }
 
 function getVerifiedEmailAuthorizationCaller(caller, context = {}) {
@@ -18464,10 +18475,9 @@ exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => 
       }
     });
     const parentTeamLimit = 180;
-    const rawParentTeamIds = Array.isArray(caller.user?.parentTeamIds) ? caller.user.parentTeamIds : [];
-    const normalizedParentTeamIds = rawParentTeamIds.map(normalizeStablePrincipalUid);
-    if (normalizedParentTeamIds.some((teamId) => !teamId)) chatTeamDiscoveryPartial = true;
-    const allParentTeamIds = Array.from(new Set(normalizedParentTeamIds.filter(Boolean)));
+    const parentTeamScope = getCallableParentTeamScope(caller.user);
+    if (parentTeamScope.isPartial) chatTeamDiscoveryPartial = true;
+    const allParentTeamIds = parentTeamScope.teamIds;
     if (allParentTeamIds.length > parentTeamLimit) chatTeamDiscoveryPartial = true;
     const parentTeamIds = allParentTeamIds.slice(0, parentTeamLimit);
     const parentTeamResults = await Promise.allSettled(

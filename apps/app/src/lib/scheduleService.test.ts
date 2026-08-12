@@ -4396,6 +4396,47 @@ describe('native parent schedule Firestore mapping', () => {
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
   });
 
+  it('rejects an exact shared-game path that is unrelated to the authorized requested team', async () => {
+    const sharedGamePath = 'tournaments/t-1/sharedGames/shared-other-team';
+    const eventId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      if (String(input).includes('/documents/tournaments/t-1/sharedGames/shared-other-team')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-other-team',
+            fields: {
+              type: { stringValue: 'game' },
+              date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+              homeTeamId: { stringValue: 'team-2' },
+              awayTeamId: { stringValue: 'team-3' },
+              opponent: { stringValue: 'Unrelated Opponent' }
+            }
+          })
+        } as any;
+      }
+      return { ok: true, json: async () => [] } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail(
+      { uid: 'parent-1', email: 'parent@example.com', roles: [] } as any,
+      {
+        teamId: 'team-1',
+        eventId,
+        sharedGamePath,
+        hydrateDetails: false,
+        expandStaffPlayers: false
+      }
+    );
+
+    expect(result.events).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/documents/tournaments/t-1/sharedGames/shared-other-team'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer native-token' }) })
+    );
+  });
+
   it('keeps tracked calendar ids on native game loads so imported events do not duplicate db games', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue({
       ok: true,
