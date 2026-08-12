@@ -253,6 +253,7 @@ jobs:
 
   validate-production-smoke-config:
     needs: production-validation-gate
+    if: always() && needs.production-validation-gate.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: production-smoke
@@ -311,6 +312,10 @@ jobs:
 
   prepare-deploy:
     needs: [production-validation-gate, validate-production-smoke-config]
+    if: >-
+      always() &&
+      needs.production-validation-gate.result == 'success' &&
+      needs.validate-production-smoke-config.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -864,6 +869,7 @@ jobs:
 
   deploy:
     needs: prepare-deploy
+    if: always() && needs.prepare-deploy.result == 'success'
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -2091,7 +2097,11 @@ jobs:
           } >> "$GITHUB_ENV"
 
   deploy-pages:
-    if: vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'
+    if: >-
+      always() &&
+      needs.prepare-deploy.result == 'success' &&
+      needs.deploy.result == 'success' &&
+      vars.RELEASE_GITHUB_PAGES_DEPLOY_ENABLED == 'true'
     needs: [prepare-deploy, deploy]
     runs-on: ubuntu-latest
     permissions:
