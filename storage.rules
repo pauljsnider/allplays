@@ -349,7 +349,8 @@ service firebase.storage {
     match /stat-sheets/team-games/{teamId}/{userId}/{fileName} {
       // Legacy game-less objects are compatibility-only: existing references
       // may be read or cleaned up, but no caller can create or replace one.
-      allow get: if canAccessTeamMedia(teamId);
+      allow get: if isTeamOwnerOrAdmin(teamId) ||
+        (request.auth.uid == userId && canAccessTeamMedia(teamId));
       allow list: if false;
       allow create, update: if false;
       allow delete: if isVerifiedForSensitiveWrite() &&

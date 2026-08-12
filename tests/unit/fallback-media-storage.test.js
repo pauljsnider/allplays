@@ -216,7 +216,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(rules).toContain("teamPermission(teamId, 'scorekeeping').get('mode', '') == 'all_confirmed'");
         expect(rules).toContain("teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected'");
 
-        expect(statSheetFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
+        expect(statSheetFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) ||\n        (request.auth.uid == userId && canAccessTeamMedia(teamId));');
         expect(statSheetFallbackRules).toContain('allow create, update: if false;');
         expect(statSheetFallbackRules).not.toContain('gameId');
         expect(rules).toContain('function canDeleteOwnTeamScopedUpload(teamId, userId)');

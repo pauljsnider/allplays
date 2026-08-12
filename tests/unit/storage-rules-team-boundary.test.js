@@ -202,12 +202,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             const managerCleanupObject = ownerStorage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg');
 
             await assertSucceeds(parentObject.getMetadata());
-            await assertSucceeds(parentObject.delete());
             await assertFails(parentObject.put(new Uint8Array([1]), { contentType: 'image/jpeg' }));
+            await assertFails(parentStorage.ref('stat-sheets/team-games/team-a/legacy-scorekeeper/manager-cleanup.jpg').getMetadata());
+            await assertSucceeds(parentObject.delete());
 
             await assertSucceeds(managerCleanupObject.getMetadata());
-            await assertSucceeds(managerCleanupObject.delete());
             await assertFails(managerCleanupObject.put(new Uint8Array([1]), { contentType: 'image/jpeg' }));
+            await assertSucceeds(managerCleanupObject.delete());
         });
 
         it('denies ordinary team parents and cross-tenant actors from creating game-less statsheets', async () => {
