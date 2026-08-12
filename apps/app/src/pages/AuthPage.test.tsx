@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { StrictMode } from 'react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthPage } from './AuthPage';
 import type { AuthState, AuthUser } from '../lib/types';
@@ -65,6 +66,32 @@ function renderAuthPage(path = '/auth') {
   );
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function renderNavigableAuthPage(path = '/auth') {
+  const router = createMemoryRouter([
+    { path: '/auth', element: <AuthPage auth={auth} /> },
+    { path: '/home', element: <div>Home destination</div> },
+    { path: '/teams/:teamId', element: <div>Team destination</div> }
+  ], { initialEntries: [path] });
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
+async function leaveAuthForTeam(router: ReturnType<typeof createMemoryRouter>) {
+  await act(async () => {
+    window.location.hash = '#/teams/team-1';
+    await router.navigate('/teams/team-1');
+  });
+  expect(await screen.findByText('Team destination')).toBeTruthy();
+}
+
 describe('AuthPage native post-login routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -112,6 +139,35 @@ describe('AuthPage native post-login routing', () => {
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps native email completion active through the StrictMode effect replay', async () => {
+    authServiceMocks.signInWithEmail.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: true
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+      profile: {}
+    });
+    window.location.hash = '#/auth';
+
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={['/auth']}>
+          <Routes>
+            <Route path="/auth" element={<AuthPage auth={auth} />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>
+    );
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(window.location.hash).toBe('#/home'));
+    expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
+
   it('reloads native Google sign-in to the home page', async () => {
     authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
       user: { uid: 'admin-1', email: 'admin@example.com' },
@@ -144,6 +200,26 @@ describe('AuthPage native post-login routing', () => {
     expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it('does not let late Google redirect completion replace a newer team route', async () => {
+    const refresh = createDeferred<AuthUser | null>();
+    auth.refresh = vi.fn(() => refresh.promise);
+    authServiceMocks.completeGoogleRedirect.mockResolvedValueOnce({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      wasNewUser: false
+    });
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      refresh.resolve(null);
+      await refresh.promise;
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
+  });
+
   it('does not let late auth hydration replace a newer authenticated deep link', async () => {
     const view = renderAuthPage();
 
@@ -166,6 +242,117 @@ describe('AuthPage native post-login routing', () => {
 
     await waitFor(() => expect(window.location.hash).toBe('#/teams'));
     expect(screen.queryByText('Home destination')).toBeNull();
+  });
+
+  it('does not let a late web email completion replace a team opened after sign-in', async () => {
+    const refresh = createDeferred<AuthUser | null>();
+    auth.refresh = vi.fn(() => refresh.promise);
+    authServiceMocks.signInWithEmail.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: false
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+      profile: {}
+    });
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      refresh.resolve(null);
+      await refresh.promise;
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
+    expect(screen.queryByText('Home destination')).toBeNull();
+  });
+
+  it('does not let a late native email completion reload over a newer team route', async () => {
+    const hydration = createDeferred<{ user: AuthUser; profile: Record<string, unknown> }>();
+    authServiceMocks.signInWithEmail.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: true
+    });
+    authServiceMocks.hydrateFirebaseUser.mockReturnValue(hydration.promise);
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(authServiceMocks.hydrateFirebaseUser).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      hydration.resolve({
+        user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+        profile: {}
+      });
+      await hydration.promise;
+    });
+
+    expect(window.location.hash).toBe('#/teams/team-1');
+    expect(window.location.reload).not.toHaveBeenCalled();
+  });
+
+  it('does not let late Google popup completion replace a newer team route', async () => {
+    const refresh = createDeferred<AuthUser | null>();
+    auth.refresh = vi.fn(() => refresh.promise);
+    authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: false,
+      wasNewUser: false
+    });
+    authServiceMocks.hydrateFirebaseUser.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+      profile: {}
+    });
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
+
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      refresh.resolve(null);
+      await refresh.promise;
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
+  });
+
+  it('does not let late Apple completion reload over a newer team route', async () => {
+    const hydration = createDeferred<{ user: AuthUser; profile: Record<string, unknown> }>();
+    authServiceMocks.signInWithAppleAccount.mockResolvedValue({
+      user: { uid: 'coach-1', email: 'coach@example.com' },
+      nativeRest: true,
+      wasNewUser: false
+    });
+    authServiceMocks.hydrateFirebaseUser.mockReturnValue(hydration.promise);
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
+
+    await waitFor(() => expect(authServiceMocks.hydrateFirebaseUser).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      hydration.resolve({
+        user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+        profile: {}
+      });
+      await hydration.promise;
+    });
+
+    expect(window.location.hash).toBe('#/teams/team-1');
+    expect(window.location.reload).not.toHaveBeenCalled();
   });
 
   it('still sends a restored signed-in session away from the active auth route', async () => {
@@ -441,6 +628,29 @@ describe('AuthPage signup validation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('coach@example.com', 'secret1', '6WSSSW9V'));
+  });
+
+  it('does not let late email signup completion replace a newer team route', async () => {
+    const refresh = createDeferred<AuthUser | null>();
+    auth.refresh = vi.fn(() => refresh.promise);
+    authServiceMocks.signUpWithEmail.mockResolvedValue({ user: { uid: 'new-user', email: 'coach@example.com' } });
+    window.location.hash = '#/auth';
+    const router = renderNavigableAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /I agree/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    await leaveAuthForTeam(router);
+    await act(async () => {
+      refresh.resolve(null);
+      await refresh.promise;
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
   });
 
   it('lets a user complete Google signup after agreeing to the terms', async () => {
