@@ -1865,7 +1865,7 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
         });
         return {
           teams: [...teamsById.values()],
-          isPartial: staffTeamResult.isPartial || httpResult.isPartial,
+          isPartial: httpResult.isPartial,
           verifiedByHttp: true,
           httpAttempted: true
         };
