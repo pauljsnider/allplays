@@ -152,9 +152,10 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 // Managed-team discovery can fan out across owner, admin, and legacy coach
-// grants. Give that one bounded callable enough time to finish on a cold web
-// start without raising the timeout for every schedule read.
-const staffTeamDiscoveryTimeoutMs = 7000;
+// grants. Cold production fixture audits take about 11 seconds, so keep this
+// one operation inside the 25-second chooser contract without raising the
+// timeout for every schedule read.
+const staffTeamDiscoveryTimeoutMs = 15000;
 const staffTeamHttpHedgeDelayMs = 2000;
 const officialTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
@@ -1791,7 +1792,7 @@ type StaffTeamsLoadResult = {
 };
 
 async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
-  const result = await loadManagedTeamsFromNativeCallable();
+  const result = await loadManagedTeamsFromNativeCallable({ timeoutMs: staffTeamDiscoveryTimeoutMs });
   return {
     // The callable already applies the server-side ownership, admin, and coach
     // checks; its serialized team profiles intentionally omit some of those fields.
