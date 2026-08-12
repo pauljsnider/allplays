@@ -3134,7 +3134,11 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   const nativeRuntime = isNativeRuntime();
   const shouldVerifyStaffResultWithHttp = nativeRuntime
     ? (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)
-    : (shouldVerifyEmptyStaffResult && staffTeamResult.isPartial !== true);
+    // A complete-empty browser SDK result has proved nondeterministic in the
+    // production staff workflow. Confirm every empty result through the same
+    // bounded, authenticated server projection instead of depending on stale
+    // role hints to decide whether the account might manage a team.
+    : (staffTeamResult.teams.length === 0 && staffTeamResult.isPartial !== true);
   if (shouldVerifyStaffResultWithHttp) {
     try {
       const restResult = await loadStaffTeamsFromRest();
