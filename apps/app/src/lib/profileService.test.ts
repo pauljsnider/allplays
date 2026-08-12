@@ -368,6 +368,18 @@ describe('native parent-team fallback hydration', () => {
         }));
     });
 
+    it('honors a caller-specific timeout for cold managed-team discovery', async () => {
+        mockNativeProfileFallbackFetch();
+
+        await loadManagedTeamsFromNativeCallable({ timeoutMs: 15000 });
+
+        expect(capacitorHttpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+            data: { data: {} },
+            connectTimeout: 15000,
+            readTimeout: 15000
+        }));
+    });
+
     it('uses per-document team reads for notification teams so parent hydration stays rule-compatible', async () => {
         dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
         dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
