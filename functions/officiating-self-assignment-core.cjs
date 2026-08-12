@@ -23,6 +23,18 @@ function normalizeStoredUserId(value) {
     return value;
 }
 
+function getValidatedParentTeamIds(user = {}) {
+    const candidateTeamIds = [
+        ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []),
+        ...(Array.isArray(user.parentOf)
+            ? user.parentOf.map((link) => (
+                link && typeof link === 'object' && !Array.isArray(link) ? link.teamId : null
+            ))
+            : [])
+    ];
+    return [...new Set(candidateTeamIds.map(normalizeStoredUserId).filter(Boolean))];
+}
+
 function hasStoredPrincipalValue(value) {
     if (value === null || value === undefined) return false;
     return typeof value === 'string' ? value.length > 0 : true;
@@ -250,10 +262,7 @@ function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = 
         : [];
     if (normalizedEmail && adminEmails.includes(normalizedEmail)) return true;
 
-    const parentTeamIds = Array.isArray(user.parentTeamIds)
-        ? user.parentTeamIds.map(normalizeString).filter(Boolean)
-        : [];
-    return Boolean(normalizedTeamId && parentTeamIds.includes(normalizedTeamId));
+    return Boolean(normalizedTeamId && getValidatedParentTeamIds(user).includes(normalizedTeamId));
 }
 
 function claimOpenOfficiatingSlotForOfficial(slots = [], slotId, official = {}) {
@@ -479,6 +488,7 @@ module.exports = {
     normalizeOfficiatingAssignmentResponseInput,
     normalizeOfficiatingSlots,
     computeOfficiatingCoverageStatus,
+    getValidatedParentTeamIds,
     isEligibleOpenOfficiatingSlotParticipant,
     isSharedGameSyntheticId,
     decodeSharedGameSyntheticId,

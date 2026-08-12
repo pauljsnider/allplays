@@ -60,6 +60,18 @@ function comparable(value) {
     return value instanceof FakeTimestamp ? value.toMillis() : value;
 }
 
+function applyFieldTransforms(existing = {}, update = {}) {
+    const result = { ...existing };
+    Object.entries(update).forEach(([key, value]) => {
+        if (value?.__op === 'increment') {
+            result[key] = Number(existing[key] || 0) + Number(value.amount || 0);
+            return;
+        }
+        result[key] = clone(value);
+    });
+    return result;
+}
+
 function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null } = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
     const queryLog = [];
@@ -86,7 +98,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
             },
             update: async (value) => {
                 if (!state.has(path)) throw new Error(`Missing document: ${path}`);
-                state.set(path, { ...state.get(path), ...clone(value) });
+                state.set(path, applyFieldTransforms(state.get(path), value));
             },
             collection: (name) => collection(`${path}/${name}`)
         };
@@ -215,7 +227,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                         : clone(operation.value));
                 } else if (operation.type === 'update') {
                     if (!nextState.has(path)) throw new Error(`Missing document: ${path}`);
-                    nextState.set(path, { ...nextState.get(path), ...clone(operation.value) });
+                    nextState.set(path, applyFieldTransforms(nextState.get(path), operation.value));
                 } else if (operation.type === 'delete') {
                     nextState.delete(path);
                 }
@@ -937,7 +949,8 @@ test('social mutation callables authorize native post actions server-side', asyn
             teamId: 'team-1',
             visibleUserIds: [],
             hidden: false,
-            reactionCounts: { like: 2 }
+            reactionCounts: { like: 2 },
+            commentCount: 4
         }
     });
 
@@ -979,6 +992,7 @@ test('social mutation callables authorize native post actions server-side', asyn
         createdAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').createdAt,
         updatedAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').updatedAt
     });
+    assert.equal(firestore.snapshot('socialPosts/post.with:punctuation').commentCount, 5);
 
     const report = await callables.reportSocialPostForCaller(
         { postId: 'post.with:punctuation', reason: ' Needs review ' },

@@ -116,7 +116,7 @@ test('isTeamLinkedToSharedGame only accepts participating teams', () => {
     assert.equal(isTeamLinkedToSharedGame({ homeTeamId: 'team-1', awayTeamId: 'team-2' }, 'team-9'), false);
 });
 
-test('isEligibleOpenOfficiatingSlotParticipant accepts staff and linked parents only', () => {
+test('isEligibleOpenOfficiatingSlotParticipant accepts staff and canonical or parentOf-linked parents only', () => {
     const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
 
     assert.equal(isEligibleOpenOfficiatingSlotParticipant({ team, uid: 'coach-1', teamId: 'team-1' }), true);
@@ -135,6 +135,20 @@ test('isEligibleOpenOfficiatingSlotParticipant accepts staff and linked parents 
         email: 'parent@example.com',
         teamId: 'team-1'
     }), true);
+    assert.equal(isEligibleOpenOfficiatingSlotParticipant({
+        team,
+        user: { parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] },
+        uid: 'parent-with-link-1',
+        email: 'linked-parent@example.com',
+        teamId: 'team-1'
+    }), true);
+    assert.equal(isEligibleOpenOfficiatingSlotParticipant({
+        team,
+        user: { parentOf: [{ teamId: ' team-1 ', playerId: 'player-1' }] },
+        uid: 'parent-with-invalid-link-1',
+        email: 'invalid-linked-parent@example.com',
+        teamId: 'team-1'
+    }), false);
     assert.equal(isEligibleOpenOfficiatingSlotParticipant({
         team,
         user: { parentTeamIds: ['other-team'] },

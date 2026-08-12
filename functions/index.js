@@ -18724,6 +18724,10 @@ exports.commentOnSocialPostForCaller = functions.https.onCall(async (data, conte
       createdAt: now,
       updatedAt: now
     });
+    transaction.update(postRef, {
+      commentCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now
+    });
   });
   return { commented: true, commentId: commentRef.id };
 });

@@ -146,7 +146,7 @@ test('official discovery rejects a caller UID that would change when trimmed', a
   );
 });
 
-test('official discovery returns only caller assignments and eligible open slots in its bounded projection', async () => {
+test('official discovery includes eligible open slots for a parentOf-only profile', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([
     { path: 'teams/team-1/officials/current', data: { emailLower: 'current@example.com' } }
@@ -157,7 +157,7 @@ test('official discovery returns only caller assignments and eligible open slots
     disabled: false
   }, {
     documents: {
-      'users/official-1': { parentTeamIds: ['team-1'] },
+      'users/official-1': { parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] },
       'teams/team-1': { name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] }
     },
     gamesByTeam: {

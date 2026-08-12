@@ -2,6 +2,7 @@
 
 const {
   buildSharedGameSyntheticId: buildSyntheticSharedGameId,
+  getValidatedParentTeamIds,
   normalizeSharedGamePath
 } = require('./officiating-self-assignment-core.cjs');
 
@@ -133,7 +134,7 @@ function canClaimOpenOfficialSlots(teamId, team = {}, user = {}, authUser = {}) 
     user.isAdmin === true ||
     normalizeStoredUserId(team.ownerId) === uid ||
     (email && adminEmails.includes(email)) ||
-    (Array.isArray(user.parentTeamIds) && user.parentTeamIds.map(normalizeBoundedId).includes(teamId))
+    getValidatedParentTeamIds(user).includes(teamId)
   );
 }
 
