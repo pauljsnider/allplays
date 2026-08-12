@@ -335,6 +335,91 @@ test('official discovery preserves a shared UID assignment after the official em
   assert.equal(result.assignments[0].slotId, 'line');
 });
 
+test('official discovery rejects stale UID and email assignment indexes for direct and shared games', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const cases = [
+    {
+      label: 'direct UID',
+      gamesByTeam: {
+        'team-stale': [{
+          id: 'direct-uid',
+          data: {
+            date: futureDate,
+            officiatingAuthorizedUserIds: ['official-1'],
+            officiatingSlots: [{ id: 'slot', officialUserId: 'someone-else', status: 'accepted' }]
+          }
+        }]
+      }
+    },
+    {
+      label: 'direct email with another canonical UID',
+      gamesByTeam: {
+        'team-stale': [{
+          id: 'direct-email',
+          data: {
+            date: futureDate,
+            officiatingAuthorizedEmails: ['current@example.com'],
+            officiatingSlots: [{
+              id: 'slot',
+              officialUserId: 'someone-else',
+              officialEmail: 'current@example.com',
+              status: 'accepted'
+            }]
+          }
+        }]
+      }
+    },
+    {
+      label: 'shared UID',
+      sharedGames: [{
+        path: 'organizations/org-1/sharedGames/shared-uid-stale',
+        data: {
+          date: futureDate,
+          homeTeamId: 'team-stale',
+          officiatingAuthorizedUserIds: ['official-1'],
+          officiatingSlots: [{ id: 'slot', officialUserId: 'someone-else', status: 'accepted' }]
+        }
+      }]
+    },
+    {
+      label: 'shared email with another canonical UID',
+      sharedGames: [{
+        path: 'organizations/org-1/sharedGames/shared-email-stale',
+        data: {
+          date: futureDate,
+          homeTeamId: 'team-stale',
+          officiatingAuthorizedEmails: ['current@example.com'],
+          officiatingSlots: [{
+            id: 'slot',
+            officialUserId: 'someone-else',
+            officialEmail: 'current@example.com',
+            status: 'accepted'
+          }]
+        }
+      }]
+    }
+  ];
+
+  for (const testCase of cases) {
+    const handler = makeHandler([], {
+      uid: 'official-1',
+      email: 'current@example.com',
+      emailVerified: true,
+      disabled: false
+    }, {
+      documents: {
+        'teams/team-stale': { name: 'Stale United', ownerId: 'coach-1', adminEmails: [] }
+      },
+      gamesByTeam: testCase.gamesByTeam,
+      sharedGames: testCase.sharedGames
+    });
+
+    const result = await handler({ includeAssignments: true }, context);
+    assert.deepEqual(result.teamIds, [], testCase.label);
+    assert.deepEqual(result.assignments, [], testCase.label);
+  }
+});
+
 test('official assignment projection does not expose open slots without current team authority', async () => {
   const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const handler = makeHandler([

@@ -272,6 +272,12 @@ function createOfficialTeamDiscoveryHandler({
     const teamIds = [];
     snapshots.forEach((snapshot, index) => {
       (Array.isArray(snapshot.docs) ? snapshot.docs : []).forEach((docSnapshot) => {
+        const game = docSnapshot?.data?.() || {};
+        const hasCurrentAssignment = Array.isArray(game.officiatingSlots)
+          && game.officiatingSlots.some((slot) => (
+            slot && typeof slot === 'object' && isAssignedToAuthUser(slot, authUser)
+          ));
+        if (!hasCurrentAssignment) return;
         const assignedTeamIds = extractAssignedGameTeamIds(docSnapshot, queryPlans[index].collectionGroupName);
         if (!assignedTeamIds.length) {
           throw new HttpsError('failed-precondition', 'Official assignment team identity could not be verified.');
@@ -459,9 +465,10 @@ function createOfficialTeamDiscoveryHandler({
         : Promise.resolve([]),
       loadAssignedTeamIds(authUser)
     ]);
-    const teamIds = [...new Set(
-      [...snapshots.flat().map(extractOfficialTeamId).filter(Boolean), ...assignedTeamIds]
+    const directoryTeamIds = [...new Set(
+      snapshots.flat().map(extractOfficialTeamId).filter(Boolean)
     )].sort();
+    const teamIds = [...new Set([...directoryTeamIds, ...assignedTeamIds])].sort();
 
     const result = {
       teamIds,
@@ -474,7 +481,12 @@ function createOfficialTeamDiscoveryHandler({
       throw new HttpsError('invalid-argument', 'The requested official team is invalid.');
     }
     const projectionTeamIds = [...new Set([...teamIds, ...(requestedTeamId ? [requestedTeamId] : [])])].sort();
-    const projection = await loadAssignmentProjection(projectionTeamIds, authUser, new Set(teamIds), requestedTeamId);
+    const projection = await loadAssignmentProjection(
+      projectionTeamIds,
+      authUser,
+      new Set(directoryTeamIds),
+      requestedTeamId
+    );
     const accessibleTeamIds = projection.teams.map((team) => team.id);
     return {
       teamIds: accessibleTeamIds,
