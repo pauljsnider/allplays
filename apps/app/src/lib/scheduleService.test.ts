@@ -825,6 +825,40 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
+  it('merges the authenticated HTTP result when a nonempty web result omits a declared coach team', async () => {
+    const coachUser = {
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      roles: ['coach'],
+      coachOf: ['team-direct', 'team-declared']
+    } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      coachOf: ['team-direct', 'team-declared']
+    } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-direct', name: 'Direct Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [
+        { id: 'team-direct', name: 'Direct Team', active: true },
+        { id: 'team-declared', name: 'Declared Team', active: true }
+      ],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(coachUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-direct', teamName: 'Direct Team' },
+      { teamId: 'team-declared', teamName: 'Declared Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
   it('confirms an empty web SDK result even when the account lacks staff access signals', async () => {
     const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
