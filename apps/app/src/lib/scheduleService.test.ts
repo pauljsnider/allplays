@@ -859,14 +859,15 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
-  it('does not verify an empty web SDK result for an account without staff access signals', async () => {
+  it('confirms an empty web SDK result even when the account lacks staff access signals', async () => {
     const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
     vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({ teams: [], isPartial: false });
 
     const scope = await loadParentScheduleScope(parentUser);
 
-    expect(loadManagedTeamsFromNativeCallable).not.toHaveBeenCalled();
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
     expect(scope.staffTeams).toEqual([]);
     expect(scope.staffTeamsPartial).toBe(false);
     expect(scope.isPartial).toBe(false);
