@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Module = require('node:module');
+const { buildSharedGameSyntheticId } = require('../officiating-self-assignment-core.cjs');
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -60,6 +61,18 @@ function comparable(value) {
     return value instanceof FakeTimestamp ? value.toMillis() : value;
 }
 
+function applyFieldTransforms(existing = {}, update = {}) {
+    const result = { ...existing };
+    Object.entries(update).forEach(([key, value]) => {
+        if (value?.__op === 'increment') {
+            result[key] = Number(existing[key] || 0) + Number(value.amount || 0);
+            return;
+        }
+        result[key] = clone(value);
+    });
+    return result;
+}
+
 function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null } = {}) {
     const state = new Map(Object.entries(seed).map(([path, value]) => [path, clone(value)]));
     const queryLog = [];
@@ -86,28 +99,28 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
             },
             update: async (value) => {
                 if (!state.has(path)) throw new Error(`Missing document: ${path}`);
-                state.set(path, { ...state.get(path), ...clone(value) });
+                state.set(path, applyFieldTransforms(state.get(path), value));
             },
             collection: (name) => collection(`${path}/${name}`)
         };
     }
 
-    function makeQuery(path, filters = [], orders = [], limitCount = null, cursor = null) {
+    function makeQuery(path, filters = [], orders = [], limitCount = null, cursor = null, collectionGroupName = null) {
         const query = {
             path,
             where(field, operator, value) {
-                return makeQuery(path, [...filters, { field, operator, value }], orders, limitCount, cursor);
+                return makeQuery(path, [...filters, { field, operator, value }], orders, limitCount, cursor, collectionGroupName);
             },
             orderBy(field, direction = 'asc') {
-                return makeQuery(path, filters, [...orders, { field, direction }], limitCount, cursor);
+                return makeQuery(path, filters, [...orders, { field, direction }], limitCount, cursor, collectionGroupName);
             },
             limit(count) {
-                return makeQuery(path, filters, orders, Number(count), cursor);
+                return makeQuery(path, filters, orders, Number(count), cursor, collectionGroupName);
             },
             startAfter(...values) {
                 return makeQuery(path, filters, orders, limitCount, values.length === 1 && values[0]?.ref
                     ? { snapshot: values[0] }
-                    : { values });
+                    : { values }, collectionGroupName);
             },
             doc(id) {
                 return doc(`${path}/${id || `auto-${nextAutoId++}`}`);
@@ -116,17 +129,19 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                 queryLog.push({ path, filters: clone(filters), limitCount });
                 const forcedFailure = queryFailures.find((failure) => (
                     failure?.path === path
-                    && filters.some(({ field, operator, value }) => (
+                    && (!failure.field || filters.some(({ field, operator, value }) => (
                         field === failure.field
                         && operator === failure.operator
                         && (!Object.hasOwn(failure, 'value')
                             || JSON.stringify(comparable(value)) === JSON.stringify(comparable(failure.value)))
-                    ))
+                    )))
                 ));
                 if (forcedFailure) throw new Error(forcedFailure.message || 'Forced query failure');
                 const depth = path.split('/').length + 1;
                 let snapshots = [...state.keys()]
-                    .filter((entryPath) => entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
+                    .filter((entryPath) => collectionGroupName
+                        ? entryPath.split('/').at(-2) === collectionGroupName
+                        : entryPath.startsWith(`${path}/`) && entryPath.split('/').length === depth)
                     .map(makeSnapshot);
 
                 snapshots = snapshots.filter((snapshot) => filters.every(({ field, operator, value }) => {
@@ -175,11 +190,16 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
         return makeQuery(path);
     }
 
+    function collectionGroup(name) {
+        return makeQuery(`**/${name}`, [], [], null, null, name);
+    }
+
     return {
         _state: state,
         _queryLog: queryLog,
         doc,
         collection,
+        collectionGroup,
         runTransaction: async (callback) => {
             if (typeof beforeTransaction === 'function') {
                 await beforeTransaction({ state });
@@ -208,7 +228,7 @@ function makeFirestore(seed = {}, { queryFailures = [], beforeTransaction = null
                         : clone(operation.value));
                 } else if (operation.type === 'update') {
                     if (!nextState.has(path)) throw new Error(`Missing document: ${path}`);
-                    nextState.set(path, { ...nextState.get(path), ...clone(operation.value) });
+                    nextState.set(path, applyFieldTransforms(nextState.get(path), operation.value));
                 } else if (operation.type === 'delete') {
                     nextState.delete(path);
                 }
@@ -411,6 +431,68 @@ test('opportunity writes require authentication and verified inquiry replies', a
     );
 });
 
+test('officiating claim and response callables reject terminal and historical direct and shared games', async () => {
+    const teamId = 'team-officiating';
+    const lifecycleCases = [
+        { key: 'past', date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() },
+        { key: 'stale-live', date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), liveStatus: 'live' },
+        { key: 'cancelled', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), status: 'cancelled' },
+        { key: 'completed', date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), liveStatus: 'completed' }
+    ];
+    const seed = {
+        [`teams/${teamId}`]: { ownerId: 'official-1', adminEmails: [] },
+        'users/official-1': { email: 'official@example.com' }
+    };
+    const cases = [];
+    for (const lifecycle of lifecycleCases) {
+        for (const shared of [false, true]) {
+            const sharedGamePath = shared
+                ? `organizations/org-1/sharedGames/${lifecycle.key}`
+                : '';
+            const gameId = shared
+                ? buildSharedGameSyntheticId(sharedGamePath)
+                : `${lifecycle.key}-game`;
+            const documentPath = sharedGamePath || `teams/${teamId}/games/${gameId}`;
+            seed[documentPath] = {
+                ...lifecycle,
+                ...(shared ? { homeTeamId: teamId } : {}),
+                officiatingSelfAssignmentEnabled: true,
+                officiatingSlots: [
+                    { id: 'open', position: 'Line Judge', status: 'open' },
+                    { id: 'pending', position: 'Center Referee', officialUserId: 'official-1', status: 'pending' }
+                ]
+            };
+            cases.push({ ...lifecycle, sharedGamePath, gameId, documentPath });
+        }
+    }
+    const { firestore, callables } = loadCallables(seed);
+    const context = authContext('official-1', { email: 'official@example.com', verified: true });
+
+    for (const testCase of cases) {
+        const reference = {
+            teamId,
+            gameId: testCase.gameId,
+            ...(testCase.sharedGamePath ? { sharedGamePath: testCase.sharedGamePath } : {})
+        };
+        await assert.rejects(
+            callables.claimOpenOfficiatingSlot({ ...reference, slotId: 'open' }, context),
+            (error) => error.code === 'failed-precondition' && /current or upcoming games/i.test(error.message),
+            `${testCase.key} ${testCase.sharedGamePath ? 'shared' : 'direct'} claim`
+        );
+        await assert.rejects(
+            callables.respondToOfficiatingAssignment({ ...reference, slotId: 'pending', status: 'accepted' }, context),
+            (error) => error.code === 'failed-precondition' && /current or upcoming games/i.test(error.message),
+            `${testCase.key} ${testCase.sharedGamePath ? 'shared' : 'direct'} response`
+        );
+        assert.equal(firestore.snapshot(testCase.documentPath).officiatingSlots[0].status, 'open');
+        assert.equal(firestore.snapshot(testCase.documentPath).officiatingSlots[1].status, 'pending');
+    }
+    assert.equal(
+        [...firestore._state.keys()].some((path) => path.includes('/officiatingNotifications/')),
+        false
+    );
+});
+
 test('managed-team callables return access fields only to current managers', async () => {
     const { firestore, callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com', coachOf: ['coach-team', 'coach-team-2'] },
@@ -583,6 +665,668 @@ test('managed-team discovery normalizes legacy teamName-only documents before so
         { id: 'bears-team', name: 'Bears' },
         { id: 'zebra-team', name: 'Zebras' }
     ]);
+});
+
+test('managed-team discovery returns bounded chat thread summaries without participant data', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true },
+        'teams/team-1/chatConversations/direct-1': {
+            type: 'direct',
+            participantIds: ['owner-1', 'user-2'],
+            directUserIds: ['owner-1', 'user-2'],
+            updatedAt: new FakeTimestamp(2000),
+            lastMessageAt: new FakeTimestamp(1900),
+            privateNote: 'must-not-leak'
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.equal(managed.isPartial, false);
+    assert.equal(managed.items[0].chatAccessVerified, true);
+    assert.deepEqual(managed.items[0].chatConversations, [{
+        id: 'direct-1',
+        type: 'direct',
+        updatedAt: new FakeTimestamp(2000),
+        lastMessageAt: new FakeTimestamp(1900)
+    }]);
+    assert.equal('participantIds' in managed.items[0].chatConversations[0], false);
+});
+
+test('managed-team chat discovery includes parentOf-only teams and their conversation summaries', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/group-1': {
+            type: 'group',
+            lastMessageAt: new FakeTimestamp(1900),
+            participantIds: ['parent-1', 'owner-1']
+        }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+
+    assert.equal(managed.isPartial, false);
+    assert.deepEqual(managed.items, [{
+        id: 'team-parent',
+        name: 'Parent Bears',
+        sport: null,
+        photoUrl: null,
+        description: null,
+        active: true,
+        archived: false,
+        status: null,
+        isPublic: false,
+        chatAccessVerified: true,
+        chatConversations: [{
+            id: 'group-1',
+            type: 'group',
+            updatedAt: null,
+            lastMessageAt: new FakeTimestamp(1900)
+        }]
+    }]);
+});
+
+test('managed-team chat discovery excludes legacy coach-only grants without current chat access', async () => {
+    const { callables } = loadCallables({
+        'users/coach-1': { coachOf: ['team-legacy'] },
+        'teams/team-legacy': { name: 'Legacy Bears', ownerId: 'owner-1', active: true },
+        'teams/team-legacy/chatConversations/group-1': { type: 'group' }
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('coach-1', { email: 'coach@example.com' })
+    );
+
+    assert.deepEqual(managed.items, []);
+    assert.equal(managed.isPartial, false);
+});
+
+test('managed-team discovery marks chat metadata partial when a thread query fails', async () => {
+    const { callables } = loadCallables({
+        'users/owner-1': { email: 'owner@example.com' },
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true }
+    }, {
+        queryFailures: [{ path: 'teams/team-1/chatConversations', message: 'chat metadata unavailable' }]
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('owner-1', { email: 'owner@example.com' })
+    );
+
+    assert.equal(managed.isPartial, true);
+    assert.equal('chatConversations' in managed.items[0], false);
+});
+
+test('managed-team chat metadata enforces aggregate query and document budgets', async () => {
+    const teamIds = Array.from({ length: 31 }, (_, index) => `team-${String(index).padStart(2, '0')}`);
+    const teams = Object.fromEntries(teamIds.map((teamId) => [
+        `teams/${teamId}`,
+        { name: `Team ${teamId}`, ownerId: `owner-${teamId}`, active: true }
+    ]));
+    const conversations = Object.fromEntries(teamIds.slice(0, 10).flatMap((teamId) => (
+        Array.from({ length: 100 }, (_, index) => [
+            `teams/${teamId}/chatConversations/thread-${index}`,
+            { type: 'team' }
+        ])
+    )));
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: teamIds },
+        ...teams,
+        ...conversations
+    });
+
+    const managed = await callables.listManagedTeams(
+        { includeChatMetadata: true },
+        authContext('parent-1')
+    );
+
+    assert.equal(managed.items.length, 31);
+    assert.equal(managed.isPartial, true);
+    const conversationQueries = firestore._queryLog.filter(({ path }) => path.endsWith('/chatConversations'));
+    assert.equal(conversationQueries.length, 30);
+    assert.ok(conversationQueries.every(({ limitCount }) => limitCount > 0 && limitCount <= 101));
+    assert.ok(conversationQueries.reduce((total, { limitCount }) => total + limitCount, 0) <= 1000);
+});
+
+test('authorized chat conversation projection hydrates parentOf-only caller-readable allow-listed threads', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/direct-parent': {
+            type: 'direct',
+            name: 'Coach Taylor',
+            participantIds: ['parent-1', 'user:coach-1'],
+            directUserIds: ['parent-1', 'coach-1'],
+            directAccess: 'team_admin',
+            initiatedBy: 'coach-1',
+            updatedAt: new FakeTimestamp(2000),
+            lastMessageAt: new FakeTimestamp(1900),
+            mutedBy: ['coach-1'],
+            privateNote: 'must-not-leak'
+        },
+        'teams/team-parent/chatConversations/direct-other': {
+            type: 'direct',
+            participantIds: ['user-2', 'user-3'],
+            directUserIds: ['user-2', 'user-3'],
+            directAccess: 'accepted_friend'
+        }
+    });
+
+    const result = await callables.listAuthorizedChatConversations(
+        { teamId: 'team-parent', activeConversationId: 'direct-parent' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+
+    assert.equal(result.isPartial, false);
+    assert.deepEqual(result.items, [{
+        id: 'direct-parent',
+        type: 'direct',
+        name: 'Coach Taylor',
+        participantIds: ['parent-1', 'user:coach-1'],
+        participantRoles: [],
+        directAccess: 'team_admin',
+        directUserIds: ['parent-1', 'coach-1'],
+        friendshipId: null,
+        initiatedBy: 'coach-1',
+        updatedAt: '1970-01-01T00:00:02.000Z',
+        lastMessageAt: '1970-01-01T00:00:01.900Z',
+        isDefault: false,
+        isLegacy: false
+    }]);
+    assert.equal('mutedBy' in result.items[0], false);
+    assert.equal('privateNote' in result.items[0], false);
+});
+
+test('chat metadata callables do not repair a whitespace-distinct caller into another participant', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1 ': { parentTeamIds: ['team-parent'] },
+        'teams/team-parent': { name: 'Parent Bears', ownerId: 'owner-1', active: true },
+        'teams/team-parent/chatConversations/group-parent': {
+            type: 'group',
+            participantIds: ['parent-1']
+        },
+        'teams/team-parent/chatConversations/direct-parent': {
+            type: 'direct',
+            directAccess: 'accepted_friend',
+            participantIds: ['parent-1', 'friend-1'],
+            directUserIds: ['parent-1', 'friend-1']
+        }
+    });
+    const context = authContext('parent-1 ', { email: 'parent@example.com' });
+
+    const managed = await callables.listManagedTeams({ includeChatMetadata: true }, context);
+    assert.equal(managed.isPartial, false);
+    assert.equal('chatConversations' in managed.items[0], false);
+
+    const authorized = await callables.listAuthorizedChatConversations({ teamId: 'team-parent' }, context);
+    assert.deepEqual(authorized, { items: [], isPartial: false });
+    await assert.rejects(
+        callables.listAuthorizedChatConversations({
+            teamId: 'team-parent',
+            activeConversationId: 'group-parent'
+        }, context),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('authorized chat conversation projection fails closed for unavailable threads and unverified email grants', async () => {
+    const { callables } = loadCallables({
+        'users/email-admin': {},
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', adminEmails: ['admin@example.com'], active: true },
+        'teams/team-1/chatConversations/group-1': { type: 'group' }
+    });
+
+    await assert.rejects(
+        callables.listAuthorizedChatConversations(
+            { teamId: 'team-1', activeConversationId: 'group-1' },
+            authContext('email-admin', { email: 'admin@example.com', verified: false })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.listAuthorizedChatConversations(
+            { teamId: 'team-1', activeConversationId: 'missing-thread' },
+            authContext('owner-1')
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('authorized chat conversation projection rejects an incomplete bounded scan', async () => {
+    const conversations = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [
+        `teams/team-1/chatConversations/group-${index}`,
+        { type: 'group', participantIds: ['owner-1'] }
+    ]));
+    const { callables } = loadCallables({
+        'users/owner-1': {},
+        'teams/team-1': { name: 'Bears', ownerId: 'owner-1', active: true },
+        ...conversations
+    });
+
+    await assert.rejects(
+        callables.listAuthorizedChatConversations({ teamId: 'team-1' }, authContext('owner-1')),
+        (error) => error.code === 'resource-exhausted'
+    );
+});
+
+test('parent fee discovery returns bounded modern and legacy player assignments without private checkout state', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1'],
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/modern': {
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'modern',
+            playerId: 'player-1',
+            playerKey: 'team-1::player-1',
+            amountDueCents: 2500,
+            checkoutUrl: 'https://checkout.stripe.com/private',
+            receiptMetadata: { amountPaidCents: 500, paymentIntentId: 'pi_private' },
+            ledgerEntries: [{ type: 'payment', amountCents: 500, providerSessionId: 'cs_private' }]
+        },
+        'teams/team-1/feeBatches/batch-2/feeRecipients/legacy': {
+            teamId: 'team-1',
+            playerId: 'player-1',
+            amountDueCents: 1500
+        },
+        'teams/team-1/feeBatches/batch-2/feeRecipients/unrelated': {
+            teamId: 'team-1',
+            playerId: 'player-2',
+            amountDueCents: 9999
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id).sort(), ['legacy', 'modern']);
+    const legacy = result.items.find((item) => item.id === 'legacy');
+    assert.equal(legacy.batchId, 'batch-2');
+    assert.equal(legacy.recipientId, 'legacy');
+    assert.equal(legacy.playerKey, 'team-1::player-1');
+    const modern = result.items.find((item) => item.id === 'modern');
+    assert.equal('checkoutUrl' in modern, false);
+    assert.equal('paymentIntentId' in modern.receiptMetadata, false);
+    assert.equal('providerSessionId' in modern.ledgerEntries[0], false);
+    const feeQueries = firestore._queryLog.filter(({ path }) => path === '**/feeRecipients');
+    assert.ok(feeQueries.length > 0);
+    assert.ok(feeQueries.every(({ limitCount }) => limitCount === 101));
+});
+
+test('parent fee discovery fails closed when a bounded query overflows', async () => {
+    const seed = {
+        'users/parent-1': { parentTeamIds: ['team-1'] }
+    };
+    for (let index = 0; index < 101; index += 1) {
+        seed[`teams/team-1/feeBatches/batch-1/feeRecipients/direct-${index}`] = {
+            parentUserId: 'parent-1',
+            amountDueCents: 100
+        };
+    }
+    const { callables } = loadCallables(seed);
+
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        (error) => error.code === 'resource-exhausted'
+    );
+});
+
+test('parent fee discovery rejects multiplicative legacy scopes before issuing unbounded work', async () => {
+    const parentOf = Array.from({ length: 40 }, (_, index) => ({
+        teamId: `team-${index}`,
+        playerId: `player-${index}`
+    }));
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            parentOf,
+            parentTeamIds: parentOf.map(({ teamId }) => teamId),
+            parentPlayerKeys: parentOf.map(({ teamId, playerId }) => `${teamId}::${playerId}`)
+        }
+    });
+
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        (error) => error.code === 'resource-exhausted' && /too many queries/i.test(error.message)
+    );
+    assert.equal(firestore._queryLog.filter(({ path }) => path === '**/feeRecipients').length, 0);
+});
+
+test('parent fee legacy player discovery ignores unrelated global ID collisions', async () => {
+    const seed = {
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::imported-player'],
+            parentOf: [{ teamId: 'team-1', playerId: 'imported-player' }]
+        }
+    };
+    for (let index = 0; index < 101; index += 1) {
+        seed[`teams/unrelated-${index}/feeBatches/batch-1/feeRecipients/collision-${index}`] = {
+            teamId: `unrelated-${index}`,
+            playerId: 'imported-player',
+            amountDueCents: 9999
+        };
+    }
+    seed['teams/team-1/feeBatches/batch-1/feeRecipients/authorized'] = {
+        teamId: 'team-1',
+        playerId: 'imported-player',
+        amountDueCents: 2500
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id), ['authorized']);
+    const playerIdQueries = firestore._queryLog.filter(({ path, filters }) => (
+        path === '**/feeRecipients'
+        && filters.some(({ field, operator, value }) => (
+            field === 'playerId' && operator === '==' && value === 'imported-player'
+        ))
+    ));
+    assert.equal(playerIdQueries.length, 1);
+    assert.ok(playerIdQueries[0].filters.some(({ field, operator, value }) => (
+        field === 'teamId' && operator === '==' && value === 'team-1'
+    )));
+});
+
+test('parent fee discovery is authenticated and rejects incomplete server queries', async () => {
+    const seed = {
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-1']
+        }
+    };
+    const { callables } = loadCallables(seed);
+    await assert.rejects(
+        callables.listParentTeamFeeRecipients({}, {}),
+        (error) => error.code === 'unauthenticated'
+    );
+
+    const failed = loadCallables(seed, {
+        queryFailures: [{
+            path: '**/feeRecipients',
+            field: 'playerId',
+            operator: '==',
+            value: 'player-1',
+            message: 'fee query failed'
+        }]
+    });
+    await assert.rejects(
+        failed.callables.listParentTeamFeeRecipients({}, authContext('parent-1')),
+        /fee query failed/
+    );
+});
+
+test('parent fee discovery preserves direct UID assignments for parent-team-only profiles', async () => {
+    const { callables } = loadCallables({
+        'users/parent-1': { parentTeamIds: ['team-1'] },
+        'teams/team-1/feeBatches/batch-1/feeRecipients/direct': {
+            parentUserId: 'parent-1',
+            amountDueCents: 3200
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id), ['direct']);
+});
+
+test('parent fee discovery treats each exact UID field as authoritative without redundant profile team links', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {},
+        'teams/team-parent/feeBatches/batch-1/feeRecipients/parent': {
+            parentUserId: 'parent-1',
+            amountDueCents: 1000
+        },
+        'teams/team-account/feeBatches/batch-2/feeRecipients/account': {
+            accountUserId: 'parent-1',
+            amountDueCents: 2000
+        },
+        'teams/team-user/feeBatches/batch-3/feeRecipients/user': {
+            userId: 'parent-1',
+            amountDueCents: 3000
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id).sort(), ['account', 'parent', 'user']);
+    const directFields = firestore._queryLog
+        .filter(({ path }) => path === '**/feeRecipients')
+        .flatMap(({ filters }) => filters)
+        .filter(({ operator, value }) => operator === '==' && value === 'parent-1')
+        .map(({ field }) => field)
+        .sort();
+    assert.deepEqual(directFields, ['accountUserId', 'parentUserId', 'userId']);
+});
+
+test('social mutation callables authorize native post actions server-side', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {
+            email: 'parent@example.com',
+            isAdmin: false,
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+            photoUrl: 'https://img.example.test/parent.jpg'
+        },
+        'teams/team-1': {
+            ownerId: 'owner-1',
+            adminEmails: []
+        },
+        'socialPosts/post.with:punctuation': {
+            authorId: 'author-1',
+            teamId: 'team-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 2 },
+            commentCount: 4
+        }
+    });
+
+    const reaction = await callables.toggleSocialPostReaction(
+        { postId: 'post.with:punctuation', reactionKey: 'like' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(reaction, { liked: true, count: 3 });
+    assert.equal(
+        firestore.snapshot('socialPosts/post.with:punctuation/reactions/parent-1').userId,
+        'parent-1'
+    );
+    assert.equal(
+        firestore.snapshot('socialPosts/post.with:punctuation')['reactionCounts.like'],
+        3
+    );
+
+    const hidden = await callables.hideSocialPostForCaller(
+        { postId: 'post.with:punctuation' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(hidden, { hidden: true });
+    assert.equal(
+        firestore.snapshot('users/parent-1/hiddenSocialPosts/post.with:punctuation').postId,
+        'post.with:punctuation'
+    );
+
+    const comment = await callables.commentOnSocialPostForCaller(
+        { postId: 'post.with:punctuation', text: ' Great update! ' },
+        authContext('parent-1', { email: 'parent@example.com', name: 'Pat Parent' })
+    );
+    assert.deepEqual(comment, { commented: true, commentId: 'auto-1' });
+    assert.deepEqual(firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1'), {
+        text: 'Great update!',
+        authorId: 'parent-1',
+        authorName: 'Pat Parent',
+        authorPhotoUrl: 'https://img.example.test/parent.jpg',
+        hidden: false,
+        createdAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').createdAt,
+        updatedAt: firestore.snapshot('socialPosts/post.with:punctuation/comments/auto-1').updatedAt
+    });
+    assert.equal(firestore.snapshot('socialPosts/post.with:punctuation').commentCount, 5);
+
+    const report = await callables.reportSocialPostForCaller(
+        { postId: 'post.with:punctuation', reason: ' Needs review ' },
+        authContext('parent-1', { email: 'parent@example.com' })
+    );
+    assert.deepEqual(report, { reported: true, reportId: 'auto-2' });
+    assert.deepEqual(firestore.snapshot('socialReports/auto-2'), {
+        postId: 'post.with:punctuation',
+        reporterId: 'parent-1',
+        reason: 'Needs review',
+        status: 'open',
+        createdAt: firestore.snapshot('socialReports/auto-2').createdAt
+    });
+});
+
+test('unverified callers keep UID-authorized social mutations without gaining email authority', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/unverified-1': {
+            email: 'unverified@example.com',
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1': { ownerId: 'owner-1', adminEmails: [] },
+        'socialPosts/authored-post': {
+            authorId: 'unverified-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        },
+        'socialPosts/visible-post': {
+            authorId: 'author-1',
+            visibleUserIds: ['unverified-1'],
+            hidden: false,
+            commentCount: 0
+        },
+        'socialPosts/team-post': {
+            authorId: 'author-1',
+            teamId: 'team-1',
+            visibleUserIds: [],
+            hidden: false
+        }
+    });
+    const unverified = authContext('unverified-1', {
+        email: 'unverified@example.com',
+        verified: false,
+        name: 'Unverified Parent'
+    });
+
+    await assert.doesNotReject(async () => {
+        assert.deepEqual(await callables.toggleSocialPostReaction(
+            { postId: 'authored-post', reactionKey: 'like' },
+            unverified
+        ), { liked: true, count: 1 });
+        assert.deepEqual(await callables.hideSocialPostForCaller(
+            { postId: 'team-post' },
+            unverified
+        ), { hidden: true });
+        assert.deepEqual(await callables.commentOnSocialPostForCaller(
+            { postId: 'visible-post', text: 'UID access still works' },
+            unverified
+        ), { commented: true, commentId: 'auto-1' });
+        assert.deepEqual(await callables.reportSocialPostForCaller(
+            { postId: 'team-post', reason: 'UID-scoped team report' },
+            unverified
+        ), { reported: true, reportId: 'auto-2' });
+    });
+    assert.equal(firestore.snapshot('socialPosts/authored-post')['reactionCounts.like'], 1);
+    assert.equal(firestore.snapshot('socialPosts/visible-post').commentCount, 1);
+    assert.equal(firestore.snapshot('socialReports/auto-2').reporterId, 'unverified-1');
+
+    const emailOnly = loadCallables({
+        'users/email-only': { email: 'coach@example.com' },
+        'teams/team-2': { ownerId: 'owner-2', adminEmails: ['coach@example.com'] },
+        'socialPosts/email-team-post': {
+            authorId: 'author-2',
+            teamId: 'team-2',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        }
+    });
+    await assert.rejects(
+        emailOnly.callables.toggleSocialPostReaction(
+            { postId: 'email-team-post', reactionKey: 'like' },
+            authContext('email-only', { email: 'coach@example.com', verified: false })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+});
+
+test('social reaction callable rejects hidden, unrelated, and malformed requests', async () => {
+    const { callables } = loadCallables({
+        'users/viewer-1': { email: 'viewer@example.com', parentTeamIds: [] },
+        'socialPosts/private-post': {
+            authorId: 'author-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        },
+        'socialPosts/hidden-post': {
+            authorId: 'viewer-1',
+            visibleUserIds: ['viewer-1'],
+            hidden: true,
+            reactionCounts: { like: 0 }
+        }
+    });
+
+    await assert.rejects(
+        callables.toggleSocialPostReaction(
+            { postId: 'private-post', reactionKey: 'like' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.toggleSocialPostReaction(
+            { postId: 'hidden-post', reactionKey: 'like' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.hideSocialPostForCaller(
+            { postId: 'bad/path' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        callables.commentOnSocialPostForCaller(
+            { postId: 'private-post', text: 'Unauthorized comment' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.commentOnSocialPostForCaller(
+            { postId: 'private-post', text: '   ' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
+    await assert.rejects(
+        callables.reportSocialPostForCaller(
+            { postId: 'private-post', reason: 'Unauthorized report' },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
+    await assert.rejects(
+        callables.reportSocialPostForCaller(
+            { postId: 'private-post', reason: { unsafe: true } },
+            authContext('viewer-1', { email: 'viewer@example.com' })
+        ),
+        (error) => error.code === 'invalid-argument'
+    );
 });
 
 test('team admin revocation atomically clears reciprocal coach access and accepted invites', async () => {

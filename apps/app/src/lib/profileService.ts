@@ -14,6 +14,7 @@ import {
   updateUserProfile,
   upsertNotificationDeviceToken
 } from './adapters/legacyProfileDb';
+import { CapacitorHttp } from '@capacitor/core';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
@@ -290,21 +291,23 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
-export async function loadManagedTeamsFromNativeCallable() {
+export async function loadManagedTeamsFromNativeCallable(options: { includeChatMetadata?: boolean } = {}) {
   const token = await getNativeAuthIdToken(true);
   if (!token) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listManagedTeams`;
-  const response = await withTimeout(fetch(requestUrl, {
-    method: 'POST',
+  const response = await withTimeout(CapacitorHttp.post({
+    url: requestUrl,
     headers: await getPrimaryAppCheckHeaders({
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json'
-    }, requestUrl),
-    body: JSON.stringify({ data: {} })
+    }, requestUrl) as Record<string, string>,
+    data: { data: options.includeChatMetadata === true ? { includeChatMetadata: true } : {} },
+    connectTimeout: profileTimeoutMs,
+    readTimeout: profileTimeoutMs
   }), 'Managed team load');
-  const payload = await response.json().catch(() => ({}));
+  const payload = response.data && typeof response.data === 'object' ? response.data : {};
   const result = payload?.result || payload?.data;
-  if (!response.ok || !Array.isArray(result?.items)) {
+  if (response.status < 200 || response.status >= 300 || !Array.isArray(result?.items)) {
     throw new Error(payload?.error?.message || 'Managed teams response is invalid.');
   }
   return {

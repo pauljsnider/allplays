@@ -131,7 +131,7 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain('Result submitted');
         expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
         expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
-        expect(officialsSource).toContain("'./js/db.js?v=4433166'");
+        expect(officialsSource).toContain("'./js/db.js?v=4433167'");
         expect(officialsSource).not.toContain("'./js/db.js?v=47'");
         expect(officialsSource).not.toContain("'./js/db.js?v=71'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
@@ -168,11 +168,15 @@ describe('officiating slots', () => {
         expect(dbSource).toContain("displayName: official?.displayName || official?.email || 'Official'");
         expect(dbSource).not.toContain('const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {');
         expect(functionsSource).toContain('exports.claimOpenOfficiatingSlot = functions.https.onCall');
+        expect(functionsSource).toContain('exports.respondToOfficiatingAssignment = functions.https.onCall');
+        expect(functionsSource).toContain("context.auth.token?.email_verified === true");
         expect(functionsSource).toContain('isEligibleOpenOfficiatingSlotParticipant({ team, user, uid, email: callerEmail, teamId: input.teamId })');
-        expect(functionsSource).toContain('const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));');
+        expect(functionsSource).toContain('const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));');
         expect(functionsSource).toContain('!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)');
         expect(functionsSource).toContain('buildOpenOfficiatingSlotClaimUpdate({');
         expect(functionsSource).toContain('buildOfficiatingSelfAssignmentNotificationRecord({');
+        expect(functionsSource).toContain('buildOfficiatingAssignmentResponseUpdate({');
+        expect(functionsSource).toContain('buildOfficiatingAssignmentResponseNotificationRecord({');
         expect(functionsSource).toContain('transaction.set(notificationRef, {');
         expect(rules).not.toContain('playerTeamIds');
         expect(rules).not.toContain('function isOpenOfficiatingSelfAssignmentUpdate(teamId)');

@@ -63,10 +63,13 @@ describe('app async operation initiative source contract', () => {
 
     it('keeps high-traffic app services using shared cache and service-error adapters', () => {
         expect(homeServiceSource).toMatch(/import\s+\{[^}]*getParentScheduleSummaryCacheKey[^}]*loadCachedAppData[^}]*\}\s+from '\.\/appDataCache';/);
-        expect(homeServiceSource).toContain("import { toAppServiceError, type AppServiceError } from './appErrors';");
+        expect(homeServiceSource).toContain("import { toAppServiceError } from './appErrors';");
         expect(homeServiceSource).toContain('return loadCachedAppData(');
-        expect(homeServiceSource).toContain('function rethrowIfPermissionError(error: unknown, fallbackMessage: string)');
-        expect(homeServiceSource).toContain("rethrowIfPermissionError(error, 'Unable to load Home chat.')");
+        expect(homeServiceSource).toContain('function normalizeSecondaryError(error: unknown, fallbackMessage: string)');
+        expect(homeServiceSource).toContain('function requireCompleteChatInbox<T extends { isPartial?: boolean }>(chatInbox: T): T');
+        expect(homeServiceSource).toContain("const failedSlice = results.find((result) => result.status === 'rejected');");
+        expect(homeServiceSource).toContain('throw failedSlice.reason;');
+        expect(homeServiceSource).toContain("normalizeSecondaryError(error, 'Unable to load Home chat.')");
 
         expect(scheduleServiceSource).toContain("import { getCachedAppData, getParentHomeSecondaryCacheKey, getParentScheduleSummaryCacheKey, invalidateCachedAppData, loadCachedAppData } from './appDataCache';");
         expect(scheduleServiceSource).toContain("import { toAppServiceError } from './appErrors';");

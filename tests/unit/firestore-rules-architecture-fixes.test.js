@@ -73,7 +73,7 @@ describe('firestore.rules architecture fixes', () => {
         expect(collectionGroupRule).toContain('allow list: if isBoundedGlobalAdminListQuery(100);');
     });
 
-    it('declares collection-group indexes for every filtered officials search field', () => {
+    it('declares collection-group indexes for official directory and canonical UID assignment discovery', () => {
         const indexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
         const indexedOfficialFields = indexes.fieldOverrides
             .filter((override) =>
@@ -84,7 +84,37 @@ describe('firestore.rules architecture fixes', () => {
             )
             .map((override) => override.fieldPath);
 
-        expect(indexedOfficialFields).toEqual(expect.arrayContaining(['email', 'name', 'phone']));
+        expect(indexedOfficialFields).toEqual(expect.arrayContaining([
+            'email',
+            'emailLower',
+            'name',
+            'phone',
+            'phoneDigits'
+        ]));
+        const assignmentIndexes = indexes.indexes
+            .filter((index) => ['games', 'sharedGames'].includes(index.collectionGroup))
+            .map((index) => ({
+                collectionGroup: index.collectionGroup,
+                fields: index.fields.map((field) => `${field.fieldPath}:${field.arrayConfig || field.order}`)
+            }));
+        expect(assignmentIndexes).toEqual(expect.arrayContaining([
+            {
+                collectionGroup: 'games',
+                fields: ['officiatingAuthorizedUserIds:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'sharedGames',
+                fields: ['officiatingAuthorizedUserIds:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'games',
+                fields: ['officiatingAuthorizedEmails:CONTAINS', 'date:ASCENDING']
+            },
+            {
+                collectionGroup: 'sharedGames',
+                fields: ['officiatingAuthorizedEmails:CONTAINS', 'date:ASCENDING']
+            }
+        ]));
     });
 
     it('removes public canonical team lists while keeping managed and admin lists bounded', () => {

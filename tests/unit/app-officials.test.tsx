@@ -248,4 +248,22 @@ describe('Officials', () => {
         });
         expect(screen.queryByText('Center Referee · vs. Tigers')).toBeNull();
     });
+
+    it('preserves the exact shared-game path when opening an opaque assignment', async () => {
+        const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+        scheduleServiceMocks.loadOfficialAssignments.mockResolvedValue({
+            hasAccess: true,
+            teamIds: ['team-1'],
+            teamCount: 1,
+            isPartial: false,
+            assignments: [buildAssignment({ gameId: 'sharedh_bounded-route-id', sharedGamePath })]
+        });
+
+        renderOfficials();
+
+        const gameLink = await screen.findByRole('link', { name: 'Game' });
+        expect(gameLink.getAttribute('href')).toBe(
+            `/schedule/team-1/game-1?teamId=team-1&sharedGamePath=${encodeURIComponent(sharedGamePath)}`
+        );
+    });
 });

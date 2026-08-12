@@ -8,10 +8,20 @@ const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '.
 
 const capacitorCoreMock = vi.hoisted(() => ({
   isNativePlatform: vi.fn(() => false),
-  getPlatform: vi.fn(() => 'web')
+  getPlatform: vi.fn(() => 'web'),
+  httpPost: vi.fn()
 }));
 
-vi.mock('@capacitor/core', () => ({ Capacitor: capacitorCoreMock }));
+const nativeCallableMock = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: capacitorCoreMock,
+  CapacitorHttp: { post: capacitorCoreMock.httpPost }
+}));
+
+vi.mock('./nativeCallable', () => nativeCallableMock);
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -58,6 +68,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getTeam: vi.fn(),
   getTeams: vi.fn(),
   getStaffTeams: vi.fn(),
+  getOfficialLinkedTeamIds: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
   buildSingleLegacyTournamentGameDocument: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => {
@@ -231,14 +242,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getDelegatedTeamContext, getGame, getGames, getMyRsvps, getOfficialLinkedTeamIds, getPlayers, getPracticeSession, getPracticeSessions, getPublicTeamCalendarEvents, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getStaffTeams, getTeam, getTeams, listRideOffersForEvent, postChatMessage, postSharedGameCancellationNotification, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, getCalendarEventTrackingId, isTeamActive, isTrackedCalendarEvent, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, invalidateCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadManagedTeamsFromNativeCallable, loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, cancelScheduledGameForApp, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, enableRsvpForImportedCalendarEvent, flushPendingLivePublishOperations, hydrateParentScheduleDetails, hydrateParentScheduleEventOptionalDetails, hydrateParentScheduleRsvps, loadHomeScoringPlayers, loadOfficialAssignments, loadOfficialAssignmentsAccess, loadParentSchedule, loadParentScheduleAssignments, loadParentScheduleChildren, loadParentScheduleEventDetail, loadParentScheduleRideOffers, loadParentScheduleScope, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvp, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -280,7 +291,7 @@ describe('native scoring roster fallback', () => {
     (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
     vi.mocked(getPlayers).mockRejectedValueOnce(new Error('SDK roster unavailable'));
     vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
-    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
     (globalThis as any).fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -1663,6 +1674,8 @@ describe('scheduled practice writes', () => {
 });
 
 describe('parent game route resolution', () => {
+  const routeUser = { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] };
+
   beforeEach(() => {
     (globalThis as any).window = globalThis as any;
     vi.clearAllMocks();
@@ -1739,6 +1752,54 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('resolves an opaque shared-game route through its exact bounded document path', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
+      if (teamId === 'team-bravo' && gameId === `shared_${encodeURIComponent(sharedGamePath)}`) {
+        return { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') };
+      }
+      return null;
+    });
+
+    const result = await resolveParentGameRoute(
+      routeUser,
+      opaqueGameId,
+      { expandStaffPlayers: false, targetTeamId: 'team-bravo', sharedGamePath }
+    );
+
+    expect(result).toEqual({
+      teamId: 'team-bravo',
+      eventId: opaqueGameId,
+      childId: 'child-2'
+    });
+    expect(getGame).toHaveBeenCalledTimes(1);
+    expect(getGame).toHaveBeenCalledWith('team-bravo', `shared_${encodeURIComponent(sharedGamePath)}`);
+  });
+
+  it('hydrates opaque shared-game details through the reversible data identity and restores the route id', async () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const opaqueGameId = 'sharedh_bounded-route-id';
+    const reversibleGameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false });
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-bravo', name: 'Bravo', active: true });
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => (
+      teamId === 'team-bravo' && gameId === reversibleGameId
+        ? { id: gameId, type: 'game', date: new Date('2026-06-25T18:00:00.000Z') }
+        : null
+    ));
+    vi.mocked(getMyRsvps).mockResolvedValue([]);
+
+    const result = await loadParentScheduleEventDetail(
+      routeUser,
+      { teamId: 'team-bravo', eventId: opaqueGameId, sharedGamePath }
+    );
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].id).toBe(opaqueGameId);
+    expect(getMyRsvps).toHaveBeenCalledWith('team-bravo', reversibleGameId, 'parent-1', ['child-2']);
   });
 });
 
@@ -2189,18 +2250,11 @@ describe('official assignments app service', () => {
   const pastDate = new Date(Date.now() - 86400000).toISOString();
 
   beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockImplementation(async (request: any) => {
-      const filter = request?.filters?.[0];
-      if (filter?.field === 'email' && filter?.value === 'ref@example.com') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      if (filter?.field === 'phone' && filter?.value === '5551234567') {
-        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
-      }
-      return { docs: [] } as any;
-    });
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: ['team-alpha'], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -2217,6 +2271,7 @@ describe('official assignments app service', () => {
       {
         id: 'game-past',
         date: pastDate,
+        liveStatus: 'live',
         opponent: 'Past',
         location: 'Old Field',
         officiatingSlots: [{ id: 'past', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
@@ -2230,6 +2285,10 @@ describe('official assignments app service', () => {
         officiatingSlots: [{ id: 'cancelled', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
       }
     ] as any);
+  });
+
+  afterEach(() => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(false);
   });
 
   it('loads upcoming assigned and eligible open slots from linked official teams', async () => {
@@ -2272,23 +2331,249 @@ describe('official assignments app service', () => {
     expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
-  it('hides officials access when no official link matches the signed-in user', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+  it('keeps recently started assigned and open slots visible while the game is in progress', async () => {
+    const recentStartDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    vi.mocked(getGames).mockResolvedValue([{
+      id: 'game-in-progress',
+      date: recentStartDate,
+      opponent: 'Tigers',
+      officiatingSelfAssignmentEnabled: true,
+      officiatingSlots: [
+        { id: 'center', officialEmail: 'ref@example.com', status: 'accepted' },
+        { id: 'line', status: 'open' }
+      ]
+    }] as any);
 
     const result = await loadOfficialAssignments(user);
 
-    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, assignments: [] });
+    expect(result.assignments.map(({ kind, gameId, slotId }) => ({ kind, gameId, slotId }))).toEqual([
+      { kind: 'assigned', gameId: 'game-in-progress', slotId: 'center' },
+      { kind: 'open', gameId: 'game-in-progress', slotId: 'line' }
+    ]);
+  });
+
+  it('loads native linked-team assignments from the authenticated bounded callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-alpha', name: 'Alpha FC' }],
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId: 'game-assigned',
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [{
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        teamName: 'Alpha FC',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        status: 'pending',
+        opponent: 'Tigers',
+        location: 'Field 2',
+        date: new Date(futureDate),
+        canClaim: false,
+        scheduleReviewRequired: false
+      }]
+    });
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: { includeAssignments: true } },
+      headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+    }));
+    expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('loads a requested native team and its shared assignments only from the complete callable projection', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-requested';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-requested'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-requested', name: 'Requested FC' }],
+          assignments: [{
+            kind: 'open',
+            teamId: 'team-requested',
+            teamName: 'Requested FC',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'line',
+            position: 'Line Judge',
+            status: 'open',
+            opponent: 'Visitors',
+            location: 'Field 3',
+            date: futureDate,
+            canClaim: true,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-requested' });
+
+    expect(result).toEqual(expect.objectContaining({
+      hasAccess: true,
+      teamIds: ['team-requested'],
+      teamCount: 1,
+      isPartial: false,
+      assignments: [expect.objectContaining({ sharedGamePath, slotId: 'line' })]
+    }));
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      data: { data: { includeAssignments: true, requestedTeamId: 'team-requested' } }
+    }));
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('marks a verified linked-team result partial when its games cannot load', async () => {
+    vi.mocked(getGames).mockRejectedValue(new Error('Schedule unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      teamCount: 1,
+      isPartial: true,
+      assignments: []
+    });
+  });
+
+  it('preserves known assignments but marks them partial when linked-team details cannot load', async () => {
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
+    expect(result.assignments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'assigned', gameId: 'game-assigned', teamName: 'Team' })
+    ]));
+  });
+
+  it('rejects an incomplete empty requested-team read instead of proving no access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [] } as any);
+    vi.mocked(getTeam).mockRejectedValue(new Error('Team unavailable.'));
+    vi.mocked(getGames).mockResolvedValue([]);
+
+    await expect(loadOfficialAssignments(user, { teamId: 'team-alpha' }))
+      .rejects.toThrow('Official assignment details could not be completely loaded. Try again.');
+  });
+
+  it('fails closed when native official discovery is unavailable despite an ordinary parent schedule link', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-alpha', playerId: 'player-alpha', teamName: 'Alpha FC' }],
+      parentTeamIds: ['team-alpha']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', active: true } as any);
+    mocks.getDoc.mockResolvedValue(playerSnapshot('player-alpha', { name: 'Avery Ace', active: true }) as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      url: expect.stringContaining('listOfficialLinkedTeamIds'),
+      data: { data: { includeAssignments: false } }
+    }));
+    expect(getStaffTeams).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+  });
+
+  it('rejects a native partial-empty schedule fallback when official discovery is unavailable', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official callable is unavailable.'));
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], parentTeamIds: [] } as any);
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 404,
+      data: { error: { message: 'Function not found.' } },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignmentsAccess(user)).rejects.toThrow('Function not found.');
+  });
+
+  it('hides officials access when no official link matches the signed-in user', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, isPartial: false, assignments: [] });
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('surfaces discovery failure instead of treating a partial-empty result as no official access', async () => {
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow('Official team access could not be verified.');
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
   });
 
   it('loads assigned slots for a requested team when official directory queries are denied', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [], phone: '(555) 123-4567' } as any);
-    vi.mocked(getDocs).mockRejectedValue(new Error('Missing or insufficient permissions.'));
+    vi.mocked(getOfficialLinkedTeamIds).mockRejectedValue(new Error('Official team access could not be verified.'));
 
     const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
 
     expect(result.hasAccess).toBe(true);
+    expect(result.isPartial).toBe(true);
     expect(result.teamIds).toEqual(['team-alpha']);
     expect(result.assignments).toEqual([
       expect.objectContaining({
@@ -2306,7 +2591,7 @@ describe('official assignments app service', () => {
   });
 
   it('allows an eligible team participant to view requested-team open slots without an official directory link', async () => {
-    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: [], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue(null as any);
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -2360,6 +2645,133 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(1, 'team-alpha', 'game-assigned', 'center', 'accepted');
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
+  });
+
+  it('routes native accept, decline, and claim actions through authenticated callables', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    const item = {
+      kind: 'assigned',
+      teamId: 'team-alpha',
+      teamName: 'Alpha FC',
+      gameId: 'game-assigned',
+      slotId: 'center',
+      position: 'Center Referee',
+      status: 'pending',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: new Date(futureDate),
+      canClaim: false,
+      scheduleReviewRequired: false
+    } as any;
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', slotId: 'line', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId: 'game-assigned', slotId: 'line' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
+  });
+
+  it('preserves a bounded shared-game action mapping through native projection and writes', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    const gameId = `sharedh_${'a'.repeat(43)}`;
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user);
+    const [item] = result.assignments;
+    expect(item).toEqual(expect.objectContaining({ gameId, sharedGamePath }));
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center' },
+      { errorLabel: 'Officiating claim' }
+    );
+  });
+
+  it('rejects official assignment projections outside supported shared-game roots', async () => {
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    const sharedGamePath = 'users/user-1/sharedGames/game-1';
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            gameId: `shared_${encodeURIComponent(sharedGamePath)}`,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            date: futureDate
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    await expect(loadOfficialAssignments(user)).rejects.toThrow(
+      'Official assignment discovery returned an invalid response.'
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).not.toHaveBeenCalled();
   });
 });
 
@@ -4088,6 +4500,47 @@ describe('native parent schedule Firestore mapping', () => {
       sourceType: 'registration'
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
+  });
+
+  it('rejects an exact shared-game path that is unrelated to the authorized requested team', async () => {
+    const sharedGamePath = 'tournaments/t-1/sharedGames/shared-other-team';
+    const eventId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      if (String(input).includes('/documents/tournaments/t-1/sharedGames/shared-other-team')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-other-team',
+            fields: {
+              type: { stringValue: 'game' },
+              date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+              homeTeamId: { stringValue: 'team-2' },
+              awayTeamId: { stringValue: 'team-3' },
+              opponent: { stringValue: 'Unrelated Opponent' }
+            }
+          })
+        } as any;
+      }
+      return { ok: true, json: async () => [] } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail(
+      { uid: 'parent-1', email: 'parent@example.com', roles: [] } as any,
+      {
+        teamId: 'team-1',
+        eventId,
+        sharedGamePath,
+        hydrateDetails: false,
+        expandStaffPlayers: false
+      }
+    );
+
+    expect(result.events).toEqual([]);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/documents/tournaments/t-1/sharedGames/shared-other-team'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer native-token' }) })
+    );
   });
 
   it('keeps tracked calendar ids on native game loads so imported events do not duplicate db games', async () => {

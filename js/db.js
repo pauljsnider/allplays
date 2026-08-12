@@ -63,7 +63,9 @@ import {
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,
-    collectOfficialLookupTargets
+    collectOfficialLookupTargets,
+    normalizeOfficialLinkEmail,
+    normalizeOfficialLinkPhone
 } from './admin-user-official-links.js?v=3';
 import {
     ADMIN_OFFICIAL_ENRICHMENT_QUERY_CEILING,
@@ -298,7 +300,9 @@ export function normalizeOfficialDraft(draft = {}) {
     return {
         name,
         email: email || null,
+        emailLower: normalizeOfficialLinkEmail(email) || null,
         phone: phone || null,
+        phoneDigits: normalizeOfficialLinkPhone(phone) || null,
         roles,
         tags
     };
@@ -375,18 +379,6 @@ async function getSharedGamesForTeam(teamId, options = {}) {
 
     return Array.from(sharedGamesByPath.values())
         .filter((game) => isGameWithinDateRange(game, startDate, endDate));
-}
-
-async function hasSharedGameUsingConfig(teamId, configId) {
-    const sharedGamesRef = collectionGroup(db, 'sharedGames');
-    const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId), limit(1))
-    ];
-
-    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
-    return snapshots.some((result) => result.status === 'fulfilled' && !result.value.empty);
 }
 
 function daysAgoDate(days) {
@@ -774,7 +766,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443342'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443343'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -4857,61 +4849,22 @@ export async function addConfig(teamId, configData) {
 }
 
 export async function deleteConfig(teamId, configId) {
-    const referencingGames = await getDocs(query(
-        collection(db, `teams/${teamId}/games`),
-        where("statTrackerConfigId", "==", configId),
-        limit(1)
-    ));
-    if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, configId)) {
-        throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.');
+    const callable = httpsCallable(functions, 'deleteStatConfig');
+    const response = await callable({ teamId, configId });
+    if (typeof response?.data?.deleted !== 'boolean') {
+        throw new Error('Stat config deletion response is invalid.');
     }
-    await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
-}
-
-function isResetBlockingLocalGameAssignment(game = {}) {
-    return Boolean(String(game?.statTrackerConfigId || '').trim());
-}
-
-async function hasResetBlockingLocalGameUsingConfig(teamId, configId) {
-    const referencingGames = await getDocs(query(
-        collection(db, `teams/${teamId}/games`),
-        where("statTrackerConfigId", "==", configId)
-    ));
-
-    return referencingGames.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()));
-}
-
-async function hasResetBlockingSharedGameUsingConfig(teamId, configId) {
-    const sharedGamesRef = collectionGroup(db, 'sharedGames');
-    const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId))
-    ];
-
-    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
-    return snapshots.some((result) => (
-        result.status === 'fulfilled'
-        && result.value.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()))
-    ));
+    return response.data.deleted;
 }
 
 export async function resetTeamStatConfigs(teamId) {
-    const configs = await getConfigs(teamId);
-
-    for (const config of configs) {
-        if (await hasResetBlockingLocalGameUsingConfig(teamId, config.id) || await hasResetBlockingSharedGameUsingConfig(teamId, config.id)) {
-            throw new Error('One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.');
-        }
+    const callable = httpsCallable(functions, 'resetTeamStatConfigs');
+    const response = await callable({ teamId });
+    const resetCount = Number(response?.data?.resetCount);
+    if (!Number.isInteger(resetCount) || resetCount < 0) {
+        throw new Error('Stat config reset response is invalid.');
     }
-
-    const batch = writeBatch(db);
-    configs.forEach((config) => {
-        batch.delete(doc(db, `teams/${teamId}/statTrackerConfigs`, config.id));
-    });
-
-    await batch.commit();
-    return configs.length;
+    return resetCount;
 }
 
 // Stats

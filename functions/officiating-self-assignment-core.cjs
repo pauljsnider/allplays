@@ -1,6 +1,15 @@
+const crypto = require('node:crypto');
+
 const OFFICIATING_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open']);
+const OFFICIATING_RESPONSE_STATUSES = new Set(['accepted', 'declined']);
 const SHARED_GAME_ID_PREFIX = 'shared_';
 const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
+const HASHED_SHARED_GAME_ID_PREFIX = 'sharedh_';
+const MAX_SHARED_GAME_PATH_BYTES = 6144;
+const MAX_FIRESTORE_SEGMENT_BYTES = 1500;
+const DEFAULT_OFFICIATING_GAME_ACTIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
+const SUPPORTED_SHARED_GAME_ROOTS = new Set(['organizations', 'tournaments']);
+const INVALID_OFFICIAL_USER_ID = Symbol('invalidOfficialUserId');
 
 function normalizeString(value) {
     return String(value || '').trim();
@@ -8,6 +17,29 @@ function normalizeString(value) {
 
 function normalizeEmail(value) {
     return normalizeString(value).toLowerCase();
+}
+
+function normalizeStoredUserId(value) {
+    if (typeof value !== 'string') return '';
+    if (!value || value.length > 128 || value.includes('/') || value !== value.trim()) return '';
+    return value;
+}
+
+function getValidatedParentTeamIds(user = {}) {
+    const candidateTeamIds = [
+        ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []),
+        ...(Array.isArray(user.parentOf)
+            ? user.parentOf.map((link) => (
+                link && typeof link === 'object' && !Array.isArray(link) ? link.teamId : null
+            ))
+            : [])
+    ];
+    return [...new Set(candidateTeamIds.map(normalizeStoredUserId).filter(Boolean))];
+}
+
+function hasStoredPrincipalValue(value) {
+    if (value === null || value === undefined) return false;
+    return typeof value === 'string' ? value.length > 0 : true;
 }
 
 function createClaimError(code, message) {
@@ -18,27 +50,93 @@ function createClaimError(code, message) {
 
 function normalizeDocId(value, label) {
     const normalized = normalizeString(value);
-    if (!normalized || normalized.includes('/')) {
+    if (!normalized || normalized.length > 128 || normalized.includes('/')) {
         throw createClaimError('invalid-argument', `${label} is required.`);
     }
     return normalized;
 }
 
+function normalizeSharedGamePath(value) {
+    if (typeof value !== 'string') return '';
+    const normalized = value.trim();
+    if (!normalized || Buffer.byteLength(normalized, 'utf8') > MAX_SHARED_GAME_PATH_BYTES) return '';
+    const parts = normalized.split('/');
+    if (
+        parts.length !== 4 ||
+        !SUPPORTED_SHARED_GAME_ROOTS.has(parts[0]) ||
+        parts[2] !== 'sharedGames'
+    ) return '';
+    if (parts.some((part) => !part || part === '.' || part === '..' || Buffer.byteLength(part, 'utf8') > MAX_FIRESTORE_SEGMENT_BYTES)) {
+        return '';
+    }
+    return normalized;
+}
+
+function buildSharedGameSyntheticId(sharedGamePath) {
+    const normalizedPath = normalizeSharedGamePath(sharedGamePath);
+    if (!normalizedPath) return '';
+    const reversibleId = `${SHARED_GAME_ID_PREFIX}${encodeURIComponent(normalizedPath)}`;
+    if (reversibleId.length <= 128) return reversibleId;
+    const digest = crypto.createHash('sha256').update(normalizedPath, 'utf8').digest('base64url');
+    return `${HASHED_SHARED_GAME_ID_PREFIX}${digest}`;
+}
+
 function isSharedGameSyntheticId(gameId) {
     return typeof gameId === 'string'
-        && (gameId.startsWith(SHARED_GAME_ID_PREFIX) || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX));
+        && (
+            gameId.startsWith(SHARED_GAME_ID_PREFIX)
+            || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX)
+            || gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)
+        );
 }
 
 function decodeSharedGameSyntheticId(gameId) {
     if (!isSharedGameSyntheticId(gameId)) return null;
+    if (gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)) return null;
     const prefix = gameId.startsWith(SHARED_GAME_ID_PREFIX)
         ? SHARED_GAME_ID_PREFIX
         : LEGACY_SHARED_GAME_ID_PREFIX;
-    return decodeURIComponent(gameId.slice(prefix.length));
+    try {
+        return normalizeSharedGamePath(decodeURIComponent(gameId.slice(prefix.length))) || null;
+    } catch {
+        return null;
+    }
 }
 
-function resolveOfficiatingGamePath(teamId, gameId) {
+function normalizeOfficiatingGameReference(data = {}) {
+    const gameId = normalizeDocId(data.gameId, 'Game ID');
+    const rawSharedGamePath = typeof data.sharedGamePath === 'string' ? data.sharedGamePath.trim() : '';
+    const sharedGamePath = normalizeSharedGamePath(rawSharedGamePath);
+    if (rawSharedGamePath && !sharedGamePath) {
+        throw createClaimError('invalid-argument', 'Shared game path is invalid.');
+    }
+    if (sharedGamePath) {
+        if (!isSharedGameSyntheticId(gameId) || buildSharedGameSyntheticId(sharedGamePath) !== gameId) {
+            throw createClaimError('invalid-argument', 'Shared game identity does not match its path.');
+        }
+    } else if (gameId.startsWith(HASHED_SHARED_GAME_ID_PREFIX)) {
+        throw createClaimError('invalid-argument', 'Shared game path is required.');
+    } else if (isSharedGameSyntheticId(gameId) && !decodeSharedGameSyntheticId(gameId)) {
+        throw createClaimError('invalid-argument', 'Shared game identity is invalid.');
+    }
+    return {
+        gameId,
+        ...(sharedGamePath ? { sharedGamePath } : {})
+    };
+}
+
+function resolveOfficiatingGamePath(teamId, gameId, sharedGamePath = '') {
+    const normalizedSharedGamePath = normalizeSharedGamePath(sharedGamePath);
+    if (normalizedSharedGamePath) {
+        if (buildSharedGameSyntheticId(normalizedSharedGamePath) !== gameId) {
+            throw createClaimError('invalid-argument', 'Shared game identity does not match its path.');
+        }
+        return normalizedSharedGamePath;
+    }
     const sharedPath = decodeSharedGameSyntheticId(gameId);
+    if (isSharedGameSyntheticId(gameId) && !sharedPath) {
+        throw createClaimError('invalid-argument', 'Shared game path is required.');
+    }
     return sharedPath || `teams/${teamId}/games/${gameId}`;
 }
 
@@ -54,12 +152,65 @@ function isTeamLinkedToSharedGame(game = {}, teamId = '') {
     return teamIds.includes(normalizedTeamId);
 }
 
+function toOfficiatingDate(value) {
+    if (value instanceof Date) return value;
+    if (value && typeof value.toDate === 'function') return value.toDate();
+    if (value && typeof value.toMillis === 'function') return new Date(value.toMillis());
+    if (value && typeof value.seconds === 'number') return new Date(value.seconds * 1000);
+    const parsed = new Date(value || 0);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isCurrentOrUpcomingOfficiatingGame(game = {}, now = new Date()) {
+    const startDate = toOfficiatingDate(game.date);
+    const nowDate = toOfficiatingDate(now);
+    if (!startDate || !nowDate) return false;
+
+    const statuses = [game.status, game.liveStatus]
+        .map((value) => normalizeString(value).toLowerCase())
+        .filter(Boolean);
+    if (statuses.some((value) => [
+        'cancelled', 'canceled', 'deleted', 'completed', 'complete', 'final', 'finished', 'ended'
+    ].includes(value))) return false;
+    const explicitEndValue = [game.endDate, game.endsAt, game.end, game.dtend]
+        .find((value) => value !== null && value !== undefined && value !== '');
+    const explicitEnd = explicitEndValue === undefined ? null : toOfficiatingDate(explicitEndValue);
+    if (explicitEnd) return explicitEnd.getTime() >= nowDate.getTime();
+
+    const durationMinutes = Number(game.durationMinutes || game.duration || 0);
+    const activeWindowMs = Number.isFinite(durationMinutes) && durationMinutes > 0
+        ? durationMinutes * 60 * 1000
+        : DEFAULT_OFFICIATING_GAME_ACTIVE_WINDOW_MS;
+    return startDate.getTime() + activeWindowMs >= nowDate.getTime();
+}
+
+function assertOfficiatingGameIsCurrent(game = {}, now = new Date()) {
+    if (!isCurrentOrUpcomingOfficiatingGame(game, now)) {
+        throw createClaimError('failed-precondition', 'Officiating assignments can only change for current or upcoming games.');
+    }
+}
+
 function normalizeOpenOfficiatingSlotClaimInput(data = {}) {
+    const gameReference = normalizeOfficiatingGameReference(data);
     return {
         teamId: normalizeDocId(data.teamId, 'Team ID'),
-        gameId: normalizeDocId(data.gameId, 'Game ID'),
+        ...gameReference,
         slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
         displayName: normalizeString(data.displayName || data.name)
+    };
+}
+
+function normalizeOfficiatingAssignmentResponseInput(data = {}) {
+    const status = normalizeString(data.status).toLowerCase();
+    if (!OFFICIATING_RESPONSE_STATUSES.has(status)) {
+        throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
+    }
+    const gameReference = normalizeOfficiatingGameReference(data);
+    return {
+        teamId: normalizeDocId(data.teamId, 'Team ID'),
+        ...gameReference,
+        slotId: normalizeDocId(data.slotId, 'Officiating slot ID'),
+        status
     };
 }
 
@@ -91,10 +242,12 @@ function normalizeOfficiatingSlots(slots = []) {
         if (!position) return null;
 
         const officialId = normalizeString(slot?.officialId);
-        const officialUserId = normalizeString(slot?.officialUserId);
+        const rawOfficialUserId = slot?.officialUserId;
+        const officialUserId = normalizeStoredUserId(rawOfficialUserId);
+        const hasOfficialUserIdBinding = hasStoredPrincipalValue(rawOfficialUserId);
         const officialEmail = normalizeEmail(slot?.officialEmail || slot?.email);
         const officialName = normalizeString(slot?.officialName || slot?.name);
-        const hasOfficial = Boolean(officialId || officialUserId || officialEmail || officialName);
+        const hasOfficial = Boolean(officialId || hasOfficialUserIdBinding || officialEmail || officialName);
         const requestedStatus = normalizeString(slot?.status);
         const status = OFFICIATING_ASSIGNMENT_STATUSES.has(requestedStatus)
             ? requestedStatus
@@ -104,7 +257,7 @@ function normalizeOfficiatingSlots(slots = []) {
             slot?.rescheduled === true ||
             status === 'needs_review';
 
-        return {
+        const normalizedSlot = {
             id: normalizeString(slot?.id || `slot-${index + 1}`),
             position,
             officialId,
@@ -118,6 +271,11 @@ function normalizeOfficiatingSlots(slots = []) {
             scheduleReviewMarkedAt: scheduleReviewRequired ? (slot?.scheduleReviewMarkedAt || null) : null,
             submittedResult: normalizeOfficiatingResult(slot?.submittedResult || null)
         };
+        Object.defineProperty(normalizedSlot, INVALID_OFFICIAL_USER_ID, {
+            value: hasOfficialUserIdBinding && !officialUserId,
+            enumerable: false
+        });
+        return normalizedSlot;
     }).filter(Boolean);
 }
 
@@ -127,8 +285,14 @@ function computeOfficiatingCoverageStatus(slots = []) {
     return normalized.every((slot) => slot.status === 'accepted') ? 'covered' : 'needs_attention';
 }
 
+function assertValidStoredOfficialUserIds(slots = []) {
+    if (slots.some((slot) => slot?.[INVALID_OFFICIAL_USER_ID] === true)) {
+        throw createClaimError('failed-precondition', 'An officiating assignment has an invalid user binding.');
+    }
+}
+
 function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = '', email = '', teamId = '' } = {}) {
-    const normalizedUid = normalizeString(uid);
+    const normalizedUid = normalizeStoredUserId(uid);
     if (!normalizedUid) return false;
 
     const normalizedTeamId = normalizeString(teamId || team.id);
@@ -142,23 +306,26 @@ function isEligibleOpenOfficiatingSlotParticipant({ team = {}, user = {}, uid = 
         : [];
     if (normalizedEmail && adminEmails.includes(normalizedEmail)) return true;
 
-    const parentTeamIds = Array.isArray(user.parentTeamIds)
-        ? user.parentTeamIds.map(normalizeString).filter(Boolean)
-        : [];
-    return Boolean(normalizedTeamId && parentTeamIds.includes(normalizedTeamId));
+    return Boolean(normalizedTeamId && getValidatedParentTeamIds(user).includes(normalizedTeamId));
 }
 
 function claimOpenOfficiatingSlotForOfficial(slots = [], slotId, official = {}) {
     const normalizedSlotId = normalizeString(slotId);
-    const officialUserId = normalizeString(official.uid || official.userId);
+    const rawOfficialUserId = official.uid || official.userId;
+    const officialUserId = normalizeStoredUserId(rawOfficialUserId);
     const officialEmail = normalizeEmail(official.email);
     const officialName = normalizeString(official.displayName || official.name || officialEmail || 'Official');
+    if (hasStoredPrincipalValue(rawOfficialUserId) && !officialUserId) {
+        throw createClaimError('unauthenticated', 'The signed-in account is invalid.');
+    }
     if (!officialUserId && !officialEmail) {
         throw createClaimError('unauthenticated', 'Sign in before claiming an officiating slot.');
     }
 
     let claimed = false;
-    const nextSlots = normalizeOfficiatingSlots(slots).map((slot) => {
+    const normalizedSlots = normalizeOfficiatingSlots(slots);
+    assertValidStoredOfficialUserIds(normalizedSlots);
+    const nextSlots = normalizedSlots.map((slot) => {
         if (slot.id !== normalizedSlotId) return slot;
         if (slot.officialUserId || slot.officialEmail || slot.officialName || slot.status !== 'open') {
             throw createClaimError('failed-precondition', 'This officiating slot is already filled.');
@@ -184,14 +351,15 @@ function uniqueStrings(values = []) {
     return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeString).filter(Boolean)));
 }
 
-function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {}, now = null } = {}) {
+function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {}, now = null, currentTime = new Date() } = {}) {
     if (game.officiatingSelfAssignmentEnabled !== true) {
         throw createClaimError('failed-precondition', 'Self-assignment is not enabled for this game.');
     }
+    assertOfficiatingGameIsCurrent(game, currentTime);
 
     const officiatingSlots = claimOpenOfficiatingSlotForOfficial(game.officiatingSlots || [], slotId, official);
     const claimedSlot = officiatingSlots.find((slot) => slot.id === normalizeString(slotId)) || null;
-    const officialUserId = normalizeString(official.uid || official.userId);
+    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
     const officialEmail = normalizeEmail(official.email);
     const officiatingAuthorizedUserIds = uniqueStrings([
         ...uniqueStrings(game.officiatingAuthorizedUserIds),
@@ -211,6 +379,62 @@ function buildOpenOfficiatingSlotClaimUpdate({ game = {}, slotId, official = {},
             officiatingAuthorizedEmails
         },
         claimedSlot
+    };
+}
+
+function buildOfficiatingAssignmentResponseUpdate({ game = {}, slotId, status, official = {}, now = null, currentTime = new Date() } = {}) {
+    const normalizedSlotId = normalizeDocId(slotId, 'Officiating slot ID');
+    const normalizedStatus = normalizeString(status).toLowerCase();
+    if (!OFFICIATING_RESPONSE_STATUSES.has(normalizedStatus)) {
+        throw createClaimError('invalid-argument', 'Officiating response must be accepted or declined.');
+    }
+    const officialUserId = normalizeStoredUserId(official.uid || official.userId);
+    const officialEmail = normalizeEmail(official.email);
+    if (!officialUserId) {
+        throw createClaimError('unauthenticated', 'Sign in before responding to an officiating assignment.');
+    }
+    assertOfficiatingGameIsCurrent(game, currentTime);
+
+    let updatedSlot = null;
+    const normalizedSlots = normalizeOfficiatingSlots(game.officiatingSlots || []);
+    assertValidStoredOfficialUserIds(normalizedSlots);
+    const officiatingSlots = normalizedSlots.map((slot) => {
+        if (slot.id !== normalizedSlotId) return slot;
+        const uidMatches = Boolean(slot.officialUserId && slot.officialUserId === officialUserId);
+        // A stable UID binding is canonical. The email is only a legacy
+        // fallback for assignments that have never been bound to a user ID.
+        const emailMatches = Boolean(
+            !slot.officialUserId &&
+            officialEmail &&
+            slot.officialEmail &&
+            slot.officialEmail === officialEmail
+        );
+        if (!uidMatches && !emailMatches) {
+            throw createClaimError('permission-denied', 'This officiating assignment belongs to another official.');
+        }
+        if (!['pending', 'needs_review'].includes(slot.status) && slot.scheduleReviewRequired !== true) {
+            throw createClaimError('failed-precondition', 'This officiating assignment is not awaiting a response.');
+        }
+        updatedSlot = {
+            ...slot,
+            status: normalizedStatus,
+            scheduleReviewRequired: false,
+            scheduleReviewReason: '',
+            scheduleReviewMarkedAt: null
+        };
+        return updatedSlot;
+    });
+
+    if (!updatedSlot) {
+        throw createClaimError('not-found', 'Officiating slot not found.');
+    }
+    return {
+        update: {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: now
+        },
+        updatedSlot
     };
 }
 
@@ -259,16 +483,70 @@ function buildOfficiatingSelfAssignmentNotificationRecord({
     };
 }
 
+function buildOfficiatingAssignmentResponseNotificationRecord({
+    teamId,
+    gameId,
+    game = {},
+    slot = {},
+    status,
+    actor = {},
+    timestamp = null
+} = {}) {
+    const normalizedSlot = normalizeOfficiatingSlots([slot])[0] || slot;
+    const actorUserId = normalizeString(actor.uid || actor.userId);
+    const actorEmail = normalizeEmail(actor.email);
+    const actorName = normalizeString(actor.displayName || actor.name);
+    const normalizedStatus = normalizeString(status).toLowerCase();
+
+    return {
+        type: 'officiating_assignment',
+        assignmentType: normalizedSlot.position || null,
+        event: normalizedStatus === 'declined' ? 'declined' : 'accepted',
+        gameReference: {
+            teamId: normalizeString(teamId),
+            gameId: normalizeString(gameId || game.id),
+            opponent: normalizeString(game.opponent) || null,
+            location: normalizeString(game.location) || null,
+            date: game.date || null
+        },
+        gameId: normalizeString(gameId || game.id),
+        slotId: normalizedSlot.id || null,
+        position: normalizedSlot.position || null,
+        status: normalizedStatus || normalizedSlot.status || null,
+        timestamp,
+        actor: {
+            userId: actorUserId,
+            name: actorName,
+            email: actorEmail
+        },
+        actorUserId: actorUserId || null,
+        actorEmail: actorEmail || null,
+        recipientType: 'assigner',
+        recipientOfficialId: normalizedSlot.officialId || null,
+        recipientOfficialUserId: normalizedSlot.officialUserId || null,
+        recipientOfficialName: normalizedSlot.officialName || null,
+        recipientOfficialEmail: normalizedSlot.officialEmail || null,
+        read: false
+    };
+}
+
 module.exports = {
+    buildSharedGameSyntheticId,
+    normalizeSharedGamePath,
     normalizeOpenOfficiatingSlotClaimInput,
+    normalizeOfficiatingAssignmentResponseInput,
     normalizeOfficiatingSlots,
     computeOfficiatingCoverageStatus,
+    getValidatedParentTeamIds,
     isEligibleOpenOfficiatingSlotParticipant,
     isSharedGameSyntheticId,
     decodeSharedGameSyntheticId,
     resolveOfficiatingGamePath,
     isTeamLinkedToSharedGame,
+    isCurrentOrUpcomingOfficiatingGame,
     claimOpenOfficiatingSlotForOfficial,
     buildOpenOfficiatingSlotClaimUpdate,
-    buildOfficiatingSelfAssignmentNotificationRecord
+    buildOfficiatingSelfAssignmentNotificationRecord,
+    buildOfficiatingAssignmentResponseUpdate,
+    buildOfficiatingAssignmentResponseNotificationRecord
 };

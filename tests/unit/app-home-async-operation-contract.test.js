@@ -41,7 +41,9 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('setHome(summary.home);');
         expect(refreshHomeSource).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
         expect(refreshHomeSource).toContain('schedule: summary.schedule');
-        expect(refreshHomeSource).toContain('onPartial: (partial) => setHome(partial)');
+        expect(refreshHomeSource).toContain('let latestSecondaryHome = summary.home;');
+        expect(refreshHomeSource).toContain('latestSecondaryHome = partial;');
+        expect(refreshHomeSource).toContain('setHome(partial);');
         expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome || receivedHomePreview)");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load Home.');");
         expect(refreshHomeSource).toContain('if (!hasExistingHome) {');
@@ -49,6 +51,8 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('setSocial(emptySocialHome());');
         expect(refreshHomeSource).toContain("getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.'))");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');");
+        expect(refreshHomeSource).toContain('const socialHome = await loadSocialHome(user, latestSecondaryHome);');
+        expect(refreshHomeSource).toContain('setSocial(socialHome);');
         expect(refreshHomeSource).toContain("setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });");
     });
 
@@ -68,7 +72,8 @@ describe('Home async operation contract', () => {
         expect(homeServiceSource).toContain("logger.warn('Schedule hydration failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Chat inbox failed.', { error: appError });");
         expect(homeServiceSource).toContain("logger.warn('Fees failed.', { error: appError });");
-        expect(homeServiceSource).toContain('throwIfAllSecondarySlicesFailed(secondaryErrors);');
+        expect(homeServiceSource).toContain("const failedSlice = results.find((result) => result.status === 'rejected');");
+        expect(homeServiceSource).toContain('throw failedSlice.reason;');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 

@@ -616,7 +616,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                 }
 
                 export async function loadOfficialAssignmentsAccess() {
-                    return { hasAccess: true, teamIds: ['team-1'], teamCount: 1 };
+                    return { hasAccess: true, teamIds: ['team-1'], teamCount: 1, isPartial: false };
                 }
 
                 export async function loadOfficialAssignments() {
@@ -624,6 +624,7 @@ async function mockHomePlayerModules(page, { switchableSocialTargets = false, fa
                         hasAccess: true,
                         teamIds: ['team-1'],
                         teamCount: 1,
+                        isPartial: false,
                         assignments: [{
                             kind: 'assigned',
                             teamId: 'team-1',

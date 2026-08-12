@@ -227,6 +227,22 @@
       ]
     },
     {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "practiceSessions",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
@@ -275,6 +291,46 @@
       ]
     },
     {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" },
+        { "fieldPath": "homeTeamId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" },
+        { "fieldPath": "awayTeamId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "registrations",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
@@ -312,6 +368,14 @@
       "fields": [
         { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "playerId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "playerKey", "order": "ASCENDING" }
       ]
     },
     {
@@ -630,6 +694,13 @@
     },
     {
       "collectionGroup": "officials",
+      "fieldPath": "emailLower",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "officials",
       "fieldPath": "name",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
@@ -638,6 +709,13 @@
     {
       "collectionGroup": "officials",
       "fieldPath": "phone",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "officials",
+      "fieldPath": "phoneDigits",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
@@ -691,6 +769,20 @@
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION" },
         { "order": "DESCENDING", "queryScope": "COLLECTION" },
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "fieldPath": "teamIds",
+      "indexes": [
+        { "arrayConfig": "CONTAINS", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "fieldPath": "statTrackerConfigId",
+      "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
       ]
     },

@@ -492,6 +492,7 @@ export function ChatWindow({
     setSelectedConversationId,
     loadingContext,
     error: teamError,
+    retryContext,
     reloadConversations,
     switchConversation: switchChatConversation
   } = useChatTeam({
@@ -1874,7 +1875,12 @@ export function ChatWindow({
       <section className={`chat-window app-card p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
         <div className="text-base font-black text-rose-700">{error}</div>
         <div className="mt-4 flex flex-wrap gap-2">
-          {canRetryMessagesError ? (
+          {teamError ? (
+            <button type="button" className="primary-button" onClick={retryContext}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry
+            </button>
+          ) : canRetryMessagesError ? (
             <button type="button" className="primary-button" onClick={() => { void handleRetryMessages(); }}>
               <RefreshCw className="h-4 w-4" aria-hidden="true" />
               Retry

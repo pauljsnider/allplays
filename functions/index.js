@@ -3,6 +3,15 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const { Resend } = require('resend');
 const crypto = require('node:crypto');
+const {
+  canProjectChatConversation,
+  serializeChatConversationProjection
+} = require('./chat-conversation-access-core.cjs');
+const {
+  canReadSocialPostForCaller,
+  getNextSocialPostLikeState,
+  normalizeSocialPostId
+} = require('./social-post-mutations-core.cjs');
 const publicUserProfileProjection = require('./public-user-profile-projection-core.cjs');
 const {
   createPublicProfileAuthDeleteHandler,
@@ -61,6 +70,7 @@ const {
   isEligibleTeamFeePayer,
   getTeamFeeRecipientTargetUserIds,
   LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+  sanitizeParentTeamFeeRecipient,
   hasLegacyReadableTeamFeeCheckoutState,
   buildLegacyReadableTeamFeeCheckoutAttempt,
   buildTeamFeeCheckoutUrls,
@@ -296,11 +306,14 @@ const {
 } = require('./schedule-notification-utils.cjs');
 const {
   normalizeOpenOfficiatingSlotClaimInput,
+  normalizeOfficiatingAssignmentResponseInput,
   isEligibleOpenOfficiatingSlotParticipant,
   resolveOfficiatingGamePath,
   isTeamLinkedToSharedGame,
   buildOpenOfficiatingSlotClaimUpdate,
-  buildOfficiatingSelfAssignmentNotificationRecord
+  buildOfficiatingSelfAssignmentNotificationRecord,
+  buildOfficiatingAssignmentResponseUpdate,
+  buildOfficiatingAssignmentResponseNotificationRecord
 } = require('./officiating-self-assignment-core.cjs');
 const {
   assertSportsConnectSyncConfig,
@@ -337,6 +350,8 @@ const {
   serializeManagedTeamProfile,
   serializeStaffTeamProfile
 } = require('./managed-team-projection-core.cjs');
+const { createOfficialTeamDiscoveryHandler } = require('./official-team-discovery-core.cjs');
+const { createStatConfigManagementHandlers } = require('./stat-config-management-core.cjs');
 const { createDelegatedTeamContextHandler } = require('./delegated-team-context-core.cjs');
 const { createAutoAcceptParentInviteHandler } = require('./parent-invite-auto-link-callable.cjs');
 const {
@@ -396,6 +411,17 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const listOfficialLinkedTeamIdsHandler = createOfficialTeamDiscoveryHandler({
+  firestore,
+  auth: admin.auth(),
+  HttpsError: functions.https.HttpsError
+});
+const statConfigManagementHandlers = createStatConfigManagementHandlers({
+  firestore,
+  auth: admin.auth(),
+  hasTeamAdminAccess,
+  HttpsError: functions.https.HttpsError
+});
 function assertPaymentsEnabled() {
   if (process.env.PAYMENTS_ENABLED !== 'true') {
     throw new functions.https.HttpsError('failed-precondition', 'Online payments are not enabled in this release.');
@@ -3268,7 +3294,7 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
   }
 
-  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
   const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -3317,6 +3343,77 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
       gameId: input.gameId,
       slotId: input.slotId,
       ...result
+    };
+  } catch (error) {
+    throw toHttpsError(error, error?.code || 'internal');
+  }
+});
+
+exports.respondToOfficiatingAssignment = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before responding to an officiating assignment.');
+  }
+
+  let input;
+  try {
+    input = normalizeOfficiatingAssignmentResponseInput(data || {});
+  } catch (error) {
+    throw toHttpsError(error, 'invalid-argument');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = context.auth.token?.email_verified === true
+    ? String(context.auth.token?.email || '').trim().toLowerCase()
+    : '';
+  const displayName = String(context.auth.token?.name || callerEmail || 'Official').trim();
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId, input.sharedGamePath));
+  const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+
+      const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
+      const { update, updatedSlot } = buildOfficiatingAssignmentResponseUpdate({
+        game,
+        slotId: input.slotId,
+        status: input.status,
+        official: { uid, email: callerEmail, displayName },
+        now
+      });
+      const notificationRecord = buildOfficiatingAssignmentResponseNotificationRecord({
+        teamId: input.teamId,
+        gameId: input.gameId,
+        game,
+        slot: updatedSlot,
+        status: input.status,
+        actor: { uid, email: callerEmail, displayName },
+        timestamp: now
+      });
+
+      transaction.update(gameRef, update);
+      transaction.set(notificationRef, {
+        ...notificationRecord,
+        createdAt: now
+      });
+
+      return updatedSlot;
+    });
+
+    return {
+      success: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      slotId: input.slotId,
+      status: result.status
     };
   } catch (error) {
     throw toHttpsError(error, error?.code || 'internal');
@@ -18311,26 +18408,548 @@ exports.listManagedPublicOpportunityTeams = functions.https.onCall(async (_data,
   return { items: Array.from(teams.values()).sort((a, b) => a.name.localeCompare(b.name)) };
 });
 
-exports.listManagedTeams = functions.https.onCall(async (_data, context = {}) => {
-  const caller = await getOpportunityCaller(context);
+function getCallableParentTeamScope(user = {}) {
+  const rawTeamIds = [
+    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []),
+    ...(Array.isArray(user.parentOf) ? user.parentOf.map((link) => link?.teamId) : [])
+  ];
+  const normalizedTeamIds = rawTeamIds.map(normalizeStablePrincipalUid);
+  return {
+    teamIds: Array.from(new Set(normalizedTeamIds.filter(Boolean))),
+    isPartial: normalizedTeamIds.some((teamId) => !teamId)
+  };
+}
+
+function hasCallableChatTeamAccess(caller, teamId, team = {}) {
+  if (hasOpportunityTeamAdminAccess(caller, team)) return true;
+  return getCallableParentTeamScope(caller.user).teamIds.includes(teamId);
+}
+
+function getVerifiedEmailAuthorizationCaller(caller, context = {}) {
+  return context.auth?.token?.email_verified === true
+    ? caller
+    : { ...caller, email: '', rawEmail: '' };
+}
+
+async function requireCallableSocialPostAccess(transaction, postRef, caller) {
+  const postSnap = await transaction.get(postRef);
+  if (!postSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+  }
+  const post = postSnap.data() || {};
+  let canAccessTeam = false;
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam: false
+  })) {
+    const teamId = normalizeSocialPostId(post.teamId);
+    if (teamId) {
+      const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+      canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+    }
+  }
+  if (!canReadSocialPostForCaller({
+    post,
+    callerUid: caller.uid,
+    isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+    canAccessTeam
+  })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+  }
+  return post;
+}
+
+const MAX_MANAGED_CHAT_METADATA_QUERIES = 30;
+const MAX_MANAGED_CHAT_METADATA_DOCUMENTS = 1000;
+const MAX_CALLABLE_DISCOVERY_CONCURRENCY = 6;
+
+function chunkCallableValues(values, size = 30) {
+  const chunks = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function allocateBoundedQueryReadLimits(jobCount, totalDocumentLimit, perQueryLimit) {
+  const limits = [];
+  let remainingDocuments = Math.max(0, Number(totalDocumentLimit) || 0);
+  for (let index = 0; index < jobCount; index += 1) {
+    const remainingJobs = jobCount - index;
+    const fairShare = Math.floor(remainingDocuments / remainingJobs);
+    const queryLimit = Math.max(1, Math.min(perQueryLimit, fairShare));
+    limits.push(queryLimit);
+    remainingDocuments -= queryLimit;
+  }
+  return limits;
+}
+
+async function runSettledWithConcurrencyLimit(items, limit, worker) {
+  return runWithConcurrencyLimit(items, limit, async (item, index) => {
+    try {
+      return { status: 'fulfilled', value: await worker(item, index) };
+    } catch (reason) {
+      return { status: 'rejected', reason };
+    }
+  });
+}
+
+exports.listManagedTeams = functions.https.onCall(async (data, context = {}) => {
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const staffTeams = await listStaffTeamDocuments(caller);
-  const items = Array.from(staffTeams.values())
-    .map((teamSnap) => {
+  const conversationLimit = 100;
+  const includeChatMetadata = data?.includeChatMetadata === true;
+  let chatTeamDiscoveryPartial = false;
+  const teamSnapsById = new Map();
+  if (includeChatMetadata) {
+    staffTeams.forEach((teamSnap) => {
+      if (hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
+        teamSnapsById.set(teamSnap.id, teamSnap);
+      }
+    });
+    const parentTeamLimit = 180;
+    const parentTeamScope = getCallableParentTeamScope(caller.user);
+    if (parentTeamScope.isPartial) chatTeamDiscoveryPartial = true;
+    const allParentTeamIds = parentTeamScope.teamIds;
+    if (allParentTeamIds.length > parentTeamLimit) chatTeamDiscoveryPartial = true;
+    const parentTeamIds = allParentTeamIds.slice(0, parentTeamLimit);
+    const parentTeamResults = await runSettledWithConcurrencyLimit(
+      parentTeamIds,
+      MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+      (teamId) => firestore.doc(`teams/${teamId}`).get()
+    );
+    parentTeamResults.forEach((result) => {
+      if (result.status === 'rejected') {
+        chatTeamDiscoveryPartial = true;
+        return;
+      }
+      const teamSnap = result.value;
+      if (teamSnap.exists && hasCallableChatTeamAccess(caller, teamSnap.id, teamSnap.data() || {})) {
+        teamSnapsById.set(teamSnap.id, teamSnap);
+      }
+    });
+  } else {
+    staffTeams.forEach((teamSnap) => teamSnapsById.set(teamSnap.id, teamSnap));
+  }
+  const teamSnaps = Array.from(teamSnapsById.values());
+  const conversationTeamSnaps = includeChatMetadata
+    ? teamSnaps.slice(0, MAX_MANAGED_CHAT_METADATA_QUERIES)
+    : [];
+  const conversationReadLimits = allocateBoundedQueryReadLimits(
+    conversationTeamSnaps.length,
+    MAX_MANAGED_CHAT_METADATA_DOCUMENTS,
+    conversationLimit + 1
+  );
+  const conversationResults = includeChatMetadata
+    ? await runSettledWithConcurrencyLimit(
+        conversationTeamSnaps,
+        MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+        (teamSnap, index) => firestore.collection(`teams/${teamSnap.id}/chatConversations`)
+          .limit(conversationReadLimits[index])
+          .get()
+      )
+    : [];
+  let chatMetadataPartial = false;
+  if (includeChatMetadata && conversationTeamSnaps.length < teamSnaps.length) chatMetadataPartial = true;
+  const items = teamSnaps
+    .map((teamSnap, index) => {
       const team = teamSnap.data() || {};
       const canManage = hasOpportunityTeamAdminAccess(caller, team);
       const item = canManage
         ? serializeManagedTeamDocument(teamSnap.id, team)
         : serializeStaffTeamProfile(teamSnap.id, team);
       if (!item) return null;
+      const conversationResult = conversationResults[index];
+      if (includeChatMetadata && conversationResult?.status !== 'fulfilled') chatMetadataPartial = true;
+      const conversationDocs = conversationResult?.status === 'fulfilled' ? conversationResult.value.docs : [];
+      const conversationReadLimit = conversationReadLimits[index] || 0;
+      if (
+        includeChatMetadata &&
+        conversationResult?.status === 'fulfilled' &&
+        conversationDocs.length >= conversationReadLimit &&
+        conversationReadLimit <= conversationLimit
+      ) chatMetadataPartial = true;
+      if (conversationDocs.length > conversationLimit) chatMetadataPartial = true;
+      const chatConversations = conversationDocs.slice(0, conversationLimit).map((conversationSnap) => {
+        const conversation = conversationSnap.data() || {};
+        const conversationId = String(conversationSnap.id || '').trim();
+        if (!conversationId || conversationId.includes('/') || conversationId.length > 1500) return null;
+        if (!canProjectChatConversation({
+          callerUid: caller.uid,
+          callerEmail: caller.email,
+          canManageTeam: canManage,
+          hasTeamChatAccess: hasCallableChatTeamAccess(caller, teamSnap.id, team),
+          conversationId,
+          conversation
+        })) return null;
+        return {
+          id: conversationId,
+          type: cleanOpportunityText(conversation.type, 32) || null,
+          updatedAt: conversation.updatedAt || null,
+          lastMessageAt: conversation.lastMessageAt || conversation.latestMessageAt || null
+        };
+      }).filter(Boolean);
       return {
         ...item,
-        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team'
+        name: cleanOpportunityText(item.name || item.teamName, 160) || 'Team',
+        ...(includeChatMetadata ? { chatAccessVerified: true } : {}),
+        ...(chatConversations.length > 0 ? { chatConversations } : {})
       };
     })
     .filter(Boolean)
     .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
-  return { items, isPartial: staffTeams.isPartial === true };
+  return {
+    items,
+    isPartial: staffTeams.isPartial === true || chatTeamDiscoveryPartial || chatMetadataPartial
+  };
 });
+
+exports.listAuthorizedChatConversations = functions.https.onCall(async (data, context = {}) => {
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const teamId = normalizeStablePrincipalUid(data?.teamId);
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid team is required.');
+  }
+  const requestedConversationId = String(data?.activeConversationId || '').trim();
+  if (requestedConversationId && (requestedConversationId.includes('/') || requestedConversationId.length > 1500)) {
+    throw new functions.https.HttpsError('invalid-argument', 'The requested conversation is invalid.');
+  }
+
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const canManage = hasOpportunityTeamAdminAccess(caller, team);
+  const hasTeamChatAccess = hasCallableChatTeamAccess(caller, teamId, team);
+  if (!hasTeamChatAccess) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to this team chat.');
+  }
+
+  const conversationLimit = 100;
+  const conversationSnap = await firestore.collection(`teams/${teamId}/chatConversations`)
+    .limit(conversationLimit + 1)
+    .get();
+  if (conversationSnap.docs.length > conversationLimit) {
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'This team has too many conversations to verify completely. Contact support.'
+    );
+  }
+  const items = conversationSnap.docs.map((conversationDoc) => {
+    const conversation = conversationDoc.data() || {};
+    if (!canProjectChatConversation({
+      callerUid: caller.uid,
+      callerEmail: caller.email,
+      canManageTeam: canManage,
+      hasTeamChatAccess,
+      conversationId: conversationDoc.id,
+      conversation
+    })) return null;
+    return serializeChatConversationProjection(conversationDoc.id, conversation);
+  }).filter(Boolean);
+
+  if (
+    requestedConversationId &&
+    requestedConversationId !== 'team' &&
+    !items.some((conversation) => conversation.id === requestedConversationId)
+  ) {
+    throw new functions.https.HttpsError(
+      'permission-denied',
+      'The requested conversation is no longer available to this account.'
+    );
+  }
+  return { items, isPartial: false };
+});
+
+exports.toggleSocialPostReaction = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to react to this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId || data?.reactionKey !== 'like') {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and like reaction are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reactionRef = firestore.doc(`socialPosts/${postId}/reactions/${caller.uid}`);
+  return firestore.runTransaction(async (transaction) => {
+    const postSnap = await transaction.get(postRef);
+    if (!postSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'This post is no longer available.');
+    }
+    const post = postSnap.data() || {};
+    let canAccessTeam = false;
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam: false
+    })) {
+      const teamId = normalizeSocialPostId(post.teamId);
+      if (teamId) {
+        const teamSnap = await transaction.get(firestore.doc(`teams/${teamId}`));
+        canAccessTeam = teamSnap.exists && hasCallableChatTeamAccess(caller, teamId, teamSnap.data() || {});
+      }
+    }
+    if (!canReadSocialPostForCaller({
+      post,
+      callerUid: caller.uid,
+      isGlobalAdmin: isOpportunityPlatformAdmin(caller),
+      canAccessTeam
+    })) {
+      throw new functions.https.HttpsError('permission-denied', 'You do not have access to this post.');
+    }
+    const reactionSnap = await transaction.get(reactionRef);
+    let nextState;
+    try {
+      nextState = getNextSocialPostLikeState({
+        reactionExists: reactionSnap.exists,
+        currentCount: post.reactionCounts?.like
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('failed-precondition', error.message);
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    if (nextState.liked) {
+      transaction.set(reactionRef, {
+        userId: caller.uid,
+        reactionKey: 'like',
+        createdAt: now,
+        updatedAt: now
+      });
+    } else {
+      transaction.delete(reactionRef);
+    }
+    transaction.update(postRef, {
+      'reactionCounts.like': nextState.count,
+      updatedAt: now
+    });
+    return nextState;
+  });
+});
+
+exports.hideSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to hide this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  if (!postId) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post is required.');
+  }
+  await firestore.doc(`users/${context.auth.uid}/hiddenSocialPosts/${postId}`).set({
+    postId,
+    hiddenAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+  return { hidden: true };
+});
+
+exports.commentOnSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to comment on this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  const text = cleanOpportunityText(typeof data?.text === 'string' ? data.text : '', 1500);
+  if (!postId || !text) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and comment are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const commentRef = firestore.collection(`socialPosts/${postId}/comments`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(commentRef, {
+      text,
+      authorId: caller.uid,
+      authorName: cleanOpportunityText(
+        context.auth.token?.name || caller.user?.displayName || caller.user?.fullName || caller.rawEmail,
+        100
+      ) || 'ALL PLAYS member',
+      authorPhotoUrl: cleanOpportunityText(
+        context.auth.token?.picture || caller.user?.photoUrl || caller.user?.profilePhotoUrl,
+        1000
+      ) || null,
+      hidden: false,
+      createdAt: now,
+      updatedAt: now
+    });
+    transaction.update(postRef, {
+      commentCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now
+    });
+  });
+  return { commented: true, commentId: commentRef.id };
+});
+
+exports.reportSocialPostForCaller = functions.https.onCall(async (data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to report this post.');
+  }
+  const postId = normalizeSocialPostId(data?.postId);
+  const reason = cleanOpportunityText(
+    data?.reason == null ? 'Reported from app' : (typeof data.reason === 'string' ? data.reason : ''),
+    500
+  );
+  if (!postId || !reason) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid post and report reason are required.');
+  }
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
+  const postRef = firestore.doc(`socialPosts/${postId}`);
+  const reportRef = firestore.collection('socialReports').doc();
+  await firestore.runTransaction(async (transaction) => {
+    await requireCallableSocialPostAccess(transaction, postRef, caller);
+    transaction.create(reportRef, {
+      postId,
+      reporterId: caller.uid,
+      reason,
+      status: 'open',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+  return { reported: true, reportId: reportRef.id };
+});
+
+function normalizeParentFeePlayerLinks(user = {}) {
+  const links = new Map();
+  const addLink = (teamValue, playerValue) => {
+    const teamId = normalizeStablePrincipalUid(teamValue);
+    const playerId = normalizeStablePrincipalUid(playerValue);
+    if (!teamId || !playerId) return;
+    links.set(`${teamId}::${playerId}`, { teamId, playerId, playerKey: `${teamId}::${playerId}` });
+  };
+  (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => addLink(link?.teamId, link?.playerId || link?.childId));
+  (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((value) => {
+    const key = String(value || '');
+    const separatorIndex = key.indexOf('::');
+    if (separatorIndex <= 0 || key.indexOf('::', separatorIndex + 2) !== -1) return;
+    addLink(key.slice(0, separatorIndex), key.slice(separatorIndex + 2));
+  });
+  return Array.from(links.values());
+}
+
+function getParentFeeRecipientTeamId(recipient = {}, documentPath = '') {
+  const storedTeamId = normalizeStablePrincipalUid(recipient.teamId);
+  if (storedTeamId) return storedTeamId;
+  const pathParts = String(documentPath || '').split('/');
+  const teamIndex = pathParts.indexOf('teams');
+  return teamIndex >= 0 ? normalizeStablePrincipalUid(pathParts[teamIndex + 1]) : '';
+}
+
+function getParentFeeRecipientPlayerKey(recipient = {}, teamId = '') {
+  const normalizedTeamId = normalizeStablePrincipalUid(teamId);
+  const storedPlayerKey = String(recipient.playerKey || '').trim();
+  const separatorIndex = storedPlayerKey.indexOf('::');
+  if (separatorIndex > 0 && storedPlayerKey.indexOf('::', separatorIndex + 2) === -1) {
+    const storedTeamId = normalizeStablePrincipalUid(storedPlayerKey.slice(0, separatorIndex));
+    const storedPlayerId = normalizeStablePrincipalUid(storedPlayerKey.slice(separatorIndex + 2));
+    if (storedTeamId && storedPlayerId && storedTeamId === normalizedTeamId) {
+      return `${storedTeamId}::${storedPlayerId}`;
+    }
+  }
+  const playerId = normalizeStablePrincipalUid(recipient.playerId || recipient.childId);
+  return normalizedTeamId && playerId ? `${normalizedTeamId}::${playerId}` : '';
+}
+
+exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, context = {}) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to view team fees.');
+  }
+  const uid = normalizeStablePrincipalUid(context.auth.uid);
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'The signed-in account is invalid.');
+  }
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  const user = userSnap.exists ? (userSnap.data() || {}) : {};
+  const playerLinks = normalizeParentFeePlayerLinks(user);
+  const teamIds = new Set([
+    ...playerLinks.map((link) => link.teamId),
+    ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])
+      .map(normalizeStablePrincipalUid)
+      .filter(Boolean)
+  ]);
+  if (playerLinks.length > 60 || teamIds.size > 60) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many linked players to load fees safely.');
+  }
+  const recipientQueryLimit = 100;
+  const maxRecipientQueries = 40;
+  const maxRecipientDocuments = 1000;
+  const playerKeys = new Set(playerLinks.map((link) => link.playerKey));
+  const playerKeyChunks = chunkCallableValues(Array.from(playerKeys), 30);
+  const playerIdsByTeam = new Map();
+  playerLinks.forEach(({ teamId, playerId }) => {
+    if (!playerIdsByTeam.has(teamId)) playerIdsByTeam.set(teamId, []);
+    playerIdsByTeam.get(teamId).push(playerId);
+  });
+  const legacyPlayerChunks = Array.from(playerIdsByTeam.entries()).flatMap(([teamId, playerIds]) => (
+    chunkCallableValues([...new Set(playerIds)], 30).map((playerIdChunk) => ({ teamId, playerIds: playerIdChunk }))
+  ));
+  const queryJobs = [
+    ...['parentUserId', 'accountUserId', 'userId'].map((field) => (queryLimit) => (
+      firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(queryLimit).get()
+    )),
+    ...playerKeyChunks.map((playerKeyChunk) => (queryLimit) => {
+      const operator = playerKeyChunk.length === 1 ? '==' : 'in';
+      const value = playerKeyChunk.length === 1 ? playerKeyChunk[0] : playerKeyChunk;
+      return firestore.collectionGroup('feeRecipients').where('playerKey', operator, value).limit(queryLimit).get();
+    }),
+    ...legacyPlayerChunks.map(({ teamId, playerIds }) => (queryLimit) => {
+      const operator = playerIds.length === 1 ? '==' : 'in';
+      const value = playerIds.length === 1 ? playerIds[0] : playerIds;
+      return firestore.collectionGroup('feeRecipients')
+        .where('teamId', '==', teamId)
+        .where('playerId', operator, value)
+        .limit(queryLimit)
+        .get();
+    })
+  ];
+  if (queryJobs.length > maxRecipientQueries) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Linked fee history requires too many queries to verify safely.');
+  }
+  const queryReadLimits = allocateBoundedQueryReadLimits(
+    queryJobs.length,
+    maxRecipientDocuments,
+    recipientQueryLimit + 1
+  );
+  const querySnapshots = await runWithConcurrencyLimit(
+    queryJobs,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (queryJob, index) => queryJob(queryReadLimits[index])
+  );
+  if (querySnapshots.some((querySnap, index) => (
+    querySnap.docs.length > recipientQueryLimit ||
+    (queryReadLimits[index] <= recipientQueryLimit && querySnap.docs.length >= queryReadLimits[index])
+  ))) {
+    throw new functions.https.HttpsError('resource-exhausted', 'Too many fee recipients to load safely.');
+  }
+  const recipients = new Map();
+  querySnapshots.forEach((querySnap) => querySnap.docs.forEach((docSnap) => {
+    const recipient = docSnap.data() || {};
+    const teamId = getParentFeeRecipientTeamId(recipient, docSnap.ref?.path);
+    if (!teamId) return;
+    const hasDirectAssignment = [recipient.parentUserId, recipient.accountUserId, recipient.userId]
+      .some((value) => normalizeStablePrincipalUid(value) === uid);
+    const hasPlayerAssignment = teamIds.has(teamId) && playerKeys.has(getParentFeeRecipientPlayerKey(recipient, teamId));
+    if (!hasDirectAssignment && !hasPlayerAssignment) return;
+    const pathParts = String(docSnap.ref?.path || '').split('/');
+    const batchIndex = pathParts.indexOf('feeBatches');
+    recipients.set(docSnap.ref.path, sanitizeParentTeamFeeRecipient({
+      id: docSnap.id,
+      ...recipient,
+      teamId,
+      batchId: recipient.batchId || (batchIndex >= 0 ? pathParts[batchIndex + 1] : ''),
+      recipientId: recipient.recipientId || docSnap.id,
+      playerKey: getParentFeeRecipientPlayerKey(recipient, teamId)
+    }));
+  }));
+  return { items: Array.from(recipients.values()) };
+});
+
+exports.listOfficialLinkedTeamIds = functions.https.onCall(listOfficialLinkedTeamIdsHandler);
+exports.deleteStatConfig = functions.https.onCall(statConfigManagementHandlers.deleteStatConfig);
+exports.resetTeamStatConfigs = functions.https.onCall(statConfigManagementHandlers.resetTeamStatConfigs);
 
 exports.getDelegatedTeamContext = functions.https.onCall(delegatedTeamContextHandler);
 

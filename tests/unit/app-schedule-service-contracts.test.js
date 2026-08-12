@@ -77,11 +77,11 @@ const firebaseMocks = vi.hoisted(() => {
         db: {},
         functions: { name: 'functions' },
         httpsCallable: vi.fn((_functions, name) => async () => ({
-            data: {
-                items: name === 'listManagedTeams'
-                    ? await managedTeamMocks.listManagedTeams()
-                    : []
-            }
+            data: name === 'listManagedTeams'
+                ? { items: await managedTeamMocks.listManagedTeams(), isPartial: false }
+                : (name === 'listOfficialLinkedTeamIds'
+                    ? { teamIds: [], isPartial: false }
+                    : {})
         })),
         doc: vi.fn((...parts) => ({
             path: parts.filter((part) => typeof part === 'string').join('/')
@@ -562,6 +562,33 @@ describe('React app schedule service contract integration', () => {
         expect(scheduleServiceSource).toContain(': (shouldVerifyEmptyStaffResult && staffTeamResult.isPartial !== true)');
     });
 
+    it('discovers official teams and native assignments through one authenticated bounded callable', () => {
+        const officialDiscoverySource = getScheduleServiceSlice(
+            'function normalizeOfficialLinkedTeamIdsResponse',
+            'export async function loadOfficialAssignmentsAccess'
+        );
+        const officialAssignmentsSource = getScheduleServiceSlice(
+            'export async function loadOfficialAssignments(user',
+            'export async function respondToOfficialAssignmentItem'
+        );
+
+        expect(legacyScheduleDbSource).toContain("legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds')");
+        expect(officialDiscoverySource).toContain('source.isPartial !== false');
+        expect(officialDiscoverySource).toContain('if (isNativeRuntime())');
+        expect(officialDiscoverySource).toContain('includeAssignments: options.includeAssignments === true');
+        expect(officialDiscoverySource).toContain('requireAssignments: options.includeAssignments === true');
+        expect(officialDiscoverySource).not.toContain("collectionGroup(db, 'officials')");
+        expect(officialDiscoverySource).not.toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain('linkedAssignmentsComplete');
+        expect(officialAssignmentsSource).toContain('includeAssignments: nativeRuntime');
+        expect(officialAssignmentsSource).toContain('requestedTeamId');
+        expect(officialAssignmentsSource).toContain('Promise.allSettled');
+        expect(officialAssignmentsSource).toContain("teamResult.status === 'rejected' || gamesResult.status === 'rejected'");
+        expect(officialAssignmentsSource).toContain('teamResults.some((result) => result.hasAccess && result.isPartial)');
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('respondToOfficiatingAssignment'");
+        expect(scheduleServiceSource).toContain("callNativeFirebaseFunction('claimOpenOfficiatingSlot'");
+    });
+
     it('routes parent schedule event detail reads through typed schedule mappers', () => {
         const importSource = scheduleServiceSource.slice(0, scheduleServiceSource.indexOf('type StaffRsvpReminderContext'));
         const nativeMapperSource = getScheduleServiceSlice('async function nativeGetScheduleEventDocument', 'const nativeDeleteFieldSentinel');
@@ -575,7 +602,7 @@ describe('React app schedule service contract integration', () => {
         expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
         expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
         expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');
-        expect(targetedSource).toContain('loadGameById(teamId, eventId)');
+        expect(targetedSource).toContain('loadGameById(teamId, eventId, sharedGamePath)');
         expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
         expect(targetedSource).toContain('createScheduleEvent({');
         expect(detailSource).toContain('const delegatedTeamContext = delegatedTeamContexts.get(requestedTeamId) || null;');

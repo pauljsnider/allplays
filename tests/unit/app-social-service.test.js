@@ -37,11 +37,29 @@ const athleteProfileMocks = vi.hoisted(() => ({
     buildAthleteProfileShareUrl: vi.fn((origin, profileId) => `${origin}/athlete-profile.html?profileId=${encodeURIComponent(profileId)}`)
 }));
 
+const profileMocks = vi.hoisted(() => ({
+    loadProfileDocument: vi.fn()
+}));
+const nativeCallableMocks = vi.hoisted(() => ({ callNativeFirebaseFunction: vi.fn() }));
+const nativeRuntimeMocks = vi.hoisted(() => ({ isNativeRuntime: vi.fn() }));
+const nativeAuthMocks = vi.hoisted(() => ({
+    firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
+    getNativeAuthIdToken: vi.fn()
+}));
+const appCheckMocks = vi.hoisted(() => ({
+    getPrimaryAppCheckHeaders: vi.fn(async (headers) => ({ ...headers, 'X-Firebase-AppCheck': 'debug-app-check' }))
+}));
+
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
 vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
 vi.mock(import('../../apps/app/src/lib/publicTeamsService.ts'), () => publicTeamMocks);
 vi.mock(import('../../apps/app/src/lib/adapters/legacyPlayerProfile.ts'), () => athleteProfileMocks);
+vi.mock(import('../../apps/app/src/lib/profileService.ts'), () => profileMocks);
+vi.mock(import('../../apps/app/src/lib/nativeCallable.ts'), () => nativeCallableMocks);
+vi.mock(import('../../apps/app/src/lib/nativeRuntime.ts'), () => nativeRuntimeMocks);
+vi.mock(import('../../apps/app/src/lib/authService.ts'), () => nativeAuthMocks);
+vi.mock(import('../../apps/app/src/lib/adapters/legacyFirebaseAppCheck.ts'), () => appCheckMocks);
 
 const user = {
     uid: 'user-1',
@@ -59,6 +77,21 @@ function snapshot(docs) {
     };
 }
 
+function nativeJsonResponse(data, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => data
+    };
+}
+
+function nativeFirestoreDocument(path, fields) {
+    return {
+        name: `projects/demo-project/databases/(default)/documents/${path}`,
+        fields
+    };
+}
+
 function deferred() {
     let resolve;
     let reject;
@@ -70,7 +103,10 @@ function deferred() {
 }
 
 beforeEach(() => {
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(false);
+    nativeAuthMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
     Object.defineProperty(globalThis, 'crypto', {
         value: {
             subtle: {
@@ -100,6 +136,11 @@ beforeEach(() => {
         path: 'chat-attachments/team-1/social/upload.png'
     });
     publicTeamMocks.getPublicTeamDetail.mockResolvedValue(null);
+    profileMocks.loadProfileDocument.mockResolvedValue({
+        displayName: 'Pat Parent',
+        photoUrl: 'https://img.example.test/user.png',
+        discoveryTeamIds: []
+    });
 });
 
 describe('React app social service', () => {
@@ -378,6 +419,105 @@ describe('React app social service', () => {
         expect(firebaseMocks.where).toHaveBeenCalledWith('requesterId', '==', 'user-1');
         expect(firebaseMocks.where).toHaveBeenCalledWith('recipientId', '==', 'user-1');
         expect(firebaseMocks.where).not.toHaveBeenCalledWith('memberIds', 'array-contains', 'user-1');
+    });
+
+    it('surfaces a failed native team-post query without treating the known feed as complete', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        const fetchMock = vi.fn(async (url, request) => {
+            const requestUrl = String(url);
+            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
+                return nativeJsonResponse({ documents: [] });
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                const body = JSON.parse(String(request?.body || '{}'));
+                const filters = body?.structuredQuery?.where?.compositeFilter?.filters || [];
+                const hasTeamFilter = filters.some((filter) => filter?.fieldFilter?.field?.fieldPath === 'teamId');
+                if (hasTeamFilter) {
+                    return nativeJsonResponse({ error: { message: 'Team feed unavailable.' } }, 503);
+                }
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/known-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    authorName: { stringValue: 'Jamie Friend' },
+                    title: { stringValue: 'Known update' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/known-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Not found.' } }, 404);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [{ teamId: 'team-1', teamName: 'Bears' }], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({ id: 'known-post', viewerHasLiked: false })]);
+        expect(model.feedError).toContain('Some feed details could not load');
+    });
+
+    it('marks team-post discovery partial when the bounded team fan-out is truncated', async () => {
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+        const teams = Array.from({ length: 9 }, (_, index) => ({
+            teamId: `team-${index + 1}`,
+            teamName: `Team ${index + 1}`
+        }));
+
+        const model = await loadSocialHome(user, {
+            players: [], teams, upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: teams.length, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([]);
+        expect(model.feedError).toContain('Some feed details could not load');
+        const queriedTeamIds = firebaseMocks.getDocs.mock.calls
+            .map(([queryRef]) => queryRef)
+            .filter((queryRef) => queryRef.collectionRef?.path?.join('/') === 'socialPosts')
+            .flatMap((queryRef) => queryRef.clauses
+                .filter((clause) => clause.field === 'teamId')
+                .map((clause) => clause.value));
+        expect(queriedTeamIds).toEqual(teams.slice(0, 8).map((team) => team.teamId));
+        expect(queriedTeamIds).not.toContain('team-9');
+    });
+
+    it('keeps failed native reaction reads unknown so Like cannot invert an existing reaction', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        vi.stubGlobal('fetch', vi.fn(async (url) => {
+            const requestUrl = String(url);
+            if (requestUrl.includes('/users/user-1/hiddenSocialPosts')) {
+                return nativeJsonResponse({ documents: [] });
+            }
+            if (requestUrl.endsWith('/documents:runQuery')) {
+                return nativeJsonResponse([{ document: nativeFirestoreDocument('socialPosts/unknown-reaction-post', {
+                    authorId: { stringValue: 'friend-1' },
+                    title: { stringValue: 'Reaction state pending' },
+                    hidden: { booleanValue: false },
+                    createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' },
+                    reactionCounts: { mapValue: { fields: { like: { integerValue: '2' } } } }
+                }) }]);
+            }
+            if (requestUrl.includes('/socialPosts/unknown-reaction-post/reactions/user-1')) {
+                return nativeJsonResponse({ error: { message: 'Reaction read unavailable.' } }, 503);
+            }
+            throw new Error(`Unexpected native request: ${requestUrl}`);
+        }));
+        const { loadSocialHome } = await import('../../apps/app/src/lib/socialService.ts');
+
+        const model = await loadSocialHome(user, {
+            players: [], teams: [], upcomingEvents: [], actionItems: [], fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
+
+        expect(model.feedItems).toEqual([expect.objectContaining({
+            id: 'unknown-reaction-post',
+            viewerHasLiked: undefined,
+            viewerReactionError: true
+        })]);
+        expect(model.feedError).toContain('Like state');
     });
 
     it('merges query results newest-first and applies viewer-local hide and reaction state', async () => {
@@ -718,15 +858,11 @@ describe('React app social service', () => {
 
     it('allows a user to load their own profile without a friendship lookup', async () => {
         const { loadFriendProfile } = await import('../../apps/app/src/lib/socialService.ts');
-        firebaseMocks.getDoc.mockImplementation(async (ref) => ({
-            id: ref.path[1],
-            exists: () => ref.path[0] === 'publicUserProfiles',
-            data: () => ({ displayName: 'Pat Parent' })
-        }));
 
         const profile = await loadFriendProfile(user, 'user-1');
 
         expect(profile).toMatchObject({ userId: 'user-1', name: 'Pat Parent', isSelf: true });
+        expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(firebaseMocks.doc).not.toHaveBeenCalledWith(firebaseMocks.db, 'friendships', expect.anything());
     });
 
@@ -846,6 +982,46 @@ describe('React app social service', () => {
         expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();
     });
 
+    it('uses the native-authenticated callable to hide posts in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ hidden: true });
+        const { hideSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await hideSocialPost('post-1', user);
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'hideSocialPostForCaller',
+            { postId: 'post-1' },
+            { errorLabel: 'Hide social post' }
+        );
+        expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('uses native-authenticated callables for comments and reports in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction
+            .mockResolvedValueOnce({ commented: true, commentId: 'comment-1' })
+            .mockResolvedValueOnce({ reported: true, reportId: 'report-1' });
+        const { commentOnSocialPost, reportSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await commentOnSocialPost('post-1', user, '  Great update!  ');
+        await reportSocialPost('post-1', user, 'Needs review');
+
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            1,
+            'commentOnSocialPostForCaller',
+            { postId: 'post-1', text: 'Great update!' },
+            { errorLabel: 'Social comment' }
+        );
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenNthCalledWith(
+            2,
+            'reportSocialPostForCaller',
+            { postId: 'post-1', reason: 'Needs review' },
+            { errorLabel: 'Social report' }
+        );
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
+    });
+
     it('atomically toggles the viewer reaction and parent like count', async () => {
         const transaction = {
             get: vi.fn()
@@ -869,6 +1045,20 @@ describe('React app social service', () => {
             expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
             expect.objectContaining({ 'reactionCounts.like': 3 })
         );
+    });
+
+    it('uses the native-authenticated callable to toggle reactions in Capacitor', async () => {
+        nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+        nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ liked: true, count: 3 });
+        const { reactToSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await expect(reactToSocialPost('post-1', user)).resolves.toEqual({ liked: true, count: 3 });
+        expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+            'toggleSocialPostReaction',
+            { postId: 'post-1', reactionKey: 'like' },
+            { errorLabel: 'Social reaction' }
+        );
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
     });
 
     it('atomically removes an existing viewer reaction', async () => {

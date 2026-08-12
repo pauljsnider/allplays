@@ -135,6 +135,9 @@ describe('Capacitor native config', () => {
             backgroundColor: '#ffffff',
             overlaysWebView: false
         });
+        expect(config.plugins.SystemBars).toMatchObject({
+            insetsHandling: 'disable'
+        });
         expect(config.plugins.Keyboard).toMatchObject({
             resize: 'native',
             resizeOnFullScreen: true

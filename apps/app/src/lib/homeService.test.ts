@@ -19,7 +19,12 @@ const feesMocks = vi.hoisted(() => ({
 
 vi.mock('./chatService', () => chatServiceMocks);
 vi.mock('./scheduleService', () => scheduleServiceMocks);
-vi.mock('./adapters/legacyHomeFees', () => feesMocks);
+vi.mock('./adapters/legacyHomeFees', () => ({
+    normalizeParentFeeRecord: feesMocks.normalizeParentFeeRecord
+}));
+vi.mock('./parentFeeRecipientsService', () => ({
+    listParentTeamFeeRecipientsForApp: feesMocks.listParentTeamFeeRecipients
+}));
 vi.mock('./uxTiming', () => ({
     startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
@@ -27,7 +32,12 @@ vi.mock('./logger', () => ({
     createLogger: vi.fn(() => ({ warn: vi.fn() }))
 }));
 
-import { loadParentHomeSummary, loadParentScheduleSummary, loadParentTeamsSummaryBootstrap } from './homeService';
+import {
+    loadParentHomeSummary,
+    loadParentHomeWithSecondaryData,
+    loadParentScheduleSummary,
+    loadParentTeamsSummaryBootstrap
+} from './homeService';
 
 const user = {
     uid: 'parent-1',
@@ -338,5 +348,123 @@ describe('homeService Teams bootstrap reuse', () => {
         expect(complete.isPartial).toBe(false);
         expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         expect(window.localStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
+    });
+
+    it.each([
+        ['schedule hydration', () => scheduleServiceMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(new Error('schedule unavailable'))],
+        ['chat inbox', () => chatServiceMocks.loadChatInbox.mockRejectedValueOnce(new Error('chat unavailable'))],
+        ['fees', () => feesMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('fees unavailable'))]
+    ])('reports a retryable partial result when %s fails and does not cache its empty fallback', async (_slice, failSlice) => {
+        const schedule = {
+            children: [{
+                teamId: 'team-1',
+                teamName: 'Fast Falcons',
+                playerId: 'player-1',
+                playerName: 'Avery Ace'
+            }],
+            events: [{
+                id: 'event-1',
+                teamId: 'team-1',
+                title: 'Practice',
+                date: new Date('2026-08-12T18:00:00.000Z')
+            }]
+        } as any;
+        failSlice();
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true })).rejects.toThrow('unavailable');
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule })).resolves.toMatchObject({
+            upcomingEvents: [expect.objectContaining({ id: 'event-1', teamId: 'team-1' })]
+        });
+    });
+
+    it('streams valid Home slices but rejects with retryable state when one secondary slice is denied', async () => {
+        const schedule = {
+            children: [{
+                teamId: 'team-1',
+                teamName: 'Fast Falcons',
+                playerId: 'player-1',
+                playerName: 'Avery Ace'
+            }],
+            events: [{
+                id: 'event-1',
+                teamId: 'team-1',
+                title: 'Practice',
+                date: new Date('2026-08-12T18:00:00.000Z')
+            }]
+        } as any;
+        const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
+            code: 'permission-denied'
+        });
+        scheduleServiceMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(permissionError);
+        chatServiceMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [{ id: 'team-1', name: 'Fast Falcons', role: 'Parent', unreadCount: 0 }]
+        });
+
+        const partials: any[] = [];
+        await expect(loadParentHomeWithSecondaryData(user, {
+            schedule,
+            force: true,
+            onPartial: (partial) => partials.push(partial)
+        })).rejects.toThrow('Missing or insufficient permissions.');
+
+        expect(partials.some((partial) => partial.upcomingEvents.some((event: any) => event.id === 'event-1'))).toBe(true);
+        expect(partials.some((partial) => partial.teams.some((team: any) => team.teamId === 'team-1'))).toBe(true);
+    });
+
+    it('does not cache a partial chat inbox as authoritative Home absence', async () => {
+        const schedule = { children: [], events: [] } as any;
+        chatServiceMocks.loadChatInbox
+            .mockResolvedValueOnce({ teams: [{ id: 'team-1', name: 'Vipers', role: 'Coach', unreadCount: 0 }], isPartial: true })
+            .mockResolvedValueOnce({
+                teams: [
+                    { id: 'team-1', name: 'Vipers', role: 'Coach', unreadCount: 0 },
+                    { id: 'team-2', name: 'Current', role: 'Coach', unreadCount: 0 }
+                ],
+                isPartial: false
+            });
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true }))
+            .rejects.toThrow('Home chat access is incomplete');
+        const complete = await loadParentHomeWithSecondaryData(user, { schedule });
+
+        expect(complete.teams.map((team) => team.teamId)).toEqual(['team-2', 'team-1']);
+        expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+    });
+
+    it('still surfaces a retryable error when every Home secondary slice fails', async () => {
+        const schedule = { children: [], events: [] } as any;
+        scheduleServiceMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(new Error('schedule unavailable'));
+        chatServiceMocks.loadChatInbox.mockRejectedValueOnce(new Error('chat unavailable'));
+        feesMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('fees unavailable'));
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true }))
+            .rejects.toThrow('schedule unavailable');
+    });
+
+    it('rejects a partial chat inbox instead of caching it as complete Home data', async () => {
+        const schedule = { children: [], events: [] } as any;
+        chatServiceMocks.loadChatInbox
+            .mockResolvedValueOnce({
+                teams: [{ id: 'team-1', name: 'Known Team', unreadCount: 2 }],
+                isPartial: true
+            })
+            .mockResolvedValueOnce({
+                teams: [
+                    { id: 'team-1', name: 'Known Team', unreadCount: 2 },
+                    { id: 'team-2', name: 'Recovered Team', unreadCount: 1 }
+                ],
+                isPartial: false
+            });
+
+        await expect(loadParentHomeWithSecondaryData(user, { schedule, force: true }))
+            .rejects.toThrow('Home chat access is incomplete');
+        const recovered = await loadParentHomeWithSecondaryData(user, { schedule });
+
+        expect(recovered.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1' }),
+            expect.objectContaining({ teamId: 'team-2' })
+        ]));
+        expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledTimes(2);
     });
 });

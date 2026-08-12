@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
     LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    sanitizeParentTeamFeeRecipient,
     hasLegacyReadableTeamFeeCheckoutState,
     buildLegacyReadableTeamFeeCheckoutAttempt,
     normalizeTeamFeeCheckoutInput,
@@ -34,6 +35,19 @@ const {
 } = require('../../functions/team-fees-core.cjs');
 
 describe('team fee checkout function helpers', () => {
+    it('recursively removes private provider state from parent fee responses', () => {
+        expect(sanitizeParentTeamFeeRecipient({
+            amountDueCents: 2500,
+            checkoutUrl: 'https://checkout.stripe.com/private',
+            receiptMetadata: { amountPaidCents: 500, paymentIntentId: 'pi_private' },
+            ledgerEntries: [{ amountCents: 500, providerSessionId: 'cs_private' }]
+        })).toEqual({
+            amountDueCents: 2500,
+            receiptMetadata: { amountPaidCents: 500 },
+            ledgerEntries: [{ amountCents: 500 }]
+        });
+    });
+
     it('moves legacy readable checkout state while preserving an existing private attempt', () => {
         const recipient = {
             checkoutUrl: 'https://checkout.stripe.com/c/pay/legacy',

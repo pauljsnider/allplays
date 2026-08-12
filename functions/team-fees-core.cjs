@@ -62,6 +62,23 @@ const LEGACY_READABLE_TEAM_FEE_LEDGER_PRIVATE_FIELDS = new Set([
     ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS
 ]);
 
+const PARENT_TEAM_FEE_PRIVATE_FIELDS = new Set([
+    ...LEGACY_READABLE_TEAM_FEE_CHECKOUT_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
+    ...LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
+    'reservationId',
+    'checkoutCreationReservationId',
+    'checkoutCreationRequest',
+    'providerRequest',
+    'providerResponse',
+    'providerSessionId',
+    'payerUid',
+    'customerData',
+    'authorizationToken',
+    'publicCheckoutCapability',
+    'publicCheckoutCapabilityHash'
+]);
+
 function hasMeaningfulValue(value) {
     return value !== undefined && value !== null && value !== '';
 }
@@ -108,6 +125,17 @@ function extractLegacyReadableTeamFeeLedgerPrivateState(value) {
             ? [[key, nestedPrivateState]]
             : [];
     }));
+}
+
+function sanitizeParentTeamFeeRecipient(value) {
+    if (Array.isArray(value)) return value.map(sanitizeParentTeamFeeRecipient);
+    if (!value || typeof value !== 'object') return value;
+    if (value instanceof Date || typeof value.toDate === 'function') return value;
+    return Object.fromEntries(Object.entries(value).flatMap(([key, childValue]) => (
+        PARENT_TEAM_FEE_PRIVATE_FIELDS.has(key)
+            ? []
+            : [[key, sanitizeParentTeamFeeRecipient(childValue)]]
+    )));
 }
 
 function hasLegacyReadableTeamFeeCheckoutState(recipient = {}) {
@@ -731,11 +759,13 @@ module.exports = {
     LEGACY_READABLE_TEAM_FEE_BILLING_FIELDS,
     LEGACY_READABLE_TEAM_FEE_RECEIPT_FIELDS,
     LEGACY_READABLE_TEAM_FEE_LEDGER_FIELDS,
+    PARENT_TEAM_FEE_PRIVATE_FIELDS,
     isLegacyReadableTeamFeeLedgerPrivateField,
     hasLegacyReadableTeamFeeCheckoutState,
     hasLegacyReadableTeamFeeBillingState,
     buildLegacyReadableTeamFeeCheckoutAttempt,
     buildLegacyReadableTeamFeeAdminBilling,
+    sanitizeParentTeamFeeRecipient,
     normalizeTeamFeeCheckoutInput,
     normalizeTeamFeeRefundInput,
     getTeamFeePaidCents,

@@ -32,6 +32,9 @@
       "backgroundColor": "#ffffff",
       "overlaysWebView": false
     },
+    "SystemBars": {
+      "insetsHandling": "disable"
+    },
     "Keyboard": {
       "resize": "native",
       "resizeOnFullScreen": true

@@ -45,7 +45,11 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [inquiries, setInquiries] = useState<OpportunityInquiry[]>([]);
   const [inquiryError, setInquiryError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [inboxStatus, setInboxStatus] = useState<{ error: string | null; isPartial: boolean }>({
+    error: null,
+    isPartial: false
+  });
+  const { error, isPartial: inboxPartial } = inboxStatus;
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
@@ -93,8 +97,9 @@ export function Messages({ auth }: { auth: AuthState }) {
     });
     inboxRequestIdRef.current = requestId;
     setLoading(true);
-    setError(null);
+    setInboxStatus((current) => ({ ...current, error: null }));
     setInquiryError(null);
+    let previewReadFailed = false;
     try {
       const [result, inquiryPage] = await Promise.all([
         loadChatInbox(auth.user, {
@@ -104,6 +109,11 @@ export function Messages({ auth }: { auth: AuthState }) {
             previewUpdates.set(previewUpdate.teamId, previewUpdate);
             pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);
             schedulePreviewFlush();
+          },
+          onPreviewError: () => {
+            previewReadFailed = true;
+            if (inboxRequestIdRef.current !== requestId) return;
+            setInboxStatus((current) => ({ ...current, isPartial: true }));
           }
         }),
         listOpportunityInquiries().catch((loadError: any) => {
@@ -119,6 +129,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
       cancelPreviewFlush();
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
+      setInboxStatus({ error: null, isPartial: result.isPartial === true || previewReadFailed });
       setInquiries(inquiryPage.items);
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       completeParentCoreWorkflowTimer('messages', {
@@ -142,7 +153,7 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
       cancelPreviewFlush();
       const message = loadError?.message || 'Unable to load messages.';
-      setError(message);
+      setInboxStatus({ error: message, isPartial: false });
       setTeams([]);
       setInquiries([]);
       timer.end({
@@ -164,7 +175,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (!shouldLoadInbox) {
       setLoading(false);
-      setError(null);
+      setInboxStatus({ error: null, isPartial: false });
       setTeams([]);
       const directThreadTeamId = inboxLoadRouteKey;
       if (auth.user && shouldRecordDirectThreadMount(directThreadMountRecordedTeamIdRef.current, directThreadTeamId)) {
@@ -255,7 +266,8 @@ export function Messages({ auth }: { auth: AuthState }) {
   if (isDesktopWeb) {
     return (
       <div className="messages-page messages-page-web">
-        <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
+        <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} unreadCountsIncomplete={inboxPartial} onRefresh={refreshInbox} />
+        {inboxPartial ? <PartialInboxNotice /> : null}
         <section className="messages-two-pane mt-4">
           <aside className="messages-list-pane">
             <InboxSearch query={query} onChange={setQuery} />
@@ -272,6 +284,7 @@ export function Messages({ auth }: { auth: AuthState }) {
                 onRetry={refreshInbox}
                 onSelect={setSelectedDesktopTeamId}
                 compact
+                unreadCountsIncomplete={inboxPartial}
               />
             </div>
           </aside>
@@ -330,7 +343,8 @@ export function Messages({ auth }: { auth: AuthState }) {
   return (
     <PullToRefresh onRefresh={() => refreshInbox()} disabled={!auth.user?.uid}>
     <div className="messages-page space-y-4">
-      <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} onRefresh={refreshInbox} />
+      <MessagesHeader teams={teams} inquiries={inquiries} loading={loading} unreadCountsIncomplete={inboxPartial} onRefresh={refreshInbox} />
+      {inboxPartial ? <PartialInboxNotice /> : null}
       <InboxSearch query={query} onChange={setQuery} />
       <OpportunityInboxList inquiries={filteredInquiries} activeInquiryId="" error={inquiryError} />
       <InboxList
@@ -342,13 +356,22 @@ export function Messages({ auth }: { auth: AuthState }) {
         totalTeamsCount={teams.length}
         onClearSearch={() => setQuery('')}
         onRetry={refreshInbox}
+        unreadCountsIncomplete={inboxPartial}
       />
     </div>
     </PullToRefresh>
   );
 }
 
-function MessagesHeader({ teams, inquiries, loading, onRefresh }: { teams: ChatTeam[]; inquiries: OpportunityInquiry[]; loading: boolean; onRefresh: () => void }) {
+function PartialInboxNotice() {
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800" role="status">
+      Showing verified team chats. Additional linked teams may appear after the access service refreshes. Message previews and unread counts may be incomplete until then.
+    </div>
+  );
+}
+
+function MessagesHeader({ teams, inquiries, loading, unreadCountsIncomplete, onRefresh }: { teams: ChatTeam[]; inquiries: OpportunityInquiry[]; loading: boolean; unreadCountsIncomplete: boolean; onRefresh: () => void }) {
   const unread = teams.reduce((total, team) => total + team.unreadCount, 0);
   const staffTeams = teams.filter((team) => team.canModerate).length;
 
@@ -359,7 +382,7 @@ function MessagesHeader({ teams, inquiries, loading, onRefresh }: { teams: ChatT
           <div className="app-label">Messages</div>
           <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Conversations</h1>
           <div className="mt-1 text-xs font-bold text-gray-500 sm:text-sm">
-            {teams.length} team chat{teams.length === 1 ? '' : 's'} · {inquiries.length} opportunit{inquiries.length === 1 ? 'y' : 'ies'} · {unread} unread · {staffTeams} staff
+            {teams.length} team chat{teams.length === 1 ? '' : 's'} · {inquiries.length} opportunit{inquiries.length === 1 ? 'y' : 'ies'} · {unreadCountsIncomplete ? 'unread counts unavailable' : `${unread} unread`} · {staffTeams} staff
           </div>
         </div>
         <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" onClick={onRefresh} aria-label="Refresh messages">
@@ -439,7 +462,8 @@ function InboxList({
   onClearSearch,
   onRetry,
   onSelect,
-  compact = false
+  compact = false,
+  unreadCountsIncomplete = false
 }: {
   teams: ChatTeam[];
   loading: boolean;
@@ -451,6 +475,7 @@ function InboxList({
   onRetry: () => void;
   onSelect?: (teamId: string) => void;
   compact?: boolean;
+  unreadCountsIncomplete?: boolean;
 }) {
   const trimmedQuery = searchQuery.trim();
   const listRef = useRef<HTMLElement | null>(null);
@@ -638,7 +663,7 @@ function InboxList({
     return (
       <section className={compact ? 'space-y-2' : 'space-y-3'}>
         {teams.map((team) => (
-          <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} />
+          <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} unreadCountsIncomplete={unreadCountsIncomplete} />
         ))}
       </section>
     );
@@ -669,6 +694,7 @@ function InboxList({
             onSelect={onSelect}
             inboxIndex={teamIndex}
             managedKeyboard={compact}
+            unreadCountsIncomplete={unreadCountsIncomplete}
             style={{
               position: 'absolute',
               top: teamIndex * INBOX_ROW_HEIGHT,
@@ -681,7 +707,7 @@ function InboxList({
   );
 }
 
-function InboxRow({ team, active, compact, onSelect, inboxIndex, managedKeyboard = false, style }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void; inboxIndex?: number; managedKeyboard?: boolean; style?: CSSProperties }) {
+function InboxRow({ team, active, compact, onSelect, inboxIndex, managedKeyboard = false, unreadCountsIncomplete = false, style }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void; inboxIndex?: number; managedKeyboard?: boolean; unreadCountsIncomplete?: boolean; style?: CSSProperties }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
   const route = buildMessagesRoute(team.id, team.preferredConversationId);
@@ -712,7 +738,7 @@ function InboxRow({ team, active, compact, onSelect, inboxIndex, managedKeyboard
           <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-600 sm:text-sm">{preview}</div>
         </div>
       </div>
-      {team.unreadCount > 0 ? (
+      {!unreadCountsIncomplete && team.unreadCount > 0 ? (
         <span className="flex h-6 min-w-6 flex-none items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white">
           {team.unreadCount > 99 ? '99+' : team.unreadCount}
         </span>

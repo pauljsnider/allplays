@@ -23,6 +23,11 @@ describe('public opportunity callable wiring', () => {
       'listMyPublicOpportunities',
       'listManagedPublicOpportunityTeams',
       'listManagedTeams',
+      'listAuthorizedChatConversations',
+      'listParentTeamFeeRecipients',
+      'listOfficialLinkedTeamIds',
+      'deleteStatConfig',
+      'resetTeamStatConfigs',
       'revokeTeamAdminAccess',
       'sendAuthorizedDirectMessage',
       'getPublicTeamProfile',
@@ -217,6 +222,8 @@ describe('public opportunity callable wiring', () => {
     expect(resolverSource).toContain('teamsWithUnresolvedInviteEvidence.add(teamId)');
     expect(resolverSource).toContain('!teamsWithUnresolvedInviteEvidence.has(teamSnap.id)');
     expect(listManagedTeamsSource).toContain('const canManage = hasOpportunityTeamAdminAccess(caller, team);');
+    expect(listManagedTeamsSource).toContain('canProjectChatConversation({');
+    expect(listManagedTeamsSource).toContain('hasTeamChatAccess: hasCallableChatTeamAccess(caller, teamSnap.id, team)');
     expect(listManagedTeamsSource).toContain('? serializeManagedTeamDocument(teamSnap.id, team)');
     expect(listManagedTeamsSource).toContain(': serializeStaffTeamProfile(teamSnap.id, team)');
   });

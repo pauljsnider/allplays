@@ -638,6 +638,25 @@ describe('ScheduleEventDetail loading states', () => {
     expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves an opaque shared-game path when the final detail route reloads', () => {
+    const sharedGamePath = `organizations/${'o'.repeat(90)}/sharedGames/${'g'.repeat(90)}`;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={[`/schedule/team-1/sharedh_bounded-route-id?sharedGamePath=${encodeURIComponent(sharedGamePath)}`]}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(auth.user, {
+      teamId: 'team-1',
+      eventId: 'sharedh_bounded-route-id',
+      sharedGamePath
+    });
+  });
+
   it('reuses the game deep-link detail load without a destination skeleton', async () => {
     const handedOffEvent = buildEvent({
       isTeamStaff: false,

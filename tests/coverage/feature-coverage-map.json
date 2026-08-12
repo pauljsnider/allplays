@@ -243,6 +243,8 @@
             ],
             "cloudFunctions": [
                 "cleanupPublicUserProfileOnAuthDelete",
+                "commentOnSocialPostForCaller",
+                "hideSocialPostForCaller",
                 "listPublicTeams",
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
@@ -250,19 +252,23 @@
                 "queueInviteEmail",
                 "queueParentInviteEmail",
                 "reconcileLegacyTeamOwnership",
+                "reportSocialPostForCaller",
                 "sweepIneligiblePublicUserProfiles",
                 "syncApprovedParentMembershipRequestUserLink",
                 "syncLegacyTeamOwnershipOnAuthCreate",
                 "syncPublicUserProfileOnUserWrite",
                 "syncPublicUserProfileProjection",
                 "syncPublicUserProfilesOnTeamWrite",
-                "syncTeamOwnerAccessOnCreate"
+                "syncTeamOwnerAccessOnCreate",
+                "toggleSocialPostReaction"
             ],
             "unitTests": [
+                "functions/test/public-opportunities-callables.test.cjs",
                 "tests/unit/app-friend-profile.test.jsx",
                 "tests/unit/app-home-logic.test.js",
                 "tests/unit/app-home-service.test.js",
                 "tests/unit/app-player-service.test.js",
+                "tests/unit/app-social-service.test.js",
                 "tests/unit/app-team-detail-service.test.js",
                 "tests/unit/athlete-profile-utils.test.js",
                 "tests/unit/discover-public-teams-search-pagination.test.js",
@@ -271,6 +277,7 @@
                 "tests/unit/edit-team-registration-sync.test.js",
                 "tests/unit/public-user-profile-backfill.test.js",
                 "tests/unit/public-user-profile-sync.test.js",
+                "tests/unit/social-post-mutations-core.test.js",
                 "tests/unit/team-owner-access-trigger.test.js",
                 "tests/unit/teams-public-visibility.test.js"
             ],
@@ -439,6 +446,7 @@
                 "createStripeTeamFeeCheckout",
                 "createStripeTeamPassCheckout",
                 "getPublicTeamPassStatus",
+                "listParentTeamFeeRecipients",
                 "notifyFeeAssigned",
                 "notifyFeeMarkedPaid",
                 "refundStripeTeamFeePayment",
@@ -447,7 +455,11 @@
             ],
             "unitTests": [
                 "functions/test/team-fee-checkout-callable.test.cjs",
+                "functions/test/public-opportunities-callables.test.cjs",
+                "apps/app/src/lib/parentFeeRecipientsService.test.ts",
                 "tests/unit/app-team-fees-service.test.ts",
+                "apps/app/src/lib/nativeCallable.test.ts",
+                "apps/app/src/lib/parentFeesService.test.ts",
                 "tests/unit/db-team-fee-recipient-list.test.js",
                 "tests/unit/db-team-fee-recipient-updates.test.js",
                 "tests/unit/fee-due-reminders-source.test.js",
@@ -489,6 +501,7 @@
             ],
             "cloudFunctions": [
                 "checkAcceptedFriendMessageAccess",
+                "listAuthorizedChatConversations",
                 "markAllNotificationInboxRead",
                 "markNotificationInboxItemRead",
                 "notifyConversationChatMessageCreated",
@@ -515,6 +528,7 @@
                 "tests/unit/app-messages-accessibility.test.tsx",
                 "tests/unit/app-notification-inbox-review.test.tsx",
                 "tests/unit/chat-notification-delivery-contract.test.js",
+                "tests/unit/chat-conversation-access-core.test.js",
                 "tests/unit/friend-message-access-core.test.js"
             ],
             "integrationTests": [
@@ -613,9 +627,12 @@
                 "apps/app/src/pages/StandardTracker.tsx"
             ],
             "cloudFunctions": [
+                "deleteStatConfig",
+                "resetTeamStatConfigs",
                 "notifyLiveEventCreated"
             ],
             "unitTests": [
+                "functions/test/stat-config-management-core.test.cjs",
                 "tests/unit/app-baseball-scorekeeping-service.test.ts",
                 "tests/unit/app-game-report-service.test.js",
                 "tests/unit/app-live-game-announcer.test.js",
@@ -745,10 +762,13 @@
             ],
             "cloudFunctions": [
                 "claimOpenOfficiatingSlot",
+                "respondToOfficiatingAssignment",
+                "listOfficialLinkedTeamIds",
                 "notifyOfficiatingNotificationCreated",
                 "notifyOpenOfficiatingSlots"
             ],
             "unitTests": [
+                "functions/test/official-team-discovery-core.test.cjs",
                 "functions/test/officiating-self-assignment-core.test.cjs",
                 "tests/unit/admin-officials-directory.test.js",
                 "tests/unit/app-officials.test.tsx",

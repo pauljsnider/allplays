@@ -68,6 +68,12 @@ const friendMessageMocks = vi.hoisted(() => ({
 const nativeStorageMocks = vi.hoisted(() => ({
   deleteNativePrimaryStorageFile: vi.fn()
 }));
+const profileServiceMocks = vi.hoisted(() => ({
+  loadManagedTeamsFromNativeCallable: vi.fn()
+}));
+const nativeCallableMocks = vi.hoisted(() => ({
+  callNativeFirebaseFunction: vi.fn()
+}));
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -100,6 +106,8 @@ vi.mock('./uxTiming', () => ({
 
 vi.mock('./friendMessageService', () => friendMessageMocks);
 vi.mock('./nativeStorageUpload', () => nativeStorageMocks);
+vi.mock('./profileService', () => profileServiceMocks);
+vi.mock('./nativeCallable', () => nativeCallableMocks);
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -171,6 +179,8 @@ beforeEach(() => {
   }));
   friendMessageMocks.canMessageAcceptedFriend.mockResolvedValue(true);
   friendMessageMocks.sendAuthorizedDirectMessage.mockResolvedValue({ id: 'direct-message-1' });
+  profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  nativeCallableMocks.callNativeFirebaseFunction.mockRejectedValue(new Error('Native callable is unavailable.'));
   vi.stubGlobal('crypto', { randomUUID: () => '11111111-1111-1111-1111-111111111111' });
 });
 
@@ -410,6 +420,616 @@ describe('chat Firestore mappers', () => {
       updatedAt: new Date('2026-06-19T18:30:00.000Z'),
       lastMessageAt: null
     });
+  });
+});
+
+describe('native chat team discovery fallback', () => {
+  function jsonResponse(payload: unknown, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: vi.fn().mockResolvedValue(payload)
+    };
+  }
+
+  function firestoreDocument(path: string, fields: Record<string, unknown>) {
+    return {
+      name: `projects/demo-allplays/databases/(default)/documents/${path}`,
+      fields
+    };
+  }
+
+  function installNativeTeamFetch({ includeTeams }: { includeTeams: boolean }) {
+    const fetchMock = vi.fn(async (url: string, request: RequestInit = {}) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          parentOf: {
+            arrayValue: {
+              values: includeTeams ? [{
+                mapValue: {
+                  fields: { teamId: { stringValue: 'team-parent' } }
+                }
+              }] : []
+            }
+          }
+        }));
+      }
+      if (String(url).endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(request.body || '{}'));
+        const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
+        if (fieldPath === 'adminEmails') {
+          return jsonResponse({ error: { message: 'Missing or insufficient permissions.' } }, 403);
+        }
+        return jsonResponse(includeTeams ? [{
+          document: firestoreDocument('teams/team-owned', {
+            name: { stringValue: 'Vipers' },
+            ownerId: { stringValue: 'user-1' },
+            active: { booleanValue: true }
+          })
+        }] : []);
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: '0' }
+            }
+          }
+        }]);
+      }
+      if (String(url).includes('/documents/teams/team-parent')) {
+        return jsonResponse(firestoreDocument('teams/team-parent', {
+          name: { stringValue: 'Jr KC Current' },
+          active: { booleanValue: true }
+        }));
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  beforeEach(() => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.getUserProfile.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+    legacyChatServiceMocks.getParentTeams.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(true);
+    legacyChatServiceMocks.canModerateChat.mockReturnValue(false);
+    legacyChatServiceMocks.isTeamActive.mockReturnValue(true);
+    legacyChatServiceMocks.getUnreadChatCounts.mockResolvedValue({});
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockRejectedValue(new Error('Managed team callable is unavailable.'));
+  });
+
+  it('uses complete server-authoritative discovery for an admin-email-only native coach', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'team-admin', name: 'Admin Bears', active: true, chatAccessVerified: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Bears' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns nonempty proven owner and parent teams when the legacy admin-email query is denied', async () => {
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-parent', name: 'Jr KC Current' }),
+      expect.objectContaining({ id: 'team-owned', name: 'Vipers' })
+    ]);
+    expect(result.isPartial).toBe(true);
+    expect(legacyChatServiceMocks.getUserProfile).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getParentTeams).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+    const requestedFields = fetchMock.mock.calls
+      .map(([, request]) => JSON.parse(String((request as RequestInit | undefined)?.body || '{}')))
+      .map((body) => body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath)
+      .filter(Boolean);
+    expect(requestedFields).toEqual(['ownerId']);
+  });
+
+  it('uses complete native callable team discovery before the partial direct-read fallback', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true
+      }],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', name: 'Admin Email Team' })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents:runQuery'))).toBe(false);
+  });
+
+  it('uses callable-proven parent teams and their non-default conversations without a direct team read', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'parent-group',
+          type: 'group',
+          lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = installNativeTeamFetch({ includeTeams: true });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({
+        id: 'team-parent',
+        name: 'Jr KC Current',
+        role: 'Parent'
+      })
+    ]);
+    expect(profileServiceMocks.loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/documents/teams/team-parent'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/parent-group:runAggregationQuery')
+    ))).toBe(true);
+  });
+
+  it('hydrates the preferred native conversation through the authenticated server projection', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{
+        id: 'direct-1',
+        type: 'direct',
+        name: 'Coach Taylor',
+        participantIds: ['user-1', 'user:coach-1'],
+        directUserIds: ['user-1', 'coach-1'],
+        directAccess: 'team_admin'
+      }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.getChatConversations.mockRejectedValue(new Error('Web Firestore is not authenticated.'));
+    const { loadChatConversations } = await import('./chatService');
+
+    const conversations = await loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    );
+
+    expect(nativeCallableMocks.callNativeFirebaseFunction).toHaveBeenCalledWith(
+      'listAuthorizedChatConversations',
+      { teamId: 'team-parent', activeConversationId: 'direct-1' },
+      { errorLabel: 'Chat conversations' }
+    );
+    expect(conversations).toEqual([
+      expect.objectContaining({ id: 'team', type: 'team' }),
+      expect.objectContaining({ id: 'direct-1', directUserIds: ['user-1', 'coach-1'] })
+    ]);
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
+  });
+
+  it('rejects a partial native conversation projection instead of resetting to default chat', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({ items: [], isPartial: true });
+    const { loadChatConversations } = await import('./chatService');
+
+    await expect(loadChatConversations(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      { activeConversationId: 'direct-1' }
+    )).rejects.toThrow('completely verified');
+  });
+
+  it('uses the same native projection for exact conversation lookup', async () => {
+    nativeCallableMocks.callNativeFirebaseFunction.mockResolvedValue({
+      items: [{ id: 'group-1', type: 'group', participantIds: ['user-1'] }],
+      isPartial: false
+    });
+    const { loadChatConversationById } = await import('./chatService');
+
+    await expect(loadChatConversationById(
+      'team-parent',
+      { uid: 'user-1', email: 'parent@example.test', displayName: 'Pat Parent', roles: [] },
+      { id: 'team-parent', name: 'Jr KC Current' },
+      false,
+      'group-1'
+    )).resolves.toEqual(expect.objectContaining({ id: 'group-1' }));
+    expect(legacyChatServiceMocks.getChatConversations).not.toHaveBeenCalled();
+  });
+
+  it('does not bypass chat authorization for an unverified staff projection', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{ id: 'legacy-coach-team', name: 'Old Coach Team', active: true }],
+      isPartial: false
+    });
+    legacyChatServiceMocks.canAccessTeamChat.mockReturnValue(false);
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([]);
+    expect(result.isPartial).toBe(false);
+  });
+
+  it('loads native unread counts through authenticated aggregation queries', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        adminEmails: ['coach@example.test'],
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string, request?: RequestInit) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {
+          teamChatState: {
+            mapValue: {
+              fields: {
+                'team-admin': {
+                  mapValue: {
+                    fields: {
+                      lastReadAt: { timestampValue: '2026-08-11T11:00:00.000Z' }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        const body = JSON.parse(String(request?.body || '{}'));
+        const isOwnCount = JSON.stringify(body).includes('senderId');
+        return jsonResponse([{
+          result: {
+            aggregateFields: {
+              messageCount: { integerValue: isOwnCount ? '2' : '3' }
+            }
+          }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 1 })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes(':runAggregationQuery'))).toHaveLength(2);
+    expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
+  });
+
+  it('includes server-authorized managed-team threads in native unread counts and previews', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'direct-1',
+          type: 'direct',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }, {
+          id: 'group-older',
+          type: 'group',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T11:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-1/chatMessages')) {
+        return jsonResponse({ documents: [firestoreDocument(
+          'teams/team-admin/chatConversations/direct-1/chatMessages/message-direct',
+          {
+            text: { stringValue: 'Direct update' },
+            senderId: { stringValue: 'user-2' },
+            createdAt: { timestampValue: '2026-08-11T12:00:00.000Z' }
+          }
+        )] });
+      }
+      if (String(url).includes('/teams/team-admin/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: true });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({
+        id: 'team-admin',
+        preferredConversationId: 'direct-1',
+        lastMessage: expect.objectContaining({ id: 'message-direct', text: 'Direct update' })
+      })
+    ]);
+    expect(result.isPartial).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/direct-1:runAggregationQuery')
+    ))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => (
+      String(url).includes('/chatConversations/group-older/chatMessages')
+    ))).toBe(false);
+  });
+
+  it('marks failed native message previews partial and retries them instead of caching absence', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-preview-failure',
+        name: 'Preview Retry Team',
+        active: true,
+        chatAccessVerified: true,
+        chatConversations: [{
+          id: 'direct-failure',
+          type: 'direct',
+          lastMessageAt: {
+            _seconds: Date.parse('2026-08-11T12:00:00.000Z') / 1000,
+            _nanoseconds: 0
+          }
+        }]
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      if (String(url).includes('/chatConversations/direct-failure/chatMessages')) {
+        return jsonResponse({ error: { message: 'Preview temporarily unavailable.' } }, 503);
+      }
+      if (String(url).includes('/teams/team-preview-failure/chatMessages')) {
+        return jsonResponse({ documents: [] });
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+    const user = {
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    };
+
+    const firstResult = await loadChatInbox(user, { includeLastMessages: true });
+    const secondResult = await loadChatInbox(user, { includeLastMessages: true });
+
+    expect(firstResult).toEqual({
+      isPartial: true,
+      teams: [expect.objectContaining({
+        id: 'team-preview-failure',
+        lastMessage: null,
+        preferredConversationId: null
+      })]
+    });
+    expect(secondResult.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes('/chatConversations/direct-failure/chatMessages')
+    ))).toHaveLength(2);
+  });
+
+  it('marks native unread counts partial when an authenticated aggregation fails', async () => {
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: [{
+        id: 'team-admin',
+        name: 'Admin Email Team',
+        active: true,
+        lastMessageAt: new Date('2026-08-11T12:00:00.000Z')
+      }],
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse({ error: { message: 'Unread count unavailable.' } }, 503);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toEqual([
+      expect.objectContaining({ id: 'team-admin', unreadCount: 0 })
+    ]);
+    expect(result.isPartial).toBe(true);
+  });
+
+  it('bounds aggregate unread work across many teams and marks the inbox partial', async () => {
+    const teams = Array.from({ length: 130 }, (_, index) => ({
+      id: `team-${index}`,
+      name: `Team ${index}`,
+      active: true,
+      chatAccessVerified: true
+    }));
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams,
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toHaveLength(130);
+    expect(result.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ))).toHaveLength(240);
+  });
+
+  it('aborts timed-out aggregate unread requests before another worker job can start', async () => {
+    vi.useFakeTimers();
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: Array.from({ length: 12 }, (_, index) => ({
+        id: `slow-team-${index}`,
+        name: `Slow Team ${index}`,
+        active: true,
+        chatAccessVerified: true
+      })),
+      isPartial: false
+    });
+    let abortedRequestCount = 0;
+    const fetchMock = vi.fn((url: string, request?: RequestInit) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return Promise.resolve(jsonResponse(firestoreDocument('users/user-1', {})));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return new Promise((_, reject) => {
+          request?.signal?.addEventListener('abort', () => {
+            abortedRequestCount += 1;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return Promise.reject(new Error(`Unexpected native request: ${url}`));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const inboxPromise = loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await inboxPromise;
+    const aggregateRequests = fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ));
+
+    expect(result.teams).toHaveLength(12);
+    expect(result.isPartial).toBe(true);
+    expect(aggregateRequests).toHaveLength(12);
+    expect(abortedRequestCount).toBe(12);
+  });
+
+  it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {
+    installNativeTeamFetch({ includeTeams: false });
+    const { loadChatInbox } = await import('./chatService');
+
+    await expect(loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false })).rejects.toThrow(/could not be completely verified/i);
   });
 });
 

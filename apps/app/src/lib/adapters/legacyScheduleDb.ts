@@ -190,6 +190,11 @@ export type StaffTeamsResult = {
     isPartial: boolean;
 };
 
+export type OfficialLinkedTeamsResult = {
+    teamIds: string[];
+    isPartial: boolean;
+};
+
 export async function getStaffTeams(_query: StaffTeamsQuery): Promise<StaffTeamsResult> {
     const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listManagedTeams');
     const response = await callable({});
@@ -198,6 +203,23 @@ export async function getStaffTeams(_query: StaffTeamsQuery): Promise<StaffTeams
     return {
         teams: items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))),
         isPartial: (response as any)?.data?.isPartial === true
+    };
+}
+
+export async function getOfficialLinkedTeamIds(): Promise<OfficialLinkedTeamsResult> {
+    const callable = legacyFirebaseHttpsCallable(legacyFirebaseFunctions, 'listOfficialLinkedTeamIds');
+    const response = await callable({});
+    const data = (response as any)?.data;
+    if (!data || data.isPartial !== false || !Array.isArray(data.teamIds)) {
+        throw new Error('Official team discovery response is invalid.');
+    }
+    const teamIds = data.teamIds.map((value: unknown) => typeof value === 'string' ? value.trim() : '');
+    if (teamIds.some((teamId: string) => !teamId || teamId.length > 128 || teamId.includes('/'))) {
+        throw new Error('Official team discovery response is invalid.');
+    }
+    return {
+        teamIds: [...new Set<string>(teamIds)].sort(),
+        isPartial: false
     };
 }
 

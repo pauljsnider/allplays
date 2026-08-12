@@ -14,7 +14,7 @@ function extractSource(source, startMarker, endMarker) {
 
 function buildGetSharedGamesForTeam(deps) {
     const normalizeSource = extractSource(dbSource, 'function normalizeSharedGameSnapshot', 'async function getSharedGamesForTeam');
-    const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+    const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
     return new Function(
         'db',
         'collectionGroup',
@@ -65,7 +65,7 @@ describe('schedule date range source contracts', () => {
 
     it('loads all visible tournament groups together and fetches shared history once', () => {
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
-        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
         const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
         const nativeSharedGamesSource = extractSource(
             appSource,
@@ -90,7 +90,7 @@ describe('schedule date range source contracts', () => {
     });
 
     it('applies the requested date window to scoped shared-game queries without unscoped fallback reads', () => {
-        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'function daysAgoDate');
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
 
         expect(sharedGamesSource).toContain("where('date', '>=', Timestamp.fromDate(startDate))");

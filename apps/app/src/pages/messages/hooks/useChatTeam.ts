@@ -27,6 +27,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
   const [selectedConversationId, setSelectedConversationId] = useState<string>(DEFAULT_TEAM_CONVERSATION_ID);
   const [loadingContext, setLoadingContext] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   userRef.current = user;
 
   const normalizedPreferredConversationId = normalizePreferredConversationId(preferredConversationId);
@@ -71,9 +72,12 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
             return DEFAULT_TEAM_CONVERSATION_ID;
           });
           setLoadingContext(false);
-        } catch {
+        } catch (loadError) {
           if (!cancelled) {
             setConversations([]);
+            setError(loadError instanceof Error && loadError.message
+              ? loadError.message
+              : 'Unable to load team chat conversations. Try again.');
             setLoadingContext(false);
           }
         }
@@ -89,7 +93,11 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     return () => {
       cancelled = true;
     };
-  }, [normalizedPreferredConversationId, onTeamReset, teamId, user?.uid]);
+  }, [loadAttempt, normalizedPreferredConversationId, onTeamReset, teamId, user?.uid]);
+
+  const retryContext = useCallback(() => {
+    setLoadAttempt((current) => current + 1);
+  }, []);
 
   const reloadConversations = useCallback(async () => {
     if (!user || !team) return undefined;
@@ -117,6 +125,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     loadingContext,
     error,
     setError,
+    retryContext,
     reloadConversations,
     switchConversation
   };

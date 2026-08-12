@@ -224,9 +224,10 @@ describe('React app Home service', () => {
         });
     });
 
-    it('throws a typed permission error when Home fees are denied', async () => {
+    it('streams Home data and returns retryable partial state when only the fees slice is denied', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Permission denied for fees'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+        const partials = [];
 
         await expect(loadParentHomeWithSecondaryData(user, {
             schedule: {
@@ -239,19 +240,29 @@ describe('React app Home service', () => {
                     }
                 ],
                 events: [event()]
-            }
+            },
+            onPartial: (partial) => partials.push(partial)
         })).rejects.toMatchObject({
             name: 'AppServiceError',
             type: 'permission',
             message: 'Permission denied for fees'
         });
+
+        const latest = partials.at(-1);
+        expect(latest.fees).toEqual([]);
+        expect(latest.players).toEqual([expect.objectContaining({ playerId: 'player-1' })]);
+        expect(latest.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1' }),
+            expect.objectContaining({ teamId: 'team-staff' })
+        ]));
     });
 
-    it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {
+    it('streams Home data and returns retryable partial state when the fees network read fails', async () => {
         dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+        const partials = [];
 
-        const home = await loadParentHomeWithSecondaryData(user, {
+        await expect(loadParentHomeWithSecondaryData(user, {
             schedule: {
                 children: [
                     {
@@ -262,11 +273,17 @@ describe('React app Home service', () => {
                     }
                 ],
                 events: [event()]
-            }
+            },
+            onPartial: (partial) => partials.push(partial)
+        })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
         });
 
-        expect(home.fees).toEqual([]);
-        expect(home.teams).toEqual(expect.arrayContaining([
+        const latest = partials.at(-1);
+        expect(latest.fees).toEqual([]);
+        expect(latest.teams).toEqual(expect.arrayContaining([
             expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
         ]));
     });
@@ -334,11 +351,12 @@ describe('React app Home service', () => {
                 }
             ]
         });
-        await Promise.resolve();
-        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
-            metrics: expect.objectContaining({ unreadMessages: 4 }),
-            fees: []
-        }));
+        await vi.waitFor(() => {
+            expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+                metrics: expect.objectContaining({ unreadMessages: 4 }),
+                fees: []
+            }));
+        });
 
         resolveFees([
             {

@@ -38,7 +38,8 @@ const profile = {
   publicChildren: [{ id: 'athlete-1', name: 'Pat Star', headline: 'Point guard', photoUrl: null, shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=athlete-1' }],
   messageRoute: null,
   isSelf: true,
-  posts: []
+  posts: [],
+  postsError: null
 };
 
 function deferred<T>() {
@@ -138,5 +139,31 @@ describe('FriendProfile', () => {
     );
 
     expect(await screen.findByRole('link', { name: 'Message' })).toHaveAttribute('href', '/messages/team-1?compose=user%3Afriend-2&recipientName=Jamie+Friend');
+  });
+
+  it('shows a retryable posts error instead of authoritative empty copy', async () => {
+    socialMocks.loadFriendProfile
+      .mockResolvedValueOnce({
+        ...profile,
+        postsError: 'Recent posts could not load. Try again.'
+      })
+      .mockResolvedValueOnce(profile);
+
+    render(
+      <MemoryRouter initialEntries={['/profile?section=posts']}>
+        <Routes>
+          <Route path="/profile" element={<FriendProfile auth={auth} profileUserId="user-1" />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Posts could not load' })).toBeVisible();
+    expect(screen.queryByText('Nothing shared yet')).toBeNull();
+    expect(screen.getByText('—')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry posts' }));
+
+    await waitFor(() => expect(socialMocks.loadFriendProfile).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Nothing shared yet')).toBeVisible();
   });
 });

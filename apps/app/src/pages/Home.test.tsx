@@ -154,6 +154,7 @@ const baseSocial = {
   outgoingRequests: [],
   suggestions: [],
   friendshipsError: null,
+  feedError: null,
   metrics: {
     feedItems: 0,
     friends: 0,
@@ -430,7 +431,7 @@ describe('Home', () => {
       thumbnailUrl: null,
       storagePath: 'stat-sheets/team-chat/team-1/team/parent-1/social.jpg'
     });
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0, isPartial: false });
     opportunityServiceMocks.listPublicOpportunities.mockResolvedValue({ items: [], nextCursor: null });
   });
 
@@ -681,7 +682,7 @@ describe('Home', () => {
   });
 
   it('uses official context when assignments are available', async () => {
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
     renderHome({ ...signedInAuth, roles: [], isParent: false } as AuthState);
 
     expect(await screen.findByText(/Official assignments/)).toBeTruthy();
@@ -771,6 +772,31 @@ describe('Home', () => {
     expect(screen.queryByText('Loading')).toBeNull();
     expect(screen.queryByText('Checking actions')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+  });
+
+  it('continues the independent social load from the latest streamed Home state when a secondary slice fails', async () => {
+    const partialHome = {
+      ...baseHome,
+      fees: [{ id: 'fee-1', teamId: 'team-1', teamName: 'Bears', title: 'Spring dues' }]
+    } as any;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce((_user: unknown, options: any) => {
+      options?.onPartial?.(partialHome);
+      return Promise.reject(new Error('fees unavailable'));
+    });
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Needs refresh')).toBeTruthy();
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, partialHome);
+    });
+    expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
   });
 
   it('keeps the Needs refresh badge when a secondary retry also fails', async () => {
@@ -866,7 +892,7 @@ describe('Home', () => {
   it('makes officials access primary for first-run users with no linked players or teams', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
-    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false });
 
     renderHome(signedInAuth);
 
@@ -883,7 +909,7 @@ describe('Home', () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(emptyHome);
     scheduleServiceMocks.loadOfficialAssignmentsAccess
-      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1 })
+      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1, isPartial: false })
       .mockImplementationOnce(() => new Promise(() => {}));
 
     const { rerender } = render(
@@ -914,6 +940,34 @@ describe('Home', () => {
     });
     expect(screen.queryByRole('heading', { name: 'Manage assignments' })).toBeNull();
     expect(screen.queryByRole('link', { name: /Officials Manage assignments/i })).toBeNull();
+  });
+
+  it('shows a retryable officials state instead of treating discovery failure as authoritative absence', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockRejectedValueOnce(new Error('access unavailable'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Assignments could not refresh' })).toBeTruthy();
+    expect(screen.getByText('Open Officials to retry. Your linked teams were not treated as empty.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+  });
+
+  it('shows verified officials access without an error card when discovery is nonempty but partial', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({
+      hasAccess: true,
+      teamCount: 1,
+      isPartial: true
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
+    expect(screen.getByText('1 verified linked team')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Assignments could not refresh' })).toBeNull();
   });
 
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
@@ -1067,6 +1121,23 @@ describe('Home', () => {
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('surfaces incomplete feed state and disables Like when the viewer reaction is unknown', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [{ ...baseFeedItem, viewerHasLiked: undefined, viewerReactionError: true }],
+      feedError: 'Some feed details could not load. Retry before relying on the complete post or Like state.',
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Some feed details could not load');
+    const likeButton = screen.getByRole('button', { name: 'Like status unavailable, 2 likes' });
+    expect(likeButton).toBeDisabled();
+    fireEvent.click(likeButton);
+    expect(socialServiceMocks.reactToSocialPost).not.toHaveBeenCalled();
   });
 
   it('optimistically removes an existing like', async () => {

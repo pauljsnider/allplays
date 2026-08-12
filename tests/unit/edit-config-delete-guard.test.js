@@ -9,8 +9,12 @@ function readEditConfigSource() {
     return readFileSync(new URL('../../edit-config.html', import.meta.url), 'utf8');
 }
 
+function readFirestoreIndexes() {
+    return JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
+}
+
 describe('edit config delete guard', () => {
-    it('blocks deleting configs that existing team games still reference', () => {
+    it('delegates deletion to the server-authoritative reference guard', () => {
         const source = readDbSource();
 
         const start = source.indexOf('export async function deleteConfig(teamId, configId) {');
@@ -19,12 +23,11 @@ describe('edit config delete guard', () => {
         expect(end).toBeGreaterThan(start);
 
         const block = source.slice(start, end);
-        expect(block).toContain('collection(db, `teams/${teamId}/games`)');
-        expect(block).toContain('where("statTrackerConfigId", "==", configId)');
-        expect(block).toContain('limit(1)');
-        expect(block).toContain('if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, configId)) {');
-        expect(block).toContain("throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.')");
-        expect(block).toContain('await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));');
+        expect(block).toContain("httpsCallable(functions, 'deleteStatConfig')");
+        expect(block).toContain('await callable({ teamId, configId })');
+        expect(block).toContain("httpsCallable(functions, 'resetTeamStatConfigs')");
+        expect(block).not.toContain("collectionGroup(db, 'sharedGames')");
+        expect(block).not.toContain('Promise.allSettled');
     });
 
     it('surfaces a clear alert when deletion is blocked', () => {
@@ -41,5 +44,34 @@ describe('edit config delete guard', () => {
         expect(block).toContain('loadConfigs();');
         expect(block).toContain('} catch (error) {');
         expect(block).toContain("alert(error?.message || 'Error deleting config.');");
+    });
+
+    it('declares the collection-group indexes used by the server reference transaction', () => {
+        const indexConfig = readFirestoreIndexes();
+        const sharedOverrides = indexConfig.fieldOverrides
+            .filter((entry) => entry.collectionGroup === 'sharedGames');
+
+        expect(sharedOverrides).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                fieldPath: 'teamIds',
+                indexes: expect.arrayContaining([
+                    expect.objectContaining({ arrayConfig: 'CONTAINS', queryScope: 'COLLECTION_GROUP' })
+                ])
+            }),
+            expect.objectContaining({
+                fieldPath: 'statTrackerConfigId',
+                indexes: expect.arrayContaining([
+                    expect.objectContaining({ order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' })
+                ])
+            })
+        ]));
+        const sharedCompositeIndexes = indexConfig.indexes
+            .filter((entry) => entry.collectionGroup === 'sharedGames')
+            .map((entry) => entry.fields.map((field) => `${field.fieldPath}:${field.arrayConfig || field.order}`));
+        expect(sharedCompositeIndexes).toEqual(expect.arrayContaining([
+            ['statTrackerConfigId:ASCENDING', 'homeTeamId:ASCENDING'],
+            ['statTrackerConfigId:ASCENDING', 'awayTeamId:ASCENDING'],
+            ['teamIds:CONTAINS', 'statTrackerConfigId:ASCENDING']
+        ]));
     });
 });

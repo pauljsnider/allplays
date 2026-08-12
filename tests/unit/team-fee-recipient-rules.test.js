@@ -22,6 +22,7 @@ import {
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
 const collectionGroupBlock = extractMatchBlock(rules, 'match /{path=**}/feeRecipients/{recipientId} {');
 const feeBatchesBlock = extractMatchBlock(rules, 'match /feeBatches/{batchId} {');
 const nestedRecipientBlock = extractMatchBlock(feeBatchesBlock, 'match /feeRecipients/{recipientId} {');
@@ -45,6 +46,18 @@ describe('team fee recipient Firestore rules', () => {
         expect(collectionGroupBlock).toContain('allow read: if');
         expect(collectionGroupBlock).not.toMatch(/allow\s+(create|update|delete|write)\b/);
         expect(collectionGroupBlock).not.toContain('request.resource');
+    });
+
+    it('declares the native indirect-parent collection-group indexes', () => {
+        const feeRecipientIndexes = firestoreIndexes.indexes
+            .filter((index) => index.collectionGroup === 'feeRecipients')
+            .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
+
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerKey:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,parentUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,accountUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,userId:ASCENDING');
     });
 
     it('requires nested recipient payload identity to match the team and batch path', () => {
@@ -131,6 +144,11 @@ describe('team fee recipient Firestore rules', () => {
                     email: 'parent-a@example.com',
                     isAdmin: false,
                     parentTeamIds: ['team-a'],
+                    parentPlayerKeys: ['team-a::player-a']
+                });
+                await setDoc(doc(firestore, 'users/indirect-parent'), {
+                    email: 'indirect-parent@example.com',
+                    isAdmin: false,
                     parentPlayerKeys: ['team-a::player-a']
                 });
             });
@@ -526,6 +544,13 @@ describe('team fee recipient Firestore rules', () => {
                 collectionGroup(parentDb, 'feeRecipients'),
                 where('teamId', '==', 'team-a'),
                 where('parentUserId', '==', 'parent-a')
+            )));
+
+            const indirectParentDb = authedFirestore('indirect-parent', 'indirect-parent@example.com');
+            await assertSucceeds(getDocs(query(
+                collectionGroup(indirectParentDb, 'feeRecipients'),
+                where('teamId', '==', 'team-a'),
+                where('playerKey', '==', 'team-a::player-a')
             )));
 
             const adminDb = authedFirestore('admin-a', 'admin-a@example.com');

@@ -224,6 +224,33 @@ describe('Messages deferred inbox preview batching', () => {
     expect(screen.getByText(/1 team chat · 1 opportunity/)).toBeInTheDocument();
   });
 
+  it('labels partial inbox unread counts as unavailable and suppresses their badges', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [team({ unreadCount: 7 })], isPartial: true });
+
+    renderMessages();
+
+    expect(await screen.findByText(
+      'Showing verified team chats. Additional linked teams may appear after the access service refreshes. Message previews and unread counts may be incomplete until then.'
+    )).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(screen.getByText(/unread counts unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText('7')).toBeNull();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
+  });
+
+  it('marks the inbox partial when a deferred message preview fails', async () => {
+    chatServiceMocks.loadChatInbox.mockImplementation(async (_user, options) => {
+      window.setTimeout(() => options.onPreviewError('team-1'), 0);
+      return { teams: [team()] };
+    });
+
+    renderMessages();
+
+    expect(await screen.findByRole('link', { name: /Bears/ })).toBeInTheDocument();
+    expect(await screen.findByText(/Message previews and unread counts may be incomplete/)).toBeInTheDocument();
+    expect(screen.queryByText('Messages couldn’t load')).toBeNull();
+  });
+
   it('announces inbox failures and retries them in place', async () => {
     chatServiceMocks.loadChatInbox
       .mockRejectedValueOnce(new Error('Network unavailable.'))
