@@ -68,6 +68,8 @@ function renderAuthPage(path = '/auth') {
 describe('AuthPage native post-login routing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    auth.user = null;
+    auth.loading = false;
     auth.refresh = vi.fn();
     auth.signOut = vi.fn();
     authServiceMocks.hydrateFirebaseUser.mockReset();
@@ -140,6 +142,51 @@ describe('AuthPage native post-login routing', () => {
 
     expect(await screen.findByText('Family fee destination')).toBeTruthy();
     expect(auth.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let late auth hydration replace a newer authenticated deep link', async () => {
+    const view = renderAuthPage();
+
+    window.location.hash = '#/teams';
+    auth.user = {
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      displayName: 'Coach',
+      roles: ['coach']
+    };
+    auth.loading = false;
+    view.rerender(
+      <MemoryRouter initialEntries={['/auth']}>
+        <Routes>
+          <Route path="/auth" element={<AuthPage auth={auth} />} />
+          <Route path="/home" element={<div>Home destination</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(window.location.hash).toBe('#/teams'));
+    expect(screen.queryByText('Home destination')).toBeNull();
+  });
+
+  it('still sends a restored signed-in session away from the active auth route', async () => {
+    window.location.hash = '#/auth';
+    auth.user = {
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      displayName: 'Coach',
+      roles: ['coach']
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/auth']}>
+        <Routes>
+          <Route path="/auth" element={<AuthPage auth={auth} />} />
+          <Route path="/home" element={<div>Home destination</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Home destination')).toBeTruthy();
   });
 
   it('routes the Apple button through native sign-in and reloads the home page', async () => {
