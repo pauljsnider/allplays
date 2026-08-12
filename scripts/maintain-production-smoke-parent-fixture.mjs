@@ -230,8 +230,8 @@ function queryContainsDocument(documents, documentPath) {
     return documents.some((document) => getFirestoreDocumentPath(document) === documentPath);
 }
 
-async function queryManagedTeamCallable(session) {
-    const response = await fetch(
+async function queryManagedTeamCallable(session, fetchImpl) {
+    const response = await fetchImpl(
         `https://us-central1-${encodeURIComponent(session.projectId)}.cloudfunctions.net/listManagedTeams`,
         {
             method: 'POST',
@@ -253,6 +253,21 @@ async function queryManagedTeamCallable(session) {
         items: result.items.filter((item) => item && typeof item === 'object' && !Array.isArray(item)),
         isPartial: result.isPartial === true
     };
+}
+
+export async function loadManagedTeamCallable(session, teamId, fetchImpl = fetch) {
+    let result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        result = await queryManagedTeamCallable(session, fetchImpl);
+        const foundFixture = result.items.some(
+            (item) => String(item?.id || '').trim() === teamId
+        );
+        if (foundFixture || !result.isPartial) return result;
+    }
+    throw new Error(
+        `The app managed-team callable result is inconclusive and retryable after a partial retry ` +
+        `(items=${result.items.length}, partial=true)`
+    );
 }
 
 async function queryStaffTeamDiscovery(session, teamId, email) {
@@ -415,7 +430,7 @@ async function main() {
             `admin-query-failed=${staffQueryDiscovery.adminQueryFailed})`
         );
     }
-    const managedTeamResult = await queryManagedTeamCallable(staffSession);
+    const managedTeamResult = await loadManagedTeamCallable(staffSession, teamId);
     const callableFoundFixture = managedTeamResult.items.some(
         (item) => String(item?.id || '').trim() === teamId
     );
