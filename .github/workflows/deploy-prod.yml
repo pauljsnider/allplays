@@ -62,6 +62,7 @@ jobs:
                 and .merged_at != null
                 and .merge_commit_sha == $sha
                 and .base.ref == "master"
+                and .base.repo.full_name == $repo
                 and .head.repo.full_name == $repo
               )
           ]' <<< "$pr_json")"
@@ -71,9 +72,10 @@ jobs:
           fi
 
           pr_number="$(jq -r '.[0].number' <<< "$matching_prs")"
+          repo_id="$(jq -r '.[0].base.repo.id' <<< "$matching_prs")"
           head_sha="$(jq -r '.[0].head.sha' <<< "$matching_prs")"
-          if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::warning::Merged PR #${pr_number} did not expose a valid exact head SHA; running production validation."
+          if [[ ! "$repo_id" =~ ^[1-9][0-9]*$ || ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::Merged PR #${pr_number} did not expose a valid repository or exact head SHA; running production validation."
             exit 0
           fi
 
@@ -86,25 +88,89 @@ jobs:
 
           workflow_passed() {
             local workflow_file="$1"
-            gh api --method GET \
+            shift
+            local required_jobs=("$@")
+            local workflow_runs workflow_jobs workflow_run_id
+            local -a workflow_run_ids
+            workflow_runs="$(gh api --method GET \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_file}/runs" \
               -f head_sha="$head_sha" \
               -f event=pull_request \
               -f status=success \
-              -F per_page=20 2>/dev/null \
-              | jq -r --arg expected_path ".github/workflows/${workflow_file}" --arg head_sha "$head_sha" \
-                'any(.workflow_runs[]?; .head_sha == $head_sha and .event == "pull_request" and .conclusion == "success" and .path == $expected_path)'
+              -F per_page=100 2>/dev/null)" || return 1
+            mapfile -t workflow_run_ids < <(jq -r \
+              --arg expected_path ".github/workflows/${workflow_file}" \
+              --arg head_sha "$head_sha" \
+              --arg repo "$GITHUB_REPOSITORY" \
+              --argjson pr_number "$pr_number" \
+              --argjson repo_id "$repo_id" '
+                .workflow_runs[]?
+                | select(
+                    .head_sha == $head_sha
+                    and .head_repository.full_name == $repo
+                    and .event == "pull_request"
+                    and .status == "completed"
+                    and .conclusion == "success"
+                    and .path == $expected_path
+                    and ([
+                      .pull_requests[]?
+                      | select(
+                          .number == $pr_number
+                          and .head.sha == $head_sha
+                          and .head.repo.id == $repo_id
+                          and .base.ref == "master"
+                          and .base.repo.id == $repo_id
+                        )
+                    ] | length) == 1
+                  )
+                | .id
+              ' <<< "$workflow_runs")
+            for workflow_run_id in "${workflow_run_ids[@]}"; do
+              workflow_jobs="$(gh api --method GET \
+                "repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/jobs?filter=latest&per_page=100" \
+                2>/dev/null)" || continue
+              if jq -e --args "${required_jobs[@]}" '
+                $ARGS.positional as $required_jobs
+                | all($required_jobs[]; . as $required_job
+                    | ([.jobs[]? | select(
+                        .name == $required_job
+                        and .status == "completed"
+                        and .conclusion == "success"
+                      )] | length) == 1)
+              ' <<< "$workflow_jobs" >/dev/null; then
+                return 0
+              fi
+            done
+            return 1
           }
 
-          pr_fast_passed="$(workflow_passed pr-fast.yml || true)"
-          pr_integration_passed="$(workflow_passed pr-integration.yml || true)"
-          paulbot_state="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/status" \
-            --jq '[.statuses[]? | select(.context == "paulbot-review-gate")] | sort_by(.updated_at) | last | .state // ""' \
-            2>/dev/null || true)"
+          if workflow_passed pr-fast.yml cache-bust-guard unit-tests app-quality; then
+            pr_fast_passed=true
+          else
+            pr_fast_passed=false
+          fi
+          if workflow_passed pr-integration.yml mobile-build preview-smoke; then
+            pr_integration_passed=true
+          else
+            pr_integration_passed=false
+          fi
+          paulbot_target="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
+          # Commit-status avatar URLs are server-generated. Bind PaulBot's status
+          # to the immutable numeric account ID used by the trusted writer.
+          paulbot_issuer_avatar="https://avatars.githubusercontent.com/u/211066188?"
+          paulbot_passed="$(gh api --method GET "repos/${GITHUB_REPOSITORY}/commits/${head_sha}/status" \
+            2>/dev/null | jq -r --arg target "$paulbot_target" --arg issuer_avatar "$paulbot_issuer_avatar" '
+              [.statuses[]? | select(.context == "paulbot-review-gate")]
+              | sort_by(.updated_at, .id)
+              | last
+              | (.state == "success"
+                  and .target_url == $target
+                  and (.avatar_url | type == "string" and startswith($issuer_avatar)))
+            ' || true)"
 
           if [[ "$pr_fast_passed" != "true" ||
                 "$pr_integration_passed" != "true" ||
-                "$paulbot_state" != "success" ]]; then
+                "$paulbot_passed" != "true" ]]; then
             echo "Production validation will run because exact-head PR validation is incomplete."
             exit 0
           fi

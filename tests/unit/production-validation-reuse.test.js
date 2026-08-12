@@ -10,6 +10,7 @@ describe('production exact-head validation reuse', () => {
         expect(workflowSource).toContain('echo "reuse_pr_validation=false" >> "$GITHUB_OUTPUT"');
         expect(workflowSource).toContain('.merge_commit_sha == $sha');
         expect(workflowSource).toContain('.base.ref == "master"');
+        expect(workflowSource).toContain('.base.repo.full_name == $repo');
         expect(workflowSource).toContain('.head.repo.full_name == $repo');
         expect(workflowSource).toContain('if [[ "$(jq \'length\' <<< "$matching_prs")" != "1" ]]');
         expect(workflowSource).toContain('"repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}"');
@@ -17,13 +18,32 @@ describe('production exact-head validation reuse', () => {
         expect(workflowSource).toContain('[[ ! "$merge_tree" =~ ^[0-9a-f]{40}$ || "$merge_tree" != "$head_tree" ]]');
     });
 
-    it('requires both exact-head PR workflows and the PaulBot gate before reuse', () => {
-        expect(workflowSource).toContain('workflow_passed pr-fast.yml');
-        expect(workflowSource).toContain('workflow_passed pr-integration.yml');
+    it('rejects same-SHA workflow evidence from another PR, base, or repository', () => {
+        expect(workflowSource).toContain('.head_repository.full_name == $repo');
+        expect(workflowSource).toContain('.number == $pr_number');
+        expect(workflowSource).toContain('.head.repo.id == $repo_id');
+        expect(workflowSource).toContain('.base.ref == "master"');
+        expect(workflowSource).toContain('.base.repo.id == $repo_id');
+        expect(workflowSource).toContain('] | length) == 1');
+    });
+
+    it('requires successful stable jobs instead of workflow-level success alone', () => {
+        expect(workflowSource).toContain('actions/runs/${workflow_run_id}/jobs?filter=latest&per_page=100');
+        expect(workflowSource).toContain('workflow_passed pr-fast.yml cache-bust-guard unit-tests app-quality');
+        expect(workflowSource).toContain('workflow_passed pr-integration.yml mobile-build preview-smoke');
+        expect(workflowSource).toContain('.name == $required_job');
+        expect(workflowSource).toContain('.status == "completed"');
+        expect(workflowSource).toContain('.conclusion == "success"');
+    });
+
+    it('binds the PaulBot gate to this PR and its trusted status issuer', () => {
         expect(workflowSource).toContain('.head_sha == $head_sha');
         expect(workflowSource).toContain('.event == "pull_request"');
-        expect(workflowSource).toContain('.conclusion == "success"');
         expect(workflowSource).toContain('.context == "paulbot-review-gate"');
+        expect(workflowSource).toContain('paulbot_target="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"');
+        expect(workflowSource).toContain('paulbot_issuer_avatar="https://avatars.githubusercontent.com/u/211066188?"');
+        expect(workflowSource).toContain('.target_url == $target');
+        expect(workflowSource).toContain('startswith($issuer_avatar)');
         expect(workflowSource).toContain('echo "reuse_pr_validation=true" >> "$GITHUB_OUTPUT"');
     });
 
