@@ -1784,6 +1784,8 @@ function isTeamStaff(team: any, user: AuthUser | null) {
 type StaffTeamsLoadResult = {
   teams: any[];
   isPartial: boolean;
+  verifiedByHttp?: boolean;
+  httpAttempted?: boolean;
 };
 
 async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
@@ -1792,7 +1794,9 @@ async function loadStaffTeamsFromRest(): Promise<StaffTeamsLoadResult> {
     // The callable already applies the server-side ownership, admin, and coach
     // checks; its serialized team profiles intentionally omit some of those fields.
     teams: result.teams.filter((team: any) => team?.id && isTeamActive(team)),
-    isPartial: result.isPartial
+    isPartial: result.isPartial,
+    verifiedByHttp: true,
+    httpAttempted: true
   };
 }
 
@@ -1808,7 +1812,12 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
     staffTeamResult.teams.filter(Boolean).forEach((team: any) => {
       if (team?.id && isTeamActive(team)) teamsById.set(team.id, team);
     });
-    return { teams: [...teamsById.values()], isPartial: staffTeamResult.isPartial };
+    return {
+      teams: [...teamsById.values()],
+      isPartial: staffTeamResult.isPartial,
+      verifiedByHttp: false,
+      httpAttempted: false
+    };
   } catch (error) {
     // The SDK callable and the authenticated HTTP callable reach the same
     // server-authorized listManagedTeams function. Keep the HTTP transport as
@@ -1817,7 +1826,11 @@ async function loadStaffTeams(user: AuthUser): Promise<StaffTeamsLoadResult> {
     logScheduleWarning('Falling back to authenticated HTTP for staff teams.', 'staff-team-callable-fallback', error, {
       fallback: 'authenticated-http'
     });
-    return loadStaffTeamsFromRest();
+    try {
+      return await loadStaffTeamsFromRest();
+    } catch {
+      return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
+    }
   }
 }
 
@@ -3095,7 +3108,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       return {};
     }),
     loadStaffTeams(user).catch(() => {
-      return { teams: [], isPartial: true };
+      return { teams: [], isPartial: true, verifiedByHttp: false, httpAttempted: true };
     })
   ]);
   let staffTeamResult = initialStaffTeamResult;
@@ -3118,7 +3131,9 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       });
       staffTeamResult = {
         teams: [...teamsById.values()],
-        isPartial: retryResult.isPartial
+        isPartial: retryResult.isPartial,
+        verifiedByHttp: retryResult.verifiedByHttp,
+        httpAttempted: retryResult.httpAttempted
       };
     } catch {
       staffTeamResult = { ...staffTeamResult, isPartial: true };
@@ -3134,11 +3149,11 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   const nativeRuntime = isNativeRuntime();
   const shouldVerifyStaffResultWithHttp = nativeRuntime
     ? (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)
-    // A complete-empty browser SDK result has proved nondeterministic in the
-    // production staff workflow. Confirm every empty result through the same
-    // bounded, authenticated server projection. Also verify a nonempty result
-    // that omitted a team explicitly declared by the freshly loaded profile.
-    : ((staffTeamResult.teams.length === 0 || hasMissingDeclaredCoachTeam) && staffTeamResult.isPartial !== true);
+    // Browser callable results have proved nondeterministically incomplete in
+    // production even when they are nonempty and claim to be complete. Merge
+    // every result with the bounded authenticated HTTP projection so a team
+    // that is not duplicated in profile role hints cannot disappear.
+    : staffTeamResult.verifiedByHttp !== true && staffTeamResult.httpAttempted !== true;
   if (shouldVerifyStaffResultWithHttp) {
     try {
       const restResult = await loadStaffTeamsFromRest();
@@ -3149,7 +3164,9 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
       });
       staffTeamResult = {
         teams: [...teamsById.values()],
-        isPartial: restResult.isPartial
+        isPartial: restResult.isPartial,
+        verifiedByHttp: true,
+        httpAttempted: true
       };
     } catch {
       staffTeamResult = { ...staffTeamResult, isPartial: true };
@@ -7248,6 +7265,18 @@ async function loadOfficialLinkedTeamIds(options: { includeAssignments?: boolean
   if (isNativeRuntime()) {
     return loadOfficialLinkedTeamIdsFromNativeCallable(options);
   }
+  if (options.includeAssignments) {
+    try {
+      return await loadOfficialLinkedTeamIdsFromNativeCallable(options);
+    } catch (error) {
+      logScheduleWarning(
+        'Falling back to browser official assignment reads.',
+        'official-assignment-callable-fallback',
+        error,
+        { fallback: 'browser-sdk' }
+      );
+    }
+  }
   return normalizeOfficialLinkedTeamIdsResponse(await getOfficialLinkedTeamIds());
 }
 
@@ -7301,8 +7330,8 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   let discoveryError: unknown = null;
   try {
     const linkedTeamResult = await loadOfficialLinkedTeamIds({
-      includeAssignments: nativeRuntime,
-      ...(nativeRuntime && requestedTeamId ? { requestedTeamId } : {})
+      includeAssignments: true,
+      ...(requestedTeamId ? { requestedTeamId } : {})
     });
     linkedTeamIds = linkedTeamResult.teamIds;
     linkedTeamIdsPartial = linkedTeamResult.isPartial;
@@ -7313,17 +7342,17 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     discoveryError = error;
   }
   const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
-  if (nativeRuntime && linkedAssignmentsComplete) {
-    const nativeTeamIds = requestedTeamId ? linkedRequestedTeamIds : linkedTeamIds;
-    const nativeAssignments = linkedAssignments
-      .filter((item) => nativeTeamIds.includes(item.teamId))
+  if (linkedAssignmentsComplete) {
+    const projectedTeamIds = requestedTeamId ? linkedRequestedTeamIds : linkedTeamIds;
+    const projectedAssignments = linkedAssignments
+      .filter((item) => projectedTeamIds.includes(item.teamId))
       .sort((left, right) => left.date.getTime() - right.date.getTime());
     return {
-      hasAccess: nativeTeamIds.length > 0,
-      teamIds: nativeTeamIds,
-      teamCount: nativeTeamIds.length,
+      hasAccess: projectedTeamIds.length > 0,
+      teamIds: projectedTeamIds,
+      teamCount: projectedTeamIds.length,
       isPartial: false,
-      assignments: nativeAssignments
+      assignments: projectedAssignments
     };
   }
   const teamIds = linkedRequestedTeamIds.length
@@ -7451,7 +7480,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 }
 
 export async function respondToOfficialAssignmentItem(item: OfficialAssignmentItem, status: 'accepted' | 'declined') {
-  if (isNativeRuntime()) {
+  if (isNativeRuntime() || item.sharedGamePath) {
     await callNativeFirebaseFunction('respondToOfficiatingAssignment', {
       teamId: item.teamId,
       gameId: item.gameId,
@@ -7465,7 +7494,7 @@ export async function respondToOfficialAssignmentItem(item: OfficialAssignmentIt
 }
 
 export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, user: AuthUser) {
-  if (isNativeRuntime()) {
+  if (isNativeRuntime() || item.sharedGamePath) {
     await callNativeFirebaseFunction('claimOpenOfficiatingSlot', {
       teamId: item.teamId,
       gameId: item.gameId,

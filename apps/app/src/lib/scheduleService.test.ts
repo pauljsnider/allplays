@@ -426,6 +426,7 @@ describe('parent schedule child scope', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockReset().mockResolvedValue({ teams: [], isPartial: false });
     vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('REST auth unavailable in isolated staff-scope tests'));
     vi.mocked(isTeamActive).mockImplementation((team: any) => (
       team?.active !== false &&
@@ -748,7 +749,7 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
-  it('uses the authoritative web callable result without browser Firestore REST verification', async () => {
+  it('merges the authoritative web callable result with the authenticated HTTP projection', async () => {
     const previousFetch = globalThis.fetch;
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
@@ -763,6 +764,7 @@ describe('parent schedule child scope', () => {
       const scope = await loadParentScheduleScope(coachUser);
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
       expect(scope.staffTeamsPartial).toBe(false);
       expect(scope.isPartial).toBe(false);
@@ -859,6 +861,31 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
+  it('merges an HTTP-authorized team omitted from a nonempty web result without profile role hints', async () => {
+    const staffUser = { uid: 'staff-1', email: 'staff@example.com', roles: ['staff'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({
+      teams: [{ id: 'team-visible', name: 'Visible Team', active: true }],
+      isPartial: false
+    } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [
+        { id: 'team-visible', name: 'Visible Team', active: true },
+        { id: 'team-authoritative', name: 'Authoritative Team', active: true }
+      ],
+      isPartial: false
+    });
+
+    const scope = await loadParentScheduleScope(staffUser);
+
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([
+      { teamId: 'team-visible', teamName: 'Visible Team' },
+      { teamId: 'team-authoritative', teamName: 'Authoritative Team' }
+    ]);
+    expect(scope.staffTeamsPartial).toBe(false);
+  });
+
   it('confirms an empty web SDK result even when the account lacks staff access signals', async () => {
     const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
@@ -916,7 +943,7 @@ describe('parent schedule child scope', () => {
     const scope = await loadParentScheduleScope(coachUser);
 
     expect(getStaffTeams).toHaveBeenCalledTimes(2);
-    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(2);
     expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
     expect(scope.staffTeamsPartial).toBe(false);
     expect(scope.isPartial).toBe(false);
@@ -929,6 +956,7 @@ describe('parent schedule child scope', () => {
       teams: [{ id: 'team-owned', name: 'Vipers', ownerId: 'coach-1', active: true }],
       isPartial: true
     } as any);
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({ teams: [], isPartial: true });
 
     const scope = await loadParentScheduleScope(coachUser);
 
@@ -2288,6 +2316,7 @@ describe('official assignments app service', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     capacitorCoreMock.isNativePlatform.mockReturnValue(false);
+    vi.mocked(getNativeAuthIdToken).mockRejectedValue(new Error('HTTP projection unavailable in browser fallback tests'));
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
     vi.mocked(getOfficialLinkedTeamIds).mockResolvedValue({ teamIds: ['team-alpha'], isPartial: false });
     vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
@@ -2452,6 +2481,80 @@ describe('official assignments app service', () => {
     expect(getTeam).not.toHaveBeenCalled();
     expect(getGames).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('loads web linked-team assignments from the authenticated bounded HTTP projection', async () => {
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
+    const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-assigned';
+    const gameId = `shared_${encodeURIComponent(sharedGamePath)}`;
+    capacitorCoreMock.httpPost.mockResolvedValue({
+      status: 200,
+      data: {
+        result: {
+          teamIds: ['team-alpha'],
+          teamCount: 1,
+          isPartial: false,
+          assignmentsComplete: true,
+          teams: [{ id: 'team-alpha', name: 'Alpha FC' }],
+          assignments: [{
+            kind: 'assigned',
+            teamId: 'team-alpha',
+            teamName: 'Alpha FC',
+            gameId,
+            sharedGamePath,
+            slotId: 'center',
+            position: 'Center Referee',
+            status: 'pending',
+            opponent: 'Tigers',
+            location: 'Field 2',
+            date: futureDate,
+            canClaim: false,
+            scheduleReviewRequired: false
+          }]
+        }
+      },
+      headers: {},
+      url: ''
+    });
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
+
+    expect(result).toEqual(expect.objectContaining({
+      hasAccess: true,
+      teamIds: ['team-alpha'],
+      isPartial: false,
+      assignments: [expect.objectContaining({ gameId, sharedGamePath, slotId: 'center' })]
+    }));
+    expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+      data: { data: { includeAssignments: true, requestedTeamId: 'team-alpha' } },
+      headers: expect.objectContaining({ Authorization: 'Bearer web-token' })
+    }));
+    expect(getOfficialLinkedTeamIds).not.toHaveBeenCalled();
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+
+    const [item] = result.assignments;
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', canClaim: true }, user);
+
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(1,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'accepted' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(2,
+      'respondToOfficiatingAssignment',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center', status: 'declined' },
+      { errorLabel: 'Officiating response' }
+    );
+    expect(nativeCallableMock.callNativeFirebaseFunction).toHaveBeenNthCalledWith(3,
+      'claimOpenOfficiatingSlot',
+      { teamId: 'team-alpha', gameId, sharedGamePath, slotId: 'center' },
+      { errorLabel: 'Officiating claim' }
+    );
+    expect(respondToOfficiatingAssignment).not.toHaveBeenCalled();
+    expect(claimOpenOfficiatingSlot).not.toHaveBeenCalled();
   });
 
   it('loads a requested native team and its shared assignments only from the complete callable projection', async () => {
