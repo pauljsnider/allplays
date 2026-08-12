@@ -796,25 +796,35 @@ describe('parent schedule child scope', () => {
     expect(scope.isPartial).toBe(false);
   });
 
-  it('accepts an empty complete web callable result without issuing permission-noise REST requests', async () => {
-    const previousFetch = globalThis.fetch;
+  it('verifies an empty web SDK result over authenticated HTTP for a known staff account', async () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
     vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
-    const fetchMock = vi.fn();
-    (globalThis as any).fetch = fetchMock;
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValueOnce({
+      teams: [{ id: 'team-coached', name: 'Coach Bears', active: true }],
+      isPartial: false
+    });
 
-    try {
-      const scope = await loadParentScheduleScope(coachUser);
+    const scope = await loadParentScheduleScope(coachUser);
 
-      expect(getStaffTeams).toHaveBeenCalledTimes(1);
-      expect(scope.staffTeams).toEqual([]);
-      expect(scope.staffTeamsPartial).toBe(false);
-      expect(scope.isPartial).toBe(false);
-      expect(fetchMock).not.toHaveBeenCalled();
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
+    expect(getStaffTeams).toHaveBeenCalledTimes(1);
+    expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+    expect(scope.staffTeams).toEqual([{ teamId: 'team-coached', teamName: 'Coach Bears' }]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
+  });
+
+  it('does not verify an empty web SDK result for an account without staff access signals', async () => {
+    const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: [] } as any);
+    vi.mocked(getStaffTeams).mockResolvedValue({ teams: [], isPartial: false } as any);
+
+    const scope = await loadParentScheduleScope(parentUser);
+
+    expect(loadManagedTeamsFromNativeCallable).not.toHaveBeenCalled();
+    expect(scope.staffTeams).toEqual([]);
+    expect(scope.staffTeamsPartial).toBe(false);
+    expect(scope.isPartial).toBe(false);
   });
 
   it('retries partial owner and admin discovery when the profile has no coach links', async () => {
