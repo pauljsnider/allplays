@@ -2591,6 +2591,45 @@ describe('official assignments app service', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('keeps cold native official discovery separate from the shorter staff discovery timeout', async () => {
+    vi.useFakeTimers();
+    capacitorCoreMock.isNativePlatform.mockReturnValue(true);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
+    capacitorCoreMock.httpPost.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        status: 200,
+        data: {
+          result: {
+            teamIds: ['team-alpha'],
+            isPartial: false,
+            assignments: [],
+            assignmentsComplete: false
+          }
+        },
+        headers: {},
+        url: ''
+      }), 8000);
+    }));
+
+    try {
+      const accessPromise = loadOfficialAssignmentsAccess(user);
+      await vi.advanceTimersByTimeAsync(8000);
+
+      await expect(accessPromise).resolves.toEqual({
+        hasAccess: true,
+        teamIds: ['team-alpha'],
+        teamCount: 1,
+        isPartial: false
+      });
+      expect(capacitorCoreMock.httpPost).toHaveBeenCalledWith(expect.objectContaining({
+        connectTimeout: 12000,
+        readTimeout: 12000
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('loads web linked-team assignments from the authenticated bounded HTTP projection', async () => {
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('web-token');
     const sharedGamePath = 'tournaments/tournament-1/sharedGames/shared-assigned';

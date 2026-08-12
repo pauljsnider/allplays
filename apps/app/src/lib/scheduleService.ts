@@ -155,6 +155,7 @@ const primaryDataTimeoutMs = 5000;
 // grants. Give that one bounded callable enough time to finish on a cold web
 // start without raising the timeout for every schedule read.
 const staffTeamDiscoveryTimeoutMs = 7000;
+const officialTeamDiscoveryTimeoutMs = 12000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
@@ -7272,9 +7273,9 @@ async function loadOfficialLinkedTeamIdsFromNativeCallable(options: { includeAss
         ...(compactString(options.requestedTeamId) ? { requestedTeamId: compactString(options.requestedTeamId) } : {})
       }
     },
-    connectTimeout: staffTeamDiscoveryTimeoutMs,
-    readTimeout: staffTeamDiscoveryTimeoutMs
-  }), 'Official team discovery', staffTeamDiscoveryTimeoutMs);
+    connectTimeout: officialTeamDiscoveryTimeoutMs,
+    readTimeout: officialTeamDiscoveryTimeoutMs
+  }), 'Official team discovery', officialTeamDiscoveryTimeoutMs);
   const payload = response.data && typeof response.data === 'object' ? response.data : {};
   const result = payload?.result || payload?.data;
   if (response.status < 200 || response.status >= 300) {
