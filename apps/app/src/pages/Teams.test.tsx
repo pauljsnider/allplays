@@ -160,6 +160,132 @@ describe('Teams empty state', () => {
     cleanup();
   });
 
+  it('renders a verified streamed team while complete scope discovery is still pending', async () => {
+    const completeLoad = deferred<ReturnType<typeof makeTeamSummaryBootstrap>>();
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      return completeLoad.promise;
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toHaveAttribute(
+      'href',
+      '/teams/team-streamed'
+    );
+    expect(screen.queryByText('Loading teams')).toBeNull();
+
+    completeLoad.resolve(makeTeamSummaryBootstrap(streamedHome));
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+  });
+
+  it('preserves a streamed team if slower complete scope discovery fails', async () => {
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      throw new Error('Family scope timed out');
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toBeVisible();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+    expect(screen.getByText('Unable to load teams while offline. Check your connection and try again.')).toBeVisible();
+  });
+
+  it('merges a streamed refresh slice without erasing the existing chooser when completion fails', async () => {
+    const existingHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-existing',
+        teamName: 'Existing Eagles',
+        role: 'Parent',
+        sport: 'Soccer',
+        photoUrl: null,
+        players: [{
+          teamId: 'team-existing',
+          teamName: 'Existing Eagles',
+          playerId: 'player-1',
+          playerName: 'Alex Eagle'
+        }],
+        nextEvent: null,
+        eventCount: 2,
+        upcomingEventCount: 1,
+        unreadCount: 1,
+        openActions: 1
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1, players: 1, unreadMessages: 1 }
+    };
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap
+      .mockResolvedValueOnce(makeTeamSummaryBootstrap(existingHome))
+      .mockImplementationOnce(async (_user, options) => {
+        options?.onPartial?.(streamedHome);
+        throw new Error('Family scope timed out');
+      });
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce(existingHome);
+
+    renderTeams();
+    expect(await screen.findByRole('link', { name: 'Open Existing Eagles' })).toBeVisible();
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh teams' }));
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Open Existing Eagles' })).toBeVisible();
+    expect(screen.getByText('Alex Eagle')).toBeVisible();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+  });
+
   it('opens the native Browse Teams route from the empty state recovery action', async () => {
     renderTeams();
 
