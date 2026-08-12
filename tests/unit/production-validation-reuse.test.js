@@ -22,6 +22,7 @@ function workflowRun(name) {
         head_repository: { full_name: 'pauljsnider/allplays' },
         path: `.github/workflows/${name}.yml`,
         display_title: `${name} #4605 -> master @ ${headSha}`,
+        pull_requests: [],
         updated_at: '2026-08-12T08:10:00Z'
     };
 }
@@ -91,6 +92,32 @@ describe('production exact-head validation reuse', () => {
         const input = evidence();
         input.prFastRuns.workflow_runs[0].display_title = `pr-fast #999 -> support @ ${headSha}`;
         input.prIntegrationRuns.workflow_runs[0].display_title = `pr-integration #999 -> support @ ${headSha}`;
+        expect(evaluateProductionValidationReuse(input).reusable).toBe(false);
+    });
+
+    it('rejects ambiguous multi-PR associations from either workflow', () => {
+        const association = (number) => ({
+            number,
+            head: { sha: headSha, ref: 'codex/production-validation-reuse' },
+            base: { ref: 'master' }
+        });
+        for (const runsKey of ['prFastRuns', 'prIntegrationRuns']) {
+            const input = evidence();
+            input[runsKey].workflow_runs[0].pull_requests = [association(4605), association(999)];
+            expect(evaluateProductionValidationReuse(input)).toEqual({
+                reusable: false,
+                reason: 'exact PR-bound workflows and required jobs are incomplete'
+            });
+        }
+    });
+
+    it('rejects a supplied association whose exact head does not match', () => {
+        const input = evidence();
+        input.prFastRuns.workflow_runs[0].pull_requests = [{
+            number: 4605,
+            head: { sha: 'd'.repeat(40), ref: 'codex/production-validation-reuse' },
+            base: { ref: 'master' }
+        }];
         expect(evaluateProductionValidationReuse(input).reusable).toBe(false);
     });
 

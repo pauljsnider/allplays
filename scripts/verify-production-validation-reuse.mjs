@@ -19,7 +19,22 @@ function latestByUpdatedAt(values) {
     )).at(-1);
 }
 
-function matchingWorkflowRuns(runs, { repository, headBranch, headSha, path, title }) {
+function pullAssociationMatches(run, { prNumber, headBranch, headSha }) {
+    const pulls = Array.isArray(run?.pull_requests) ? run.pull_requests : [];
+    // GitHub returns this association while a PR is open, but may return an
+    // empty array after merge. When present, fail closed on ambiguity; when
+    // absent, the immutable event/title/branch/SHA/workflow binding below is
+    // the durable association.
+    return pulls.length === 0 || (
+        pulls.length === 1
+        && pulls[0]?.number === prNumber
+        && pulls[0]?.head?.sha === headSha
+        && pulls[0]?.head?.ref === headBranch
+        && pulls[0]?.base?.ref === 'master'
+    );
+}
+
+function matchingWorkflowRuns(runs, { repository, prNumber, headBranch, headSha, path, title }) {
     return (runs?.workflow_runs || []).filter((run) => (
         Number.isInteger(run?.id)
         && run.id > 0
@@ -31,6 +46,7 @@ function matchingWorkflowRuns(runs, { repository, headBranch, headSha, path, tit
         && run?.head_repository?.full_name === repository
         && run?.path === path
         && run?.display_title === title
+        && pullAssociationMatches(run, { prNumber, headBranch, headSha })
     ));
 }
 
@@ -83,7 +99,7 @@ export function evaluateProductionValidationReuse({
         return { reusable: false, reason: 'production tree differs from the reviewed PR head' };
     }
 
-    const runIdentity = { repository, headBranch, headSha };
+    const runIdentity = { repository, prNumber, headBranch, headSha };
     const fastRun = matchingWorkflowRuns(prFastRuns, {
         ...runIdentity,
         path: '.github/workflows/pr-fast.yml',
