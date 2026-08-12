@@ -141,7 +141,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production.slice(storageAuth, storageDeploy)).not.toContain('run:');
         expect(production.slice(productionAuth, productionDeploy)).not.toContain('run:');
         expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
-        expect(production.slice(productionDeploy)).toContain('timeout-minutes: 20');
+        expect(production.slice(productionDeploy)).toContain('timeout-minutes: 30');
         const oidcJobs = workflowJobs(production).filter((job) => job.permissions?.['id-token'] === 'write');
         expect(oidcJobs).toHaveLength(2);
         for (const oidcJob of oidcJobs) {

@@ -284,11 +284,19 @@ concurrency:
           }
           create_firestore_ruleset_with_retry() {
             jq --rawfile rules_source firestore.rules --arg rules_fingerprint fingerprint 'fingerprint:$rules_fingerprint'
-            for attempt in 1 2 3; do
+            for attempt in 1 2 3 4 5 6; do
               curl --request POST "https://firebaserules.googleapis.com/v1/projects/game-flow-c6311/rulesets"
               jq '(.source.files // []) | if length == 1 and .[0].name == "firestore.rules"'
               [[ -n "$created_rules_b64" && "$created_rules_b64" == "$local_rules_b64" ]]
               [[ "$created_fingerprint" == "$local_fingerprint" ]]
+              firestore_rules_api_error "Firestore ruleset creation"
+              if ruleset_name="$(find_recent_matching_firestore_ruleset "$expected_rules_source")"; then
+                printf '%s\n' "$ruleset_name"
+                return 0
+              fi
+              retry_delay_seconds=$((15 * (2 ** (attempt - 1))))
+              retry_delay_seconds=$((retry_delay_seconds + (RANDOM % 16)))
+              if (( retry_delay_seconds > 120 )); then retry_delay_seconds=120; fi
             done
           }
           ensure_exact_firestore_ruleset() {
