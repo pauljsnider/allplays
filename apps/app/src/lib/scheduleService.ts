@@ -3134,7 +3134,7 @@ export async function loadParentScheduleScope(user: AuthUser | null): Promise<Pa
   const nativeRuntime = isNativeRuntime();
   const shouldVerifyStaffResultWithHttp = nativeRuntime
     ? (staffTeamResult.isPartial || hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult)
-    : (shouldVerifyEmptyStaffResult && staffTeamResult.isPartial !== true);
+    : ((hasMissingDeclaredCoachTeam || shouldVerifyEmptyStaffResult) && staffTeamResult.isPartial !== true);
   if (shouldVerifyStaffResultWithHttp) {
     try {
       const restResult = await loadStaffTeamsFromRest();
