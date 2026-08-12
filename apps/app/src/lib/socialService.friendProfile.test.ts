@@ -116,6 +116,33 @@ describe('loadFriendProfile self-profile resilience', () => {
     }));
   });
 
+  it('keeps the friend profile available when optional public athlete profiles fail', async () => {
+    firestoreMocks.getDocs.mockImplementation(async (queryValue: any) => {
+      const path = queryValue?.base?.path || '';
+      if (path === 'athleteProfiles') {
+        throw Object.assign(new Error('Temporary public profile read failure.'), {
+          code: 'unavailable'
+        });
+      }
+      return { docs: [] };
+    });
+
+    const profile = await loadFriendProfile({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    } as any, 'user-1');
+
+    expect(profile).toMatchObject({
+      userId: 'user-1',
+      name: 'Pat Parent',
+      publicChildren: [],
+      posts: [],
+      postsError: null
+    });
+  });
+
   it('loads self-profile posts through authenticated REST in native builds', async () => {
     nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -330,5 +357,128 @@ describe('loadFriendProfile self-profile resilience', () => {
     expect(profile.messageRoute).toBeTruthy();
     expect(firestoreMocks.getDoc).not.toHaveBeenCalled();
     expect(firestoreMocks.getDocs).not.toHaveBeenCalled();
+  });
+
+  it('bounds native hidden-post pagination and surfaces an incomplete retry state', async () => {
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+    const hiddenRequests: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/publicUserProfiles/user-1')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/publicUserProfiles/user-1',
+            fields: { discoveryTeamIds: { arrayValue: {} } }
+          })
+        };
+      }
+      if (url.includes('/hiddenSocialPosts?')) {
+        hiddenRequests.push(url);
+        const page = hiddenRequests.length;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            documents: Array.from({ length: 200 }, (_, index) => ({
+              name: `projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/hidden-${page}-${index}`
+            })),
+            nextPageToken: `page-${page + 1}`
+          })
+        };
+      }
+      if (url.endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (body.structuredQuery.from?.[0]?.collectionId === 'athleteProfiles') {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+        throw new Error('Post discovery must not run with incomplete hidden-post state.');
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profile = await loadFriendProfile({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    } as any, 'user-1');
+
+    expect(hiddenRequests).toHaveLength(3);
+    expect(hiddenRequests[2]).toContain('pageToken=page-3');
+    expect(profile).toMatchObject({
+      posts: [],
+      postsError: 'Recent posts could not load completely. Try again.'
+    });
+  });
+
+  it('bounds native post scans when every matching post is hidden and surfaces retry', async () => {
+    nativeRuntimeMocks.isNativeRuntime.mockReturnValue(true);
+    const hiddenIds = Array.from({ length: 120 }, (_, index) => `post-${index}`);
+    const socialQueryBodies: any[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/publicUserProfiles/user-1')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'projects/demo-project/databases/(default)/documents/publicUserProfiles/user-1',
+            fields: { discoveryTeamIds: { arrayValue: {} } }
+          })
+        };
+      }
+      if (url.includes('/hiddenSocialPosts?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            documents: hiddenIds.map((id) => ({
+              name: `projects/demo-project/databases/(default)/documents/users/user-1/hiddenSocialPosts/${id}`
+            }))
+          })
+        };
+      }
+      if (url.endsWith('/documents:runQuery')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (body.structuredQuery.from?.[0]?.collectionId === 'athleteProfiles') {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+        socialQueryBodies.push(body);
+        const page = socialQueryBodies.length - 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => hiddenIds.slice(page * 30, page * 30 + 30).map((id, index) => ({
+            document: {
+              name: `projects/demo-project/databases/(default)/documents/socialPosts/${id}`,
+              fields: {
+                authorId: { stringValue: 'user-1' },
+                hidden: { booleanValue: false },
+                createdAt: { timestampValue: new Date(Date.UTC(2026, 7, 10, 15, page, index)).toISOString() }
+              }
+            }
+          }))
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const profile = await loadFriendProfile({
+      uid: 'user-1',
+      email: 'parent@example.test',
+      displayName: 'Pat Parent',
+      roles: []
+    } as any, 'user-1');
+
+    expect(socialQueryBodies).toHaveLength(4);
+    expect(socialQueryBodies[3].structuredQuery.startAt).toBeTruthy();
+    expect(profile).toMatchObject({
+      posts: [],
+      postsError: 'Recent posts could not load completely. Try again.'
+    });
   });
 });

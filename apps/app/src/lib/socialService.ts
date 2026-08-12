@@ -53,6 +53,8 @@ import {
 const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
 const hiddenSocialPostPageSize = 200;
+const hiddenSocialPostPageBudget = 3;
+const socialPostPageBudget = 4;
 const teamSocialPostLimit = 12;
 const teamSocialFeedTeamLimit = 8;
 const friendSuggestionLimit = 8;
@@ -276,7 +278,11 @@ async function loadNativeSocialPostQueryPages({
   const visiblePosts: FirestoreDoc[] = [];
   let cursor: { createdAt: Record<string, unknown>; documentName: string } | null = null;
   let previousCursorName = '';
-  while (visiblePosts.length < visibleLimit) {
+  let loadedPages = 0;
+  let isPartial = false;
+  let hasMore = false;
+  while (visiblePosts.length < visibleLimit && loadedPages < socialPostPageBudget) {
+    loadedPages += 1;
     const payload: any = await withTimeout(nativeFirestoreRequest(':runQuery', {
       method: 'POST',
       body: JSON.stringify({
@@ -325,14 +331,24 @@ async function loadNativeSocialPostQueryPages({
         visiblePosts.push(post);
       }
     });
-    if (pageDocs.length < pageSize || visiblePosts.length >= visibleLimit) break;
+    hasMore = pageDocs.length >= pageSize && visiblePosts.length < visibleLimit;
+    if (!hasMore) break;
     const lastDoc: FirestoreDoc = pageDocs[pageDocs.length - 1];
     const documentName = compactString(lastDoc.__documentName);
-    if (!documentName || documentName === previousCursorName || !lastDoc.__createdAtCursor) break;
+    if (!documentName || documentName === previousCursorName || !lastDoc.__createdAtCursor) {
+      isPartial = true;
+      break;
+    }
     cursor = { createdAt: lastDoc.__createdAtCursor, documentName };
     previousCursorName = documentName;
   }
-  return visiblePosts.map(({ __documentName, __createdAtCursor, ...post }) => post);
+  if (hasMore && loadedPages >= socialPostPageBudget) {
+    isPartial = true;
+  }
+  return {
+    docs: visiblePosts.map(({ __documentName, __createdAtCursor, ...post }) => post),
+    isPartial
+  };
 }
 
 function compactString(value: unknown) {
@@ -462,7 +478,11 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
   posts: SocialFeedItem[];
   isPartial: boolean;
 }> {
-  const hiddenPostIds = await loadHiddenSocialPostIds(user.uid);
+  const hiddenPostResult = await loadHiddenSocialPostIds(user.uid);
+  const hiddenPostIds = hiddenPostResult.ids;
+  if (hiddenPostResult.isPartial) {
+    return { posts: [], isPartial: true };
+  }
   const postDocs = new Map<string, FirestoreDoc>();
   const homeTeamIds = getHomeTeamIds(home);
   const queriedTeamIds = homeTeamIds.slice(0, teamSocialFeedTeamLimit);
@@ -488,7 +508,7 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     });
-  const [visiblePosts, teamPostResults] = await Promise.all([
+  const [visiblePostResult, teamPostResults] = await Promise.all([
     loadVisiblePosts,
     Promise.allSettled(queriedTeamIds.map((teamId) => (
       isNativeRuntime()
@@ -521,11 +541,11 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
       failedTeamCount: failedTeamPostResults.length
     });
   }
-  const teamPostSnapshots = teamPostResults
-    .filter((result): result is PromiseFulfilledResult<FirestoreDoc[]> => result.status === 'fulfilled')
+  const successfulTeamPostResults = teamPostResults
+    .filter((result): result is PromiseFulfilledResult<{ docs: FirestoreDoc[]; isPartial: boolean }> => result.status === 'fulfilled')
     .map((result) => result.value);
-  visiblePosts.forEach((post) => postDocs.set(post.id, post));
-  teamPostSnapshots.flat().forEach((post) => postDocs.set(post.id, post));
+  visiblePostResult.docs.forEach((post) => postDocs.set(post.id, post));
+  successfulTeamPostResults.flatMap((result) => result.docs).forEach((post) => postDocs.set(post.id, post));
 
   const posts = sortSocialFeedItems([...postDocs.values()]
     .map(mapSocialPost)
@@ -541,6 +561,8 @@ async function loadVisibleSocialPostsWithState(user: AuthUser, home: ParentHomeM
       viewerReactionError: viewerReactions.failedPostIds.has(post.id)
     })),
     isPartial: homeTeamIds.length > queriedTeamIds.length ||
+      visiblePostResult.isPartial ||
+      successfulTeamPostResults.some((result) => result.isPartial) ||
       failedTeamPostResults.length > 0 ||
       viewerReactions.failedPostIds.size > 0
   };
@@ -562,7 +584,11 @@ async function loadSocialPostQueryPages({
   const visiblePosts: FirestoreDoc[] = [];
   let cursor: any | null = null;
   let previousCursorId = '';
-  while (visiblePosts.length < visibleLimit) {
+  let loadedPages = 0;
+  let isPartial = false;
+  let hasMore = false;
+  while (visiblePosts.length < visibleLimit && loadedPages < socialPostPageBudget) {
+    loadedPages += 1;
     const snapshot = await withTimeout(getDocs(buildQuery(cursor)), label);
     const snapshotDocs = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
     snapshotToDocs(snapshot).forEach((post) => {
@@ -570,20 +596,29 @@ async function loadSocialPostQueryPages({
         visiblePosts.push(post);
       }
     });
-    if (snapshotDocs.length < pageSize || visiblePosts.length >= visibleLimit) break;
+    hasMore = snapshotDocs.length >= pageSize && visiblePosts.length < visibleLimit;
+    if (!hasMore) break;
     const nextCursor = snapshotDocs[snapshotDocs.length - 1];
-    if (!nextCursor?.id || nextCursor.id === previousCursorId) break;
+    if (!nextCursor?.id || nextCursor.id === previousCursorId) {
+      isPartial = true;
+      break;
+    }
     cursor = nextCursor;
     previousCursorId = nextCursor.id;
   }
-  return visiblePosts;
+  if (hasMore && loadedPages >= socialPostPageBudget) {
+    isPartial = true;
+  }
+  return { docs: visiblePosts, isPartial };
 }
 
 async function loadHiddenSocialPostIds(userId: string) {
   const hiddenPostIds = new Set<string>();
   if (isNativeRuntime()) {
     let pageToken = '';
+    let loadedPages = 0;
     do {
+      loadedPages += 1;
       const params = new URLSearchParams({ pageSize: String(hiddenSocialPostPageSize) });
       if (pageToken) params.set('pageToken', pageToken);
       const payload = await nativeFirestoreRequest(`/users/${encodeURIComponent(userId)}/hiddenSocialPosts?${params.toString()}`);
@@ -592,27 +627,39 @@ async function loadHiddenSocialPostIds(userId: string) {
         if (decoded?.id) hiddenPostIds.add(decoded.id);
       });
       pageToken = compactString(payload?.nextPageToken);
-    } while (pageToken);
-    return hiddenPostIds;
+    } while (pageToken && loadedPages < hiddenSocialPostPageBudget);
+    return { ids: hiddenPostIds, isPartial: Boolean(pageToken) };
   }
   let cursor: any | null = null;
   let previousCursorId = '';
-  while (true) {
+  let loadedPages = 0;
+  let isPartial = false;
+  let hasMore = false;
+  while (loadedPages < hiddenSocialPostPageBudget) {
+    loadedPages += 1;
     const snapshot = await withTimeout(getDocs(query(
       collection(db, 'users', userId, 'hiddenSocialPosts'),
       ...(cursor ? [startAfter(cursor)] : []),
       limit(hiddenSocialPostPageSize)
     )), 'Hidden social posts').catch(() => null);
-    if (!snapshot) break;
+    if (!snapshot) {
+      isPartial = true;
+      break;
+    }
     const snapshotDocs = Array.isArray(snapshot.docs) ? snapshot.docs : [];
     snapshotToDocs(snapshot).forEach((entry) => hiddenPostIds.add(entry.id));
-    if (snapshotDocs.length < hiddenSocialPostPageSize) break;
+    hasMore = snapshotDocs.length >= hiddenSocialPostPageSize;
+    if (!hasMore) break;
     const nextCursor = snapshotDocs[snapshotDocs.length - 1];
-    if (!nextCursor?.id || nextCursor.id === previousCursorId) break;
+    if (!nextCursor?.id || nextCursor.id === previousCursorId) {
+      isPartial = true;
+      break;
+    }
     cursor = nextCursor;
     previousCursorId = nextCursor.id;
   }
-  return hiddenPostIds;
+  if (hasMore && loadedPages >= hiddenSocialPostPageBudget) isPartial = true;
+  return { ids: hiddenPostIds, isPartial };
 }
 
 async function loadViewerSocialPostReactions(posts: SocialFeedItem[], userId: string) {
@@ -664,12 +711,16 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     }
   }
 
-  const [privateProfile, publicProfile, hiddenPostIds, publicChildrenDocs] = await Promise.all([
+  const [privateProfile, publicProfile, hiddenPostResult, publicChildrenDocs] = await Promise.all([
     isSelf ? loadProfileDocument(targetUserId) : Promise.resolve(null),
     loadPublicUserProfileDocument(targetUserId),
     loadHiddenSocialPostIds(viewerId),
-    loadPublicAthleteProfileDocuments(targetUserId)
+    loadPublicAthleteProfileDocuments(targetUserId).catch((error) => {
+      logger.warn('Unable to load public athlete profiles.', { error, isSelf });
+      return [];
+    })
   ]);
+  const hiddenPostIds = hiddenPostResult.ids;
   const profile = isSelf
     ? {
         ...(publicProfile || {}),
@@ -689,7 +740,11 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     photoUrl: team.photoUrl
   })));
   let postsError: string | null = null;
-  const postDocs = await (isNativeRuntime()
+  let postResult = { docs: [] as FirestoreDoc[], isPartial: hiddenPostResult.isPartial };
+  if (hiddenPostResult.isPartial) {
+    postsError = 'Recent posts could not load completely. Try again.';
+  } else {
+    postResult = await (isNativeRuntime()
     ? loadNativeSocialPostQueryPages({
       filters: [
         { fieldPath: 'visibleUserIds', op: 'ARRAY_CONTAINS', value: { stringValue: viewerId } },
@@ -715,10 +770,14 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
       pageSize: socialPostLimit,
       visibleLimit: socialPostLimit
     })).catch((error) => {
-    logger.warn('Unable to load profile posts.', { error, isSelf });
-    postsError = 'Recent posts could not load. Try again.';
-    return [];
-  });
+      logger.warn('Unable to load profile posts.', { error, isSelf });
+      postsError = 'Recent posts could not load. Try again.';
+      return { docs: [], isPartial: true };
+    });
+    if (postResult.isPartial && !postsError) {
+      postsError = 'Recent posts could not load completely. Try again.';
+    }
+  }
   const sharedTeamIds = isSelf ? [] : uniqueStrings(friendship?.sharedTeamIds || []);
   const publicChildren = publicChildrenDocs.map((child) => ({
     id: child.id,
@@ -727,7 +786,7 @@ export async function loadFriendProfile(user: AuthUser, profileUserId: string): 
     photoUrl: compactString(child.profilePhoto?.url || child.profilePhotoUrl) || null,
     shareUrl: buildAthleteProfileShareUrl(getPublicBaseUrl(), child.id)
   }));
-  const posts = sortSocialFeedItems(postDocs
+  const posts = sortSocialFeedItems(postResult.docs
     .map(mapSocialPost)
     .filter((post) => !post.hidden && !hiddenPostIds.has(post.id)));
   const [publicTeams, viewerReactions] = await Promise.all([
