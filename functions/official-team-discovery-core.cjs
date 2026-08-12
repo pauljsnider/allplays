@@ -124,6 +124,90 @@ function isOfficialDocumentAuthorizedForQuery(docSnapshot, authUser = {}, proof 
   );
 }
 
+function validateLegacyOfficialBindingState({ official = {}, user = {}, authUser = {}, userId, expectedPhone }) {
+  const normalizedUserId = normalizeStoredUserId(userId);
+  const normalizedExpectedPhone = normalizeOfficialPhone(expectedPhone);
+  if (!normalizedUserId || normalizedExpectedPhone.length < 7 || normalizedExpectedPhone.length > 15) {
+    throw new Error('A valid target user and expected phone are required.');
+  }
+  if (!authUser || authUser.uid !== normalizedUserId || authUser.disabled === true) {
+    throw new Error('The target Auth account is unavailable.');
+  }
+  const storedOfficialUserId = normalizeStoredUserId(official.officialUserId);
+  if (hasStoredPrincipalValue(official.officialUserId)) {
+    if (!storedOfficialUserId || storedOfficialUserId !== normalizedUserId) {
+      throw new Error('The official row already has a conflicting canonical user binding.');
+    }
+    return { alreadyBound: true, normalizedUserId };
+  }
+  const profilePhone = normalizeOfficialPhone(user.phoneNumber || user.phone);
+  const officialPhone = normalizeOfficialPhone(official.phoneDigits || official.phone);
+  if (profilePhone !== normalizedExpectedPhone || officialPhone !== normalizedExpectedPhone) {
+    throw new Error('The approved phone does not match both legacy records.');
+  }
+  const officialEmails = [official.emailLower, official.email].map(normalizeOfficialEmail).filter(Boolean);
+  if (officialEmails.length > 0) {
+    const authEmail = authUser.emailVerified === true ? normalizeOfficialEmail(authUser.email) : '';
+    if (!authEmail || !officialEmails.includes(authEmail)) {
+      throw new Error('The official row has a conflicting email identity.');
+    }
+  }
+  return { alreadyBound: false, normalizedUserId };
+}
+
+function createOfficialUserBindingMigrator({ firestore, auth, serverTimestamp = () => new Date() }) {
+  if (!firestore || !auth || typeof firestore.runTransaction !== 'function') {
+    throw new Error('Official identity migration dependencies are required.');
+  }
+  return async function migrateOfficialUserBinding({
+    teamId,
+    officialId,
+    userId,
+    expectedPhone,
+    dryRun = true
+  } = {}) {
+    const normalizedTeamId = normalizeBoundedId(teamId);
+    const normalizedOfficialId = normalizeBoundedId(officialId);
+    const normalizedUserId = normalizeStoredUserId(userId);
+    if (!normalizedTeamId || !normalizedOfficialId || !normalizedUserId) {
+      throw new Error('Valid team, official, and user IDs are required.');
+    }
+    const authUser = await auth.getUser(normalizedUserId);
+    const officialRef = firestore.doc(`teams/${normalizedTeamId}/officials/${normalizedOfficialId}`);
+    const userRef = firestore.doc(`users/${normalizedUserId}`);
+    return firestore.runTransaction(async (transaction) => {
+      const [officialSnap, userSnap] = await Promise.all([
+        transaction.get(officialRef),
+        transaction.get(userRef)
+      ]);
+      if (!officialSnap.exists || !userSnap.exists) {
+        throw new Error('Both the official row and user profile must exist.');
+      }
+      const validation = validateLegacyOfficialBindingState({
+        official: officialSnap.data() || {},
+        user: userSnap.data() || {},
+        authUser,
+        userId: normalizedUserId,
+        expectedPhone
+      });
+      if (!dryRun && !validation.alreadyBound) {
+        transaction.update(officialRef, {
+          officialUserId: normalizedUserId,
+          officialUserBindingMethod: 'operator-approved-profile-phone',
+          officialUserBoundAt: serverTimestamp()
+        });
+      }
+      return {
+        teamId: normalizedTeamId,
+        officialId: normalizedOfficialId,
+        userId: normalizedUserId,
+        dryRun: dryRun === true,
+        alreadyBound: validation.alreadyBound
+      };
+    });
+  };
+}
+
 function extractOfficialTeamId(docSnapshot) {
   const parts = String(docSnapshot?.ref?.path || '').split('/').filter(Boolean);
   if (parts.length !== 4 || parts[0] !== 'teams' || parts[2] !== 'officials') return '';
@@ -603,6 +687,7 @@ function createOfficialTeamDiscoveryHandler({
     const profilePhoneCandidates = buildOfficialPhoneCandidates({ phoneNumber: user.phoneNumber || user.phone });
     const normalizedProfilePhone = normalizeOfficialPhone(user.phoneNumber || user.phone);
     const queryPlans = [
+      { field: 'officialUserId', values: [authUser.uid], proof: 'auth' },
       { field: 'email', values: emailCandidates, proof: 'auth' },
       { field: 'emailLower', values: normalizedEmail ? [normalizedEmail] : [], proof: 'auth' },
       { field: 'phone', values: authPhoneCandidates, proof: 'auth' },
@@ -666,6 +751,7 @@ module.exports = {
   buildSharedGameSyntheticId,
   canClaimOpenOfficialSlots,
   createOfficialTeamDiscoveryHandler,
+  createOfficialUserBindingMigrator,
   extractOfficialTeamId,
   isAssignedToAuthUser,
   isCurrentOrUpcomingOfficialGame,

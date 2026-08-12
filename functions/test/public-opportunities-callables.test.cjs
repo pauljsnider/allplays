@@ -1019,6 +1019,35 @@ test('parent fee discovery preserves direct UID assignments for parent-team-only
     assert.deepEqual(result.items.map((item) => item.id), ['direct']);
 });
 
+test('parent fee discovery treats each exact UID field as authoritative without redundant profile team links', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/parent-1': {},
+        'teams/team-parent/feeBatches/batch-1/feeRecipients/parent': {
+            parentUserId: 'parent-1',
+            amountDueCents: 1000
+        },
+        'teams/team-account/feeBatches/batch-2/feeRecipients/account': {
+            accountUserId: 'parent-1',
+            amountDueCents: 2000
+        },
+        'teams/team-user/feeBatches/batch-3/feeRecipients/user': {
+            userId: 'parent-1',
+            amountDueCents: 3000
+        }
+    });
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id).sort(), ['account', 'parent', 'user']);
+    const directFields = firestore._queryLog
+        .filter(({ path }) => path === '**/feeRecipients')
+        .flatMap(({ filters }) => filters)
+        .filter(({ operator, value }) => operator === '==' && value === 'parent-1')
+        .map(({ field }) => field)
+        .sort();
+    assert.deepEqual(directFields, ['accountUserId', 'parentUserId', 'userId']);
+});
+
 test('social mutation callables authorize native post actions server-side', async () => {
     const { firestore, callables } = loadCallables({
         'users/parent-1': {

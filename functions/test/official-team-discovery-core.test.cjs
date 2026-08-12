@@ -5,6 +5,7 @@ const test = require('node:test');
 const {
   buildOfficialPhoneCandidates,
   createOfficialTeamDiscoveryHandler,
+  createOfficialUserBindingMigrator,
   isCurrentOrUpcomingOfficialGame
 } = require('../official-team-discovery-core.cjs');
 
@@ -109,6 +110,35 @@ function makeHandler(records, authUser, options = {}) {
     maxProjectionDocuments: options.maxProjectionDocuments,
     projectionConcurrency: options.projectionConcurrency
   });
+}
+
+function makeBindingFirestore(documents = {}) {
+  const state = new Map(Object.entries(documents).map(([path, data]) => [path, structuredClone(data)]));
+  const firestore = {
+    doc(path) {
+      return {
+        path,
+        id: path.split('/').pop(),
+        async get() {
+          const data = state.get(path);
+          return { id: path.split('/').pop(), exists: data != null, data: () => structuredClone(data) };
+        }
+      };
+    },
+    async runTransaction(callback) {
+      const updates = [];
+      const result = await callback({
+        get: (ref) => ref.get(),
+        update: (ref, value) => updates.push({ ref, value })
+      });
+      updates.forEach(({ ref, value }) => state.set(ref.path, { ...state.get(ref.path), ...structuredClone(value) }));
+      return result;
+    },
+    getData(path) {
+      return structuredClone(state.get(path));
+    }
+  };
+  return firestore;
 }
 
 const context = { auth: { uid: 'official-1', token: { email: 'stale@example.com' } } };
@@ -218,6 +248,94 @@ test('official discovery does not treat a mutable profile phone alone as authori
   });
 
   assert.deepEqual((await handler({}, context)).teamIds, []);
+});
+
+test('operator-approved migration binds a phone-only legacy row and canonical discovery preserves access', async () => {
+  const officialPath = 'teams/legacy-phone-team/officials/legacy-official';
+  const firestore = makeBindingFirestore({
+    [officialPath]: { name: 'Legacy Official', phone: '(816) 555-0123' },
+    'users/official-1': { phone: '816-555-0123' }
+  });
+  const authUser = {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  };
+  const migrateBinding = createOfficialUserBindingMigrator({
+    firestore,
+    auth: { getUser: async () => authUser },
+    serverTimestamp: () => 'server-time'
+  });
+
+  await migrateBinding({
+    teamId: 'legacy-phone-team',
+    officialId: 'legacy-official',
+    userId: 'official-1',
+    expectedPhone: '8165550123'
+  });
+  assert.equal(firestore.getData(officialPath).officialUserId, undefined);
+
+  await migrateBinding({
+    teamId: 'legacy-phone-team',
+    officialId: 'legacy-official',
+    userId: 'official-1',
+    expectedPhone: '8165550123',
+    dryRun: false
+  });
+
+  const migratedOfficial = firestore.getData(officialPath);
+  assert.equal(migratedOfficial.officialUserId, 'official-1');
+  assert.equal(migratedOfficial.officialUserBindingMethod, 'operator-approved-profile-phone');
+  const handler = makeHandler([
+    { path: officialPath, data: migratedOfficial }
+  ], authUser, {
+    documents: { 'users/official-1': {} }
+  });
+  assert.deepEqual((await handler({}, context)).teamIds, ['legacy-phone-team']);
+});
+
+test('legacy official binding migration rejects phone mismatches and conflicting canonical users', async () => {
+  const officialPath = 'teams/legacy-phone-team/officials/legacy-official';
+  const firestore = makeBindingFirestore({
+    [officialPath]: { phone: '8165550123', officialUserId: 'official-2' },
+    'users/official-1': { phone: '8165550123' }
+  });
+  const migrateBinding = createOfficialUserBindingMigrator({
+    firestore,
+    auth: { getUser: async () => ({ uid: 'official-1', disabled: false }) }
+  });
+
+  await assert.rejects(
+    migrateBinding({
+      teamId: 'legacy-phone-team',
+      officialId: 'legacy-official',
+      userId: 'official-1',
+      expectedPhone: '8165550123',
+      dryRun: false
+    }),
+    /conflicting canonical user binding/i
+  );
+
+  const unboundFirestore = makeBindingFirestore({
+    [officialPath]: { phone: '8165550123' },
+    'users/official-1': { phone: '8165559999' }
+  });
+  const migrateUnbound = createOfficialUserBindingMigrator({
+    firestore: unboundFirestore,
+    auth: { getUser: async () => ({ uid: 'official-1', disabled: false }) }
+  });
+  await assert.rejects(
+    migrateUnbound({
+      teamId: 'legacy-phone-team',
+      officialId: 'legacy-official',
+      userId: 'official-1',
+      expectedPhone: '8165550123',
+      dryRun: false
+    }),
+    /approved phone does not match both legacy records/i
+  );
+  assert.equal(unboundFirestore.getData(officialPath).officialUserId, undefined);
 });
 
 test('official discovery rejects a caller UID that would change when trimmed', async () => {

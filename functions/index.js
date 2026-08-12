@@ -18873,8 +18873,6 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
   if (playerLinks.length > 60 || teamIds.size > 60) {
     throw new functions.https.HttpsError('resource-exhausted', 'Too many linked players to load fees safely.');
   }
-  if (teamIds.size === 0) return { items: [] };
-
   const recipientQueryLimit = 100;
   const maxRecipientQueries = 40;
   const maxRecipientDocuments = 1000;
@@ -18930,10 +18928,10 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
   querySnapshots.forEach((querySnap) => querySnap.docs.forEach((docSnap) => {
     const recipient = docSnap.data() || {};
     const teamId = getParentFeeRecipientTeamId(recipient, docSnap.ref?.path);
-    if (!teamId || !teamIds.has(teamId)) return;
+    if (!teamId) return;
     const hasDirectAssignment = [recipient.parentUserId, recipient.accountUserId, recipient.userId]
-      .some((value) => String(value || '').trim() === uid);
-    const hasPlayerAssignment = playerKeys.has(getParentFeeRecipientPlayerKey(recipient, teamId));
+      .some((value) => normalizeStablePrincipalUid(value) === uid);
+    const hasPlayerAssignment = teamIds.has(teamId) && playerKeys.has(getParentFeeRecipientPlayerKey(recipient, teamId));
     if (!hasDirectAssignment && !hasPlayerAssignment) return;
     const pathParts = String(docSnap.ref?.path || '').split('/');
     const batchIndex = pathParts.indexOf('feeBatches');
