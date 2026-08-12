@@ -2261,6 +2261,7 @@ describe('official assignments app service', () => {
       {
         id: 'game-past',
         date: pastDate,
+        liveStatus: 'live',
         opponent: 'Past',
         location: 'Old Field',
         officiatingSlots: [{ id: 'past', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
