@@ -54,7 +54,7 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
       };
     },
     collectionGroup(name) {
-      assert.ok(['officials', 'sharedGames'].includes(name), `Unexpected collection group: ${name}`);
+      assert.ok(['officials', 'games', 'sharedGames'].includes(name), `Unexpected collection group: ${name}`);
       const filters = [];
       let queryLimit = Infinity;
       return {
@@ -68,7 +68,14 @@ function makeFirestore(records = [], { failField = null, documents = {}, gamesBy
         },
         async get() {
           if (filters.some(({ field }) => field === failField)) throw new Error('query failed');
-          const source = name === 'officials' ? records : sharedGames;
+          const source = name === 'officials'
+            ? records
+            : name === 'games'
+              ? Object.entries(gamesByTeam).flatMap(([teamId, games]) => games.map(({ id, data }) => ({
+                path: `teams/${teamId}/games/${id}`,
+                data
+              })))
+              : sharedGames;
           const docs = source
             .filter(({ data }) => filters.every(({ field, operator, value }) => {
               if (operator === '==') return data[field] === value;
@@ -214,6 +221,118 @@ test('official discovery includes eligible open slots for a parentOf-only profil
     }
   ]);
   assert.equal(result.assignments.some((assignment) => assignment.slotId === 'other'), false);
+});
+
+test('official discovery finds a direct canonical UID assignment without a directory row', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'teams/team-uid': { name: 'UID United', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      'team-uid': [{
+        id: 'game-uid',
+        data: {
+          date: futureDate,
+          opponent: 'Tigers',
+          officiatingAuthorizedUserIds: ['official-1'],
+          officiatingSlots: [{
+            id: 'center',
+            position: 'Center',
+            officialUserId: 'official-1',
+            officialEmail: 'old@example.com',
+            status: 'pending'
+          }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.teamIds, ['team-uid']);
+  assert.deepEqual(result.assignments.map(({ teamId, gameId, slotId }) => ({ teamId, gameId, slotId })), [{
+    teamId: 'team-uid',
+    gameId: 'game-uid',
+    slotId: 'center'
+  }]);
+});
+
+test('official discovery finds a current verified-email assignment without a directory row', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const handler = makeHandler([], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'teams/team-email': { name: 'Email United', ownerId: 'coach-1', adminEmails: [] }
+    },
+    gamesByTeam: {
+      'team-email': [{
+        id: 'game-email',
+        data: {
+          date: futureDate,
+          officiatingAuthorizedEmails: ['current@example.com'],
+          officiatingSlots: [{
+            id: 'assistant',
+            officialEmail: 'current@example.com',
+            status: 'pending'
+          }]
+        }
+      }]
+    }
+  });
+
+  const result = await handler({ includeAssignments: true }, context);
+
+  assert.deepEqual(result.teamIds, ['team-email']);
+  assert.equal(result.assignments[0].slotId, 'assistant');
+});
+
+test('official discovery preserves a shared UID assignment after the official email changes', async () => {
+  const futureDate = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const sharedGamePath = 'organizations/org-1/sharedGames/shared-uid';
+  const handler = makeHandler([
+    { path: 'teams/team-shared/officials/old', data: { emailLower: 'old@example.com' } }
+  ], {
+    uid: 'official-1',
+    email: 'current@example.com',
+    emailVerified: true,
+    disabled: false
+  }, {
+    documents: {
+      'teams/team-shared': { name: 'Shared United', ownerId: 'coach-1', adminEmails: [] }
+    },
+    sharedGames: [{
+      path: sharedGamePath,
+      data: {
+        date: futureDate,
+        homeTeamId: 'team-shared',
+        officiatingAuthorizedUserIds: ['official-1'],
+        officiatingSlots: [{
+          id: 'line',
+          position: 'Line',
+          officialUserId: 'official-1',
+          officialEmail: 'old@example.com',
+          status: 'accepted'
+        }]
+      }
+    }]
+  });
+
+  const result = await handler({ includeAssignments: true, requestedTeamId: 'team-shared' }, context);
+
+  assert.deepEqual(result.teamIds, ['team-shared']);
+  assert.equal(result.assignments.length, 1);
+  assert.equal(result.assignments[0].sharedGamePath, sharedGamePath);
+  assert.equal(result.assignments[0].slotId, 'line');
 });
 
 test('official assignment projection does not expose open slots without current team authority', async () => {

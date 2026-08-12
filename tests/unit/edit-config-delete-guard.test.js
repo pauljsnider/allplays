@@ -47,7 +47,8 @@ describe('edit config delete guard', () => {
     });
 
     it('declares the collection-group indexes used by the server reference transaction', () => {
-        const sharedOverrides = readFirestoreIndexes().fieldOverrides
+        const indexConfig = readFirestoreIndexes();
+        const sharedOverrides = indexConfig.fieldOverrides
             .filter((entry) => entry.collectionGroup === 'sharedGames');
 
         expect(sharedOverrides).toEqual(expect.arrayContaining([
@@ -63,6 +64,14 @@ describe('edit config delete guard', () => {
                     expect.objectContaining({ order: 'ASCENDING', queryScope: 'COLLECTION_GROUP' })
                 ])
             })
+        ]));
+        const sharedCompositeIndexes = indexConfig.indexes
+            .filter((entry) => entry.collectionGroup === 'sharedGames')
+            .map((entry) => entry.fields.map((field) => `${field.fieldPath}:${field.arrayConfig || field.order}`));
+        expect(sharedCompositeIndexes).toEqual(expect.arrayContaining([
+            ['statTrackerConfigId:ASCENDING', 'homeTeamId:ASCENDING'],
+            ['statTrackerConfigId:ASCENDING', 'awayTeamId:ASCENDING'],
+            ['teamIds:CONTAINS', 'statTrackerConfigId:ASCENDING']
         ]));
     });
 });

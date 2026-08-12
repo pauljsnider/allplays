@@ -91,8 +91,7 @@ function makeHandlers(seed, options = {}) {
     auth: { getUser: async () => authUser },
     hasTeamAdminAccess,
     HttpsError,
-    maxConfigs: options.maxConfigs,
-    maxSharedGamesPerQuery: options.maxSharedGamesPerQuery
+    maxConfigs: options.maxConfigs
   });
   return { firestore, handlers };
 }
@@ -144,6 +143,47 @@ test('delete succeeds only after complete local and shared reference checks', as
     { deleted: true, configId: 'config-1' }
   );
   assert.equal(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'), false);
+});
+
+test('delete ignores unrelated global config references beyond the safety bound', async () => {
+  const unrelatedSharedGames = Object.fromEntries([1, 2, 3].map((index) => [
+    `organizations/org-1/sharedGames/unrelated-${index}`,
+    { homeTeamId: `other-team-${index}`, statTrackerConfigId: 'config-1' }
+  ]));
+  const { firestore, handlers } = makeHandlers({
+    ...baseSeed,
+    'teams/team-1/statTrackerConfigs/config-1': { name: 'Basketball' },
+    ...unrelatedSharedGames
+  });
+
+  assert.deepEqual(
+    await handlers.deleteStatConfig({ teamId: 'team-1', configId: 'config-1' }, context),
+    { deleted: true, configId: 'config-1' }
+  );
+  assert.equal(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'), false);
+});
+
+test('delete checks every supported shared-game team membership field', async () => {
+  for (const [field, value] of [
+    ['homeTeamId', 'team-1'],
+    ['awayTeamId', 'team-1'],
+    ['teamIds', ['team-1']]
+  ]) {
+    const { firestore, handlers } = makeHandlers({
+      ...baseSeed,
+      'teams/team-1/statTrackerConfigs/config-1': { name: 'Basketball' },
+      'organizations/org-1/sharedGames/assigned': {
+        [field]: value,
+        statTrackerConfigId: 'config-1'
+      }
+    });
+
+    await assert.rejects(
+      handlers.deleteStatConfig({ teamId: 'team-1', configId: 'config-1' }, context),
+      (error) => error.code === 'failed-precondition'
+    );
+    assert.ok(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'), field);
+  }
 });
 
 test('destructive config handlers deny disabled Auth users before mutation', async () => {
@@ -203,7 +243,7 @@ test('reset deletes every config in one successful transaction after complete-em
   assert.equal(firestore._state.has('teams/team-1/statTrackerConfigs/config-2'), false);
 });
 
-test('reset preserves all configs when bounded shared history cannot prove completeness', async () => {
+test('reset ignores unrelated shared history while checking exact config references', async () => {
   const sharedGames = Object.fromEntries([1, 2, 3].map((index) => [
     `organizations/org-1/sharedGames/game-${index}`,
     { homeTeamId: 'team-1', statTrackerConfigId: null }
@@ -212,13 +252,10 @@ test('reset preserves all configs when bounded shared history cannot prove compl
     ...baseSeed,
     'teams/team-1/statTrackerConfigs/config-1': { name: 'One' },
     ...sharedGames
-  }, { maxSharedGamesPerQuery: 2 });
+  });
 
-  await assert.rejects(
-    handlers.resetTeamStatConfigs({ teamId: 'team-1' }, context),
-    (error) => error.code === 'resource-exhausted'
-  );
-  assert.ok(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'));
+  assert.deepEqual(await handlers.resetTeamStatConfigs({ teamId: 'team-1' }, context), { resetCount: 1 });
+  assert.equal(firestore._state.has('teams/team-1/statTrackerConfigs/config-1'), false);
 });
 
 test('current Auth email cannot recover access through a stale profile alias', async () => {

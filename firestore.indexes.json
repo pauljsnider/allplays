@@ -227,6 +227,22 @@
       ]
     },
     {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "games",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "practiceSessions",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
@@ -272,6 +288,46 @@
       "fields": [
         { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedUserIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "officiatingAuthorizedEmails", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" },
+        { "fieldPath": "homeTeamId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" },
+        { "fieldPath": "awayTeamId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "statTrackerConfigId", "order": "ASCENDING" }
       ]
     },
     {

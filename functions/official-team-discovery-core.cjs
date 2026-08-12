@@ -72,6 +72,27 @@ function extractOfficialTeamId(docSnapshot) {
   return normalizeBoundedId(parts[1]);
 }
 
+function extractAssignedGameTeamIds(docSnapshot, collectionGroupName) {
+  if (collectionGroupName === 'games') {
+    const parts = String(docSnapshot?.ref?.path || '').split('/').filter(Boolean);
+    const teamId = parts.length === 4 && parts[0] === 'teams' && parts[2] === 'games'
+      ? normalizeStoredUserId(parts[1])
+      : '';
+    return teamId ? [teamId] : [];
+  }
+
+  const game = docSnapshot?.data?.() || {};
+  const rawTeamIds = [
+    ...(game.homeTeamId == null || game.homeTeamId === '' ? [] : [game.homeTeamId]),
+    ...(game.awayTeamId == null || game.awayTeamId === '' ? [] : [game.awayTeamId]),
+    ...(Array.isArray(game.teamIds) ? game.teamIds : [])
+  ];
+  if (game.teamIds != null && !Array.isArray(game.teamIds)) return [];
+  const teamIds = rawTeamIds.map(normalizeStoredUserId);
+  if (!teamIds.length || teamIds.some((teamId) => !teamId)) return [];
+  return [...new Set(teamIds)];
+}
+
 function isAuthUserMissing(error) {
   return ['auth/user-not-found', 'user-not-found'].includes(String(error?.code || ''));
 }
@@ -215,6 +236,57 @@ function createOfficialTeamDiscoveryHandler({
       if (error instanceof HttpsError) throw error;
       throw new HttpsError('unavailable', 'Official team access could not be verified. Try again.');
     }
+  }
+
+  async function loadAssignedTeamIds(authUser) {
+    const assignmentStartDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const collectionGroups = ['games', 'sharedGames'];
+    const identityPlans = [
+      { field: 'officiatingAuthorizedUserIds', value: authUser.uid },
+      ...(authUser.emailVerified === true && normalizeOfficialEmail(authUser.email)
+        ? [{ field: 'officiatingAuthorizedEmails', value: normalizeOfficialEmail(authUser.email) }]
+        : [])
+    ];
+    const queryPlans = collectionGroups.flatMap((collectionGroupName) => identityPlans.map((identity) => ({
+      collectionGroupName,
+      ...identity
+    })));
+    let snapshots;
+    try {
+      snapshots = await Promise.all(queryPlans.map(({ collectionGroupName, field, value }) => firestore
+        .collectionGroup(collectionGroupName)
+        .where(field, 'array-contains', value)
+        .where('date', '>=', assignmentStartDate)
+        .limit(boundedGameLimit + 1)
+        .get()));
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('unavailable', 'Official assignment access could not be verified. Try again.');
+    }
+    if (snapshots.some((snapshot) => (snapshot.size ?? snapshot.docs?.length ?? 0) > boundedGameLimit)) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Official assignment discovery is too large to verify completely. Contact support.'
+      );
+    }
+    const teamIds = [];
+    snapshots.forEach((snapshot, index) => {
+      (Array.isArray(snapshot.docs) ? snapshot.docs : []).forEach((docSnapshot) => {
+        const assignedTeamIds = extractAssignedGameTeamIds(docSnapshot, queryPlans[index].collectionGroupName);
+        if (!assignedTeamIds.length) {
+          throw new HttpsError('failed-precondition', 'Official assignment team identity could not be verified.');
+        }
+        teamIds.push(...assignedTeamIds);
+      });
+    });
+    const uniqueTeamIds = [...new Set(teamIds)].sort();
+    if (uniqueTeamIds.length > boundedAssignmentTeamLimit) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'Official assignment discovery is too large to verify completely. Contact support.'
+      );
+    }
+    return uniqueTeamIds;
   }
 
   async function loadAssignmentProjection(teamIds, authUser, directoryTeamIds = new Set(), preferredTeamId = '') {
@@ -381,11 +453,14 @@ function createOfficialTeamDiscoveryHandler({
       ['phoneDigits', normalizedPhone ? [normalizedPhone] : []]
     ].filter(([, values]) => values.length > 0);
 
-    const snapshots = queryPlans.length
-      ? await Promise.all(queryPlans.map(([field, values]) => loadOfficialDocuments(field, values)))
-      : [];
+    const [snapshots, assignedTeamIds] = await Promise.all([
+      queryPlans.length
+        ? Promise.all(queryPlans.map(([field, values]) => loadOfficialDocuments(field, values)))
+        : Promise.resolve([]),
+      loadAssignedTeamIds(authUser)
+    ]);
     const teamIds = [...new Set(
-      snapshots.flat().map(extractOfficialTeamId).filter(Boolean)
+      [...snapshots.flat().map(extractOfficialTeamId).filter(Boolean), ...assignedTeamIds]
     )].sort();
 
     const result = {

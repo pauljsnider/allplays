@@ -1,7 +1,6 @@
 'use strict';
 
 const DEFAULT_MAX_STAT_CONFIGS = 200;
-const DEFAULT_MAX_SHARED_GAMES_PER_QUERY = 500;
 const CONFIG_ASSIGNED_MESSAGE = 'This config is still assigned to one or more games. Remove it from those games before deleting the config.';
 const RESET_ASSIGNED_MESSAGE = 'One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.';
 
@@ -15,12 +14,6 @@ function normalizeAuthUid(value) {
   if (typeof value !== 'string') return '';
   if (!value || value.length > 128 || value.includes('/') || value !== value.trim()) return '';
   return value;
-}
-
-function isSharedGameLinkedToTeam(game = {}, teamId) {
-  return game.homeTeamId === teamId
-    || game.awayTeamId === teamId
-    || (Array.isArray(game.teamIds) && game.teamIds.includes(teamId));
 }
 
 function snapshotSize(snapshot) {
@@ -50,15 +43,13 @@ function createStatConfigManagementHandlers({
   auth,
   hasTeamAdminAccess,
   HttpsError,
-  maxConfigs = DEFAULT_MAX_STAT_CONFIGS,
-  maxSharedGamesPerQuery = DEFAULT_MAX_SHARED_GAMES_PER_QUERY
+  maxConfigs = DEFAULT_MAX_STAT_CONFIGS
 }) {
   if (!firestore || !auth || typeof hasTeamAdminAccess !== 'function' || typeof HttpsError !== 'function') {
     throw new Error('Stat config management dependencies are required.');
   }
 
   const configLimit = Math.max(1, Math.min(Number(maxConfigs) || DEFAULT_MAX_STAT_CONFIGS, 400));
-  const sharedGameLimit = Math.max(1, Math.min(Number(maxSharedGamesPerQuery) || DEFAULT_MAX_SHARED_GAMES_PER_QUERY, 1000));
 
   async function loadEnabledAuthUser(context) {
     const uid = normalizeAuthUid(context.auth?.uid);
@@ -108,15 +99,17 @@ function createStatConfigManagementHandlers({
     return teamRef;
   }
 
-  async function readBoundedSharedQuery(transaction, query) {
-    const snapshot = await transaction.get(query.limit(sharedGameLimit + 1));
-    if (snapshotSize(snapshot) > sharedGameLimit) {
-      throw new HttpsError(
-        'resource-exhausted',
-        'Shared game history is too large to verify completely. No configs were changed.'
-      );
-    }
-    return snapshot.docs || [];
+  function buildSharedConfigReferenceQueries(teamId, configIds) {
+    const sharedGamesRef = firestore.collectionGroup('sharedGames');
+    return [
+      ['homeTeamId', '=='],
+      ['awayTeamId', '=='],
+      ['teamIds', 'array-contains']
+    ].map(([field, operator]) => makeValueQuery(
+      sharedGamesRef.where(field, operator, teamId),
+      'statTrackerConfigId',
+      configIds
+    ).limit(1));
   }
 
   async function deleteStatConfig(data, context = {}) {
@@ -132,13 +125,15 @@ function createStatConfigManagementHandlers({
         const localGamesQuery = firestore.collection(`teams/${teamId}/games`)
           .where('statTrackerConfigId', '==', configId)
           .limit(1);
-        const sharedGamesQuery = firestore.collectionGroup('sharedGames')
-          .where('statTrackerConfigId', '==', configId);
         const localGamesSnap = await transaction.get(localGamesQuery);
-        const sharedGameDocs = await readBoundedSharedQuery(transaction, sharedGamesQuery);
-        const hasSharedReference = sharedGameDocs.some((docSnap) => (
-          isSharedGameLinkedToTeam(docSnap.data() || {}, teamId)
-        ));
+        let hasSharedReference = false;
+        for (const sharedQuery of buildSharedConfigReferenceQueries(teamId, [configId])) {
+          const sharedSnapshot = await transaction.get(sharedQuery);
+          if (!sharedSnapshot.empty) {
+            hasSharedReference = true;
+            break;
+          }
+        }
 
         if (!localGamesSnap.empty || hasSharedReference) {
           throw new HttpsError('failed-precondition', CONFIG_ASSIGNED_MESSAGE);
@@ -175,26 +170,11 @@ function createStatConfigManagementHandlers({
           ).limit(1);
           const localSnapshot = await transaction.get(localQuery);
           if (!localSnapshot.empty) throw new HttpsError('failed-precondition', RESET_ASSIGNED_MESSAGE);
+          for (const sharedQuery of buildSharedConfigReferenceQueries(teamId, configIdChunk)) {
+            const sharedSnapshot = await transaction.get(sharedQuery);
+            if (!sharedSnapshot.empty) throw new HttpsError('failed-precondition', RESET_ASSIGNED_MESSAGE);
+          }
         }
-
-        const sharedGamesRef = firestore.collectionGroup('sharedGames');
-        const sharedQueries = [
-          sharedGamesRef.where('homeTeamId', '==', teamId),
-          sharedGamesRef.where('awayTeamId', '==', teamId),
-          sharedGamesRef.where('teamIds', 'array-contains', teamId)
-        ];
-        const sharedGamesByPath = new Map();
-        for (const sharedQuery of sharedQueries) {
-          const docs = await readBoundedSharedQuery(transaction, sharedQuery);
-          docs.forEach((docSnap) => sharedGamesByPath.set(docSnap.ref.path, docSnap));
-        }
-        const resetConfigIds = new Set(configIds);
-        const hasSharedReference = [...sharedGamesByPath.values()].some((docSnap) => {
-          const game = docSnap.data() || {};
-          return isSharedGameLinkedToTeam(game, teamId)
-            && resetConfigIds.has(normalizeBoundedId(game.statTrackerConfigId));
-        });
-        if (hasSharedReference) throw new HttpsError('failed-precondition', RESET_ASSIGNED_MESSAGE);
 
         configDocs.forEach((configDoc) => transaction.delete(configDoc.ref));
         return { resetCount: configDocs.length };
@@ -210,10 +190,8 @@ function createStatConfigManagementHandlers({
 
 module.exports = {
   CONFIG_ASSIGNED_MESSAGE,
-  DEFAULT_MAX_SHARED_GAMES_PER_QUERY,
   DEFAULT_MAX_STAT_CONFIGS,
   RESET_ASSIGNED_MESSAGE,
   createStatConfigManagementHandlers,
-  isSharedGameLinkedToTeam,
   normalizeBoundedId
 };
