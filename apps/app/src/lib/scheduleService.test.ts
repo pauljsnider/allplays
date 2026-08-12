@@ -710,20 +710,55 @@ describe('parent schedule child scope', () => {
     const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
     vi.mocked(getStaffTeams).mockImplementation(() => new Promise(() => undefined));
-    vi.mocked(loadManagedTeamsFromNativeCallable).mockResolvedValue({
-      teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
-      isPartial: false
-    });
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      }), 8000);
+    }));
 
     try {
       const scopePromise = loadParentScheduleScope(coachUser);
-      await vi.advanceTimersByTimeAsync(7000);
+      await vi.advanceTimersByTimeAsync(10000);
       const scope = await scopePromise;
 
       expect(getStaffTeams).toHaveBeenCalledTimes(1);
       expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
       expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
       expect(scope.staffTeamsPartial).toBe(false);
+    } finally {
+      vi.mocked(getStaffTeams).mockReset();
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a complete HTTP hedge clear a partial cold SDK result', async () => {
+    vi.useFakeTimers();
+    const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'], coachOf: [] } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: [], coachOf: ['team-owned'] } as any);
+    vi.mocked(getStaffTeams).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [],
+        isPartial: true
+      } as any), 3000);
+    }));
+    vi.mocked(loadManagedTeamsFromNativeCallable).mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve({
+        teams: [{ id: 'team-owned', name: 'Vipers', active: true }],
+        isPartial: false
+      }), 1000);
+    }));
+
+    try {
+      const scopePromise = loadParentScheduleScope(coachUser);
+      await vi.advanceTimersByTimeAsync(6000);
+      const scope = await scopePromise;
+
+      expect(getStaffTeams).toHaveBeenCalledTimes(1);
+      expect(loadManagedTeamsFromNativeCallable).toHaveBeenCalledTimes(1);
+      expect(scope.staffTeams).toEqual([{ teamId: 'team-owned', teamName: 'Vipers' }]);
+      expect(scope.staffTeamsPartial).toBe(false);
+      expect(scope.isPartial).toBe(false);
     } finally {
       vi.mocked(getStaffTeams).mockReset();
       vi.useRealTimers();
