@@ -79,6 +79,8 @@ const deferredInboxPreviewConcurrency = 3;
 const chatUnreadCountTimeoutMs = 3000;
 const nativeChatUnreadCountConcurrency = 6;
 const nativeChatUnreadConversationLimit = 26;
+const nativeChatUnreadAggregationRequestLimit = 240;
+const nativeChatUnreadJobLimit = nativeChatUnreadAggregationRequestLimit / 2;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -509,13 +511,15 @@ async function nativeAggregateUnreadMessageCount({
   conversationId,
   userId,
   lastReadAt,
-  ownMessagesOnly
+  ownMessagesOnly,
+  signal
 }: {
   teamId: string;
   conversationId: string;
   userId: string;
   lastReadAt: unknown;
   ownMessagesOnly: boolean;
+  signal: AbortSignal;
 }) {
   const parentPath = isDefaultTeamConversation(conversationId)
     ? `teams/${encodeURIComponent(teamId)}`
@@ -527,6 +531,7 @@ async function nativeAggregateUnreadMessageCount({
   };
   const payload = await nativeFirestoreRequest(`/${parentPath}:runAggregationQuery`, {
     method: 'POST',
+    signal,
     body: JSON.stringify({
       structuredAggregationQuery: {
         structuredQuery,
@@ -549,11 +554,18 @@ async function nativeLoadUnreadChatCounts(
   userId: string,
   teamIds: string[],
   profile: Record<string, any>,
-  conversationIdsByTeam: Record<string, string[]>
+  conversationIdsByTeam: Record<string, string[]>,
+  timeoutMs = chatUnreadCountTimeoutMs
 ) {
   const uniqueTeamIds = Array.from(new Set(teamIds));
   const counts = Object.fromEntries(uniqueTeamIds.map((teamId) => [teamId, 0])) as Record<string, number>;
   let conversationOverflow = false;
+  let timedOut = false;
+  const abortController = new AbortController();
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeoutMs);
   const jobs = uniqueTeamIds.flatMap((teamId) => {
     const storedConversationIds = Array.isArray(conversationIdsByTeam[teamId])
       ? conversationIdsByTeam[teamId]
@@ -572,35 +584,43 @@ async function nativeLoadUnreadChatCounts(
           conversationId,
           userId,
           lastReadAt,
-          ownMessagesOnly: false
+          ownMessagesOnly: false,
+          signal: abortController.signal
         }),
         nativeAggregateUnreadMessageCount({
           teamId,
           conversationId,
           userId,
           lastReadAt,
-          ownMessagesOnly: true
+          ownMessagesOnly: true,
+          signal: abortController.signal
         })
       ]);
       return { teamId, count: Math.max(0, totalUnread - ownUnread) };
     });
   });
-  const results = new Array<PromiseSettledResult<{ teamId: string; count: number }>>(jobs.length);
+  const workloadOverflow = jobs.length > nativeChatUnreadJobLimit;
+  const boundedJobs = jobs.slice(0, nativeChatUnreadJobLimit);
+  const results = new Array<PromiseSettledResult<{ teamId: string; count: number }>>(boundedJobs.length);
   let nextJobIndex = 0;
-  await Promise.all(Array.from(
-    { length: Math.min(nativeChatUnreadCountConcurrency, jobs.length) },
-    async () => {
-      while (nextJobIndex < jobs.length) {
-        const jobIndex = nextJobIndex;
-        nextJobIndex += 1;
-        try {
-          results[jobIndex] = { status: 'fulfilled', value: await jobs[jobIndex]() };
-        } catch (error) {
-          results[jobIndex] = { status: 'rejected', reason: error };
+  try {
+    await Promise.all(Array.from(
+      { length: Math.min(nativeChatUnreadCountConcurrency, boundedJobs.length) },
+      async () => {
+        while (nextJobIndex < boundedJobs.length && !abortController.signal.aborted) {
+          const jobIndex = nextJobIndex;
+          nextJobIndex += 1;
+          try {
+            results[jobIndex] = { status: 'fulfilled', value: await boundedJobs[jobIndex]() };
+          } catch (error) {
+            results[jobIndex] = { status: 'rejected', reason: error };
+          }
         }
       }
-    }
-  ));
+    ));
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
   results.forEach((result) => {
     if (result.status === 'fulfilled') {
       counts[result.value.teamId] = Number(counts[result.value.teamId] || 0) + result.value.count;
@@ -610,7 +630,11 @@ async function nativeLoadUnreadChatCounts(
   });
   return {
     counts,
-    isPartial: conversationOverflow || results.some((result) => result.status === 'rejected')
+    isPartial: conversationOverflow
+      || workloadOverflow
+      || timedOut
+      || results.filter(Boolean).length < boundedJobs.length
+      || results.some((result) => result.status === 'rejected')
   };
 }
 
@@ -1276,9 +1300,11 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     .map((team) => team.id);
   const unreadDeadlineAt = Date.now() + chatUnreadCountTimeoutMs;
   const nativeUnreadResult = nativeRuntime
-    ? await withTimeout(
-      nativeLoadUnreadChatCounts(user.uid, unreadCandidateTeamIds, profile, conversationIdsByTeam),
-      'Native chat unread counts',
+    ? await nativeLoadUnreadChatCounts(
+      user.uid,
+      unreadCandidateTeamIds,
+      profile,
+      conversationIdsByTeam,
       chatUnreadCountTimeoutMs
     ).catch((error) => {
       logger.warn('Native chat unread counts failed.', { error });

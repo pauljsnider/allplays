@@ -934,6 +934,92 @@ describe('native chat team discovery fallback', () => {
     expect(result.isPartial).toBe(true);
   });
 
+  it('bounds aggregate unread work across many teams and marks the inbox partial', async () => {
+    const teams = Array.from({ length: 130 }, (_, index) => ({
+      id: `team-${index}`,
+      name: `Team ${index}`,
+      active: true,
+      chatAccessVerified: true
+    }));
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams,
+      isPartial: false
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return jsonResponse(firestoreDocument('users/user-1', {}));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return jsonResponse([{
+          result: { aggregateFields: { messageCount: { integerValue: '0' } } }
+        }]);
+      }
+      throw new Error(`Unexpected native request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const result = await loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+
+    expect(result.teams).toHaveLength(130);
+    expect(result.isPartial).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ))).toHaveLength(240);
+  });
+
+  it('aborts timed-out aggregate unread requests before another worker job can start', async () => {
+    vi.useFakeTimers();
+    profileServiceMocks.loadManagedTeamsFromNativeCallable.mockResolvedValue({
+      teams: Array.from({ length: 12 }, (_, index) => ({
+        id: `slow-team-${index}`,
+        name: `Slow Team ${index}`,
+        active: true,
+        chatAccessVerified: true
+      })),
+      isPartial: false
+    });
+    let abortedRequestCount = 0;
+    const fetchMock = vi.fn((url: string, request?: RequestInit) => {
+      if (String(url).includes('/documents/users/user-1')) {
+        return Promise.resolve(jsonResponse(firestoreDocument('users/user-1', {})));
+      }
+      if (String(url).includes(':runAggregationQuery')) {
+        return new Promise((_, reject) => {
+          request?.signal?.addEventListener('abort', () => {
+            abortedRequestCount += 1;
+            reject(new DOMException('The operation was aborted.', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return Promise.reject(new Error(`Unexpected native request: ${url}`));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadChatInbox } = await import('./chatService');
+
+    const inboxPromise = loadChatInbox({
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: []
+    }, { includeLastMessages: false });
+    await vi.advanceTimersByTimeAsync(3000);
+    const result = await inboxPromise;
+    const aggregateRequests = fetchMock.mock.calls.filter(([url]) => (
+      String(url).includes(':runAggregationQuery')
+    ));
+
+    expect(result.teams).toHaveLength(12);
+    expect(result.isPartial).toBe(true);
+    expect(aggregateRequests).toHaveLength(12);
+    expect(abortedRequestCount).toBe(12);
+  });
+
   it('does not turn a partial-empty native fallback into an authoritative empty inbox', async () => {
     installNativeTeamFetch({ includeTeams: false });
     const { loadChatInbox } = await import('./chatService');
