@@ -154,7 +154,7 @@ const primaryDataTimeoutMs = 5000;
 // Managed-team discovery can fan out across owner, admin, and legacy coach
 // grants. Give that one bounded callable enough time to finish on a cold web
 // start without raising the timeout for every schedule read.
-const staffTeamDiscoveryTimeoutMs = 12000;
+const staffTeamDiscoveryTimeoutMs = 7000;
 const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
