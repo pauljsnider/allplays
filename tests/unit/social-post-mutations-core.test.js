@@ -37,23 +37,21 @@ describe('social post mutation callable core', () => {
         expect(normalizeSocialPostId('')).toBe('');
     });
 
-    it('wires verified, transactionally consistent native mutation callables', () => {
+    it('wires UID-authorized, transactionally consistent native mutation callables', () => {
         const start = functionsSource.indexOf('exports.toggleSocialPostReaction');
         const end = functionsSource.indexOf('function normalizeParentFeePlayerLinks', start);
         const source = functionsSource.slice(start, end);
-        expect(source).toContain("assertSensitiveEmailVerified(context, 'toggle-social-post-reaction')");
+        expect(source).not.toContain('assertSensitiveEmailVerified(context');
+        expect(source).toContain('getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context)');
         expect(source).toContain('firestore.runTransaction(async (transaction) =>');
         expect(source).toContain('canReadSocialPostForCaller({');
         expect(source).toContain("'reactionCounts.like': nextState.count");
         expect(source).toContain('exports.hideSocialPostForCaller');
-        expect(source).toContain("assertSensitiveEmailVerified(context, 'hide-social-post')");
         expect(source).toContain('users/${context.auth.uid}/hiddenSocialPosts/${postId}');
         expect(source).toContain('exports.commentOnSocialPostForCaller');
-        expect(source).toContain("assertSensitiveEmailVerified(context, 'comment-on-social-post')");
         expect(source).toContain('requireCallableSocialPostAccess(transaction, postRef, caller)');
         expect(source).toContain('transaction.create(commentRef');
         expect(source).toContain('exports.reportSocialPostForCaller');
-        expect(source).toContain("assertSensitiveEmailVerified(context, 'report-social-post')");
         expect(source).toContain('transaction.create(reportRef');
     });
 });

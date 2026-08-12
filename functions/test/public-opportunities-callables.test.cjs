@@ -889,6 +889,43 @@ test('parent fee discovery fails closed when a bounded query overflows', async (
     );
 });
 
+test('parent fee legacy player discovery ignores unrelated global ID collisions', async () => {
+    const seed = {
+        'users/parent-1': {
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::imported-player'],
+            parentOf: [{ teamId: 'team-1', playerId: 'imported-player' }]
+        }
+    };
+    for (let index = 0; index < 101; index += 1) {
+        seed[`teams/unrelated-${index}/feeBatches/batch-1/feeRecipients/collision-${index}`] = {
+            teamId: `unrelated-${index}`,
+            playerId: 'imported-player',
+            amountDueCents: 9999
+        };
+    }
+    seed['teams/team-1/feeBatches/batch-1/feeRecipients/authorized'] = {
+        teamId: 'team-1',
+        playerId: 'imported-player',
+        amountDueCents: 2500
+    };
+    const { firestore, callables } = loadCallables(seed);
+
+    const result = await callables.listParentTeamFeeRecipients({}, authContext('parent-1'));
+
+    assert.deepEqual(result.items.map((item) => item.id), ['authorized']);
+    const playerIdQueries = firestore._queryLog.filter(({ path, filters }) => (
+        path === '**/feeRecipients'
+        && filters.some(({ field, operator, value }) => (
+            field === 'playerId' && operator === '==' && value === 'imported-player'
+        ))
+    ));
+    assert.equal(playerIdQueries.length, 1);
+    assert.ok(playerIdQueries[0].filters.some(({ field, operator, value }) => (
+        field === 'teamId' && operator === '==' && value === 'team-1'
+    )));
+});
+
 test('parent fee discovery is authenticated and rejects incomplete server queries', async () => {
     const seed = {
         'users/parent-1': {
@@ -921,7 +958,6 @@ test('parent fee discovery preserves direct UID assignments for parent-team-only
     const { callables } = loadCallables({
         'users/parent-1': { parentTeamIds: ['team-1'] },
         'teams/team-1/feeBatches/batch-1/feeRecipients/direct': {
-            teamId: 'team-1',
             parentUserId: 'parent-1',
             amountDueCents: 3200
         }
@@ -1006,6 +1042,80 @@ test('social mutation callables authorize native post actions server-side', asyn
         status: 'open',
         createdAt: firestore.snapshot('socialReports/auto-2').createdAt
     });
+});
+
+test('unverified callers keep UID-authorized social mutations without gaining email authority', async () => {
+    const { firestore, callables } = loadCallables({
+        'users/unverified-1': {
+            email: 'unverified@example.com',
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        },
+        'teams/team-1': { ownerId: 'owner-1', adminEmails: [] },
+        'socialPosts/authored-post': {
+            authorId: 'unverified-1',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        },
+        'socialPosts/visible-post': {
+            authorId: 'author-1',
+            visibleUserIds: ['unverified-1'],
+            hidden: false,
+            commentCount: 0
+        },
+        'socialPosts/team-post': {
+            authorId: 'author-1',
+            teamId: 'team-1',
+            visibleUserIds: [],
+            hidden: false
+        }
+    });
+    const unverified = authContext('unverified-1', {
+        email: 'unverified@example.com',
+        verified: false,
+        name: 'Unverified Parent'
+    });
+
+    await assert.doesNotReject(async () => {
+        assert.deepEqual(await callables.toggleSocialPostReaction(
+            { postId: 'authored-post', reactionKey: 'like' },
+            unverified
+        ), { liked: true, count: 1 });
+        assert.deepEqual(await callables.hideSocialPostForCaller(
+            { postId: 'team-post' },
+            unverified
+        ), { hidden: true });
+        assert.deepEqual(await callables.commentOnSocialPostForCaller(
+            { postId: 'visible-post', text: 'UID access still works' },
+            unverified
+        ), { commented: true, commentId: 'auto-1' });
+        assert.deepEqual(await callables.reportSocialPostForCaller(
+            { postId: 'team-post', reason: 'UID-scoped team report' },
+            unverified
+        ), { reported: true, reportId: 'auto-2' });
+    });
+    assert.equal(firestore.snapshot('socialPosts/authored-post')['reactionCounts.like'], 1);
+    assert.equal(firestore.snapshot('socialPosts/visible-post').commentCount, 1);
+    assert.equal(firestore.snapshot('socialReports/auto-2').reporterId, 'unverified-1');
+
+    const emailOnly = loadCallables({
+        'users/email-only': { email: 'coach@example.com' },
+        'teams/team-2': { ownerId: 'owner-2', adminEmails: ['coach@example.com'] },
+        'socialPosts/email-team-post': {
+            authorId: 'author-2',
+            teamId: 'team-2',
+            visibleUserIds: [],
+            hidden: false,
+            reactionCounts: { like: 0 }
+        }
+    });
+    await assert.rejects(
+        emailOnly.callables.toggleSocialPostReaction(
+            { postId: 'email-team-post', reactionKey: 'like' },
+            authContext('email-only', { email: 'coach@example.com', verified: false })
+        ),
+        (error) => error.code === 'permission-denied'
+    );
 });
 
 test('social reaction callable rejects hidden, unrelated, and malformed requests', async () => {

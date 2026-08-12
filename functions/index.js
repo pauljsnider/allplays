@@ -18613,12 +18613,11 @@ exports.toggleSocialPostReaction = functions.https.onCall(async (data, context =
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to react to this post.');
   }
-  await assertSensitiveEmailVerified(context, 'toggle-social-post-reaction');
   const postId = normalizeSocialPostId(data?.postId);
   if (!postId || data?.reactionKey !== 'like') {
     throw new functions.https.HttpsError('invalid-argument', 'A valid post and like reaction are required.');
   }
-  const caller = await getOpportunityCaller(context);
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const postRef = firestore.doc(`socialPosts/${postId}`);
   const reactionRef = firestore.doc(`socialPosts/${postId}/reactions/${caller.uid}`);
   return firestore.runTransaction(async (transaction) => {
@@ -18681,7 +18680,6 @@ exports.hideSocialPostForCaller = functions.https.onCall(async (data, context = 
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to hide this post.');
   }
-  await assertSensitiveEmailVerified(context, 'hide-social-post');
   const postId = normalizeSocialPostId(data?.postId);
   if (!postId) {
     throw new functions.https.HttpsError('invalid-argument', 'A valid post is required.');
@@ -18697,13 +18695,12 @@ exports.commentOnSocialPostForCaller = functions.https.onCall(async (data, conte
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to comment on this post.');
   }
-  await assertSensitiveEmailVerified(context, 'comment-on-social-post');
   const postId = normalizeSocialPostId(data?.postId);
   const text = cleanOpportunityText(typeof data?.text === 'string' ? data.text : '', 1500);
   if (!postId || !text) {
     throw new functions.https.HttpsError('invalid-argument', 'A valid post and comment are required.');
   }
-  const caller = await getOpportunityCaller(context);
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const postRef = firestore.doc(`socialPosts/${postId}`);
   const commentRef = firestore.collection(`socialPosts/${postId}/comments`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -18736,7 +18733,6 @@ exports.reportSocialPostForCaller = functions.https.onCall(async (data, context 
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to report this post.');
   }
-  await assertSensitiveEmailVerified(context, 'report-social-post');
   const postId = normalizeSocialPostId(data?.postId);
   const reason = cleanOpportunityText(
     data?.reason == null ? 'Reported from app' : (typeof data.reason === 'string' ? data.reason : ''),
@@ -18745,7 +18741,7 @@ exports.reportSocialPostForCaller = functions.https.onCall(async (data, context 
   if (!postId || !reason) {
     throw new functions.https.HttpsError('invalid-argument', 'A valid post and report reason are required.');
   }
-  const caller = await getOpportunityCaller(context);
+  const caller = getVerifiedEmailAuthorizationCaller(await getOpportunityCaller(context), context);
   const postRef = firestore.doc(`socialPosts/${postId}`);
   const reportRef = firestore.collection('socialReports').doc();
   await firestore.runTransaction(async (transaction) => {
@@ -18826,7 +18822,6 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
 
   const recipientQueryLimit = 100;
   const playerKeys = new Set(playerLinks.map((link) => link.playerKey));
-  const playerIds = new Set(playerLinks.map((link) => link.playerId));
   const queryJobs = [
     ...['parentUserId', 'accountUserId', 'userId'].map((field) => (
       firestore.collectionGroup('feeRecipients').where(field, '==', uid).limit(recipientQueryLimit + 1).get()
@@ -18834,8 +18829,12 @@ exports.listParentTeamFeeRecipients = functions.https.onCall(async (_data, conte
     ...Array.from(playerKeys).map((playerKey) => (
       firestore.collectionGroup('feeRecipients').where('playerKey', '==', playerKey).limit(recipientQueryLimit + 1).get()
     )),
-    ...Array.from(playerIds).map((playerId) => (
-      firestore.collectionGroup('feeRecipients').where('playerId', '==', playerId).limit(recipientQueryLimit + 1).get()
+    ...playerLinks.map(({ teamId, playerId }) => (
+      firestore.collectionGroup('feeRecipients')
+        .where('teamId', '==', teamId)
+        .where('playerId', '==', playerId)
+        .limit(recipientQueryLimit + 1)
+        .get()
     ))
   ];
   const querySnapshots = await Promise.all(queryJobs);

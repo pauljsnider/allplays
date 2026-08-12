@@ -48,12 +48,16 @@ describe('team fee recipient Firestore rules', () => {
         expect(collectionGroupBlock).not.toContain('request.resource');
     });
 
-    it('declares the native indirect-parent collection-group index', () => {
+    it('declares the native indirect-parent collection-group indexes', () => {
         const feeRecipientIndexes = firestoreIndexes.indexes
             .filter((index) => index.collectionGroup === 'feeRecipients')
             .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
 
         expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerKey:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,playerId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,parentUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,accountUserId:ASCENDING');
+        expect(feeRecipientIndexes).toContain('teamId:ASCENDING,userId:ASCENDING');
     });
 
     it('requires nested recipient payload identity to match the team and batch path', () => {
