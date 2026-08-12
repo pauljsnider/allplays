@@ -7335,7 +7335,8 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   const now = new Date();
   // Bound the read to a small look-behind window instead of scanning the team's entire
   // game history on every officials load. The filter below preserves games still in progress
-  // using their explicit end, duration, live status, or the shared three-hour fallback.
+  // using their explicit end, configured duration, or the shared three-hour fallback.
+  // A live status never bypasses that bounded window.
   const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
     const [teamResult, gamesResult] = await Promise.allSettled([
