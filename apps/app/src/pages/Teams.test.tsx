@@ -160,6 +160,72 @@ describe('Teams empty state', () => {
     cleanup();
   });
 
+  it('renders a verified streamed team while complete scope discovery is still pending', async () => {
+    const completeLoad = deferred<ReturnType<typeof makeTeamSummaryBootstrap>>();
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      return completeLoad.promise;
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toHaveAttribute(
+      'href',
+      '/teams/team-streamed'
+    );
+    expect(screen.queryByText('Loading teams')).toBeNull();
+
+    completeLoad.resolve(makeTeamSummaryBootstrap(streamedHome));
+    await waitFor(() => expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1));
+  });
+
+  it('preserves a streamed team if slower complete scope discovery fails', async () => {
+    const streamedHome: ParentHomeModel = {
+      ...emptyHome,
+      teams: [{
+        teamId: 'team-streamed',
+        teamName: 'Streamed Stars',
+        role: 'Coach',
+        sport: null,
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        upcomingEventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }],
+      metrics: { ...emptyHome.metrics, teams: 1 }
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockImplementationOnce(async (_user, options) => {
+      options?.onPartial?.(streamedHome);
+      throw new Error('Family scope timed out');
+    });
+
+    renderTeams();
+
+    expect(await screen.findByRole('link', { name: 'Open Streamed Stars' })).toBeVisible();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+    expect(screen.getByText('Unable to load teams while offline. Check your connection and try again.')).toBeVisible();
+  });
+
   it('opens the native Browse Teams route from the empty state recovery action', async () => {
     renderTeams();
 

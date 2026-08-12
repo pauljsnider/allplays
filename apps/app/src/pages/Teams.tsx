@@ -82,26 +82,32 @@ export function Teams({ auth }: { auth: AuthState }) {
     setTeamsLoadError(null);
 
     let teamSummaryBootstrap: Awaited<ReturnType<typeof loadParentTeamsSummaryBootstrap>> | null = null;
+    let hasStreamedTeams = false;
+    const applyTeamSummary = (fastHome: ParentHomeModel) => {
+      if (loadId !== activeLoadIdRef.current) return;
+      hasStreamedTeams = hasStreamedTeams || fastHome.teams.length > 0;
+      setHome(fastHome);
+      setLoadedTeamSummaryUserId(user.uid);
+      setTeamsLoadError(null);
+    };
     const fastHome = await runTeamSummaryLoad(
       async () => {
-        teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, { force: !showLoading });
+        teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, {
+          force: !showLoading,
+          onPartial: applyTeamSummary
+        });
         return teamSummaryBootstrap.home;
       },
       {
         ignoreStale: true,
         rethrow: false,
         getErrorMessage: (loadError) => getTeamsLoadErrorMessage(toAppServiceError(loadError, 'Unable to load teams.'), hasExistingTeams),
-        onSuccess: (fastHome) => {
-          if (loadId !== activeLoadIdRef.current) return;
-          setHome(fastHome);
-          setLoadedTeamSummaryUserId(user.uid);
-          setTeamsLoadError(null);
-        },
+        onSuccess: applyTeamSummary,
         onError: (loadError) => {
           if (loadId !== activeLoadIdRef.current) return;
           const appError = toAppServiceError(loadError, 'Unable to load teams.');
           setTeamsLoadError(appError);
-          if (!hasExistingTeams) {
+          if (!hasExistingTeams && !hasStreamedTeams) {
             setHome(emptyHome());
             setLoadedTeamSummaryUserId(null);
             setLoadedTeamUserId(null);
@@ -158,7 +164,7 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useRefreshOnResume(() => loadTeams(), { enabled: Boolean(auth.user?.uid) });
 
-  const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
+  const showBlockingErrorState = !loading && !hasLoadedTeamSummary && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
 
