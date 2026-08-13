@@ -6,7 +6,7 @@ const callableMocks = vi.hoisted(() => ({
     queueInviteSignInEmail: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=24', () => ({
+vi.mock('../../js/firebase.js?v=25', () => ({
     functions: { project: 'test' },
     httpsCallable: vi.fn((_functions, name) => callableMocks[name])
 }));

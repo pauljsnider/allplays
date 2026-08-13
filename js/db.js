@@ -33,7 +33,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=24';
+} from './firebase.js?v=25';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=11';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=3';
@@ -122,7 +122,7 @@ import {
     FRIEND_INVITE_TYPE,
     buildFriendInviteAccessCodeData
 } from './friend-invite.js?v=1';
-import { commitCertificateDefaults } from './certificates/persistence.js?v=2';
+import { commitCertificateDefaults } from './certificates/persistence.js?v=3';
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
@@ -245,7 +245,7 @@ import { buildOfficiatingNotificationRecord } from './officiating-notifications.
 import {
     getTeamEmailAttachmentTotalBytes,
     normalizeTeamEmailAttachments
-} from './team-email-attachments.js?v=4';
+} from './team-email-attachments.js?v=5';
 export {
     TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
     assertTeamEmailAttachmentLimit,
@@ -254,7 +254,7 @@ export {
     getTeamEmailDraft,
     normalizeTeamEmailAttachments,
     uploadTeamEmailAttachment
-} from './team-email-attachments.js?v=4';
+} from './team-email-attachments.js?v=5';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -766,7 +766,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443344'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443345'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();

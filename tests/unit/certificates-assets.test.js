@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
     ref: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=24', () => ({
+vi.mock('../../js/firebase.js?v=25', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-1' } },
     storage: { name: 'primary-storage' },

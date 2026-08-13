@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from '../firebase.js?v=24';
+import { functions, httpsCallable } from '../firebase.js?v=25';
 
 export async function commitCertificateDefaults(teamId, defaults = {}) {
     if (!teamId) throw new Error('Missing team for certificate defaults');

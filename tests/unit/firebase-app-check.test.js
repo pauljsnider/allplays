@@ -123,6 +123,10 @@ describe('Firebase App Check initialization', () => {
             debugToken: false,
             isTokenAutoRefreshEnabled: true
         });
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false },
+            { forceRefresh: true }
+        ]);
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
         expect(getAppCheckStatus()).toMatchObject({ state: 'token-ready', provider: 'native-attestation' });
     });
@@ -201,6 +205,22 @@ describe('Firebase App Check initialization', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('bypasses its startup token cache when the JavaScript SDK requests renewal', async () => {
+        nativeAppCheck.getToken
+            .mockResolvedValueOnce({ token: 'startup-token', expireTimeMillis: Date.now() + 60_000 })
+            .mockResolvedValueOnce({ token: 'renewed-token', expireTimeMillis: Date.now() + 120_000 });
+        const loadToken = createNativeAppCheckTokenLoader(nativeAppCheck);
+
+        await expect(loadToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(loadToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(loadToken(true)).resolves.toMatchObject({ token: 'renewed-token' });
+
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false },
+            { forceRefresh: true }
+        ]);
     });
 
     it('does not replace the iOS provider after native startup configures Firebase', async () => {
