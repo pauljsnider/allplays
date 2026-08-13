@@ -13,7 +13,7 @@ import {
   query,
   where
 } from './adapters/legacySearchDb';
-import { loadParentHomeSummary } from './homeService';
+import { loadParentSearchTeamsSummary } from './homeService';
 import { getPublicTeamsPage } from './publicTeamsService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
@@ -345,7 +345,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   cachedTeamsPromise = (async () => {
     const [directAccessTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
       loadDirectAccessSearchTeams(user),
-      user ? loadParentHomeSummary(user) : Promise.resolve(null),
+      user ? loadParentSearchTeamsSummary(user) : Promise.resolve(null),
       user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
     ]);
 
@@ -378,11 +378,17 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
       if (firstError) throw firstError;
     }
 
-    cachedTeams = Array.from(teamsById.values())
+    const teams = Array.from(teamsById.values())
       .sort((a, b) => a.name.localeCompare(b.name));
-    cachedTeamsLoadedAt = Date.now();
-    cachedTeamsUserKey = userCacheKey;
-    return cachedTeams;
+    const accessDiscoveryComplete = directAccessTeamsResult.status === 'fulfilled'
+      && homeTeamsResult.status === 'fulfilled'
+      && streamVolunteerTeamsResult.status === 'fulfilled';
+    if (accessDiscoveryComplete) {
+      cachedTeams = teams;
+      cachedTeamsLoadedAt = Date.now();
+      cachedTeamsUserKey = userCacheKey;
+    }
+    return teams;
   })();
 
   try {

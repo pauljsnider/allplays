@@ -90,6 +90,31 @@ export async function loadParentHomeSummary(
   return summary.home;
 }
 
+export async function loadParentSearchTeamsSummary(user: AuthUser | null): Promise<ParentHomeModel> {
+  if (!user?.uid) {
+    return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
+  }
+
+  const scheduleScope = await loadParentScheduleScope(user);
+  if (scheduleScope.isPartial === true) {
+    throw toAppServiceError(
+      new Error('Search team access discovery is incomplete. Try searching again.'),
+      'Unable to load search teams.'
+    );
+  }
+
+  return buildParentHomeModel({
+    children: scheduleScope.children,
+    events: [],
+    inboxTeams: normalizeStaffTeams({
+      children: [],
+      events: [],
+      staffTeams: scheduleScope.staffTeams
+    }),
+    fees: []
+  });
+}
+
 export async function loadParentHomeSummaryBootstrap(
   user: AuthUser | null,
   options: ParentHomeSummaryBootstrapOptions = {}

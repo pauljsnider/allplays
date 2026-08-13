@@ -35,6 +35,7 @@ vi.mock('./logger', () => ({
 import {
     loadParentHomeSummary,
     loadParentHomeWithSecondaryData,
+    loadParentSearchTeamsSummary,
     loadParentScheduleSummary,
     loadParentTeamsSummaryBootstrap
 } from './homeService';
@@ -154,6 +155,61 @@ describe('homeService Teams bootstrap reuse', () => {
             })
         ]));
         expect(summary.home.metrics.teams).toBe(2);
+    });
+
+    it('builds search teams from parent and zero-event staff scope without loading schedules', async () => {
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: { coachOf: ['team-owned'] },
+            children: [{
+                teamId: 'team-parent-1',
+                teamName: 'Jr Current',
+                playerId: 'player-1',
+                playerName: 'Madison Snider'
+            }, {
+                teamId: 'team-parent-2',
+                teamName: 'Fast Falcons',
+                playerId: 'player-2',
+                playerName: 'Avery Ace'
+            }],
+            staffTeams: [{ teamId: 'team-owned', teamName: 'Vipers' }],
+            isPartial: false
+        });
+
+        const summary = await loadParentSearchTeamsSummary(user);
+
+        expect(summary.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-parent-1', teamName: 'Jr Current' }),
+            expect.objectContaining({ teamId: 'team-parent-2', teamName: 'Fast Falcons' }),
+            expect.objectContaining({
+                teamId: 'team-owned',
+                teamName: 'Vipers',
+                role: 'Coach',
+                players: [],
+                eventCount: 0
+            })
+        ]));
+        expect(scheduleServiceMocks.loadParentScheduleScope).toHaveBeenCalledTimes(1);
+        expect(scheduleServiceMocks.loadParentSchedule).not.toHaveBeenCalled();
+        expect(chatServiceMocks.loadChatInbox).not.toHaveBeenCalled();
+    });
+
+    it('rejects partial search access scope so an incomplete team list is retryable', async () => {
+        scheduleServiceMocks.loadParentScheduleScope.mockResolvedValue({
+            profile: {},
+            children: [{
+                teamId: 'team-parent-1',
+                teamName: 'Jr Current',
+                playerId: 'player-1',
+                playerName: 'Madison Snider'
+            }],
+            staffTeams: [],
+            isPartial: true
+        });
+
+        await expect(loadParentSearchTeamsSummary(user)).rejects.toThrow(
+            'Search team access discovery is incomplete'
+        );
+        expect(scheduleServiceMocks.loadParentSchedule).not.toHaveBeenCalled();
     });
 
     it('streams a verified chat team before slower family scope discovery completes', async () => {
