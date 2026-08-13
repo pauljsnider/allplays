@@ -96,6 +96,30 @@ type VolatileNativeRestSession = NativeAuthSession & {
 
 let volatileNativeRestSession: VolatileNativeRestSession | null = null;
 
+const nativePluginTokenReuseMs = 30 * 1000;
+type NativePluginTokenCache = {
+  uid: string;
+  token: string;
+  expiresAt: number;
+};
+type NativePluginTokenRequest = {
+  uid: string;
+  forceRefresh: boolean;
+  generation: number;
+  sequence: number;
+  promise: Promise<string>;
+};
+let nativePluginTokenCache: NativePluginTokenCache | null = null;
+let nativePluginTokenRequest: NativePluginTokenRequest | null = null;
+let nativePluginTokenGeneration = 0;
+let nativePluginTokenSequence = 0;
+
+function resetNativePluginTokenBroker() {
+  nativePluginTokenGeneration += 1;
+  nativePluginTokenCache = null;
+  nativePluginTokenRequest = null;
+}
+
 type NativeRestLookupUser = {
   email?: string;
   emailVerified?: boolean;
@@ -299,6 +323,7 @@ function writeNativeAuthSession(session: NativeAuthSession | VolatileNativeRestS
 }
 
 function clearNativeAuthSession() {
+  resetNativePluginTokenBroker();
   try {
     volatileNativeRestSession = null;
     window.localStorage?.removeItem(nativeAuthSessionStorageKey);
@@ -406,16 +431,53 @@ async function refreshNativeAuthSession(session: VolatileNativeRestSession) {
   return nextSession;
 }
 
-async function getNativePluginToken(forceRefresh = false) {
+async function getNativePluginToken(forceRefresh = false, expectedUid = '') {
   if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
     throw new Error('Native Firebase auth is unavailable.');
   }
 
-  const result = await FirebaseAuthentication.getIdToken({ forceRefresh });
-  if (!result?.token) {
-    throw new Error('Native Firebase auth did not return an ID token.');
+  const uid = expectedUid || readNativeAuthSession()?.uid || auth.currentUser?.uid || '';
+  if (!uid) {
+    throw new Error('Native Firebase auth has no signed-in user.');
   }
-  return result.token;
+  const now = Date.now();
+  const cachedToken = nativePluginTokenCache;
+  if (!forceRefresh && cachedToken && cachedToken.uid === uid && cachedToken.expiresAt > now) {
+    return cachedToken.token;
+  }
+  const pendingTokenRequest = nativePluginTokenRequest;
+  if (
+    pendingTokenRequest
+    && pendingTokenRequest.uid === uid
+    && (!forceRefresh || pendingTokenRequest.forceRefresh)
+  ) {
+    return pendingTokenRequest.promise;
+  }
+
+  const generation = nativePluginTokenGeneration;
+  const sequence = ++nativePluginTokenSequence;
+  const promise = FirebaseAuthentication.getIdToken({ forceRefresh }).then((result) => {
+    if (generation !== nativePluginTokenGeneration) {
+      throw new Error('Native Firebase auth session changed while loading a token.');
+    }
+    if (!result?.token) {
+      throw new Error('Native Firebase auth did not return an ID token.');
+    }
+    if (sequence === nativePluginTokenSequence) {
+      nativePluginTokenCache = {
+        uid,
+        token: result.token,
+        expiresAt: Date.now() + nativePluginTokenReuseMs
+      };
+    }
+    return result.token;
+  }).finally(() => {
+    if (nativePluginTokenRequest?.promise === promise) {
+      nativePluginTokenRequest = null;
+    }
+  });
+  nativePluginTokenRequest = { uid, forceRefresh, generation, sequence, promise };
+  return promise;
 }
 
 async function refreshNativePluginAuthSession(session: NativeAuthSession) {
@@ -457,7 +519,7 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
     async getIdToken(forceRefresh = false) {
       if (session.provider === 'native-plugin') {
         if (forceRefresh) await refreshNativePluginAuthSession(session);
-        return getNativePluginToken(forceRefresh);
+        return getNativePluginToken(forceRefresh, session.uid);
       }
       let currentSession = volatileNativeRestSession;
       if (!currentSession) throw new Error('Legacy native auth session must be signed in again.');
@@ -564,10 +626,11 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
   }
   const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
   if (previousUid && previousUid !== pluginUser.uid) {
+    resetNativePluginTokenBroker();
     clearCachedUserData();
   }
 
-  const idToken = await getNativePluginToken(true);
+  const idToken = await getNativePluginToken(true, pluginUser.uid);
   const lookupPayload = (await callFirebaseAuthRest('accounts:lookup', {
     idToken
   }).catch((error) => {
@@ -613,7 +676,7 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
           }
         );
       }
-      return getNativePluginToken(forceRefresh);
+      return getNativePluginToken(forceRefresh, pluginUser.uid || '');
     },
     async delete() {
       await deleteNativeAuthUser();

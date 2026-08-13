@@ -794,7 +794,7 @@ describe('Home', () => {
     expect(screen.getByText('Needs refresh')).toBeTruthy();
   });
 
-  it('continues the independent social load from the latest streamed Home state when a secondary slice fails', async () => {
+  it('keeps the concurrent social load when a failed secondary slice does not change team scope', async () => {
     const partialHome = {
       ...baseHome,
       fees: [{ id: 'fee-1', teamId: 'team-1', teamName: 'Bears', title: 'Spring dues' }]
@@ -813,7 +813,7 @@ describe('Home', () => {
 
     expect(await screen.findByText('Needs refresh')).toBeTruthy();
     await waitFor(() => {
-      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, partialHome);
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, baseHome);
     });
     expect(await screen.findByText('Pat Player highlight')).toBeTruthy();
     expect(screen.getByText('Needs refresh')).toBeTruthy();

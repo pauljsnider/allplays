@@ -156,7 +156,8 @@ function getHomeSectionRoute(section: HomeSectionId) {
 
 function isHomeSectionReady(section: HomeSectionId, state: { loading: boolean; socialLoading: boolean; hasLoadedHomeDetails: boolean; showBlockingErrorState: boolean }) {
   if (state.loading || state.showBlockingErrorState) return false;
-  if (section === 'today' || section === 'feed' || section === 'friends') {
+  if (section === 'today') return true;
+  if (section === 'feed' || section === 'friends') {
     return state.hasLoadedHomeDetails && !state.socialLoading;
   }
   return state.hasLoadedHomeDetails;
@@ -211,10 +212,17 @@ export function Home({ auth }: { auth: AuthState }) {
       force,
       hasExistingHome
     });
+    const handleBackgroundError = (backgroundError: unknown) => {
+      const appError = toAppServiceError(backgroundError, 'Unable to refresh Home details.');
+      setFailedHomeDetailsUserId(user.uid);
+      setHomeLoadError(appError);
+      setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+    };
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, {
           force,
+          onBackgroundError: handleBackgroundError,
           onPartial: (partial) => {
             receivedHomePreview = true;
             setHome(partial.home);
@@ -227,12 +235,18 @@ export function Home({ auth }: { auth: AuthState }) {
         setPreviewHomeUserId(user.uid);
         setHomeLoadError(null);
         let latestSecondaryHome = summary.home;
+        const summaryTeamScope = summary.home.teams.map((team) => team.teamId).sort().join('|');
+        const socialHomePromise = loadSocialHome(user, summary.home)
+          .then((socialHome) => ({ socialHome, error: null }))
+          .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
 
         void runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, {
               force,
               schedule: summary.schedule,
+              nativeContext: summary.nativeContext,
+              onBackgroundError: handleBackgroundError,
               // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
               // arrives instead of waiting for all of them (#2037).
               onPartial: (partial) => {
@@ -245,7 +259,16 @@ export function Home({ auth }: { auth: AuthState }) {
             setLoadedHomeDetailsUserId(user.uid);
             setFailedHomeDetailsUserId(null);
             setHomeLoadError(null);
-            const socialHome = await loadSocialHome(user, secondaryHome);
+            const secondaryTeamScope = secondaryHome.teams.map((team) => team.teamId).sort().join('|');
+            const socialResult = secondaryTeamScope === summaryTeamScope
+              ? await socialHomePromise
+              : await loadSocialHome(user, secondaryHome)
+                .then((socialHome) => ({ socialHome, error: null }))
+                .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+            if (socialResult.error || !socialResult.socialHome) {
+              throw socialResult.error || new Error('Unable to load Home social details.');
+            }
+            const socialHome = socialResult.socialHome;
             setSocial(socialHome);
             timer.end({
               hydrated: true,
@@ -264,8 +287,13 @@ export function Home({ auth }: { auth: AuthState }) {
             onError: async (secondaryError) => {
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
               try {
-                const socialHome = await loadSocialHome(user, latestSecondaryHome);
-                setSocial(socialHome);
+                const latestTeamScope = latestSecondaryHome.teams.map((team) => team.teamId).sort().join('|');
+                const socialResult = latestTeamScope === summaryTeamScope
+                  ? await socialHomePromise
+                  : await loadSocialHome(user, latestSecondaryHome)
+                    .then((socialHome) => ({ socialHome, error: null }))
+                    .catch((socialError: unknown) => ({ socialHome: null, error: socialError }));
+                if (socialResult.socialHome) setSocial(socialResult.socialHome);
               } catch {
                 // The Home details error remains the visible retry signal. Social
                 // state is left untouched so a failed independent load cannot

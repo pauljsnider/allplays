@@ -175,8 +175,8 @@ function getNativeFirestoreDocumentName(path: string) {
   return `projects/${projectId}/databases/(default)/documents/${path}`;
 }
 
-async function getNativeFirestoreHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+async function getNativeFirestoreHeaders(requestUrl: string, forceRefresh = false) {
+  const token = await getNativeAuthIdToken(forceRefresh);
   if (!token) throw new Error('Native auth token is unavailable.');
   return getPrimaryAppCheckHeaders({
     Authorization: `Bearer ${token}`,
@@ -186,13 +186,19 @@ async function getNativeFirestoreHeaders(requestUrl: string) {
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}): Promise<any> {
   const requestUrl = `${getNativeFirestoreBaseUrl()}${path}`;
-  const response = await withTimeout(fetch(requestUrl, {
+  const method = String(init.method || 'GET').toUpperCase();
+  const isReadOnly = method === 'GET' || path.includes(':runQuery') || path.includes(':runAggregationQuery');
+  const execute = async (forceRefresh: boolean) => withTimeout(fetch(requestUrl, {
     ...init,
     headers: {
-      ...(await getNativeFirestoreHeaders(requestUrl)),
+      ...(await getNativeFirestoreHeaders(requestUrl, forceRefresh)),
       ...(init.headers || {})
     }
   }), 'Social Firestore request');
+  let response = await execute(!isReadOnly);
+  if (response.status === 401) {
+    response = await execute(true);
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload?.error?.message || `Social Firestore request failed (${response.status}).`) as Error & {

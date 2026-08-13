@@ -323,7 +323,7 @@ describe('React app schedule rideshare service integration', () => {
 
         const loaded = await loadParentScheduleRideOffers(event(), user(), [event()]);
 
-        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(true);
+        expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
         expect(loaded).toEqual([
             expect.objectContaining({
                 id: 'offer-native',

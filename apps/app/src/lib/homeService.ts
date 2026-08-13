@@ -15,6 +15,7 @@ import {
 } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { listParentTeamFeeRecipientsForApp } from './parentFeeRecipientsService';
+import { isNativeRuntime } from './nativeRuntime';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -26,17 +27,26 @@ import type { AuthUser } from './types';
 
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
+const homeMaxStaleMs = 5 * 60 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 const logger = createLogger('home');
+
+type ParentHomeNativeLoadContext = {
+  loadProfile: () => Promise<Record<string, unknown>>;
+  loadManagedTeams: () => Promise<{ teams: any[]; isPartial: boolean }>;
+};
 
 type ParentHomeSummaryBootstrapResult = {
   home: ParentHomeModel;
   schedule: ParentScheduleLoadResult;
+  nativeContext?: ParentHomeNativeLoadContext;
 };
 
 type ParentHomeSummaryOptions = {
   force?: boolean;
   scheduleScope?: ParentScheduleScope;
+  nativeContext?: ParentHomeNativeLoadContext;
+  onBackgroundError?: (error: unknown) => void;
 };
 
 type ParentHomeSummaryBootstrapOptions = ParentHomeSummaryOptions & {
@@ -47,6 +57,28 @@ type ParentTeamsSummaryBootstrapOptions = {
   force?: boolean;
   onPartial?: (home: ParentHomeModel) => void;
 };
+
+function createParentHomeNativeLoadContext(userId: string): ParentHomeNativeLoadContext | undefined {
+  if (!isNativeRuntime()) return undefined;
+  let profilePromise: Promise<Record<string, unknown>> | null = null;
+  let managedTeamsPromise: Promise<{ teams: any[]; isPartial: boolean }> | null = null;
+  return {
+    loadProfile: () => {
+      if (!profilePromise) {
+        profilePromise = import('./nativeHomeLoaders').then(({ loadNativeHomeProfile }) => loadNativeHomeProfile(userId));
+      }
+      return profilePromise;
+    },
+    loadManagedTeams: () => {
+      if (!managedTeamsPromise) {
+        managedTeamsPromise = import('./nativeHomeLoaders').then(({ loadNativeHomeManagedTeams }) => (
+          loadNativeHomeManagedTeams()
+        ));
+      }
+      return managedTeamsPromise;
+    }
+  };
+}
 
 function normalizeSecondaryError(error: unknown, fallbackMessage: string) {
   return toAppServiceError(error, fallbackMessage);
@@ -127,6 +159,7 @@ export async function loadParentHomeSummaryBootstrap(
     };
   }
 
+  const nativeContext = options.nativeContext || createParentHomeNativeLoadContext(user.uid);
   const toBootstrapResult = (schedule: ParentScheduleLoadResult): ParentHomeSummaryBootstrapResult => ({
     home: buildParentHomeModel({
       children: schedule.children,
@@ -134,11 +167,13 @@ export async function loadParentHomeSummaryBootstrap(
       inboxTeams: normalizeStaffTeams(schedule),
       fees: []
     }),
-    schedule
+    schedule,
+    ...(nativeContext ? { nativeContext } : {})
   });
   const schedule = await loadParentScheduleSummary(user, {
     force: options.force,
     scheduleScope: options.scheduleScope,
+    nativeContext,
     ...(options.onPartial ? {
       onPartial: (partialSchedule) => options.onPartial?.(toBootstrapResult(partialSchedule))
     } : {})
@@ -259,7 +294,9 @@ export async function loadParentHomeWithSecondaryData(
   options: {
     force?: boolean;
     schedule?: ParentScheduleLoadResult;
+    nativeContext?: ParentHomeNativeLoadContext;
     onPartial?: (model: ParentHomeModel) => void;
+    onBackgroundError?: (error: unknown) => void;
   } = {}
 ): Promise<ParentHomeModel> {
   if (!user?.uid) {
@@ -303,7 +340,10 @@ export async function loadParentHomeWithSecondaryData(
         logger.warn('Schedule hydration failed.', { error: appError });
         throw appError;
       }),
-      loadChatInbox(user).then((chatInbox) => {
+      loadChatInbox(user, options.nativeContext ? {
+        nativeProfileLoader: options.nativeContext.loadProfile,
+        nativeManagedTeamsLoader: options.nativeContext.loadManagedTeams
+      } : {}).then((chatInbox) => {
         const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
         emit({ inboxTeams: nextInboxTeams });
         requireCompleteChatInbox(chatInbox);
@@ -336,7 +376,14 @@ export async function loadParentHomeWithSecondaryData(
       inboxTeams: chatResult.status === 'fulfilled' ? chatResult.value : partialState.inboxTeams,
       fees: feesResult.status === 'fulfilled' ? feesResult.value : partialState.fees
     });
-  }, { ttlMs: homeSecondaryTtlMs, force: options.force });
+  }, {
+    ttlMs: homeSecondaryTtlMs,
+    force: options.force,
+    maxStaleMs: homeMaxStaleMs,
+    staleWhileRevalidate: true,
+    onRefresh: onPartial || undefined,
+    onRefreshError: options.onBackgroundError
+  });
 }
 
 export async function loadParentScheduleSummary(
@@ -351,11 +398,17 @@ export async function loadParentScheduleSummary(
       hydrateDetails: false,
       expandStaffPlayers: false,
       parentScope: options.scheduleScope,
+      nativeProfileLoader: options.nativeContext?.loadProfile,
+      nativeStaffTeamsLoader: options.nativeContext?.loadManagedTeams,
       ...(options.onPartial ? { onPartial: options.onPartial } : {})
     }),
     {
       ttlMs: homeSummaryTtlMs,
       force: options.force || hasScopedStaffTeams,
+      maxStaleMs: homeMaxStaleMs,
+      staleWhileRevalidate: true,
+      onRefresh: options.onPartial,
+      onRefreshError: options.onBackgroundError,
       shouldCache: (result) => result?.isPartial !== true
     }
   );

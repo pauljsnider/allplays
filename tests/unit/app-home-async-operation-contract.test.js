@@ -51,7 +51,8 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).toContain('setSocial(emptySocialHome());');
         expect(refreshHomeSource).toContain("getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.'))");
         expect(refreshHomeSource).toContain("const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');");
-        expect(refreshHomeSource).toContain('const socialHome = await loadSocialHome(user, latestSecondaryHome);');
+        expect(refreshHomeSource).toContain('const socialHomePromise = loadSocialHome(user, summary.home)');
+        expect(refreshHomeSource).toContain('? await socialHomePromise');
         expect(refreshHomeSource).toContain('setSocial(socialHome);');
         expect(refreshHomeSource).toContain("setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });");
     });

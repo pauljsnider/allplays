@@ -64,6 +64,7 @@ describe('parentFeeRecipientsService native access', () => {
       })
     ]);
     expect(legacyMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
+    expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
     expect(httpMocks.post).toHaveBeenCalledWith({
       url: 'https://us-central1-demo-project.cloudfunctions.net/listParentTeamFeeRecipients',
       headers: expect.objectContaining({
@@ -84,6 +85,35 @@ describe('parentFeeRecipientsService native access', () => {
 
     await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks))
       .rejects.toThrow('Fee discovery unavailable.');
+  });
+
+  it('refreshes once after an unauthenticated read response', async () => {
+    authMocks.getNativeAuthIdToken
+      .mockResolvedValueOnce('cached-token')
+      .mockResolvedValueOnce('refreshed-token');
+    httpMocks.post
+      .mockResolvedValueOnce({ status: 401, data: { error: { message: 'Unauthenticated.' } } })
+      .mockResolvedValueOnce({ status: 200, data: { result: { items: [] } } });
+
+    await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks)).resolves.toEqual([]);
+
+    expect(authMocks.getNativeAuthIdToken).toHaveBeenNthCalledWith(1, false);
+    expect(authMocks.getNativeAuthIdToken).toHaveBeenNthCalledWith(2, true);
+    expect(httpMocks.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a permission-denied read response', async () => {
+    httpMocks.post.mockResolvedValue({
+      status: 403,
+      data: { error: { message: 'Missing or insufficient permissions.' } }
+    });
+
+    await expect(listParentTeamFeeRecipientsForApp('parent-1', childLinks))
+      .rejects.toThrow('Missing or insufficient permissions.');
+
+    expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledTimes(1);
+    expect(authMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
+    expect(httpMocks.post).toHaveBeenCalledTimes(1);
   });
 
   it('recursively decodes callable Firestore timestamps for native fee history', async () => {

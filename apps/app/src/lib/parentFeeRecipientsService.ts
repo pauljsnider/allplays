@@ -45,23 +45,31 @@ function decodeCallableValue(value: unknown): unknown {
 }
 
 async function listNativeParentTeamFeeRecipients() {
-  const token = await getNativeAuthIdToken(true);
-  if (!token) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://us-central1-${getProjectId()}.cloudfunctions.net/listParentTeamFeeRecipients`;
-  const response = await CapacitorHttp.post({
-    url: requestUrl,
-    headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    }, requestUrl) as Record<string, string>,
-    data: { data: {} },
-    connectTimeout: parentFeeRequestTimeoutMs,
-    readTimeout: parentFeeRequestTimeoutMs
-  });
+  const execute = async (forceRefresh: boolean) => {
+    const token = await getNativeAuthIdToken(forceRefresh);
+    if (!token) throw new Error('Native auth token is unavailable.');
+    return CapacitorHttp.post({
+      url: requestUrl,
+      headers: await getPrimaryAppCheckHeaders({
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }, requestUrl) as Record<string, string>,
+      data: { data: {} },
+      connectTimeout: parentFeeRequestTimeoutMs,
+      readTimeout: parentFeeRequestTimeoutMs
+    });
+  };
+  let response = await execute(false);
+  if (response.status === 401) {
+    response = await execute(true);
+  }
   const payload = response.data && typeof response.data === 'object' ? response.data : {};
   const result = payload?.result || payload?.data;
   if (response.status < 200 || response.status >= 300 || !Array.isArray(result?.items)) {
-    throw new Error(payload?.error?.message || 'Parent team fees response is invalid.');
+    const error = new Error(payload?.error?.message || 'Parent team fees response is invalid.') as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
   return result.items
     .filter((fee: unknown) => fee && typeof fee === 'object' && !Array.isArray(fee))
