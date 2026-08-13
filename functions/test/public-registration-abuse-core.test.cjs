@@ -11,8 +11,10 @@ const {
   buildPublicRegistrationSubmissionFingerprint,
   evaluatePublicRegistrationAppCheck,
   getPublicRegistrationRequestBodyBytes,
+  normalizePublicRegistrationFields,
   normalizePublicRegistrationIdempotencyKey,
-  normalizePublicRegistrationSecurityMode
+  normalizePublicRegistrationSecurityMode,
+  resolvePublicRegistrationGuardianEmail
 } = require('../public-registration-abuse-core.cjs');
 
 function validInput(overrides = {}) {
@@ -67,6 +69,52 @@ test('builds separate subject, network, and form abuse boundaries', () => {
   assert.notEqual(boundaries.network, boundaries.form);
   assert.doesNotMatch(boundaries.network, /parent@example\.com/);
   assert.doesNotMatch(boundaries.form, /parent@example\.com|203\.0\.113\.10/);
+});
+
+test('uses an explicitly resolved opaque guardian email for subject boundaries', () => {
+  const input = validInput({ guardian: { guardian_2: 'caller-value@example.com' } });
+  const normalized = buildPublicRegistrationRateLimitBoundaries(input, {}, {
+    operation: 'submit',
+    requestIp: '203.0.113.10',
+    canonicalGuardianEmail: ' Parent@Example.COM '
+  });
+  const equivalent = buildPublicRegistrationRateLimitBoundaries(input, {}, {
+    operation: 'submit',
+    requestIp: '203.0.113.10',
+    canonicalGuardianEmail: 'parent@example.com'
+  });
+  const different = buildPublicRegistrationRateLimitBoundaries(input, {}, {
+    operation: 'submit',
+    requestIp: '203.0.113.10',
+    canonicalGuardianEmail: 'other@example.com'
+  });
+
+  assert.equal(normalized.subject, equivalent.subject);
+  assert.notEqual(normalized.subject, different.subject);
+});
+
+test('preserves normalized guardian field types and legacy email definitions', () => {
+  const fields = normalizePublicRegistrationFields([
+    { id: 'guardian_2', label: 'Guardian email', type: 'EMAIL', required: true },
+    { id: 'guardianEmail', label: 'Email', required: false }
+  ]);
+  assert.deepEqual(fields, [
+    { id: 'guardian_2', label: 'Guardian email', type: 'email', required: true },
+    { id: 'guardianEmail', label: 'Email', type: '', required: false }
+  ]);
+  assert.equal(resolvePublicRegistrationGuardianEmail({ guardianFields: fields }, {
+    guardian_2: ' Typed@Example.COM ',
+    guardianEmail: 'legacy@example.com'
+  }), 'typed@example.com');
+  assert.equal(resolvePublicRegistrationGuardianEmail({
+    guardianFields: normalizePublicRegistrationFields([{ id: 'email', label: 'Contact', required: true }])
+  }, { email: ' Email@Example.COM ' }), 'email@example.com');
+  assert.equal(resolvePublicRegistrationGuardianEmail({
+    guardianFields: normalizePublicRegistrationFields([{ id: 'guardianEmail', label: 'Contact', required: true }])
+  }, { guardianEmail: ' Guardian@Example.COM ' }), 'guardian@example.com');
+  assert.equal(resolvePublicRegistrationGuardianEmail({
+    guardianFields: normalizePublicRegistrationFields([{ id: 'guardian_legacy', label: 'Guardian Email', required: true }])
+  }, { guardian_legacy: ' Label@Example.COM ' }), 'label@example.com');
 });
 
 test('keeps checkout subject throttles stable across rotating client IPs', () => {

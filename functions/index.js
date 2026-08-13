@@ -126,8 +126,10 @@ const {
   buildPublicRegistrationRateLimitBoundaries,
   buildPublicRegistrationSubmissionFingerprint,
   evaluatePublicRegistrationAppCheck,
+  normalizePublicRegistrationFields,
   normalizePublicRegistrationIdempotencyKey,
-  normalizePublicRegistrationSecurityMode
+  normalizePublicRegistrationSecurityMode,
+  resolvePublicRegistrationGuardianEmail
 } = require('./public-registration-abuse-core.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
@@ -1478,17 +1480,6 @@ function normalizePublicRegistrationInstallmentPlan(plan = null) {
   };
 }
 
-function normalizePublicRegistrationFields(fields = []) {
-  if (!Array.isArray(fields)) return [];
-  return fields
-    .map((field, index) => ({
-      id: String(field?.id || field?.key || `field_${index + 1}`).trim(),
-      label: String(field?.label || field?.name || field?.id || field?.key || `Field ${index + 1}`).trim(),
-      required: field?.required === true
-    }))
-    .filter((field) => field.id && field.label);
-}
-
 function normalizePublicRegistrationBackgroundCheck(settings = {}) {
   const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true;
   const status = String(settings?.initialScreeningStatus || 'pending').trim().toLowerCase().replace(/[ _]+/g, '-');
@@ -1806,15 +1797,16 @@ function buildPublicPendingRegistrationRecord({
   return record;
 }
 
-function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
+function buildPublicRegistrationRateLimitBoundary(input, context = {}, canonicalGuardianEmail = '') {
   return buildPublicRegistrationRateLimitBoundaries(input, context, {
     operation: 'submit',
-    requestIp: getRequestIp(context.rawRequest || {})
+    requestIp: getRequestIp(context.rawRequest || {}),
+    canonicalGuardianEmail
   }).subject;
 }
 
-async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '') {
-  const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
+async function assertPublicRegistrationRateLimit(input, context = {}, reservationId = '', canonicalGuardianEmail = '') {
+  const boundary = buildPublicRegistrationRateLimitBoundary(input, context, canonicalGuardianEmail);
   const rateLimit = await getPublicRegistrationSubmissionRateLimit()(boundary, Date.now(), reservationId);
   if (!rateLimit.allowed) {
     throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
@@ -1998,7 +1990,8 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   });
   validatePublicRegistrationSubmission(initialForm, input, initialFeeSnapshot);
 
-  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint);
+  const canonicalGuardianEmail = resolvePublicRegistrationGuardianEmail(initialForm, input.guardian);
+  await assertPublicRegistrationRateLimit(input, context, submissionFingerprint, canonicalGuardianEmail);
   await applyStagedPublicRegistrationRateLimits(input, context, 'submit', submissionFingerprint);
 
   let result = null;
