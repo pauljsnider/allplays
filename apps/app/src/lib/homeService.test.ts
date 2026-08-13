@@ -428,7 +428,7 @@ describe('homeService Teams bootstrap reuse', () => {
                 id: 'event-1',
                 teamId: 'team-1',
                 title: 'Practice',
-                date: new Date('2026-08-12T18:00:00.000Z')
+                date: new Date('2100-08-12T18:00:00.000Z')
             }]
         } as any;
         failSlice();
@@ -452,7 +452,7 @@ describe('homeService Teams bootstrap reuse', () => {
                 id: 'event-1',
                 teamId: 'team-1',
                 title: 'Practice',
-                date: new Date('2026-08-12T18:00:00.000Z')
+                date: new Date('2100-08-12T18:00:00.000Z')
             }]
         } as any;
         const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {

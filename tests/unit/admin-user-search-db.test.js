@@ -19,7 +19,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDocs: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=23', () => ({
+vi.mock('../../js/firebase.js?v=24', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -93,7 +93,7 @@ describe('bounded admin user search queries', () => {
             return { docs: [] };
         });
 
-        const { searchAdminUsers } = await import('../../js/db.js?v=4433167-admin-user-search');
+        const { searchAdminUsers } = await import('../../js/db.js?v=4433168-admin-user-search');
         const users = await searchAdminUsers('zeta');
 
         expect(users).toEqual([{
@@ -130,7 +130,7 @@ describe('bounded admin user search queries', () => {
             return { docs: [] };
         });
 
-        const { searchAdminUsers } = await import('../../js/db.js?v=4433167-admin-user-search');
+        const { searchAdminUsers } = await import('../../js/db.js?v=4433168-admin-user-search');
         const users = await searchAdminUsers('robin');
 
         expect(users).toEqual([{
@@ -160,7 +160,7 @@ describe('bounded admin user search queries', () => {
             return { docs: [] };
         });
 
-        const { searchAdminUsers } = await import('../../js/db.js?v=4433167-admin-user-search');
+        const { searchAdminUsers } = await import('../../js/db.js?v=4433168-admin-user-search');
         const users = await searchAdminUsers(term);
 
         expect(users).toEqual([{ id: 'user-450', ...userData }]);
@@ -173,7 +173,7 @@ describe('bounded admin user search queries', () => {
             email: `User-${index}@Example.com`,
             phone: `+1 (555) 000-${String(index).padStart(4, '0')}`
         }));
-        const { getOfficialsForUsers } = await import('../../js/db.js?v=4433167-admin-user-search');
+        const { getOfficialsForUsers } = await import('../../js/db.js?v=4433168-admin-user-search');
 
         await getOfficialsForUsers(users);
 
@@ -214,7 +214,7 @@ describe('bounded admin user search queries', () => {
                 docs: emailFilter?.value.includes('user-29@example.com') ? [laterOfficial] : []
             };
         });
-        const { getOfficialsForUsers } = await import('../../js/db.js?v=4433167-admin-user-search');
+        const { getOfficialsForUsers } = await import('../../js/db.js?v=4433168-admin-user-search');
 
         const entries = await getOfficialsForUsers(users);
 

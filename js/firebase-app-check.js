@@ -16,6 +16,8 @@ export {
 const INITIALIZATIONS_KEY = '__allplaysAppCheckInitializations';
 const STATUS_KEY = '__ALLPLAYS_APP_CHECK_STATUS__';
 const NATIVE_TOKEN_FALLBACK_TTL_MS = 10 * 60 * 1000;
+const NATIVE_TOKEN_TIMEOUT_MS = 1500;
+const NATIVE_TOKEN_RETRY_COOLDOWN_MS = 30 * 1000;
 
 function getInitializations() {
     if (!globalThis[INITIALIZATIONS_KEY]) {
@@ -114,6 +116,72 @@ export function normalizeNativeAppCheckToken(result, now = Date.now()) {
     };
 }
 
+function createNativeTokenUnavailableError() {
+    return new Error('Native App Check attestation is temporarily unavailable.');
+}
+
+function withNativeTokenTimeout(promise) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+        timeoutId = globalThis.setTimeout(() => {
+            reject(createNativeTokenUnavailableError());
+        }, NATIVE_TOKEN_TIMEOUT_MS);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timeoutId !== undefined) globalThis.clearTimeout(timeoutId);
+    });
+}
+
+/**
+ * Keep native attestation best-effort while App Check is in monitoring mode.
+ * A platform provider can take tens of seconds to reject an emulator, an
+ * unsupported device, or a temporarily rate-limited install. Firebase SDK
+ * reads must not serialize behind that optional attempt. Share one bounded
+ * request, cool down failures, and retain a token that arrives after the
+ * caller's availability timeout so the next request can recover.
+ */
+export function createNativeAppCheckTokenLoader(FirebaseAppCheck) {
+    let cachedToken = null;
+    let inFlight = null;
+    let retryAfter = 0;
+
+    return async () => {
+        const now = Date.now();
+        if (cachedToken?.token && cachedToken.expireTimeMillis > now) {
+            return cachedToken;
+        }
+        if (now < retryAfter) {
+            throw createNativeTokenUnavailableError();
+        }
+        if (inFlight) return inFlight;
+
+        const nativeRequest = Promise.resolve()
+            .then(() => FirebaseAppCheck.getToken({ forceRefresh: false }))
+            .then((result) => {
+                const normalized = normalizeNativeAppCheckToken(result);
+                if (typeof normalized.token !== 'string' || !normalized.token) {
+                    throw createNativeTokenUnavailableError();
+                }
+                cachedToken = normalized;
+                retryAfter = 0;
+                return normalized;
+            });
+
+        inFlight = withNativeTokenTimeout(nativeRequest)
+            .catch(() => {
+                if (!cachedToken?.token || cachedToken.expireTimeMillis <= Date.now()) {
+                    retryAfter = Date.now() + NATIVE_TOKEN_RETRY_COOLDOWN_MS;
+                }
+                throw createNativeTokenUnavailableError();
+            })
+            .finally(() => {
+                inFlight = null;
+            });
+        return inFlight;
+    };
+}
+
 export async function initializeNativeAppCheck(app, config) {
     const { FirebaseAppCheck } = await import('@capacitor-firebase/app-check');
     const useDebugProvider = config.nativeDebug === true;
@@ -133,22 +201,39 @@ export async function initializeNativeAppCheck(app, config) {
         });
     }
 
-    const provider = new CustomProvider({
-        getToken: async () => normalizeNativeAppCheckToken(
-            await FirebaseAppCheck.getToken({ forceRefresh: false })
-        )
-    });
-    const appCheck = initializeAppCheck(app, {
-        provider,
-        isTokenAutoRefreshEnabled
-    });
-    registerPrimaryAppCheckContext({
-        tokenGetter: (forceRefresh) => getToken(appCheck, forceRefresh)
-    });
-    monitorToken(appCheck, useDebugProvider ? 'native-debug' : 'native-attestation');
+    const providerName = useDebugProvider ? 'native-debug' : 'native-attestation';
+    const loadNativeToken = createNativeAppCheckTokenLoader(FirebaseAppCheck);
+    let activated = false;
+    const activateBridge = () => {
+        if (activated) return;
+        activated = true;
+        const provider = new CustomProvider({ getToken: loadNativeToken });
+        const appCheck = initializeAppCheck(app, {
+            provider,
+            isTokenAutoRefreshEnabled
+        });
+        registerPrimaryAppCheckContext({
+            tokenGetter: (forceRefresh) => getToken(appCheck, forceRefresh)
+        });
+        reportStatus({ state: 'token-ready', provider: providerName });
+    };
+    const attemptBridgeActivation = () => {
+        void loadNativeToken()
+            .then(activateBridge)
+            .catch((error) => {
+                reportStatus({ state: 'token-error', provider: providerName, error: safeErrorDetails(error) });
+                globalThis.setTimeout(attemptBridgeActivation, NATIVE_TOKEN_RETRY_COOLDOWN_MS);
+            });
+    };
+
+    // Do not register the JavaScript App Check provider until native
+    // attestation has produced a real token. Firebase SDKs wait on a registered
+    // provider before every request; installing it early turns a monitoring-only
+    // rollout into a data-path outage whenever the platform attester stalls.
+    attemptBridgeActivation();
     return reportStatus({
         state: 'initialized',
-        provider: useDebugProvider ? 'native-debug' : 'native-attestation'
+        provider: providerName
     });
 }
 

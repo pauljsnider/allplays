@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const queueInviteSignInEmailMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=22', () => ({
+vi.mock('../../js/firebase.js?v=24', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -17,7 +17,7 @@ vi.mock('../../js/firebase.js?v=22', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433167', () => ({
+vi.mock('../../js/db.js?v=4433168', () => ({
     validateAccessCode: vi.fn(),
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
@@ -34,13 +34,13 @@ vi.mock('../../js/db.js?v=4433167', () => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/auth-email.js?v=1', () => ({
+vi.mock('../../js/auth-email.js?v=2', () => ({
     queueCurrentUserVerificationEmail: vi.fn(),
     queueInviteSignInEmail: queueInviteSignInEmailMock,
     queuePasswordResetEmail: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=6', () => ({
+vi.mock('../../js/admin-invite.js?v=7', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

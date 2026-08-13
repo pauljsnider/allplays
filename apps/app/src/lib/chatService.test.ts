@@ -760,6 +760,8 @@ describe('native chat team discovery fallback', () => {
     ]);
     expect(result.isPartial).toBe(false);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes(':runAggregationQuery'))).toHaveLength(2);
+    expect(authServiceMocks.getNativeAuthIdToken).toHaveBeenCalledWith(false);
+    expect(authServiceMocks.getNativeAuthIdToken).not.toHaveBeenCalledWith(true);
     expect(legacyChatServiceMocks.getUnreadChatCounts).not.toHaveBeenCalled();
   });
 

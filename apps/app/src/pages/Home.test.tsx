@@ -759,6 +759,15 @@ describe('Home', () => {
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
   });
 
+  it('does not expose a raw internal backend code after an initial Home load failure', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new Error('INTERNAL'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Unable to load Home. Try again.')).toBeTruthy();
+    expect(screen.queryByText('INTERNAL')).toBeNull();
+  });
+
   it('keeps the summary visible when the initial secondary load fails', async () => {
     homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
@@ -772,6 +781,17 @@ describe('Home', () => {
     expect(screen.queryByText('Loading')).toBeNull();
     expect(screen.queryByText('Checking actions')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+  });
+
+  it('does not expose a raw internal backend code when Home details fail', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new Error('INTERNAL'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Unable to refresh Home details. Try again.')).toBeTruthy();
+    expect(screen.queryByText('INTERNAL')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Your day' })).toBeTruthy();
+    expect(screen.getByText('Needs refresh')).toBeTruthy();
   });
 
   it('continues the independent social load from the latest streamed Home state when a secondary slice fails', async () => {

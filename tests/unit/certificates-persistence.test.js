@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=23', () => ({
+vi.mock('../../js/firebase.js?v=24', () => ({
     functions: { name: 'functions' },
     httpsCallable: mocks.httpsCallable
 }));
