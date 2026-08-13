@@ -146,18 +146,18 @@ export function createNativeAppCheckTokenLoader(FirebaseAppCheck) {
     let inFlight = null;
     let retryAfter = 0;
 
-    return async () => {
+    return async (forceRefresh = false) => {
         const now = Date.now();
-        if (cachedToken?.token && cachedToken.expireTimeMillis > now) {
+        if (!forceRefresh && cachedToken?.token && cachedToken.expireTimeMillis > now) {
             return cachedToken;
         }
-        if (now < retryAfter) {
+        if (!forceRefresh && now < retryAfter) {
             throw createNativeTokenUnavailableError();
         }
         if (inFlight) return inFlight;
 
         const nativeRequest = Promise.resolve()
-            .then(() => FirebaseAppCheck.getToken({ forceRefresh: false }))
+            .then(() => FirebaseAppCheck.getToken({ forceRefresh }))
             .then((result) => {
                 const normalized = normalizeNativeAppCheckToken(result);
                 if (typeof normalized.token !== 'string' || !normalized.token) {
@@ -207,7 +207,11 @@ export async function initializeNativeAppCheck(app, config) {
     const activateBridge = () => {
         if (activated) return;
         activated = true;
-        const provider = new CustomProvider({ getToken: loadNativeToken });
+        // The JavaScript SDK calls its provider when its own token cache needs
+        // renewal. Bypass this startup cache at that boundary so proactive
+        // refresh receives a newly issued native token instead of the same
+        // token and scheduling an immediate retry loop near expiry.
+        const provider = new CustomProvider({ getToken: () => loadNativeToken(true) });
         const appCheck = initializeAppCheck(app, {
             provider,
             isTokenAutoRefreshEnabled
