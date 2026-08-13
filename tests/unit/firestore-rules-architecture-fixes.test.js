@@ -108,7 +108,11 @@ describe('firestore.rules architecture fixes', () => {
             .map((override) => `${override.collectionGroup}.${override.fieldPath}`);
         expect(collectionGroupAscendingFields).toEqual(expect.arrayContaining([
             'games.scheduleNotifications.nextReminderAt',
-            'registrations.paymentReminder.nextReminderAt'
+            'registrations.paymentReminder.nextReminderAt',
+            'feeRecipients.parentUserId',
+            'feeRecipients.accountUserId',
+            'feeRecipients.userId',
+            'feeRecipients.playerKey'
         ]));
         const assignmentIndexes = indexes.indexes
             .filter((index) => ['games', 'sharedGames'].includes(index.collectionGroup))

@@ -6,7 +6,7 @@ const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
 
-vi.mock('../../js/firebase.js?v=23', () => ({
+vi.mock('../../js/firebase.js?v=24', () => ({
     db: {},
     auth: { currentUser: null },
     functions: {},
@@ -45,7 +45,6 @@ vi.mock('../../js/firebase.js?v=23', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=22', async () => import('../../js/firebase.js?v=23'));
 
 vi.mock('../../js/firebase-images.js?v=11', () => ({
     imageStorage: {},
@@ -59,7 +58,7 @@ describe('validateAccessCode', () => {
     });
 
     it('authenticates browser validation for a phone-only friend invite through the callable adapter', async () => {
-        const { auth } = await import('../../js/firebase.js?v=23');
+        const { auth } = await import('../../js/firebase.js?v=24');
         auth.currentUser = {
             uid: 'email-user-1',
             getIdToken: vi.fn().mockResolvedValue('browser-id-token')

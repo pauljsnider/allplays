@@ -301,7 +301,11 @@ function getFirestoreBaseUrl() {
 }
 
 async function getNativeHeaders(requestUrl: string) {
-  const token = await getNativeAuthIdToken(true);
+  // Firebase Authentication refreshes an expired token even when forceRefresh
+  // is false. Forcing a refresh for every parallel Home read crosses the native
+  // bridge twice per request and can exhaust the three-second unread-count
+  // budget before Firestore is contacted.
+  const token = await getNativeAuthIdToken(false);
   if (!token) {
     throw new Error('Native auth token is unavailable.');
   }

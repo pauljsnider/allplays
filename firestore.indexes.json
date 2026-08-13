@@ -1009,6 +1009,34 @@
     },
     {
       "collectionGroup": "feeRecipients",
+      "fieldPath": "parentUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "fieldPath": "accountUserId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "fieldPath": "userId",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "fieldPath": "playerKey",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
       "fieldPath": "reminderDeliveryClaimExpiresAtMillis",
       "indexes": [
         { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }

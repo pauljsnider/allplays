@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from './firebase.js?v=22';
+import { functions, httpsCallable } from './firebase.js?v=24';
 
 async function callAuthEmailFunction(name, data = {}) {
     const callable = httpsCallable(functions, name);

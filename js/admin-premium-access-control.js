@@ -1,9 +1,9 @@
 import { PREMIUM_ACCESS_CONFIG_PATH } from './premium-access-core.js?v=1';
-import { readPremiumAccessConfig } from './premium-access.js?v=1';
+import { readPremiumAccessConfig } from './premium-access.js?v=2';
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=23');
+    return import('./firebase.js?v=24');
 }
 
 function unavailableConfig(reason) {

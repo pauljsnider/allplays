@@ -135,7 +135,7 @@ describe('admin invite server-authoritative redemption', () => {
         const appAuthSource = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/authService.ts'), 'utf8');
 
         expect(adminInviteSource).toContain("httpsCallable(functions, 'redeemAdminInvite')");
-        expect(acceptInviteSource).toContain("import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';");
+        expect(acceptInviteSource).toContain("import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=7';");
         expect(appAuthSource).toContain('{ redeemAdminInviteAtomically }');
         expect(appAuthSource).toContain('redeemAdminInviteAtomically,');
         expect(appAuthSource).not.toContain('redeemAdminInviteAtomically: dbModule.redeemAdminInviteAtomically');

@@ -2664,7 +2664,7 @@ function getHomeLoadErrorMessage(error: AppServiceError, hasExistingHome: boolea
   if (error.type === 'permission') return 'You do not have permission to load this Home data.';
   if (error.type === 'not_found') return 'Home data was not found. Try again or check the linked team access.';
   if (error.type === 'validation') return error.message;
-  return getAsyncErrorMessage(error, 'Unable to load Home. Try again.');
+  return 'Unable to load Home. Try again.';
 }
 
 function getHomeSecondaryErrorMessage(error: AppServiceError) {
@@ -2672,7 +2672,7 @@ function getHomeSecondaryErrorMessage(error: AppServiceError) {
   if (error.type === 'permission') return 'Home details could not refresh because access was denied.';
   if (error.type === 'not_found') return 'Home details could not refresh because some data was not found.';
   if (error.type === 'validation') return error.message;
-  return getAsyncErrorMessage(error, 'Unable to refresh Home details.');
+  return 'Unable to refresh Home details. Try again.';
 }
 
 function getHomeLoadErrorStateCopy(error: AppServiceError | null) {

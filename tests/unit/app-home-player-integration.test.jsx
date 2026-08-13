@@ -1010,7 +1010,8 @@ describe('React app Home and player drill-in integration', () => {
 
         const { container } = await renderApp('/home');
 
-        await waitForText(container, 'Home service down');
+        await waitForText(container, 'Unable to load Home. Try again.');
+        expect(container.textContent).not.toContain('Home service down');
         expect(container.textContent).toContain('Home could not load');
         expect(container.textContent).toContain('Try loading Home again to restore your dashboard.');
         expect(buttonByAriaLabel(container, 'Retry loading Home')).toBeTruthy();
