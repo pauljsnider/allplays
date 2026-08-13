@@ -11,17 +11,17 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=25';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433169';
+} from './firebase.js?v=26';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=4433170';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=14';
-import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=8';
+import { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } from './admin-invite.js?v=9';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 import { createInviteProcessor } from './accept-invite-flow.js?v=443314';
 import {
     queueCurrentUserVerificationEmail,
     queueInviteSignInEmail,
     queuePasswordResetEmail
-} from './auth-email.js?v=3';
+} from './auth-email.js?v=4';
 
 async function cleanupFailedNewUser(user, context, options = {}) {
     const activationCode = String(options.activationCode || '').trim().toUpperCase();

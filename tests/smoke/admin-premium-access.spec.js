@@ -12,7 +12,7 @@ test('legacy admin toggles global premium access on and off with the shared cont
     await page.route('**/js/admin.js?v=*', (route) => route.fulfill({
         contentType: 'application/javascript',
         body: `
-            import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=3';
+            import { createAdminPremiumAccessControl } from './admin-premium-access-control.js?v=4';
 
             let config = { state: 'ready', openToAll: true, reason: 'global-open' };
             window.__premiumWrites = [];

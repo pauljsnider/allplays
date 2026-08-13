@@ -23,7 +23,7 @@ import {
     orderBy,
     serverTimestamp,
     writeBatch,
-} from './firebase.js?v=25';
+} from './firebase.js?v=26';
 
 // Normalizes a stat column name (e.g. 'PTS', 'POINTS') to Firestore key (e.g. 'pts').
 // Matches the map used in live-game.js for consistency.

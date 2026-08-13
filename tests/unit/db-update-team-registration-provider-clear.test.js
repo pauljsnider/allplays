@@ -4,7 +4,7 @@ const updateDoc = vi.fn();
 const deleteField = vi.fn(() => '__DELETE_FIELD__');
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=25', () => ({
+vi.mock('../../js/firebase.js?v=26', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},

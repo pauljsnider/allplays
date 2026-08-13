@@ -10,8 +10,8 @@ describe('edit team rollover cache delivery', () => {
     it('loads rollover writes from the current cache-busted db module', () => {
         const source = readEditTeamSource();
 
-        expect(source).toContain("from './js/db.js?v=4433169';");
-        expect(source).not.toContain("from './js/db.js?v=102';");
+        expect(source).toContain("from './js/db.js?v=4433170';");
+        expect(source).not.toContain("from './js/db.js?v=103';");
     });
 });
 
