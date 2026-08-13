@@ -255,7 +255,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from '../db.js?v=4433169'");
         expect(db).toContain("from './certificates/persistence.js?v=3'");
         expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
-        expect(studio).toContain("import('./assets.js?v=8')");
+        expect(studio).toContain("import('./assets.js?v=9')");
         expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
         expect(studio).toContain('signers: normalizeSigners(state.shared.signers),');
         expect(studio).not.toContain('.map(({ signatureImagePath, ...signer }) => signer)');
@@ -310,7 +310,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('readFileAsDataUrl');
         expect(studio).toContain('formatImageUploadError');
         expect(studio).toContain('Local preview only');
-        expect(studio).toContain("import('./assets.js?v=8')");
+        expect(studio).toContain("import('./assets.js?v=9')");
         expect(studio).toContain('backgroundOpacity');
         expect(css).toContain('@media print');
         expect(css).toContain('.cert-template-banner');
