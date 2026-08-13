@@ -31,12 +31,12 @@ const dbMocks = vi.hoisted(() => ({
     normalizeParentScopeLinks: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=25', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433169', () => dbMocks);
+vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
+vi.mock('../../js/db.js?v=4433170', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
-vi.mock('../../js/admin-invite.js?v=8', () => ({
+vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAcceptance: vi.fn(),
     redeemAdminInviteAtomically: vi.fn()
 }));
@@ -46,7 +46,7 @@ vi.mock('../../js/parent-membership-utils.js?v=2', () => ({
 vi.mock('../../js/accept-invite-flow.js?v=443314', () => ({
     createInviteProcessor: vi.fn()
 }));
-vi.mock('../../js/auth-email.js?v=3', () => ({
+vi.mock('../../js/auth-email.js?v=4', () => ({
     queueCurrentUserVerificationEmail: vi.fn(),
     queueInviteSignInEmail: vi.fn(),
     queuePasswordResetEmail: vi.fn()

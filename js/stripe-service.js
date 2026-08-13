@@ -1,5 +1,5 @@
 
-import { getFunctions, httpsCallable } from './firebase.js?v=25';
+import { getFunctions, httpsCallable } from './firebase.js?v=26';
 
 export function getCanonicalStripeCheckoutUrl(value) {
     if (typeof value !== 'string' || !value || value !== value.trim()) return '';

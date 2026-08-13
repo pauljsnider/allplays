@@ -9,7 +9,7 @@ const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 const redeemAdminInviteAcceptanceMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=25', () => ({
+vi.mock('../../js/firebase.js?v=26', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('../../js/firebase.js?v=25', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=4433169', () => ({
+vi.mock('../../js/db.js?v=4433170', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -45,7 +45,7 @@ vi.mock('../../js/db.js?v=4433169', () => ({
     addTeamAdminEmail: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=8', () => ({
+vi.mock('../../js/admin-invite.js?v=9', () => ({
     redeemAdminInviteAcceptance: redeemAdminInviteAcceptanceMock
 }));
 

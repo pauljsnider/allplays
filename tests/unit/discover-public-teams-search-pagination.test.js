@@ -12,7 +12,7 @@ const firebaseMocks = vi.hoisted(() => ({
     listPublicTeams: vi.fn(),
 }));
 
-vi.mock('../../js/firebase.js?v=25', () => ({
+vi.mock('../../js/firebase.js?v=26', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},
@@ -113,7 +113,7 @@ describe('discoverPublicTeams search pagination', () => {
                 }
             });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=4433169');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=4433170');
 
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
@@ -146,7 +146,7 @@ describe('discoverPublicTeams search pagination', () => {
             data: { items: [], nextCursor: null }
         });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=4433169');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=4433170');
 
         const page = await discoverPublicTeams({
             searchText: 'atlanta',
@@ -178,7 +178,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 10 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=4433169');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=4433170');
 
         await expect(getPublicTeamRosterCount('team-roster-1')).resolves.toEqual({
             count: 10,
@@ -194,7 +194,7 @@ describe('public team roster count', () => {
         firebaseMocks.getCountFromServer.mockResolvedValue({
             data: () => ({ count: 201 })
         });
-        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=4433169');
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=4433170');
 
         await expect(getPublicTeamRosterCount('team-large-roster')).resolves.toEqual({
             count: 200,
@@ -212,7 +212,7 @@ describe('bounded stat tracker config reads', () => {
         firebaseMocks.getDocs.mockResolvedValue({
             docs: [createTeamDoc('config-1', { name: 'Basketball Standard', baseType: 'Basketball' })]
         });
-        const { getConfigs } = await import('../../js/db.js?v=4433169');
+        const { getConfigs } = await import('../../js/db.js?v=4433170');
 
         await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
             expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })
@@ -235,7 +235,7 @@ describe('complete legacy collection helpers', () => {
             .mockResolvedValueOnce({ docs: firstPage })
             .mockResolvedValueOnce({ docs: secondPage });
 
-        const { getAllUsers } = await import('../../js/db.js?v=4433169');
+        const { getAllUsers } = await import('../../js/db.js?v=4433170');
         const users = await getAllUsers();
 
         expect(users).toHaveLength(101);
@@ -254,7 +254,7 @@ describe('complete legacy collection helpers', () => {
             .mockResolvedValueOnce({ docs: firstPage })
             .mockResolvedValueOnce({ docs: secondPage });
 
-        const { getTeams } = await import('../../js/db.js?v=4433169');
+        const { getTeams } = await import('../../js/db.js?v=4433170');
         const teams = await getTeams({ includePrivate: true });
 
         expect(teams).toHaveLength(101);
@@ -280,7 +280,7 @@ describe('complete legacy collection helpers', () => {
         });
         pages.forEach((page) => firebaseMocks.listPublicTeams.mockResolvedValueOnce(page));
 
-        const { getTeams } = await import('../../js/db.js?v=4433169-public-team-complete');
+        const { getTeams } = await import('../../js/db.js?v=4433170-public-team-complete');
         const teams = await getTeams({ publicOnly: true });
 
         expect(teams).toHaveLength(1001);

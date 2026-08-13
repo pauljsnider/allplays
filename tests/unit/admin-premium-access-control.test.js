@@ -242,8 +242,8 @@ describe('legacy admin premium access control', () => {
         expect(adminHtml).toContain('id="premium-access-control"');
         expect(adminHtml).toContain('id="premium-access-toggle"');
         expect(adminHtml).toContain('id="premium-access-feedback" role="status" aria-live="polite"');
-        expect(adminHtml).toContain('js/admin.js?v=443337');
-        expect(adminJs).toContain("from './admin-premium-access-control.js?v=3'");
+        expect(adminHtml).toContain('js/admin.js?v=443338');
+        expect(adminJs).toContain("from './admin-premium-access-control.js?v=4'");
         expect(adminJs.indexOf('if (!user.isAdmin)')).toBeLessThan(adminJs.indexOf('createAdminPremiumAccessControl()'));
         expect(getPremiumAccessToggleConfirmation(false)).toContain('Users without a valid premium entitlement');
     });

@@ -124,11 +124,30 @@ describe('Firebase App Check initialization', () => {
             isTokenAutoRefreshEnabled: true
         });
         expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
-            { forceRefresh: false },
-            { forceRefresh: true }
+            { forceRefresh: false }
         ]);
         expect(status).toMatchObject({ state: 'initialized', provider: 'native-attestation' });
         expect(getAppCheckStatus()).toMatchObject({ state: 'token-ready', provider: 'native-attestation' });
+    });
+
+    it('reuses the startup token for initial bridge acquisition and force-refreshes renewal', async () => {
+        nativeAppCheck.getToken
+            .mockResolvedValueOnce({ token: 'startup-token', expireTimeMillis: Date.now() + 60_000 })
+            .mockResolvedValueOnce({ token: 'renewed-token', expireTimeMillis: Date.now() + 120_000 });
+
+        await initializeNativeAppCheck(PRIMARY_APP, {
+            nativeDebug: false,
+            isTokenAutoRefreshEnabled: true
+        });
+        await vi.waitFor(() => expect(appCheckSdk.initializeAppCheck).toHaveBeenCalledOnce());
+        const provider = appCheckSdk.initializeAppCheck.mock.calls[0][1].provider;
+
+        await expect(provider.getToken()).resolves.toMatchObject({ token: 'startup-token' });
+        await expect(provider.getToken()).resolves.toMatchObject({ token: 'renewed-token' });
+        expect(nativeAppCheck.getToken.mock.calls.map(([options]) => options)).toEqual([
+            { forceRefresh: false },
+            { forceRefresh: true }
+        ]);
     });
 
     it('does not register a blocking JavaScript provider while native attestation is unavailable', async () => {

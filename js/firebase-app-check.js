@@ -207,11 +207,19 @@ export async function initializeNativeAppCheck(app, config) {
     const activateBridge = () => {
         if (activated) return;
         activated = true;
-        // The JavaScript SDK calls its provider when its own token cache needs
-        // renewal. Bypass this startup cache at that boundary so proactive
-        // refresh receives a newly issued native token instead of the same
-        // token and scheduling an immediate retry loop near expiry.
-        const provider = new CustomProvider({ getToken: () => loadNativeToken(true) });
+        let hasSuppliedStartupToken = false;
+        const provider = new CustomProvider({
+            getToken: () => {
+                // Activation is gated on one valid native token. Supply that
+                // cached token for the JavaScript SDK's initial acquisition so
+                // startup does not perform a duplicate attestation. Every later
+                // provider request is a renewal and must bypass the native cache
+                // to avoid an immediate proactive-refresh loop near expiry.
+                const forceRefresh = hasSuppliedStartupToken;
+                hasSuppliedStartupToken = true;
+                return loadNativeToken(forceRefresh);
+            }
+        });
         const appCheck = initializeAppCheck(app, {
             provider,
             isTokenAutoRefreshEnabled
