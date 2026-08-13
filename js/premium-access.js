@@ -5,7 +5,7 @@ import {
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=24');
+    return import('./firebase.js?v=25');
 }
 
 function snapshotToConfig(snapshot) {

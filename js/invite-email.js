@@ -1,4 +1,4 @@
-import { functions, httpsCallable } from './firebase.js?v=24';
+import { functions, httpsCallable } from './firebase.js?v=25';
 
 export async function queueInviteEmail(inviteCode, options = {}) {
     const code = String(inviteCode || '').trim().toUpperCase();

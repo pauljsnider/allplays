@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433168';";
-const ACCEPT_INVITE_ADMIN_IMPORT = "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=7';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemFriendInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=4433169';";
+const ACCEPT_INVITE_ADMIN_IMPORT = "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=8';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -106,7 +106,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433170';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4433171';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
@@ -122,7 +122,7 @@ const setTimeout = deps.setTimeout;
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
-            "import { renderHeader, renderFooter } from './js/utils.js?v=443344';",
+            "import { renderHeader, renderFooter } from './js/utils.js?v=443345';",
             'const { renderHeader, renderFooter } = deps.utils;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');

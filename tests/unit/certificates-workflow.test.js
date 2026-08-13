@@ -245,15 +245,15 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=443341');
+        expect(html).toContain('./js/certificates/studio.js?v=443342');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
         expect(studio).toContain("from './signers.js?v=2'");
         expect(studio).toContain("from './defaultsReconciliation.js?v=1'");
         expect(studio).toContain('if (!certificateDefaultsMatch(state.shared, authoritativeDefaults))');
-        expect(studio).toContain("from '../db.js?v=4433168'");
-        expect(db).toContain("from './certificates/persistence.js?v=2'");
+        expect(studio).toContain("from '../db.js?v=4433169'");
+        expect(db).toContain("from './certificates/persistence.js?v=3'");
         expect(db).toContain('return commitCertificateDefaults(teamId, defaults);');
         expect(studio).toContain("import('./assets.js?v=8')");
         expect(studio).toContain('state.shared.signers[index].signatureImagePath = result.path;');
