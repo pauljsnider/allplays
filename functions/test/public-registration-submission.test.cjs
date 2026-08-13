@@ -5,6 +5,7 @@ const Module = require('node:module');
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 const registrationSecurityEnvKeys = [
+    'PAYMENTS_ENABLED',
     'PUBLIC_REGISTRATION_APP_CHECK_MODE',
     'PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE',
     'PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE',
@@ -397,6 +398,7 @@ test.beforeEach(() => {
     StripeStub = null;
     stripeState = null;
     registrationSecurityEnvKeys.forEach((key) => delete process.env[key]);
+    process.env.PAYMENTS_ENABLED = 'true';
 });
 
 test.afterEach(() => {
@@ -413,9 +415,8 @@ test.afterEach(() => {
     });
 });
 
-test('loads unrelated callables without Firestore transaction support', () => {
+test('loads unrelated callables with the shared Firestore stub', () => {
     const firestore = makeFirestore();
-    delete firestore.runTransaction;
     installModuleStubs(firestore);
 
     const mod = require('../index.js');
