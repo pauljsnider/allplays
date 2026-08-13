@@ -5,6 +5,7 @@ const Module = require('node:module');
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 const registrationSecurityEnvKeys = [
+    'PAYMENTS_ENABLED',
     'PUBLIC_REGISTRATION_APP_CHECK_MODE',
     'PUBLIC_REGISTRATION_NETWORK_RATE_LIMIT_MODE',
     'PUBLIC_REGISTRATION_FORM_RATE_LIMIT_MODE',
@@ -397,6 +398,7 @@ test.beforeEach(() => {
     StripeStub = null;
     stripeState = null;
     registrationSecurityEnvKeys.forEach((key) => delete process.env[key]);
+    process.env.PAYMENTS_ENABLED = 'true';
 });
 
 test.afterEach(() => {
@@ -413,9 +415,8 @@ test.afterEach(() => {
     });
 });
 
-test('loads unrelated callables without Firestore transaction support', () => {
+test('loads unrelated callables with the shared Firestore stub', () => {
     const firestore = makeFirestore();
-    delete firestore.runTransaction;
     installModuleStubs(firestore);
 
     const mod = require('../index.js');
@@ -677,6 +678,77 @@ test('isolates guardian submission limits for families sharing an IP address', a
     assert.equal(result.success, true);
     assert.equal(firestore.rateLimitDocs().length, 4);
     assert.equal(firestore.registrationDocs().length, 4);
+});
+
+test('uses the authoritative opaque guardian email field for throttling', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        guardianFields: [
+            { id: 'guardian_1', label: 'Guardian name', type: 'text', required: true },
+            { id: 'guardian_2', label: 'Guardian email', type: 'email', required: true }
+        ]
+    }));
+    const firstGuardian = buildSubmission({
+        guardian: {
+            guardian_1: 'Guardian One',
+            guardian_2: ' Parent@One.Example ',
+            email: 'attacker-selected@example.com'
+        }
+    });
+
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    await submitPublicRegistration(firstGuardian, context);
+    const formBeforeThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationsBeforeThrottle = firestore.registrationDocs().length;
+
+    await assert.rejects(
+        submitPublicRegistration(firstGuardian, context),
+        (error) => error.code === 'resource-exhausted' && error.details.reason === 'rate-limited'
+    );
+
+    assert.deepEqual(
+        firestore.snapshot('teams/team-1/registrationForms/form-1').registrationOptionCounts,
+        formBeforeThrottle.registrationOptionCounts
+    );
+    assert.equal(firestore.registrationDocs().length, registrationsBeforeThrottle);
+
+    const secondGuardian = await submitPublicRegistration(buildSubmission({
+        guardian: {
+            guardian_1: 'Guardian Two',
+            guardian_2: 'parent@two.example',
+            email: 'attacker-selected@example.com'
+        }
+    }), context);
+
+    assert.equal(secondGuardian.success, true);
+    assert.equal(firestore.registrationDocs().length, registrationsBeforeThrottle + 1);
+    assert.doesNotMatch(JSON.stringify(firestore.rateLimitDocs()), /@/);
+});
+
+test('does not let an extra caller-selected email field override the published email field', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        guardianFields: [{ id: 'guardian_2', label: 'Guardian email', type: 'email', required: true }]
+    }));
+
+    for (let index = 0; index < 3; index += 1) {
+        await submitPublicRegistration(buildSubmission({
+            guardian: {
+                guardian_2: 'authoritative@example.com',
+                email: `caller-selected-${index}@example.com`
+            }
+        }), context);
+    }
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({
+            guardian: {
+                guardian_2: 'authoritative@example.com',
+                email: 'caller-selected-fourth@example.com'
+            }
+        }), context),
+        (error) => error.code === 'resource-exhausted' && error.details.reason === 'rate-limited'
+    );
+    assert.equal(firestore.registrationDocs().length, 3);
 });
 
 test('replays an identical keyed submission without duplicating capacity or consuming another rate slot', async () => {
