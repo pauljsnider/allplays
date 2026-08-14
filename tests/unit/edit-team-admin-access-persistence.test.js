@@ -214,6 +214,10 @@ function createEnvironment(initialState, overrides = {}) {
         'bracketUrl',
         'standingsEnabled',
         'standingsRankingMode',
+        'standingsSeasonLabel',
+        'standingsSeasonStart',
+        'standingsSeasonEnd',
+        'standingsLeagueTeamIds',
         'standingsPointWin',
         'standingsPointTie',
         'standingsPointLoss',
@@ -1992,7 +1996,11 @@ describe('edit team admin access persistence', () => {
                     points: { win: 3, tie: 1, loss: 0 },
                     maxGoalDiff: 4,
                     twoTeamTiebreakers: ['head_to_head', 'goal_diff', 'name'],
-                    multiTeamTiebreakers: ['group_head_to_head', 'goal_diff', 'goals_for', 'name']
+                    multiTeamTiebreakers: ['group_head_to_head', 'goal_diff', 'goals_for', 'name'],
+                    seasonLabel: 'Fall 2026',
+                    seasonStart: '2026-07-15',
+                    seasonEnd: '2026-11-30',
+                    leagueTeamIds: ['team-1', 'team-owls', 'team-foxes']
                 },
                 zip: '66209',
                 isPublic: true,
@@ -2007,6 +2015,10 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('standingsMaxGoalDiff').value).toBe('4');
             expect(env.elements.get('standingsTwoTeamTiebreakers').value).toBe('head_to_head, goal_diff, name');
             expect(env.elements.get('standingsMultiTeamTiebreakers').value).toBe('group_head_to_head, goal_diff, goals_for, name');
+            expect(env.elements.get('standingsSeasonLabel').value).toBe('Fall 2026');
+            expect(env.elements.get('standingsSeasonStart').value).toBe('2026-07-15');
+            expect(env.elements.get('standingsSeasonEnd').value).toBe('2026-11-30');
+            expect(env.elements.get('standingsLeagueTeamIds').value).toBe('team-owls, team-foxes');
 
             env.elements.get('standingsPointWin').value = '5';
             env.elements.get('standingsPointTie').value = '2';
@@ -2025,7 +2037,11 @@ describe('edit team admin access persistence', () => {
                 maxGoalDiff: 3,
                 tiebreakers: ['head_to_head', 'wins'],
                 twoTeamTiebreakers: ['head_to_head', 'wins'],
-                multiTeamTiebreakers: ['group_head_to_head', 'goals_for', 'fewest_goals_allowed']
+                multiTeamTiebreakers: ['group_head_to_head', 'goals_for', 'fewest_goals_allowed'],
+                seasonLabel: 'Fall 2026',
+                seasonStart: '2026-07-15',
+                seasonEnd: '2026-11-30',
+                leagueTeamIds: ['team-owls', 'team-foxes']
             });
         } finally {
             env.cleanup();

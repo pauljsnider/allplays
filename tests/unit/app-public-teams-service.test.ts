@@ -2,17 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     discoverPublicTeams: vi.fn(),
+    getPublicLeagueStandingsProjection: vi.fn(),
     getPublicTeamGamesProjection: vi.fn(),
     getPublicTeamProfile: vi.fn(),
     getPublicTeamRosterCount: vi.fn()
 }));
 
-const standingsMocks = vi.hoisted(() => ({
-    computeNativeStandings: vi.fn()
-}));
-
 vi.mock('../../apps/app/src/lib/adapters/legacyPublicTeamsDb', () => dbMocks);
-vi.mock('../../apps/app/src/lib/adapters/legacyPublicStandings', () => standingsMocks);
 
 import { getPublicTeamDetail, getPublicTeamResults, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
 
@@ -20,7 +16,7 @@ describe('publicTeamsService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.getPublicTeamRosterCount.mockResolvedValue({ count: 0, isCapped: false });
-        standingsMocks.computeNativeStandings.mockReturnValue([]);
+        dbMocks.getPublicLeagueStandingsProjection.mockResolvedValue(null);
     });
 
     it('hydrates public cards from bounded roster counts instead of the empty linked-player array', async () => {
@@ -466,7 +462,11 @@ describe('publicTeamsService', () => {
                 maxGoalDiff: 7,
                 tiebreakers: ['head_to_head', 'point_diff'],
                 twoTeamTiebreakers: ['head_to_head'],
-                multiTeamTiebreakers: ['group_head_to_head', 'point_diff']
+                multiTeamTiebreakers: ['group_head_to_head', 'point_diff'],
+                seasonLabel: 'Fall 2026',
+                seasonStart: '2026-07-15',
+                seasonEnd: '2026-11-30',
+                leagueTeamIds: ['team-public-1', 'team-owls', 'team-foxes']
             },
             ownerId: 'private-owner',
             adminEmails: ['private@example.com']
@@ -490,7 +490,11 @@ describe('publicTeamsService', () => {
                 maxGoalDiff: 7,
                 tiebreakers: ['head_to_head', 'point_diff'],
                 twoTeamTiebreakers: ['head_to_head'],
-                multiTeamTiebreakers: ['group_head_to_head', 'point_diff']
+                multiTeamTiebreakers: ['group_head_to_head', 'point_diff'],
+                seasonLabel: 'Fall 2026',
+                seasonStart: '2026-07-15',
+                seasonEnd: '2026-11-30',
+                leagueTeamIds: ['team-public-1', 'team-owls', 'team-foxes']
             }
         });
         expect(dbMocks.getPublicTeamProfile).toHaveBeenCalledWith('team-public-1');
@@ -519,12 +523,16 @@ describe('publicTeamsService', () => {
                 maxGoalDiff: null,
                 tiebreakers: ['head_to_head'],
                 twoTeamTiebreakers: [],
-                multiTeamTiebreakers: []
+                multiTeamTiebreakers: [],
+                seasonLabel: null,
+                seasonStart: null,
+                seasonEnd: null,
+                leagueTeamIds: []
             }
         }));
     });
 
-    it('normalizes only completed public finals into standings and five recent results', async () => {
+    it('computes season-bounded standings from a complete league schedule and keeps five recent team results', async () => {
         const team = {
             id: 'team-public-1',
             name: 'Austin Bats',
@@ -543,7 +551,11 @@ describe('publicTeamsService', () => {
                 maxGoalDiff: 5,
                 tiebreakers: ['point_diff'],
                 twoTeamTiebreakers: ['head_to_head'],
-                multiTeamTiebreakers: ['group_head_to_head']
+                multiTeamTiebreakers: ['group_head_to_head'],
+                seasonLabel: 'Fall 2026',
+                seasonStart: '2026-07-15',
+                seasonEnd: '2026-11-30',
+                leagueTeamIds: ['team-public-1', 'team-owls', 'team-foxes']
             }
         };
         const qualifyingGames = Array.from({ length: 6 }, (_, index) => ({
@@ -571,30 +583,36 @@ describe('publicTeamsService', () => {
                 { id: 'friendly', startsAt: '2026-08-14T17:00:00.000Z', opponent: 'Friendly FC', status: 'completed', teamScore: 2, opponentScore: 2, countsTowardSeasonRecord: false }
             ]
         });
-        standingsMocks.computeNativeStandings.mockReturnValue([
-            { rank: 1, team: 'Austin Bats', record: '6-0', points: 24 }
-        ]);
+        dbMocks.getPublicLeagueStandingsProjection.mockResolvedValue({
+            range: { from: '2026-07-15', to: '2026-11-30', truncated: false },
+            seasonLabel: 'Fall 2026',
+            games: [
+                { id: 'bats-owls', startsAt: '2026-08-01T18:00:00.000Z', homeTeam: 'Austin Bats', awayTeam: 'Owls', homeScore: 3, awayScore: 1, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'foxes-bats', startsAt: '2026-08-08T18:00:00.000Z', homeTeam: 'Foxes', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 4, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'owls-foxes', startsAt: '2026-08-12T18:00:00.000Z', homeTeam: 'Owls', awayTeam: 'Foxes', homeScore: 5, awayScore: 0, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'prior-season', startsAt: '2026-06-30T18:00:00.000Z', homeTeam: 'Owls', awayTeam: 'Foxes', homeScore: 0, awayScore: 9, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'exhibition', startsAt: '2026-08-20T18:00:00.000Z', homeTeam: 'Foxes', awayTeam: 'Owls', homeScore: 9, awayScore: 0, status: 'completed', countsTowardSeasonRecord: false }
+            ]
+        });
 
         const result = await getPublicTeamResults(team, new Date('2026-08-14T22:00:00.000Z'));
 
         expect(dbMocks.getPublicTeamGamesProjection).toHaveBeenCalledWith('team-public-1', {
-            from: '2025-08-14',
-            to: '2026-08-14',
+            from: '2026-07-15',
+            to: '2026-11-30',
             limit: 500
         });
-        expect(standingsMocks.computeNativeStandings).toHaveBeenCalledWith([
-            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 1', homeScore: 3, awayScore: 1, status: 'completed' },
-            { homeTeam: 'Opponent 2', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 4, status: 'completed' },
-            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 3', homeScore: 5, awayScore: 3, status: 'completed' },
-            { homeTeam: 'Opponent 4', awayTeam: 'Austin Bats', homeScore: 4, awayScore: 6, status: 'completed' },
-            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 5', homeScore: 7, awayScore: 5, status: 'completed' },
-            { homeTeam: 'Opponent 6', awayTeam: 'Austin Bats', homeScore: 6, awayScore: 8, status: 'completed' }
-        ], team.standingsConfig);
+        expect(dbMocks.getPublicLeagueStandingsProjection).toHaveBeenCalledWith('team-public-1');
         expect(result.standings).toEqual(expect.objectContaining({
             enabled: true,
             label: 'Points table',
-            currentRow: { rank: 1, team: 'Austin Bats', record: '6-0', points: 24 }
+            currentRow: expect.objectContaining({ rank: 1, team: 'Austin Bats', record: '2-0', points: 8 })
         }));
+        expect(result.standings.rows.map((row) => [row.rank, row.team, row.record, row.points])).toEqual([
+            [1, 'Austin Bats', '2-0', 8],
+            [2, 'Owls', '1-1', 4],
+            [3, 'Foxes', '0-2', 0]
+        ]);
         expect(result.recentResults).toHaveLength(5);
         expect(result.recentResults.map((game) => game.opponent)).toEqual([
             'Friendly FC',
@@ -641,6 +659,6 @@ describe('publicTeamsService', () => {
             leagueUrl: null,
             standingsConfig: null
         }, new Date('2026-08-14T22:00:00.000Z'))).rejects.toThrow('complete public results');
-        expect(standingsMocks.computeNativeStandings).not.toHaveBeenCalled();
+        expect(dbMocks.getPublicLeagueStandingsProjection).not.toHaveBeenCalled();
     });
 });

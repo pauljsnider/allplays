@@ -159,6 +159,21 @@ test('public team handlers use bounded games reads and field-whitelisting serial
   assert.doesNotMatch(apiSource, /collection\(`teams\/\$\{request\.teamId\}\/games`\)\.get\(\)/);
 });
 
+test('public league standings require an explicit season and bounded public team schedule', () => {
+  const helperStart = source.indexOf('async function getConfiguredPublicLeagueStandings');
+  const handlerEnd = source.indexOf('exports.getPublicTeamCalendarProjection', helperStart);
+  const standingsSource = source.slice(helperStart, handlerEnd);
+
+  assert.match(standingsSource, /config\.seasonStart/);
+  assert.match(standingsSource, /config\.seasonEnd/);
+  assert.match(standingsSource, /config\.leagueTeamIds/);
+  assert.match(standingsSource, /configuredTeamIds\.length > 32/);
+  assert.match(standingsSource, /getStrictPublicTeam\(leagueTeamId\)/);
+  assert.match(standingsSource, /runWithConcurrencyLimit/);
+  assert.match(standingsSource, /getPublicTeamGames\(leagueTeamId, range\)/);
+  assert.match(standingsSource, /exports\.getPublicLeagueStandingsProjection/);
+});
+
 test('public roster handler bounds its player scan before filtering sensitive documents', () => {
   const start = source.indexOf('async function getPublicTeamPlayers');
   const end = source.indexOf('async function getPublicTeamGames', start);

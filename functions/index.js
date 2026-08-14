@@ -8076,6 +8076,81 @@ async function getPublicOpponentStatKeysByGameId(teamId, games = []) {
   return keysByGameId;
 }
 
+async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
+  const config = team.standingsConfig || {};
+  const seasonStart = String(config.seasonStart || '').trim();
+  const seasonEnd = String(config.seasonEnd || '').trim();
+  const configuredTeamIds = Array.isArray(config.leagueTeamIds) ? config.leagueTeamIds : [];
+  if (!config.enabled || !seasonStart || !seasonEnd || configuredTeamIds.length === 0) return null;
+  if (configuredTeamIds.length > 32) {
+    throwOpportunityError('resource-exhausted', 'Public standings league team limit exceeded.');
+  }
+
+  const range = parsePublicGamesQuery({ from: seasonStart, to: seasonEnd, limit: 500 });
+  if (range.error) throwOpportunityError('failed-precondition', `Invalid public standings season: ${range.error}`);
+  const leagueTeamIds = [...new Set([teamId, ...configuredTeamIds.map(normalizeTeamId)])];
+  if (leagueTeamIds.some((configuredTeamId) => !configuredTeamId) || leagueTeamIds.length > 32) {
+    throwOpportunityError('failed-precondition', 'Public standings contains an invalid league team.');
+  }
+
+  const leagueTeams = await runWithConcurrencyLimit(
+    leagueTeamIds,
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (leagueTeamId) => getStrictPublicTeam(leagueTeamId)
+  );
+  if (leagueTeams.some((leagueTeam) => !leagueTeam)) {
+    throwOpportunityError('failed-precondition', 'Public standings requires every configured league team to be public.');
+  }
+  const gamesByTeam = await runWithConcurrencyLimit(
+    leagueTeamIds.map((leagueTeamId) => () => getPublicTeamGames(leagueTeamId, range)),
+    MAX_CALLABLE_DISCOVERY_CONCURRENCY,
+    (loadGames) => loadGames()
+  );
+  if (gamesByTeam.some((games) => games.length > range.limit)) {
+    throwOpportunityError('resource-exhausted', 'Public standings schedule limit exceeded.');
+  }
+
+  const seasonLabel = String(config.seasonLabel || '').trim();
+  const leagueTeamNames = new Set(leagueTeams.map((leagueTeam) => String(leagueTeam?.name || '').trim()).filter(Boolean));
+  const leagueGamesByKey = new Map();
+  gamesByTeam.forEach((games, teamIndex) => {
+    const sourceTeamName = String(leagueTeams[teamIndex]?.name || '').trim();
+    games.forEach((game) => {
+      const projection = serializePublicGame(game);
+      if (!projection || (seasonLabel && projection.seasonLabel !== seasonLabel)) return;
+      const opponent = String(projection.opponent || '').trim();
+      if (!sourceTeamName || !opponent || !leagueTeamNames.has(opponent)) return;
+      const leagueGame = {
+        id: projection.id,
+        startsAt: projection.startsAt,
+        homeTeam: projection.isHome ? sourceTeamName : opponent,
+        awayTeam: projection.isHome ? opponent : sourceTeamName,
+        homeScore: projection.isHome ? projection.teamScore : projection.opponentScore,
+        awayScore: projection.isHome ? projection.opponentScore : projection.teamScore,
+        status: projection.status,
+        countsTowardSeasonRecord: projection.countsTowardSeasonRecord
+      };
+      const sharedScheduleId = String(game.sharedScheduleId || '').trim();
+      const fallbackKey = [
+        leagueGame.startsAt,
+        leagueGame.homeTeam,
+        leagueGame.awayTeam,
+        leagueGame.homeScore,
+        leagueGame.awayScore
+      ].join('|');
+      leagueGamesByKey.set(sharedScheduleId ? `shared:${sharedScheduleId}` : fallbackKey, leagueGame);
+    });
+  });
+  if (leagueGamesByKey.size > 500) {
+    throwOpportunityError('resource-exhausted', 'Public standings schedule limit exceeded.');
+  }
+  return {
+    range: { from: range.from, to: range.to, truncated: false },
+    seasonLabel: seasonLabel || null,
+    games: [...leagueGamesByKey.values()]
+  };
+}
+
 function decodePublicSharedGamePath(gameId) {
   if (typeof gameId !== 'string' || !gameId.startsWith('shared_')) return '';
   try {
@@ -19173,6 +19248,19 @@ exports.getPublicTeamGamesProjection = functions.https.onCall(async (data, conte
     cursor,
     opponentStatKeysByGameId
   });
+});
+
+exports.getPublicLeagueStandingsProjection = functions.https.onCall(async (data, context = {}) => {
+  assertOpportunityRateLimit(checkPublicOpportunityBrowseRateLimit, context, 'league-standings');
+  const teamId = normalizeTeamId(data?.teamId);
+  if (!teamId) throwOpportunityError('invalid-argument', 'A valid teamId is required.');
+  const team = await getStrictPublicTeam(teamId);
+  if (!team) throwOpportunityError('not-found', 'Public team not found.');
+  const standings = await getConfiguredPublicLeagueStandings(teamId, team);
+  if (!standings) {
+    throwOpportunityError('failed-precondition', 'Public league standings are not fully configured.');
+  }
+  return standings;
 });
 
 exports.getPublicTeamCalendarProjection = functions

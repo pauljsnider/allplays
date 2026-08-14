@@ -1,4 +1,4 @@
-import { discoverPublicTeams, getPublicTeamGamesProjection, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
+import { discoverPublicTeams, getPublicLeagueStandingsProjection, getPublicTeamGamesProjection, getPublicTeamProfile, getPublicTeamRosterCount, type PublicLeagueStandingsGame, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
 import { computeNativeStandings } from './adapters/legacyPublicStandings';
 import { type ParentHomeTeam } from './homeLogic';
 
@@ -103,6 +103,10 @@ export type PublicStandingsConfig = {
     tiebreakers: string[];
     twoTeamTiebreakers: string[];
     multiTeamTiebreakers: string[];
+    seasonLabel: string | null;
+    seasonStart: string | null;
+    seasonEnd: string | null;
+    leagueTeamIds: string[];
 };
 
 export type PublicTeamRecentResult = {
@@ -153,13 +157,19 @@ function finiteNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function publicStringList(value: unknown): string[] {
+function publicStringList(value: unknown, maxItems = 20): string[] {
     if (!Array.isArray(value)) return [];
     return value
         .filter((item): item is string => typeof item === 'string')
         .map((item) => item.trim())
         .filter(Boolean)
-        .slice(0, 20);
+        .slice(0, maxItems);
+}
+
+function publicDateOnly(value: unknown): string | null {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : null;
 }
 
 function normalizeStandingsConfig(value: unknown): PublicStandingsConfig | null {
@@ -180,7 +190,13 @@ function normalizeStandingsConfig(value: unknown): PublicStandingsConfig | null 
         maxGoalDiff: maxGoalDiff !== null && maxGoalDiff > 0 ? maxGoalDiff : null,
         tiebreakers: publicStringList(config.tiebreakers),
         twoTeamTiebreakers: publicStringList(config.twoTeamTiebreakers),
-        multiTeamTiebreakers: publicStringList(config.multiTeamTiebreakers)
+        multiTeamTiebreakers: publicStringList(config.multiTeamTiebreakers),
+        seasonLabel: typeof config.seasonLabel === 'string' && config.seasonLabel.trim()
+            ? config.seasonLabel.trim().slice(0, 100)
+            : null,
+        seasonStart: publicDateOnly(config.seasonStart),
+        seasonEnd: publicDateOnly(config.seasonEnd),
+        leagueTeamIds: publicStringList(config.leagueTeamIds, 32)
     };
 }
 
@@ -196,10 +212,7 @@ function shiftUtcYear(date: Date, yearOffset: number): Date {
     return shifted;
 }
 
-type NormalizedPublicFinal = PublicTeamRecentResult & {
-    isHome: boolean;
-    countsTowardSeasonRecord: boolean;
-};
+type NormalizedPublicFinal = PublicTeamRecentResult;
 
 function normalizePublicFinal(value: unknown): NormalizedPublicFinal | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -219,12 +232,34 @@ function normalizePublicFinal(value: unknown): NormalizedPublicFinal | null {
         id: String(game.id || ''),
         date,
         opponent,
-        isHome: game.isHome !== false,
         teamScore,
         opponentScore,
-        result: teamScore > opponentScore ? 'Win' : teamScore < opponentScore ? 'Loss' : 'Tie',
-        countsTowardSeasonRecord: game.countsTowardSeasonRecord !== false
+        result: teamScore > opponentScore ? 'Win' : teamScore < opponentScore ? 'Loss' : 'Tie'
     };
+}
+
+function normalizePublicLeagueFinal(value: PublicLeagueStandingsGame): Record<string, unknown> | null {
+    const homeTeam = typeof value.homeTeam === 'string' ? value.homeTeam.trim() : '';
+    const awayTeam = typeof value.awayTeam === 'string' ? value.awayTeam.trim() : '';
+    const homeScore = finiteNumber(value.homeScore);
+    const awayScore = finiteNumber(value.awayScore);
+    const startsAt = new Date(String(value.startsAt || ''));
+    if (String(value.status || '').toLowerCase() !== 'completed' || value.countsTowardSeasonRecord === false) return null;
+    if (!homeTeam || !awayTeam || homeScore === null || awayScore === null || homeScore < 0 || awayScore < 0 || Number.isNaN(startsAt.getTime())) return null;
+    return { homeTeam, awayTeam, homeScore, awayScore, status: 'completed', startsAt: startsAt.toISOString() };
+}
+
+function hasCompletePublicStandingsConfig(config: PublicStandingsConfig | null): config is PublicStandingsConfig & {
+    seasonStart: string;
+    seasonEnd: string;
+} {
+    return Boolean(
+        config?.enabled &&
+        config.seasonStart &&
+        config.seasonEnd &&
+        config.seasonStart <= config.seasonEnd &&
+        config.leagueTeamIds.length
+    );
 }
 
 type PublicTeamSearchResult = {
@@ -380,11 +415,18 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
 }
 
 export async function getPublicTeamResults(team: PublicTeamProfile, now = new Date()): Promise<PublicTeamResults> {
-    const projection = await getPublicTeamGamesProjection(team.id, {
-        from: shiftUtcYear(now, -1).toISOString().slice(0, 10),
-        to: now.toISOString().slice(0, 10),
-        limit: PUBLIC_RESULTS_PROJECTION_LIMIT
-    });
+    const standingsConfig = team.standingsConfig;
+    const hasStandingsSource = hasCompletePublicStandingsConfig(standingsConfig);
+    const from = hasStandingsSource ? standingsConfig.seasonStart : shiftUtcYear(now, -1).toISOString().slice(0, 10);
+    const to = hasStandingsSource ? standingsConfig.seasonEnd : now.toISOString().slice(0, 10);
+    const [projection, standingsProjection] = await Promise.all([
+        getPublicTeamGamesProjection(team.id, {
+            from,
+            to,
+            limit: PUBLIC_RESULTS_PROJECTION_LIMIT
+        }),
+        hasStandingsSource ? getPublicLeagueStandingsProjection(team.id) : Promise.resolve(null)
+    ]);
     if (projection?.range?.truncated === true) {
         throw new Error('Unable to load complete public results. Please try again.');
     }
@@ -392,19 +434,21 @@ export async function getPublicTeamResults(team: PublicTeamProfile, now = new Da
     const finals = (Array.isArray(projection?.games) ? projection.games : [])
         .map(normalizePublicFinal)
         .filter((game): game is NormalizedPublicFinal => game !== null);
-    const standingsConfig = team.standingsConfig;
-    const standingsGames = standingsConfig?.enabled
-        ? finals
-            .filter((game) => game.countsTowardSeasonRecord)
-            .map((game) => ({
-                homeTeam: game.isHome ? team.name : game.opponent,
-                awayTeam: game.isHome ? game.opponent : team.name,
-                homeScore: game.isHome ? game.teamScore : game.opponentScore,
-                awayScore: game.isHome ? game.opponentScore : game.teamScore,
-                status: 'completed'
-            }))
-        : [];
-    const rows = standingsConfig?.enabled
+    if (standingsProjection && (
+        standingsProjection.range?.truncated === true ||
+        standingsProjection.range?.from !== standingsConfig?.seasonStart ||
+        standingsProjection.range?.to !== standingsConfig?.seasonEnd
+    )) {
+        throw new Error('Unable to load complete public standings. Please try again.');
+    }
+    const standingsGames = (Array.isArray(standingsProjection?.games) ? standingsProjection.games : [])
+        .map(normalizePublicLeagueFinal)
+        .filter((game): game is Record<string, unknown> => game !== null)
+        .filter((game) => {
+            const date = String(game.startsAt).slice(0, 10);
+            return date >= String(standingsConfig?.seasonStart) && date <= String(standingsConfig?.seasonEnd);
+        });
+    const rows = standingsConfig?.enabled && standingsProjection
         ? computeNativeStandings(standingsGames, standingsConfig as unknown as Record<string, unknown>)
         : [];
 

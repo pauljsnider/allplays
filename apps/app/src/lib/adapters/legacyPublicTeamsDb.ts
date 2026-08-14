@@ -32,8 +32,53 @@ export type PublicTeamGamesProjectionOptions = {
   limit: number;
 };
 
-export async function getPublicTeamGamesProjection(teamId: string, options: PublicTeamGamesProjectionOptions): Promise<any> {
+export type PublicTeamProjectedGame = {
+  id?: unknown;
+  startsAt?: unknown;
+  opponent?: unknown;
+  isHome?: unknown;
+  status?: unknown;
+  liveStatus?: unknown;
+  type?: unknown;
+  visibility?: unknown;
+  isPrivate?: unknown;
+  private?: unknown;
+  deleted?: unknown;
+  teamScore?: unknown;
+  opponentScore?: unknown;
+  countsTowardSeasonRecord?: unknown;
+};
+
+export type PublicTeamGamesProjection = {
+  range?: { from?: unknown; to?: unknown; truncated?: unknown };
+  games?: PublicTeamProjectedGame[];
+};
+
+export type PublicLeagueStandingsGame = {
+  id?: unknown;
+  startsAt?: unknown;
+  homeTeam?: unknown;
+  awayTeam?: unknown;
+  homeScore?: unknown;
+  awayScore?: unknown;
+  status?: unknown;
+  countsTowardSeasonRecord?: unknown;
+};
+
+export type PublicLeagueStandingsProjection = {
+  range?: { from?: unknown; to?: unknown; truncated?: unknown };
+  seasonLabel?: unknown;
+  games?: PublicLeagueStandingsGame[];
+};
+
+export async function getPublicTeamGamesProjection(teamId: string, options: PublicTeamGamesProjectionOptions): Promise<PublicTeamGamesProjection | null> {
   const callable = legacyHttpsCallable(legacyFunctions, 'getPublicTeamGamesProjection');
   const result = await callable({ teamId, ...options });
+  return result.data || null;
+}
+
+export async function getPublicLeagueStandingsProjection(teamId: string): Promise<PublicLeagueStandingsProjection | null> {
+  const callable = legacyHttpsCallable(legacyFunctions, 'getPublicLeagueStandingsProjection');
+  const result = await callable({ teamId });
   return result.data || null;
 }

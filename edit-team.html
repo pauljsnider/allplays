@@ -215,6 +215,31 @@
                             <option value="win_pct">Win percentage</option>
                         </select>
                     </div>
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <div>
+                            <label for="standingsSeasonLabel" class="block text-sm font-medium text-gray-700">Season Label</label>
+                            <input type="text" id="standingsSeasonLabel"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                placeholder="Fall 2026">
+                        </div>
+                        <div>
+                            <label for="standingsSeasonStart" class="block text-sm font-medium text-gray-700">Season Start</label>
+                            <input type="date" id="standingsSeasonStart"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
+                        <div>
+                            <label for="standingsSeasonEnd" class="block text-sm font-medium text-gray-700">Season End</label>
+                            <input type="date" id="standingsSeasonEnd"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
+                    </div>
+                    <div>
+                        <label for="standingsLeagueTeamIds" class="block text-sm font-medium text-gray-700">Other League Team IDs (comma-separated)</label>
+                        <input type="text" id="standingsLeagueTeamIds"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="team_owls, team_foxes">
+                        <p class="text-xs text-gray-500 mt-1">Public standings require explicit season dates and every public team in the league. The current team is included automatically.</p>
+                    </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Standings Points</label>
                         <div class="mt-1 grid grid-cols-3 gap-3">
@@ -1541,6 +1566,12 @@
                 document.getElementById('bracketUrl').value = team.bracketUrl || '';
                 document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
                 document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
+                document.getElementById('standingsSeasonLabel').value = team.standingsConfig?.seasonLabel || '';
+                document.getElementById('standingsSeasonStart').value = team.standingsConfig?.seasonStart || '';
+                document.getElementById('standingsSeasonEnd').value = team.standingsConfig?.seasonEnd || '';
+                document.getElementById('standingsLeagueTeamIds').value = Array.isArray(team.standingsConfig?.leagueTeamIds)
+                    ? team.standingsConfig.leagueTeamIds.filter((teamId) => teamId !== initialTeamId).join(', ')
+                    : '';
                 document.getElementById('standingsPointWin').value = String(parseStandingsNumber(team.standingsConfig?.points?.win, 3));
                 document.getElementById('standingsPointTie').value = String(parseStandingsNumber(team.standingsConfig?.points?.tie, 1));
                 document.getElementById('standingsPointLoss').value = String(parseStandingsNumber(team.standingsConfig?.points?.loss, 0));
@@ -2014,6 +2045,7 @@
                 const standingsTiebreakers = splitStandingsList(document.getElementById('standingsTiebreakers').value);
                 const standingsTwoTeamTiebreakers = splitStandingsList(document.getElementById('standingsTwoTeamTiebreakers').value);
                 const standingsMultiTeamTiebreakers = splitStandingsList(document.getElementById('standingsMultiTeamTiebreakers').value);
+                const standingsLeagueTeamIds = splitStandingsList(document.getElementById('standingsLeagueTeamIds').value);
                 const points = {
                     win: parseStandingsNumber(document.getElementById('standingsPointWin').value, 3),
                     tie: parseStandingsNumber(document.getElementById('standingsPointTie').value, 1),
@@ -2055,7 +2087,11 @@
                         maxGoalDiff: Number.isFinite(maxGoalDiff) && maxGoalDiff > 0 ? maxGoalDiff : null,
                         tiebreakers: legacyFallbackTiebreakers,
                         twoTeamTiebreakers: standingsTwoTeamTiebreakers.length > 0 ? standingsTwoTeamTiebreakers : legacyFallbackTiebreakers,
-                        multiTeamTiebreakers: standingsMultiTeamTiebreakers
+                        multiTeamTiebreakers: standingsMultiTeamTiebreakers,
+                        seasonLabel: document.getElementById('standingsSeasonLabel').value.trim() || null,
+                        seasonStart: document.getElementById('standingsSeasonStart').value || null,
+                        seasonEnd: document.getElementById('standingsSeasonEnd').value || null,
+                        leagueTeamIds: standingsLeagueTeamIds
                     },
                     zip,
                     colors: {

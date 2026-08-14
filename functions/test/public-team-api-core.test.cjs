@@ -112,6 +112,10 @@ test('public team profile preserves public page features through a bounded allow
       points: { win: 3, tie: 1, loss: 0, privateNote: 'secret' },
       maxGoalDiff: 7,
       tiebreakers: ['head_to_head', 'point_diff'],
+      seasonLabel: 'Fall 2026',
+      seasonStart: '2026-07-15',
+      seasonEnd: '2026-11-30',
+      leagueTeamIds: ['team-public', 'team-owls', 'team-public', 'bad/team'],
       adminEmail: 'private@example.test'
     },
     tournament: {
@@ -161,7 +165,11 @@ test('public team profile preserves public page features through a bounded allow
       maxGoalDiff: 7,
       tiebreakers: ['head_to_head', 'point_diff'],
       twoTeamTiebreakers: [],
-      multiTeamTiebreakers: []
+      multiTeamTiebreakers: [],
+      seasonLabel: 'Fall 2026',
+      seasonStart: '2026-07-15',
+      seasonEnd: '2026-11-30',
+      leagueTeamIds: ['team-public', 'team-owls']
     },
     tournament: {
       divisions: [{ divisionName: '10U Gold' }],

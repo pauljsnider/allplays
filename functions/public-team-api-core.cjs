@@ -56,7 +56,15 @@ function serializePublicStandingsConfig(value) {
     maxGoalDiff: publicFiniteNumber(value.maxGoalDiff, 1, 1000),
     tiebreakers: publicTextArray(value.tiebreakers, 20, 40),
     twoTeamTiebreakers: publicTextArray(value.twoTeamTiebreakers, 20, 40),
-    multiTeamTiebreakers: publicTextArray(value.multiTeamTiebreakers, 20, 40)
+    multiTeamTiebreakers: publicTextArray(value.multiTeamTiebreakers, 20, 40),
+    seasonLabel: nullableText(value.seasonLabel, 100),
+    seasonStart: parseDateOnly(value.seasonStart) ? compactText(value.seasonStart, 10) : null,
+    seasonEnd: parseDateOnly(value.seasonEnd) ? compactText(value.seasonEnd, 10) : null,
+    leagueTeamIds: Array.from(new Set(
+      (Array.isArray(value.leagueTeamIds) ? value.leagueTeamIds : [])
+        .map(normalizeTeamId)
+        .filter(Boolean)
+    )).slice(0, 32)
   };
 }
 
