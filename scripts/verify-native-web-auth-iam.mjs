@@ -16,6 +16,7 @@ export function hasSelfTokenCreatorBinding(policy, serviceAccountEmail) {
     const member = `serviceaccount:${email}`;
     return policy.bindings.some((binding) => (
         binding?.role === serviceAccountTokenCreatorRole
+        && !Object.prototype.hasOwnProperty.call(binding, 'condition')
         && Array.isArray(binding.members)
         && binding.members.some((candidate) => String(candidate).trim().toLowerCase() === member)
     ));

@@ -42,7 +42,6 @@ const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
 const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
-const nativeAuthObserverTimeoutMs = 4000;
 const nativeWebAuthBridgeTimeoutMs = 15000;
 const nativeWebAuthBridgeMaxAttempts = 2;
 const profileHydrationTimeoutMs = 8000;
@@ -1143,7 +1142,6 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 }
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
-  let timeoutId: number | undefined;
   let lastObservedUid: string | null | undefined;
   let disposed = false;
   let webAuthUserObserved = false;
@@ -1164,11 +1162,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
     callback(user);
   };
 
-  const clearFallbackTimer = () => {
-    if (timeoutId) window.clearTimeout(timeoutId);
-    timeoutId = undefined;
-  };
-
   const emitNativeFallback = (fallbackUser = getNativeAuthFallbackUser()) => {
     if (webAuthUserObserved || fallbackEmitted) return;
     fallbackEmitted = true;
@@ -1178,12 +1171,10 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
   const bootstrapNativeWebAuth = () => {
     const fallbackUser = getNativeAuthFallbackUser();
     if (!fallbackUser?.uid) {
-      clearFallbackTimer();
       emitNativeFallback(null);
       return;
     }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      clearFallbackTimer();
       emitNativeFallback(fallbackUser);
       return;
     }
@@ -1191,7 +1182,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
 
     bootstrapRequest = ensureNativeWebViewAuthSession(fallbackUser.uid)
       .then((bridgedUser) => {
-        clearFallbackTimer();
         // signInWithCustomToken normally reaches the SDK observer first. This
         // keeps bootstrap deterministic in tests and unusual WebView runtimes.
         if (!webAuthUserObserved) {
@@ -1201,7 +1191,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
         }
       })
       .catch((error) => {
-        clearFallbackTimer();
         logger.warn('Unable to authenticate the WebView Firebase session.', { error });
         emitNativeFallback(fallbackUser);
       })
@@ -1210,15 +1199,8 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
       });
   };
 
-  if (isNativeRuntime()) {
-    timeoutId = window.setTimeout(() => {
-      emitNativeFallback();
-    }, nativeAuthObserverTimeoutMs);
-  }
-
   const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
     if (!isNativeRuntime()) {
-      clearFallbackTimer();
       emit(user);
       return;
     }
@@ -1233,7 +1215,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
         return;
       }
       webAuthUserObserved = true;
-      clearFallbackTimer();
       // signInWithCustomToken may resolve just before Firebase dispatches its
       // observer. The bootstrap path already exposed this exact principal, so
       // suppress the one redundant callback that would otherwise hydrate and
@@ -1254,7 +1235,6 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
 
   return () => {
     disposed = true;
-    clearFallbackTimer();
     unsubscribe();
   };
 }

@@ -36,6 +36,19 @@ describe('native WebView custom-token deployment IAM', () => {
         }, runtimeServiceAccount)).toBe(false);
     });
 
+    it('rejects a conditional self-binding whose applicability is not verified', () => {
+        expect(hasSelfTokenCreatorBinding({
+            bindings: [{
+                role: serviceAccountTokenCreatorRole,
+                members: [`serviceAccount:${runtimeServiceAccount}`],
+                condition: {
+                    title: 'expired-token-creator-grant',
+                    expression: 'request.time < timestamp("2025-01-01T00:00:00Z")'
+                }
+            }]
+        }, runtimeServiceAccount)).toBe(false);
+    });
+
     it('fails closed for malformed policy or service-account input', () => {
         expect(hasSelfTokenCreatorBinding({}, runtimeServiceAccount)).toBe(false);
         expect(hasSelfTokenCreatorBinding({ bindings: [] }, 'not-an-account')).toBe(false);

@@ -1392,7 +1392,7 @@ describe('observeFirebaseUser', () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  it('emits one startup identity when the online bridge crosses the native fallback deadline', async () => {
+  it('does not expose the restored native identity while the online bridge is pending', async () => {
     vi.useFakeTimers();
     try {
       vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
@@ -1418,13 +1418,15 @@ describe('observeFirebaseUser', () => {
 
       observer.current?.(null);
       await vi.advanceTimersByTimeAsync(4000);
-      expect(callback).toHaveBeenCalledTimes(1);
-      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({
-        uid: 'native-user',
-        isNativeRestSession: true
-      }));
+      expect(callback).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(500);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({
+        uid: 'native-user'
+      }));
+      expect(callback.mock.calls[0][0]).not.toHaveProperty('isNativeRestSession', true);
+
       observer.current?.(authState.currentUser);
 
       expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledTimes(1);
