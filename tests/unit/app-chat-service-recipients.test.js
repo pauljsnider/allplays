@@ -54,9 +54,16 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../apps/app/src/lib/adapters/legacyChatService.ts', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyChatService.ts', async (importOriginal) => ({
+    ...await importOriginal(),
+    sendTeamEmail: dbMocks.sendTeamEmail
+}));
 vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileServiceMocks);
+vi.mock('../../js/firebase.js', () => ({
+    functions: {},
+    httpsCallable: vi.fn()
+}));
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: vi.fn(() => ({}))
 }));
