@@ -62,7 +62,13 @@ describe('native WebView custom-token deployment IAM', () => {
 
         expect(workflow).toContain('gcloud iam service-accounts get-iam-policy');
         expect(workflow).toContain(runtimeServiceAccount);
-        expect(workflow).toContain('node scripts/verify-native-web-auth-iam.mjs');
+        expect(workflow).toContain(
+            'cp scripts/verify-native-web-auth-iam.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"'
+        );
+        expect(workflow).toContain(
+            'node "$FIREBASE_PRODUCTION_BUNDLE/context/verify-native-web-auth-iam.mjs"'
+        );
+        expect(workflow).not.toContain('node scripts/verify-native-web-auth-iam.mjs');
         expect(workflow).toContain('--service-account "$native_web_auth_runtime_service_account"');
     });
 });

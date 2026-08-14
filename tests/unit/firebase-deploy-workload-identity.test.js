@@ -15,6 +15,9 @@ const candidate = read('.github/workflows/deploy-candidate-host.yml');
 const productionExtractorSha256 = createHash('sha256')
     .update(read('scripts/extract-production-functions-handoff.py'))
     .digest('hex');
+const productionNativeWebAuthIamVerifierSha256 = createHash('sha256')
+    .update(read('scripts/verify-native-web-auth-iam.mjs'))
+    .digest('hex');
 const previewVerifierSha256 = createHash('sha256')
     .update(read('scripts/verify-preview-deploy-trigger.mjs'))
     .digest('hex');
@@ -92,8 +95,10 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const firestoreDetection = production.indexOf('name: Detect Firestore configuration changes');
         const cliInstall = production.indexOf('name: Install isolated Firebase deploy CLI without OIDC');
         const functionsArchive = production.indexOf('name: Archive installed Functions runtime into trusted handoff');
+        const iamVerifierCopy = production.indexOf('cp scripts/verify-native-web-auth-iam.mjs "$FIREBASE_PRODUCTION_BUNDLE/context/"');
         const handoff = production.indexOf('name: Upload trusted production deploy handoff');
         const extractorHashCheck = production.indexOf(`expected_extractor_sha256='${productionExtractorSha256}'`);
+        const iamVerifierHashCheck = production.indexOf(`expected_native_web_auth_iam_verifier_sha256='${productionNativeWebAuthIamVerifierSha256}'`);
         const functionsExtract = production.indexOf('python3 "$bundle/context/extract-production-functions-handoff.py"');
         const ownerLifecycleAuth = production.indexOf('name: Authenticate legacy owner lifecycle deploy through exact-workflow OIDC');
         const ownerLifecycleDeploy = production.indexOf('name: Deploy legacy owner Auth lifecycle compatibility');
@@ -107,11 +112,14 @@ describe('Firebase deploy Workload Identity boundary', () => {
         const storageCleanup = production.indexOf('name: Remove Storage deploy credential');
         const productionAuth = production.indexOf('name: Authenticate production deploy through exact-workflow OIDC');
         const productionDeploy = production.indexOf('name: Deploy Firebase production');
+        const iamVerifierExecution = production.indexOf('node "$FIREBASE_PRODUCTION_BUNDLE/context/verify-native-web-auth-iam.mjs"');
 
         expect(cliInstall).toBeGreaterThan(firestoreDetection);
         expect(functionsArchive).toBeGreaterThan(firestoreDetection);
+        expect(iamVerifierCopy).toBeGreaterThan(functionsArchive);
         expect(handoff).toBeGreaterThan(cliInstall);
         expect(extractorHashCheck).toBeGreaterThan(handoff);
+        expect(iamVerifierHashCheck).toBeGreaterThan(extractorHashCheck);
         expect(functionsExtract).toBeGreaterThan(extractorHashCheck);
         expect(production.slice(extractorHashCheck, functionsExtract)).toContain('sha256sum --check --strict');
         expect(production.slice(handoff, extractorHashCheck)).toContain('test ! -L');
@@ -138,6 +146,8 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(storageCleanup).toBeGreaterThan(storageDeploy);
         expect(productionAuth).toBeGreaterThan(storageCleanup);
         expect(productionDeploy).toBeGreaterThan(productionAuth);
+        expect(iamVerifierExecution).toBeGreaterThan(productionDeploy);
+        expect(production.slice(productionDeploy, iamVerifierExecution)).not.toContain('node scripts/verify-native-web-auth-iam.mjs');
         expect(production.slice(storageAuth, storageDeploy)).not.toContain('run:');
         expect(production.slice(productionAuth, productionDeploy)).not.toContain('run:');
         expect(production.slice(storageDeploy, storageCleanup)).toContain('timeout-minutes: 4');
@@ -152,6 +162,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
         expect(production).toMatch(/name: Upload trusted production deploy handoff[\s\S]*retention-days: 30/);
         expect(production).toContain('functions-runtime.tar');
         expect(production).toContain('cp scripts/extract-production-functions-handoff.py "$FIREBASE_PRODUCTION_BUNDLE/context/"');
+        expect(production).toContain('test ! -L "$bundle/context/verify-native-web-auth-iam.mjs"');
         expect(production).not.toContain('cp -R functions "$FIREBASE_PRODUCTION_BUNDLE/functions"');
     });
 
