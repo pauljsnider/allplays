@@ -194,6 +194,21 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             );
         });
 
+        it('requires a verified matching admin email for team Storage access', async () => {
+            const unverifiedAdminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: false
+            }).storage();
+            const verifiedAdminStorage = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: true
+            }).storage();
+            const existingTeamMediaPath = 'team-media/team-a/folder-a/owner-a/existing.jpg';
+
+            await assertFails(unverifiedAdminStorage.ref(existingTeamMediaPath).getMetadata());
+            await assertSucceeds(verifiedAdminStorage.ref(existingTeamMediaPath).getMetadata());
+        });
+
         it('allows bounded game-scoped statsheet images for managers and exact-game scorekeepers', async () => {
             const ownerStorage = testEnv.authenticatedContext('owner-a', {
                 email: 'owner-a@example.com',

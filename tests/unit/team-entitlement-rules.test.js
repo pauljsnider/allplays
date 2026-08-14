@@ -91,15 +91,21 @@ describe('team entitlement Firestore rules', () => {
             await assertFails(updateDoc(existingActiveRef, { expiresAt: '2099-01-01T00:00:00.000Z' }));
         });
 
-        it('allows team admins to deactivate an active entitlement but not reactivate it', async () => {
-            const adminDb = testEnv.authenticatedContext('admin-a', {
+        it('requires a verified matching admin email for team-manager writes', async () => {
+            const unverifiedAdminDb = testEnv.authenticatedContext('admin-a', {
+                email: 'admin-a@example.com',
+                email_verified: false
+            }).firestore();
+            const verifiedAdminDb = testEnv.authenticatedContext('admin-a', {
                 email: 'admin-a@example.com',
                 email_verified: true
             }).firestore();
-            const activeRef = doc(adminDb, 'teams/team-a/entitlements/server-active');
+            const unverifiedActiveRef = doc(unverifiedAdminDb, 'teams/team-a/entitlements/server-active');
+            const verifiedActiveRef = doc(verifiedAdminDb, 'teams/team-a/entitlements/server-active');
 
-            await assertSucceeds(updateDoc(activeRef, { status: 'cancelled' }));
-            await assertFails(updateDoc(activeRef, { status: 'active' }));
+            await assertFails(updateDoc(unverifiedActiveRef, { status: 'cancelled' }));
+            await assertSucceeds(updateDoc(verifiedActiveRef, { status: 'cancelled' }));
+            await assertFails(updateDoc(verifiedActiveRef, { status: 'active' }));
         });
 
         it('keeps non-admin clients from staging entitlement records', async () => {
