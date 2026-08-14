@@ -17527,6 +17527,7 @@ async function getOpportunityCaller(context, options = {}) {
     uid,
     email: rawEmail.toLowerCase(),
     rawEmail,
+    emailVerified: context.auth.token?.email_verified === true,
     user: userSnap.exists ? userSnap.data() || {} : {}
   };
 }
@@ -17542,7 +17543,7 @@ function hasOpportunityTeamAdminAccess(caller, team) {
     // come only from the current Auth token, never a stale users/{uid} email.
     user: { isAdmin: isOpportunityPlatformAdmin(caller) },
     uid: caller?.uid,
-    email: caller?.email
+    email: caller?.emailVerified === true ? caller?.email : ''
   });
 }
 
@@ -17990,7 +17991,7 @@ async function resolveOpportunityTeam(input, caller) {
 
 async function listOpportunityManagedTeamDocuments(caller, { allowPartial = false } = {}) {
   const queries = [firestore.collection('teams').where('ownerId', '==', caller.uid).get()];
-  if (caller.email) {
+  if (caller.emailVerified === true && caller.email) {
     queries.push(
       firestore.collection('teams').where('adminEmails', 'array-contains', caller.email).get(),
       firestore.collection('teams').where('ownerEmailLower', '==', caller.email).get()

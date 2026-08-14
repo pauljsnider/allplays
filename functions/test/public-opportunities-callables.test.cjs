@@ -639,6 +639,111 @@ test('managed-team callables return access fields only to current managers', asy
     assert.equal('privateBillingCustomerId' in stalePublicProfile.item, false);
 });
 
+test('email-derived opportunity access requires a verified current token claim', async () => {
+    const createdAt = new FakeTimestamp(Date.now() - 1000);
+    const { callables } = loadCallables({
+        'users/legacy-owner': { email: 'legacy-owner@example.com' },
+        'users/legacy-admin': { email: 'legacy-admin@example.com' },
+        'teams/legacy-owner-team': {
+            name: 'Legacy Owner Team',
+            ownerEmail: 'legacy-owner@example.com',
+            adminEmails: [],
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'private-owner-data'
+        },
+        'teams/legacy-admin-team': {
+            name: 'Legacy Admin Team',
+            ownerId: 'canonical-owner',
+            adminEmails: ['legacy-admin@example.com'],
+            active: true,
+            isPublic: false,
+            privateBillingCustomerId: 'private-admin-data'
+        },
+        'teams/public-admin-team': {
+            name: 'Public Admin Team',
+            ownerId: 'canonical-owner',
+            adminEmails: ['legacy-admin@example.com'],
+            active: true,
+            isPublic: true,
+            privateBillingCustomerId: 'private-public-data'
+        },
+        'opportunityInquiries/legacy-owner-inquiry': {
+            senderId: 'sender-owner',
+            teamId: 'legacy-owner-team',
+            participantIds: ['sender-owner'],
+            listingTitle: 'Owner inquiry',
+            updatedAt: createdAt,
+            createdAt,
+            status: 'open'
+        },
+        'opportunityInquiries/legacy-admin-inquiry': {
+            senderId: 'sender-admin',
+            teamId: 'legacy-admin-team',
+            participantIds: ['sender-admin'],
+            listingTitle: 'Admin inquiry',
+            updatedAt: createdAt,
+            createdAt,
+            status: 'open'
+        }
+    });
+
+    const cases = [
+        {
+            uid: 'legacy-owner',
+            email: 'legacy-owner@example.com',
+            teamId: 'legacy-owner-team',
+            inquiryId: 'legacy-owner-inquiry',
+            managedTeamIds: ['legacy-owner-team']
+        },
+        {
+            uid: 'legacy-admin',
+            email: 'legacy-admin@example.com',
+            teamId: 'legacy-admin-team',
+            inquiryId: 'legacy-admin-inquiry',
+            managedTeamIds: ['legacy-admin-team', 'public-admin-team']
+        }
+    ];
+
+    for (const testCase of cases) {
+        const unverified = authContext(testCase.uid, { email: testCase.email, verified: false });
+        assert.deepEqual((await callables.listManagedTeams({}, unverified)).items, []);
+        assert.deepEqual((await callables.listOpportunityInquiries({}, unverified)).items, []);
+        await assert.rejects(
+            callables.getPublicTeamProfile({ teamId: testCase.teamId }, unverified),
+            (error) => error.code === 'not-found'
+        );
+        await assert.rejects(
+            callables.getOpportunityInquiry({ inquiryId: testCase.inquiryId }, unverified),
+            (error) => error.code === 'permission-denied'
+        );
+
+        const verified = authContext(testCase.uid, { email: testCase.email, verified: true });
+        assert.deepEqual(
+            (await callables.listManagedTeams({}, verified)).items.map((team) => team.id),
+            testCase.managedTeamIds
+        );
+        assert.equal((await callables.getPublicTeamProfile({ teamId: testCase.teamId }, verified)).item.id, testCase.teamId);
+        assert.deepEqual(
+            (await callables.listOpportunityInquiries({}, verified)).items.map((inquiry) => inquiry.id),
+            [testCase.inquiryId]
+        );
+        assert.equal(
+            (await callables.getOpportunityInquiry({ inquiryId: testCase.inquiryId }, verified)).inquiry.id,
+            testCase.inquiryId
+        );
+    }
+
+    const publicProjection = await callables.getPublicTeamProfile(
+        { teamId: 'public-admin-team' },
+        authContext('legacy-admin', { email: 'legacy-admin@example.com', verified: false })
+    );
+    assert.equal(publicProjection.item.name, 'Public Admin Team');
+    assert.equal('ownerId' in publicProjection.item, false);
+    assert.equal('adminEmails' in publicProjection.item, false);
+    assert.equal('privateBillingCustomerId' in publicProjection.item, false);
+});
+
 test('managed-team discovery normalizes legacy teamName-only documents before sorting', async () => {
     const { callables } = loadCallables({
         'users/owner-1': { email: 'owner@example.com' },

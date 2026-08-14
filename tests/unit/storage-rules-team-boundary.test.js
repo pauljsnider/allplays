@@ -72,6 +72,18 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     ownerEmail: 'legacy-owner@example.com',
                     adminEmails: []
                 });
+                await firestore.doc('teams/legacy-team/players/legacy-player').set({
+                    name: 'Legacy Player'
+                });
+                await firestore.doc('teams/legacy-team/players/legacy-player/private/profile').set({
+                    medicalInfo: 'private'
+                });
+                await firestore.doc('teams/legacy-team/mediaFolders/private-folder').set({
+                    visibility: 'private'
+                });
+                await firestore.doc('teams/legacy-team/mediaItems/private-item').set({
+                    folderId: 'private-folder'
+                });
                 await firestore.doc('teams/conflicting-legacy-team').set({
                     ownerEmail: 'current@example.com',
                     ownerEmailLower: 'former@example.com',
@@ -144,6 +156,10 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 await storage.ref('stat-sheets/drills/team-a/legacy-drill/legacy-uploader/manager-existing.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
+                );
+                await storage.ref('team-email-attachments/legacy-team/draft-a/legacy-owner-uid/existing.txt').put(
+                    new Uint8Array([1]),
+                    { contentType: 'text/plain' }
                 );
             });
         });
@@ -783,7 +799,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             }));
         });
 
-        it('lets canonical ownership override stale owner emails while preserving legacy-only teams', async () => {
+        it('requires verified legacy email ownership while preserving UID-based ownership', async () => {
             await testEnv.withSecurityRulesDisabled(async (context) => {
                 await context.firestore().doc('securityPolicies/verifiedEmail').set({ mode: 'enforce' });
             });
@@ -794,6 +810,16 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             });
             const legacyOwnerStorage = legacyOwnerContext.storage();
             const legacyOwnerFirestore = legacyOwnerContext.firestore();
+            const verifiedLegacyOwnerContext = testEnv.authenticatedContext('legacy-owner-uid', {
+                email: 'legacy-owner@example.com',
+                email_verified: true
+            });
+            const verifiedLegacyOwnerStorage = verifiedLegacyOwnerContext.storage();
+            const verifiedLegacyOwnerFirestore = verifiedLegacyOwnerContext.firestore();
+            const canonicalOwnerContext = testEnv.authenticatedContext('owner-a', {
+                email: 'owner-a@example.com',
+                email_verified: false
+            });
 
             await assertFails(legacyOwnerFirestore.doc('teams/team-a').get());
             await assertFails(
@@ -805,10 +831,40 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                     { contentType: 'image/jpeg' }
                 )
             );
-
-            await assertSucceeds(legacyOwnerFirestore.doc('teams/legacy-team').get());
+            await assertSucceeds(canonicalOwnerContext.firestore().doc('teams/team-a').get());
             await assertSucceeds(
+                canonicalOwnerContext.storage().ref('team-media/team-a/folder-a/owner-a/existing.jpg').getMetadata()
+            );
+
+            await assertFails(legacyOwnerFirestore.doc('teams/legacy-team').get());
+            await assertFails(
                 legacyOwnerStorage.ref('stat-sheets/team-chat/legacy-team/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
+                    new Uint8Array([1]),
+                    { contentType: 'image/jpeg' }
+                )
+            );
+            await assertFails(
+                legacyOwnerFirestore.doc('teams/legacy-team/players/legacy-player/private/profile').get()
+            );
+            await assertFails(
+                legacyOwnerFirestore.doc('teams/legacy-team/mediaItems/private-item').get()
+            );
+            await assertFails(
+                legacyOwnerStorage.ref('team-email-attachments/legacy-team/draft-a/legacy-owner-uid/existing.txt').getMetadata()
+            );
+
+            await assertSucceeds(verifiedLegacyOwnerFirestore.doc('teams/legacy-team').get());
+            await assertSucceeds(
+                verifiedLegacyOwnerFirestore.doc('teams/legacy-team/players/legacy-player/private/profile').get()
+            );
+            await assertSucceeds(
+                verifiedLegacyOwnerFirestore.doc('teams/legacy-team/mediaItems/private-item').get()
+            );
+            await assertSucceeds(
+                verifiedLegacyOwnerStorage.ref('team-email-attachments/legacy-team/draft-a/legacy-owner-uid/existing.txt').getMetadata()
+            );
+            await assertSucceeds(
+                verifiedLegacyOwnerStorage.ref('stat-sheets/team-chat/legacy-team/team/legacy-owner-uid/legacy-owner-photo.jpg').put(
                     new Uint8Array([1]),
                     { contentType: 'image/jpeg' }
                 )
