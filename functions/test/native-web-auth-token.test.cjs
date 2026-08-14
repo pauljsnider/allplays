@@ -36,6 +36,25 @@ test('native WebView auth token binds only the authenticated caller uid', async 
   assert.deepEqual(calls, ['native.user:1']);
 });
 
+test('native WebView auth token preserves opaque caller uids byte-for-byte', async () => {
+  const calls = [];
+  const handler = createNativeWebAuthTokenHandler({
+    getAuth: () => ({
+      async createCustomToken(uid) {
+        calls.push(uid);
+        return `token:${uid}`;
+      }
+    }),
+    HttpsError: TestHttpsError
+  });
+
+  await handler({}, { auth: { uid: ' victim ' } });
+  await handler({}, { auth: { uid: 'victim' } });
+  await handler({}, { auth: { uid: 'tenant/user' } });
+
+  assert.deepEqual(calls, [' victim ', 'victim', 'tenant/user']);
+});
+
 test('native WebView auth token fails closed without a valid authenticated uid', async () => {
   const createCustomToken = () => {
     throw new Error('must not run');
@@ -48,7 +67,6 @@ test('native WebView auth token fails closed without a valid authenticated uid',
   for (const context of [
     {},
     { auth: {} },
-    { auth: { uid: '../unsafe' } },
     { auth: { uid: 'x'.repeat(129) } },
     { auth: { uid: 42 } }
   ]) {
@@ -73,7 +91,7 @@ test('native WebView auth token converts provider failures into a retryable erro
 });
 
 test('native WebView uid validation accepts the complete product uid contract', () => {
-  assert.equal(normalizeAuthenticatedUid(' user.with:punctuation '), 'user.with:punctuation');
-  assert.equal(normalizeAuthenticatedUid('contains/slash'), '');
+  assert.equal(normalizeAuthenticatedUid(' user.with:punctuation '), ' user.with:punctuation ');
+  assert.equal(normalizeAuthenticatedUid('contains/slash'), 'contains/slash');
   assert.equal(normalizeAuthenticatedUid(''), '');
 });

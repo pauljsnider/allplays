@@ -4,9 +4,8 @@ const UID_MAX_LENGTH = 128;
 
 function normalizeAuthenticatedUid(value) {
   if (typeof value !== 'string') return '';
-  const uid = value.trim();
-  if (!uid || uid.length > UID_MAX_LENGTH || uid.includes('/')) return '';
-  return uid;
+  if (!value || value.length > UID_MAX_LENGTH) return '';
+  return value;
 }
 
 function createNativeWebAuthTokenHandler({ getAuth, HttpsError }) {

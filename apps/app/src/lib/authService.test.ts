@@ -449,6 +449,28 @@ describe('native WebView Firebase auth bridge', () => {
     );
   });
 
+  it('never trims or conflates opaque native Firebase uids', async () => {
+    const opaqueUid = ' tenant/user ';
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: opaqueUid,
+      email: 'native@example.com',
+      provider: 'native-plugin'
+    }));
+    nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+      user: { uid: opaqueUid, email: 'native@example.com' }
+    });
+    authState.currentUser = { uid: opaqueUid.trim() } as never;
+
+    await expect(ensureNativeWebViewAuthSession(opaqueUid)).resolves.toEqual(
+      expect.objectContaining({ uid: opaqueUid })
+    );
+
+    expect(webAuthRuntimeMocks.signOut).toHaveBeenCalledWith(authState);
+    expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).toHaveBeenCalledTimes(1);
+    expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledTimes(1);
+    expect(getNativeAuthUserId()).toBe(opaqueUid);
+  });
+
   it('allows a delayed custom-token response and retries one timed-out attempt', async () => {
     nativeCallableMocks.callNativeFirebaseFunctionWithAuth
       .mockRejectedValueOnce(new Error('Native WebView authentication timed out.'))

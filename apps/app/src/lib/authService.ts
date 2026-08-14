@@ -157,8 +157,8 @@ async function ensureNativePluginAuthStateListener() {
   const registration = Promise.resolve(
     FirebaseAuthentication.addListener('authStateChange', (event) => {
       resetNativePluginTokenBroker();
-      const nativeUid = String(event?.user?.uid || '').trim();
-      const storedUid = String(readNativeAuthSession()?.uid || '').trim();
+      const nativeUid = normalizeNativeAuthUid(event?.user?.uid);
+      const storedUid = normalizeNativeAuthUid(readNativeAuthSession()?.uid);
       if (!nativeUid || (storedUid && storedUid !== nativeUid)) {
         clearNativeAuthSession();
         clearCachedUserData();
@@ -194,7 +194,7 @@ async function verifyNativePluginUser(expectedUid: string) {
     if (generation !== nativePluginTokenGeneration) {
       throw new Error('Native Firebase auth session changed while verifying the current user.');
     }
-    const currentUid = String(result?.user?.uid || '').trim();
+    const currentUid = normalizeNativeAuthUid(result?.user?.uid);
     if (!currentUid) {
       resetNativePluginTokenBroker();
       throw new Error('Native Firebase auth has no signed-in user.');
@@ -402,7 +402,7 @@ function readNativeAuthSession(): NativeAuthSession | null {
 
 function sanitizeNativeAuthSession(session: Partial<VolatileNativeRestSession>): NativeAuthSession {
   return {
-    uid: String(session.uid || ''),
+    uid: normalizeNativeAuthUid(session.uid),
     email: String(session.email || ''),
     displayName: session.displayName || null,
     photoUrl: session.photoUrl || null,
@@ -662,9 +662,8 @@ export function getNativeAuthUserId(): string | null {
 
 function normalizeNativeAuthUid(value: unknown) {
   if (typeof value !== 'string') return '';
-  const uid = value.trim();
-  if (!uid || uid.length > 128 || uid.includes('/')) return '';
-  return uid;
+  if (!value || value.length > 128) return '';
+  return value;
 }
 
 export async function ensureNativeWebViewAuthSession(expectedUid = getNativeAuthUserId()): Promise<FirebaseUser | null> {
