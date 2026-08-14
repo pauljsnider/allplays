@@ -27,6 +27,13 @@ describe('staged verified-email policy rules', () => {
     expect(storageRules).toContain('function isVerifiedForSensitiveWrite()');
   });
 
+  it('requires a verified claim whenever a team email supplies manager authority', () => {
+    expect(firestoreRules).toContain("request.auth.token.get('email_verified', false) == true &&\n             team.get('ownerId', '') == ''");
+    expect(firestoreRules).toContain("request.auth.token.get('email_verified', false) == true &&\n             adminEmails is list");
+    expect(storageRules).toContain("request.auth.token.get('email_verified', false) == true &&\n          team.get('ownerId', '') == ''");
+    expect(storageRules).toContain("request.auth.token.get('email_verified', false) == true &&\n          request.auth.token.email.lower() in team.get('adminEmails', [])");
+  });
+
   it('gates every direct auth-only write rule except mixed invite redemption/revocation', () => {
     const directSignedInWriteLines = firestoreRules.split('\n')
       .filter((line) => /allow\s+(?:create|update|delete|write|create, update|update, delete).*isSignedIn\(\)/.test(line.trim()));
