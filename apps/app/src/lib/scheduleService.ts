@@ -3959,8 +3959,50 @@ async function buildTeamSchedule(
   const gamesRange: ScheduleDateRange = options.range || (options.includePastGames
     ? {}
     : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) });
+  const teamPromise = loadTeam(teamId);
+  const calendarLoadPromise: Promise<{
+    calendarUrls: string[];
+    calendarResults: Array<Awaited<ReturnType<typeof fetchAndParseCalendar>>>;
+  }> = teamPromise.then(async (team) => {
+    if (!team) {
+      return { calendarUrls: [], calendarResults: [] };
+    }
+    const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
+    if (calendarUrls.length > 0) {
+      const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
+        try {
+          return await fetchAndParseCalendar(calendarUrl);
+        } catch (error) {
+          logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
+          options.onSourcePartial?.();
+          return [];
+        }
+      }));
+      return { calendarUrls, calendarResults };
+    }
+    if (team.hasCalendarSources === true) {
+      try {
+        return {
+          calendarUrls,
+          calendarResults: [await getPublicTeamCalendarEvents(
+            teamId,
+            getPublicCalendarProjectionRange(gamesRange)
+          )]
+        };
+      } catch (error) {
+        logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
+        throw error;
+      }
+    }
+    return { calendarUrls, calendarResults: [] };
+  });
+  // The calendar request starts as soon as the team document is available, but
+  // remains part of the same complete team result. Attach a handler immediately
+  // so a fast calendar rejection cannot become unhandled while stored schedule
+  // reads finish; awaiting the original promise below still preserves the error.
+  void calendarLoadPromise.catch(() => {});
   const [team, dbGames, practiceSessions] = await Promise.all([
-    loadTeam(teamId),
+    teamPromise,
     loadGames(teamId, gamesRange),
     loadPracticeSessions(teamId, gamesRange)
   ]);
@@ -3981,19 +4023,6 @@ async function buildTeamSchedule(
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
-  const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
-  let projectedCalendarEvents: any[] = [];
-  if (calendarUrls.length === 0 && team.hasCalendarSources === true) {
-    try {
-      projectedCalendarEvents = await getPublicTeamCalendarEvents(
-        teamId,
-        getPublicCalendarProjectionRange(gamesRange)
-      );
-    } catch (error) {
-      logScheduleWarning('Unable to load projected team calendar.', 'team-calendar-projection-load', error, { teamId });
-      throw error;
-    }
-  }
   const isStaff = isTeamStaff(teamWithId, user);
   const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
   teamChildren.forEach((child) => {
@@ -4143,19 +4172,8 @@ async function buildTeamSchedule(
     }
   }
 
-  if (calendarUrls.length > 0 || projectedCalendarEvents.length > 0) {
-    const calendarResults = calendarUrls.length > 0
-      ? await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
-      try {
-        return await fetchAndParseCalendar(calendarUrl);
-      } catch (error) {
-        logScheduleWarning('Unable to load team calendar.', 'team-calendar-load', error, { teamId, calendarUrl });
-        options.onSourcePartial?.();
-        return [];
-      }
-      }))
-      : [projectedCalendarEvents];
-
+  const { calendarUrls, calendarResults } = await calendarLoadPromise;
+  if (calendarResults.length > 0) {
     calendarResults.flat().forEach((calendarEvent: any) => {
       const calendarEventTrackingId = getCalendarEventTrackingId(calendarEvent);
       if (
