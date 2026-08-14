@@ -1294,7 +1294,19 @@ export async function createRosterParentInviteForApp(
   if (!code) throw new Error('Invite code was not created.');
   const reused = inviteResult?.reused === true;
   const created = inviteResult?.created !== false && !reused;
-  const emailPending = Boolean(normalizedEmail);
+  let emailQueued = false;
+  let emailDeduplicated = false;
+  let emailError: string | null = null;
+  if (normalizedEmail) {
+    try {
+      const queueResult = await queueInviteEmail(code);
+      emailQueued = true;
+      emailDeduplicated = queueResult?.deduplicated === true;
+    } catch (error: any) {
+      emailError = cleanString(error?.message) || 'Invite email could not be queued.';
+      logger.warn('Parent invite was created, but its email could not be queued.', { error });
+    }
+  }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
@@ -1302,10 +1314,10 @@ export async function createRosterParentInviteForApp(
     inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
     email: normalizedEmail || null,
-    emailQueued: false,
-    emailDeduplicated: reused,
-    emailSent: false,
-    emailError: emailPending ? 'Email delivery is pending confirmation.' : null,
+    emailQueued,
+    emailDeduplicated,
+    emailSent: emailQueued,
+    emailError,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
     created,

@@ -278,7 +278,7 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('reports trigger-backed parent email delivery as pending confirmation', async () => {
+    it('confirms parent email delivery when the on-create trigger is delayed', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -294,17 +294,41 @@ describe('React app team detail model', () => {
         );
 
         expect(inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '9', 'parent@example.com', 'Guardian');
-        expect(queueInviteEmail).not.toHaveBeenCalled();
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
         expect(result).toMatchObject({
             email: 'parent@example.com',
-            emailQueued: false,
+            emailQueued: true,
             emailDeduplicated: false,
-            emailSent: false,
-            emailError: 'Email delivery is pending confirmation.'
+            emailSent: true,
+            emailError: null
         });
     });
 
-    it('preserves a retryable state when asynchronous trigger delivery can fail', async () => {
+    it('confirms delivery already queued by the on-create trigger', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Guardian' }
+        );
+
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(result).toMatchObject({
+            emailQueued: true,
+            emailDeduplicated: true,
+            emailSent: true,
+            emailError: null
+        });
+    });
+
+    it('preserves a retryable state when trigger and explicit queue confirmation fail', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -319,18 +343,18 @@ describe('React app team detail model', () => {
             { email: 'parent@example.com', relation: 'Guardian' }
         );
 
-        expect(queueInviteEmail).not.toHaveBeenCalled();
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
         expect(result).toMatchObject({
             code: 'ABCD1234',
             email: 'parent@example.com',
             emailQueued: false,
             emailSent: false,
-            emailError: 'Email delivery is pending confirmation.',
+            emailError: 'mail unavailable',
             status: 'pending'
         });
     });
 
-    it('reports callable reuse without claiming another email was sent', async () => {
+    it('uses the idempotent queue coordinate to confirm delivery for a reused invite', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -344,6 +368,7 @@ describe('React app team detail model', () => {
             teamName: 'Bears',
             playerName: 'Pat Star'
         });
+        queueInviteEmail.mockResolvedValue({ queued: true, deduplicated: true });
 
         const result = await createRosterParentInviteForApp(
             'team-1',
@@ -352,14 +377,15 @@ describe('React app team detail model', () => {
             { email: 'parent@example.com', relation: 'Guardian' }
         );
 
-        expect(queueInviteEmail).not.toHaveBeenCalled();
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
         expect(result).toMatchObject({
             code: 'ABCD1234',
             created: false,
             reused: true,
-            emailQueued: false,
+            emailQueued: true,
             emailDeduplicated: true,
-            emailSent: false
+            emailSent: true,
+            emailError: null
         });
     });
 
@@ -382,7 +408,7 @@ describe('React app team detail model', () => {
         expect(queueInviteEmail).not.toHaveBeenCalled();
     });
 
-    it('leaves initial auto-linked email delivery to the server trigger', async () => {
+    it('reports an auto-linked invite as retryable when email queue confirmation fails', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -409,7 +435,7 @@ describe('React app team detail model', () => {
             autoLinked: true,
             emailQueued: false,
             emailSent: false,
-            emailError: 'Email delivery is pending confirmation.'
+            emailError: 'mail unavailable'
         });
     });
 
@@ -476,15 +502,15 @@ describe('React app team detail model', () => {
             'parent@allplays.ai',
             'Guardian'
         );
-        expect(queueInviteEmail).not.toHaveBeenCalled();
+        expect(queueInviteEmail).toHaveBeenNthCalledWith(1, 'SIBLING1');
+        expect(queueInviteEmail).toHaveBeenNthCalledWith(2, 'SIBLING2');
         expect(result.savedOperations).toEqual(savedOperations);
         expect(result.inviteResults).toEqual([
             {
                 playerId: 'player-1',
                 email: 'parent@allplays.ai',
-                status: 'code-created',
-                emailStatus: 'retryable',
-                error: 'Email delivery is pending confirmation.',
+                status: 'emailed',
+                emailStatus: 'emailed',
                 code: 'SIBLING1'
             },
             {
@@ -492,16 +518,16 @@ describe('React app team detail model', () => {
                 email: 'parent@allplays.ai',
                 status: 'linked',
                 emailStatus: 'retryable',
-                error: 'Email delivery is pending confirmation.',
+                error: 'mail unavailable',
                 code: 'SIBLING2'
             }
         ]);
         expect(result.invitationSummary).toEqual({
             linked: 1,
-            emailed: 0,
-            retryable: 2,
+            emailed: 1,
+            retryable: 1,
             failed: 0,
-            retryableRecipients: ['parent@allplays.ai', 'parent@allplays.ai'],
+            retryableRecipients: ['parent@allplays.ai'],
             failedRecipients: []
         });
     });
