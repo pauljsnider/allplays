@@ -26,6 +26,18 @@ export type FirestoreDocument = {
     fields?: Record<string, FirestoreValue>;
 };
 
+export type NativeChatPageCursor = {
+    kind: 'native-chat-rest';
+    collectionPath: string;
+    orderBy: 'createdAt desc';
+    pageSize: 50;
+    nextPageToken: string | null;
+};
+
+export function isNativeChatPageCursor(value: unknown): value is NativeChatPageCursor {
+    return Boolean(value && typeof value === 'object' && (value as { kind?: unknown }).kind === 'native-chat-rest');
+}
+
 export type FirestoreDecodedDocument = Record<string, unknown> & {
     id: string;
 };
