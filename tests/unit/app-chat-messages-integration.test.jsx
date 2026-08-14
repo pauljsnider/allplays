@@ -2318,14 +2318,17 @@ describe('React app messages integration', () => {
             onMessages(liveMessages, { id: 'oldest-live-doc' });
             return { unsubscribe: vi.fn() };
         });
-        chatMocks.loadOlderTeamChatMessages.mockResolvedValue([
-            chatMessage({
-                id: 'older-1',
-                text: 'Older update',
-                createdAt: new Date('2026-05-20T12:00:00Z'),
-                _doc: { id: 'older-doc' }
-            })
-        ]);
+        chatMocks.loadOlderTeamChatMessages.mockResolvedValue({
+            messages: [
+                chatMessage({
+                    id: 'older-1',
+                    text: 'Older update',
+                    createdAt: new Date('2026-05-20T12:00:00Z'),
+                    _doc: { id: 'older-doc' }
+                })
+            ],
+            cursor: null
+        });
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Load older messages');

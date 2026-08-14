@@ -67,8 +67,10 @@ import type {
   ChatConversationFirestoreRecord,
   ChatMessageFirestoreRecord,
   FirestoreDecodedDocument,
-  FirestoreDocument as NativeFirestoreDocument
+  FirestoreDocument as NativeFirestoreDocument,
+  NativeChatPageCursor
 } from './firestore/types';
+import { isNativeChatPageCursor } from './firestore/types';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -81,6 +83,8 @@ const nativeChatUnreadCountConcurrency = 6;
 const nativeChatUnreadConversationLimit = 26;
 const nativeChatUnreadAggregationRequestLimit = 240;
 const nativeChatUnreadJobLimit = nativeChatUnreadAggregationRequestLimit / 2;
+const nativeChatPageOrder = 'createdAt desc' as const;
+const nativeChatPageSize = 50 as const;
 export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const logger = createLogger('chat-service');
 
@@ -380,13 +384,29 @@ async function nativeGetDocument(path: string) {
 }
 
 async function nativeListCollection(path: string, params: Record<string, string | number> = {}) {
+  return (await nativeListCollectionPage(path, params)).documents;
+}
+
+async function nativeListCollectionPage(path: string, params: Record<string, string | number> = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => query.set(key, String(value)));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const payload = await nativeFirestoreRequest(`/${path}${suffix}`);
-  return (payload.documents || [])
-    .map((document: NativeFirestoreDocument) => mapFirestoreDocument(document))
-    .filter(Boolean) as FirestoreDocument[];
+  const payload = await nativeFirestoreRequest(`/${path}${suffix}`) as {
+    documents?: NativeFirestoreDocument[];
+    nextPageToken?: unknown;
+  };
+  if (payload.nextPageToken != null && typeof payload.nextPageToken !== 'string') {
+    throw new Error('Native Firestore pagination returned an invalid nextPageToken.');
+  }
+  const nextPageToken = typeof payload.nextPageToken === 'string' && payload.nextPageToken.trim()
+    ? payload.nextPageToken
+    : null;
+  return {
+    documents: (payload.documents || [])
+      .map((document: NativeFirestoreDocument) => mapFirestoreDocument(document))
+      .filter(Boolean) as FirestoreDocument[],
+    nextPageToken
+  };
 }
 
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
@@ -703,6 +723,29 @@ function getMessageCollectionPath(teamId: string, conversationId = DEFAULT_TEAM_
 
 function getMessageDocumentPath(teamId: string, messageId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
   return `${getMessageCollectionPath(teamId, conversationId)}/${encodeURIComponent(messageId)}`;
+}
+
+function createNativeChatPageCursor(collectionPath: string, nextPageToken: string | null): NativeChatPageCursor {
+  return {
+    kind: 'native-chat-rest',
+    collectionPath,
+    orderBy: nativeChatPageOrder,
+    pageSize: nativeChatPageSize,
+    nextPageToken
+  };
+}
+
+function validateNativeChatPageCursor(cursor: NativeChatPageCursor, expectedCollectionPath: string) {
+  if (
+    cursor.collectionPath !== expectedCollectionPath
+    || cursor.orderBy !== nativeChatPageOrder
+    || cursor.pageSize !== nativeChatPageSize
+  ) {
+    throw new Error('Native chat pagination cursor does not match the active conversation.');
+  }
+  if (cursor.nextPageToken !== null && typeof cursor.nextPageToken !== 'string') {
+    throw new Error('Native chat pagination cursor has an invalid nextPageToken.');
+  }
 }
 
 function mapUserWithProfile(user: AuthUser, profile: Record<string, any>) {
@@ -1567,16 +1610,21 @@ export function subscribeToTeamChatMessages(
     const load = async () => {
       if (cancelled) return;
       try {
-        const messages = await nativeListCollection(getMessageCollectionPath(teamId, conversationId), {
-          orderBy: 'createdAt desc',
-          pageSize: 50
+        const collectionPath = getMessageCollectionPath(teamId, conversationId);
+        const page = await nativeListCollectionPage(collectionPath, {
+          orderBy: nativeChatPageOrder,
+          pageSize: nativeChatPageSize
         });
         if (cancelled) return;
-        const mappedMessages = mapChatMessageRecords(messages);
-        const messageRevision = getChatMessageListRevision(mappedMessages);
+        const mappedMessages = mapChatMessageRecords(page.documents);
+        const cursor = createNativeChatPageCursor(collectionPath, page.nextPageToken);
+        const messageRevision = JSON.stringify({
+          messages: getChatMessageListRevision(mappedMessages),
+          nextPageToken: cursor.nextPageToken
+        });
         if (messageRevision === lastNativeMessageRevision) return;
         lastNativeMessageRevision = messageRevision;
-        onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
+        onMessages(mappedMessages, cursor);
       } catch (error: any) {
         if (!cancelled) onError?.(error);
       }
@@ -1611,20 +1659,40 @@ export function subscribeToTeamChatMessages(
   };
 }
 
-export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null) {
-  if (!startAfterDoc) return [];
-  try {
-    const messages = await withTimeout(Promise.resolve(getChatMessages(teamId, {
-      limit: 50,
-      startAfterDoc,
-      conversationId
-    })), 'Older chat messages load') as ChatMessage[];
-    return mapChatMessageRecords(messages);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logger.warn('Older chat history is limited in native REST fallback.', { error });
-    return [];
+export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null): Promise<{
+  messages: ChatMessage[];
+  cursor: unknown | null;
+}> {
+  if (!startAfterDoc) return { messages: [], cursor: null };
+  if (isNativeChatPageCursor(startAfterDoc)) {
+    const collectionPath = getMessageCollectionPath(teamId, conversationId);
+    validateNativeChatPageCursor(startAfterDoc, collectionPath);
+    if (!startAfterDoc.nextPageToken?.trim()) {
+      return { messages: [], cursor: createNativeChatPageCursor(collectionPath, null) };
+    }
+    const page = await nativeListCollectionPage(collectionPath, {
+      orderBy: nativeChatPageOrder,
+      pageSize: nativeChatPageSize,
+      pageToken: startAfterDoc.nextPageToken
+    });
+    return {
+      messages: mapChatMessageRecords(page.documents),
+      cursor: createNativeChatPageCursor(collectionPath, page.nextPageToken)
+    };
   }
+
+  const messages = await withTimeout(Promise.resolve(getChatMessages(teamId, {
+    limit: 50,
+    startAfterDoc,
+    conversationId
+  })), 'Older chat messages load') as ChatMessage[];
+  const mappedMessages = mapChatMessageRecords(messages);
+  return {
+    messages: mappedMessages,
+    cursor: mappedMessages.length >= nativeChatPageSize
+      ? mappedMessages[mappedMessages.length - 1]?._doc || null
+      : null
+  };
 }
 
 async function nativeUploadChatMedia(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {

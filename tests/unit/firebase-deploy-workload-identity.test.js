@@ -185,7 +185,7 @@ describe('Firebase deploy Workload Identity boundary', () => {
             retryEnabledExports.add(`functions:${match[1]}`);
         }
         for (const match of functionsSource.matchAll(
-            /exports\.([A-Za-z0-9_]+)\s*=\s*retryableNotificationFunctions\./g
+            /exports\.([A-Za-z0-9_]+)\s*=\s*retryable[A-Za-z0-9_]*Functions\./g
         )) {
             retryEnabledExports.add(`functions:${match[1]}`);
         }

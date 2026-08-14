@@ -5,6 +5,7 @@ import {
   type ChatMessage
 } from '../../../lib/chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID, getSortedChatMessages, mergeChatMessageLists } from '../../../lib/chatLogic';
+import { isNativeChatPageCursor } from '../../../lib/firestore/types';
 import type { AuthState } from '../../../lib/types';
 
 type UseChatMessagesParams = {
@@ -45,28 +46,33 @@ export function useChatMessages({
 }: UseChatMessagesParams) {
   const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
   const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([]);
-  const [liveOldestDoc, setLiveOldestDoc] = useState<unknown | null>(null);
+  const [paginationCursor, setPaginationCursor] = useState<unknown | null>(null);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryVersion, setRetryVersion] = useState(0);
   const initialSnapshotLoadedRef = useRef(false);
+  const olderPaginationStartedRef = useRef(false);
+  const olderLoadGenerationRef = useRef(0);
   const conversationId = normalizeConversationId(selectedConversationId);
   const canSubscribe = Boolean(enabled && team && user);
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
+    const generation = ++olderLoadGenerationRef.current;
+    setLoadingOlder(false);
     if (!canSubscribe) return undefined;
 
     setLoadingMessages(true);
     setError(null);
     setOlderMessages([]);
     setLiveMessages([]);
-    setLiveOldestDoc(null);
+    setPaginationCursor(null);
     setHasMoreMessages(false);
     initialSnapshotLoadedRef.current = false;
+    olderPaginationStartedRef.current = false;
     onMessagesReset?.();
 
     const subscription = subscribeToTeamChatMessages(
@@ -75,9 +81,14 @@ export function useChatMessages({
       (incomingMessages, oldestDoc) => {
         const isInitialSnapshot = !initialSnapshotLoadedRef.current;
         const wasNearBottom = onBeforeLiveUpdate?.() ?? true;
-        setLiveOldestDoc(oldestDoc || incomingMessages[incomingMessages.length - 1]?._doc || null);
+        const incomingCursor = oldestDoc || incomingMessages[incomingMessages.length - 1]?._doc || null;
+        if (!olderPaginationStartedRef.current) {
+          setPaginationCursor(incomingCursor);
+          setHasMoreMessages(isNativeChatPageCursor(incomingCursor)
+            ? Boolean(incomingCursor.nextPageToken)
+            : incomingMessages.length >= 50);
+        }
         setLiveMessages(getSortedChatMessages(incomingMessages));
-        setHasMoreMessages(incomingMessages.length >= 50);
         setLoadingMessages(false);
         onLiveUpdateState?.({ isInitialSnapshot, wasNearBottom });
         initialSnapshotLoadedRef.current = true;
@@ -90,42 +101,62 @@ export function useChatMessages({
     );
 
     return () => {
+      if (olderLoadGenerationRef.current === generation) {
+        olderLoadGenerationRef.current += 1;
+      }
       subscription.unsubscribe();
     };
   }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
+    olderLoadGenerationRef.current += 1;
     setLoadingMessages(true);
+    setLoadingOlder(false);
     setError(null);
     setOlderMessages([]);
     setLiveMessages([]);
-    setLiveOldestDoc(null);
+    setPaginationCursor(null);
     setHasMoreMessages(false);
     initialSnapshotLoadedRef.current = false;
+    olderPaginationStartedRef.current = false;
     onMessagesReset?.();
     setRetryVersion((current) => current + 1);
   }, [onMessagesReset, team, user]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlder || !hasMoreMessages) return;
-    const cursor = olderMessages[0]?._doc || liveOldestDoc;
+    const cursor = paginationCursor;
     if (!cursor) return;
+    const generation = olderLoadGenerationRef.current;
+    olderPaginationStartedRef.current = true;
     setLoadingOlder(true);
+    setError(null);
     try {
-      const batch = await loadOlderTeamChatMessages(teamId, conversationId, cursor);
-      if (batch.length < 50) setHasMoreMessages(false);
-      setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
+      const page = await loadOlderTeamChatMessages(teamId, conversationId, cursor);
+      if (generation !== olderLoadGenerationRef.current) return;
+      setPaginationCursor(page.cursor);
+      if (isNativeChatPageCursor(cursor)) {
+        setHasMoreMessages(isNativeChatPageCursor(page.cursor) && Boolean(page.cursor.nextPageToken));
+      } else if (page.messages.length < 50) {
+        setHasMoreMessages(false);
+      }
+      setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(page.messages), current));
+    } catch (loadError) {
+      if (generation !== olderLoadGenerationRef.current) return;
+      setError(getChatMessagesErrorMessage(loadError));
     } finally {
-      setLoadingOlder(false);
+      if (generation === olderLoadGenerationRef.current) {
+        setLoadingOlder(false);
+      }
     }
-  }, [conversationId, hasMoreMessages, liveOldestDoc, loadingOlder, olderMessages, teamId]);
+  }, [conversationId, hasMoreMessages, loadingOlder, paginationCursor, teamId]);
 
   return {
     liveMessages,
     olderMessages,
     messages,
-    liveOldestDoc,
+    liveOldestDoc: paginationCursor,
     hasMoreMessages,
     loadingMessages,
     loadingOlder,

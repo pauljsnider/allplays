@@ -1089,17 +1089,20 @@ describe('React app chat recipient service', () => {
                 updatedAt: new Date('2026-06-19T19:00:00.000Z')
             })
         ]);
-        expect(messages).toEqual([
-            expect.objectContaining({
-                id: 'message-1',
-                text: 'Bring water',
-                reactions: {
-                    heart: ['user-2']
-                },
-                mentionedUids: ['user-3'],
-                createdAt: new Date('2026-06-19T19:02:00.000Z')
-            })
-        ]);
+        expect(messages).toEqual({
+            messages: [
+                expect.objectContaining({
+                    id: 'message-1',
+                    text: 'Bring water',
+                    reactions: {
+                        heart: ['user-2']
+                    },
+                    mentionedUids: ['user-3'],
+                    createdAt: new Date('2026-06-19T19:02:00.000Z')
+                })
+            ],
+            cursor: null
+        });
     });
 
     it('requests and returns an active deep-linked conversation when the recent page omits it', async () => {

@@ -19,17 +19,26 @@ describe('media and award notification contract', () => {
     });
 
     it('dispatches due media batches with current visibility re-checks and media dedup keys', () => {
-        expect(functionsSource).toContain('async function dispatchDueTeamMediaNotificationBatches(now = new Date())');
+        expect(functionsSource).toContain('async function dispatchDueTeamMediaNotificationBatches(now = new Date(), options = {})');
         expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
         expect(functionsSource).toContain(".where('status', '==', 'pending')");
-        expect(functionsSource).toContain(".where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))");
+        expect(functionsSource).toContain(".where('dueAt', '<=', admin.firestore.Timestamp.fromDate(new Date(dueIso)))");
+        expect(functionsSource).toContain(".orderBy('dueAt', 'asc')");
+        expect(functionsSource).toContain('.limit(limit || TEAM_MEDIA_NOTIFICATION_QUERY_PAGE_SIZE)');
+        expect(functionsSource).toContain('maxPages: options.maxPages || TEAM_MEDIA_NOTIFICATION_MAX_PAGES_PER_RUN');
+        expect(functionsSource).toContain('maxRuntimeMs: options.maxRuntimeMs || TEAM_MEDIA_NOTIFICATION_MAX_RUNTIME_MS');
+        expect(functionsSource).toContain("stoppedBecause: drainSummary.stoppedBecause");
+        expect(functionsSource).toContain('processedCount: processedResults.length');
+        expect(functionsSource).toContain("backlogDrained: drainSummary.stoppedBecause === 'drained' && releasedPendingCount === 0");
         expect(functionsSource).toContain('const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);');
         expect(functionsSource).toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_found\');');
         expect(functionsSource).not.toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_team_visible\');');
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
         expect(functionsSource).toContain('audienceContext');
-        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('const retryableTeamMediaNotificationFunctions = functions.runWith({');
+        expect(functionsSource).toContain('timeoutSeconds: 540');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableTeamMediaNotificationFunctions.pubsub');
         expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
         expect(firestoreIndexes).toContain('"fieldPath": "status"');
         expect(firestoreIndexes).toContain('"fieldPath": "dueAt"');

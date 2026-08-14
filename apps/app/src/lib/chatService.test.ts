@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
-import type { FirestoreDocument } from './firestore/types';
+import type { FirestoreDocument, NativeChatPageCursor } from './firestore/types';
 
 const legacyChatServiceMocks = vi.hoisted(() => ({
   GoogleAIBackend: class GoogleAIBackend {},
@@ -1425,13 +1425,16 @@ describe('subscribeToTeamChatMessages', () => {
     };
   }
 
-  function mockNativePolls(payloads: Array<Array<ReturnType<typeof nativeMessageDocument>>>) {
+  function mockNativePolls(payloads: Array<Array<ReturnType<typeof nativeMessageDocument>> | {
+    documents: Array<ReturnType<typeof nativeMessageDocument>>;
+    nextPageToken?: unknown;
+  }>) {
     const fetchMock = vi.fn().mockImplementation(() => {
-      const documents = payloads[Math.min(fetchMock.mock.calls.length - 1, payloads.length - 1)];
+      const payload = payloads[Math.min(fetchMock.mock.calls.length - 1, payloads.length - 1)];
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: vi.fn().mockResolvedValue({ documents })
+        json: vi.fn().mockResolvedValue(Array.isArray(payload) ? { documents: payload } : payload)
       });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -1503,6 +1506,177 @@ describe('subscribeToTeamChatMessages', () => {
     subscription.unsubscribe();
     await vi.advanceTimersByTimeAsync(16000);
     expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('propagates and replaces native REST page cursors through terminal history', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const firstPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`latest-${index}`));
+    const secondPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`older-${index}`));
+    const terminalPage = Array.from({ length: 50 }, (_, index) => nativeMessageDocument(`oldest-${index}`));
+    const fetchMock = mockNativePolls([
+      { documents: firstPage, nextPageToken: 'token/one+=' },
+      { documents: secondPage, nextPageToken: 'token two' },
+      { documents: terminalPage }
+    ]);
+    const onMessages = vi.fn();
+
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    await vi.advanceTimersByTimeAsync(0);
+
+    const firstCursor = onMessages.mock.calls[0][1] as NativeChatPageCursor;
+    expect(firstCursor).toEqual({
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-1/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'token/one+='
+    });
+    expect(new URL(fetchMock.mock.calls[0][0]).searchParams.get('pageToken')).toBeNull();
+
+    const second = await loadOlderTeamChatMessages('team-1', 'team', firstCursor);
+    expect(second.messages).toHaveLength(50);
+    expect(second.cursor).toEqual(expect.objectContaining({ nextPageToken: 'token two' }));
+    const secondUrl = new URL(fetchMock.mock.calls[1][0]);
+    expect(secondUrl.pathname).toContain('/documents/teams/team-1/chatMessages');
+    expect(Object.fromEntries(secondUrl.searchParams)).toEqual({
+      orderBy: 'createdAt desc',
+      pageSize: '50',
+      pageToken: 'token/one+='
+    });
+
+    const terminal = await loadOlderTeamChatMessages('team-1', 'team', second.cursor);
+    expect(terminal.messages).toHaveLength(50);
+    expect(terminal.cursor).toEqual(expect.objectContaining({ nextPageToken: null }));
+    expect(new URL(fetchMock.mock.calls[2][0]).searchParams.get('pageToken')).toBe('token two');
+
+    subscription.unsubscribe();
+  });
+
+  it('keeps nested native conversation paths scoped across pagination', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const fetchMock = mockNativePolls([
+      { documents: [nativeMessageDocument('nested-latest')], nextPageToken: 'nested-token' },
+      { documents: [nativeMessageDocument('nested-older')] }
+    ]);
+    const onMessages = vi.fn();
+
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'group_role%3Astaff', onMessages);
+    await vi.advanceTimersByTimeAsync(0);
+    const cursor = onMessages.mock.calls[0][1] as NativeChatPageCursor;
+
+    expect(cursor.collectionPath).toBe('teams/team-1/chatConversations/group_role%253Astaff/chatMessages');
+    await loadOlderTeamChatMessages('team-1', 'group_role%3Astaff', cursor);
+    const olderUrl = new URL(fetchMock.mock.calls[1][0]);
+    expect(olderUrl.pathname).toContain('/documents/teams/team-1/chatConversations/group_role%253Astaff/chatMessages');
+    expect(olderUrl.searchParams.get('orderBy')).toBe('createdAt desc');
+    expect(olderUrl.searchParams.get('pageSize')).toBe('50');
+    expect(olderUrl.searchParams.get('pageToken')).toBe('nested-token');
+
+    subscription.unsubscribe();
+  });
+
+  it('emits native cursor-only changes that affect pagination state', async () => {
+    vi.useFakeTimers();
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const document = nativeMessageDocument('message-1');
+    mockNativePolls([
+      { documents: [document], nextPageToken: 'token-1' },
+      { documents: [document], nextPageToken: 'token-2' },
+      { documents: [document] }
+    ]);
+    const onMessages = vi.fn();
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages);
+    await vi.advanceTimersByTimeAsync(16000);
+
+    expect(onMessages).toHaveBeenCalledTimes(3);
+    expect(onMessages.mock.calls.map(([, cursor]) => cursor.nextPageToken)).toEqual(['token-1', 'token-2', null]);
+    subscription.unsubscribe();
+  });
+
+  it('rejects invalid native page metadata and REST pagination failures', async () => {
+    nativeRuntime.isNativePlatform = true;
+    legacyChatServiceMocks.subscribeToChatMessages.mockImplementation(() => {
+      throw new Error('Firestore listener unavailable');
+    });
+    const invalidFetch = mockNativePolls([{ documents: [nativeMessageDocument('message-1')], nextPageToken: 42 }]);
+    const onError = vi.fn();
+    const { loadOlderTeamChatMessages, subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', vi.fn(), onError);
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('nextPageToken')
+    })));
+    subscription.unsubscribe();
+    expect(invalidFetch).toHaveBeenCalledTimes(1);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: vi.fn().mockResolvedValue({ error: { message: 'Firestore unavailable' } })
+    }));
+    const cursor: NativeChatPageCursor = {
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-1/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'retry-token'
+    };
+    await expect(loadOlderTeamChatMessages('team-1', 'team', cursor)).rejects.toThrow('Firestore unavailable');
+  });
+
+  it('rejects a native cursor from another conversation before requesting it', async () => {
+    nativeRuntime.isNativePlatform = true;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const cursor: NativeChatPageCursor = {
+      kind: 'native-chat-rest',
+      collectionPath: 'teams/team-2/chatMessages',
+      orderBy: 'createdAt desc',
+      pageSize: 50,
+      nextPageToken: 'wrong-scope-token'
+    };
+
+    const { loadOlderTeamChatMessages } = await import('./chatService');
+    await expect(loadOlderTeamChatMessages('team-1', 'team', cursor)).rejects.toThrow('active conversation');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves browser DocumentSnapshot pagination without making REST requests', async () => {
+    const webCursor = { id: 'snapshot-50' };
+    const nextWebCursor = { id: 'snapshot-100' };
+    legacyChatServiceMocks.getChatMessages.mockResolvedValue([
+      { id: 'older-message', text: 'Older', createdAt: { seconds: 1 }, _doc: nextWebCursor }
+    ]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadOlderTeamChatMessages } = await import('./chatService');
+    const page = await loadOlderTeamChatMessages('team-1', 'team', webCursor);
+
+    expect(legacyChatServiceMocks.getChatMessages).toHaveBeenCalledWith('team-1', {
+      limit: 50,
+      startAfterDoc: webCursor,
+      conversationId: 'team'
+    });
+    expect(page).toEqual({
+      messages: [expect.objectContaining({ id: 'older-message', _doc: nextWebCursor })],
+      cursor: null
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not emit or report errors after an in-flight native poll is unsubscribed', async () => {
