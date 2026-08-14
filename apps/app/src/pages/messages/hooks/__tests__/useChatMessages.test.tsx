@@ -47,6 +47,16 @@ function nativeCursor(nextPageToken: string | null): NativeChatPageCursor {
     };
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
 function MessagesProbe({
     conversationId = 'team',
     enabled = true,
@@ -151,6 +161,64 @@ describe('useChatMessages', () => {
         expect(screen.getByTestId('loading').textContent).toBe('true');
         expect(screen.getByTestId('message-ids').textContent).toBe('');
         expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
+    });
+
+    it('ignores an older-page success from the previous conversation', async () => {
+        const stalePage = deferred<Awaited<ReturnType<typeof loadOlderTeamChatMessages>>>();
+        const teamCursor = nativeCursor('team-token');
+        const staffCursor = nativeCursor('staff-token');
+        vi.mocked(loadOlderTeamChatMessages)
+            .mockReturnValueOnce(stalePage.promise)
+            .mockResolvedValueOnce({ messages: [], cursor: nativeCursor(null) });
+        const { rerender } = render(<MessagesProbe conversationId="team" />);
+        act(() => {
+            liveCallback?.([message('team-live', 20, null)], teamCursor);
+        });
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('true'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+        await waitFor(() => expect(loadOlderTeamChatMessages).toHaveBeenCalledWith('team-1', 'team', teamCursor));
+        rerender(<MessagesProbe conversationId="staff" />);
+        act(() => {
+            liveCallback?.([message('staff-live', 30, null)], staffCursor);
+        });
+
+        await act(async () => {
+            stalePage.resolve({ messages: [message('stale-team-page', 5)], cursor: nativeCursor(null) });
+            await stalePage.promise;
+        });
+
+        expect(screen.getByTestId('message-ids').textContent).toBe('staff-live');
+        expect(screen.getByTestId('has-more').textContent).toBe('true');
+        expect(screen.getByTestId('loading-older').textContent).toBe('false');
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+        await waitFor(() => expect(loadOlderTeamChatMessages).toHaveBeenNthCalledWith(2, 'team-1', 'staff', staffCursor));
+    });
+
+    it('ignores an older-page failure from the previous conversation', async () => {
+        const stalePage = deferred<Awaited<ReturnType<typeof loadOlderTeamChatMessages>>>();
+        vi.mocked(loadOlderTeamChatMessages).mockReturnValueOnce(stalePage.promise);
+        const { rerender } = render(<MessagesProbe conversationId="team" />);
+        act(() => {
+            liveCallback?.([message('team-live', 20, null)], nativeCursor('team-token'));
+        });
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('true'));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+        await waitFor(() => expect(screen.getByTestId('loading-older').textContent).toBe('true'));
+        rerender(<MessagesProbe conversationId="staff" />);
+        act(() => {
+            liveCallback?.([message('staff-live', 30, null)], nativeCursor(null));
+        });
+
+        await act(async () => {
+            stalePage.reject(new Error('stale load failed'));
+            await stalePage.promise.catch(() => undefined);
+        });
+
+        expect(screen.getByTestId('message-ids').textContent).toBe('staff-live');
+        expect(screen.getByTestId('error').textContent).toBe('');
+        expect(screen.getByTestId('loading-older').textContent).toBe('false');
     });
 
     it('prepends older messages and clears the pagination flag on short batches', async () => {

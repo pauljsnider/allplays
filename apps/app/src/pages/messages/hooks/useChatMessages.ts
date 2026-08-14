@@ -54,12 +54,15 @@ export function useChatMessages({
   const [retryVersion, setRetryVersion] = useState(0);
   const initialSnapshotLoadedRef = useRef(false);
   const olderPaginationStartedRef = useRef(false);
+  const olderLoadGenerationRef = useRef(0);
   const conversationId = normalizeConversationId(selectedConversationId);
   const canSubscribe = Boolean(enabled && team && user);
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
+    const generation = ++olderLoadGenerationRef.current;
+    setLoadingOlder(false);
     if (!canSubscribe) return undefined;
 
     setLoadingMessages(true);
@@ -98,13 +101,18 @@ export function useChatMessages({
     );
 
     return () => {
+      if (olderLoadGenerationRef.current === generation) {
+        olderLoadGenerationRef.current += 1;
+      }
       subscription.unsubscribe();
     };
   }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
+    olderLoadGenerationRef.current += 1;
     setLoadingMessages(true);
+    setLoadingOlder(false);
     setError(null);
     setOlderMessages([]);
     setLiveMessages([]);
@@ -120,11 +128,13 @@ export function useChatMessages({
     if (loadingOlder || !hasMoreMessages) return;
     const cursor = paginationCursor;
     if (!cursor) return;
+    const generation = olderLoadGenerationRef.current;
     olderPaginationStartedRef.current = true;
     setLoadingOlder(true);
     setError(null);
     try {
       const page = await loadOlderTeamChatMessages(teamId, conversationId, cursor);
+      if (generation !== olderLoadGenerationRef.current) return;
       setPaginationCursor(page.cursor);
       if (isNativeChatPageCursor(cursor)) {
         setHasMoreMessages(isNativeChatPageCursor(page.cursor) && Boolean(page.cursor.nextPageToken));
@@ -133,9 +143,12 @@ export function useChatMessages({
       }
       setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(page.messages), current));
     } catch (loadError) {
+      if (generation !== olderLoadGenerationRef.current) return;
       setError(getChatMessagesErrorMessage(loadError));
     } finally {
-      setLoadingOlder(false);
+      if (generation === olderLoadGenerationRef.current) {
+        setLoadingOlder(false);
+      }
     }
   }, [conversationId, hasMoreMessages, loadingOlder, paginationCursor, teamId]);
 
