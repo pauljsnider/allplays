@@ -36,6 +36,7 @@ const dbMocks = vi.hoisted(() => ({
 
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => ({ functions: {}, httpsCallable: vi.fn() }));
 vi.mock('../../js/vendor/firebase-app.js', () => ({ getApp: vi.fn() }));
 vi.mock('../../js/vendor/firebase-ai.js', () => ({ getAI: vi.fn(), getGenerativeModel: vi.fn(), GoogleAIBackend: {} }));
 vi.mock('../../js/firebase-runtime-config.js', () => ({ resolveImageFirebaseConfig: vi.fn() }));
