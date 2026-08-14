@@ -36,7 +36,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('CSVs up to 10 MB each');
         expect(pageHtml).toContain('Save video link');
         expect(pageJs).toMatch(/import \{ checkAuth \} from '\.\/auth\.js\?v=\d+';/);
-        expect(pageJs).toContain("from './db.js?v=4433170'");
+        expect(pageJs).toContain("from './db.js?v=4433171'");
         expect(pageJs).toContain('getDelegatedTeamContext');
         expect(pageJs).not.toMatch(/\bgetTeam\(/);
         expect(pageJs).toContain('normalizeTeamMediaVideoDraft');

@@ -299,9 +299,9 @@
   <script type="module">
     // Render the real site header immediately (renderHeader is Firebase-free, so it works on localhost too),
     // then upgrade to the auth-aware version on the deployed site. Firebase is disabled on localhost.
-    import { renderHeader } from './js/utils.js?v=443346';
+    import { renderHeader } from './js/utils.js?v=443347';
     renderHeader(document.getElementById('header-container'), null);
-    import('./js/auth.js?v=4433172').then(({ checkAuth }) => checkAuth((user) => {
+    import('./js/auth.js?v=4433173').then(({ checkAuth }) => checkAuth((user) => {
       if (user) {
         window.location.replace('/app/' + window.location.search + window.location.hash);
         return;

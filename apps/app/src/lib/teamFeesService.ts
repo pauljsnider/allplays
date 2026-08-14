@@ -1,4 +1,4 @@
-import { createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
+import { assertTeamFeeRecipientLimit, createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, listTeamFeeBatches, listTeamFeeRecipients, normalizeTeamFeeRecipientIds, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
 import { appendAppRouteParams, buildAppUrl, getPublicAppOrigin } from './appLinks';
 import type { AuthUser } from './types';
 
@@ -410,10 +410,16 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
   if (amountCents === null || amountCents <= 0) throw new Error('Enter an amount greater than $0.');
   if (!normalizeString(dueDate)) throw new Error('Enter a due date.');
 
+  const seenActivePlayerIds = new Set<string>();
   const activePlayers = ((await Promise.resolve(getPlayers(teamId))) as any[])
     .filter((player) => player?.active !== false)
     .map(toRosterPlayer)
-    .filter((player) => player.id);
+    .map((player) => ({ ...player, id: normalizeTeamFeeRecipientIds([player.id])[0] || '' }))
+    .filter((player) => {
+      if (!player.id || seenActivePlayerIds.has(player.id)) return false;
+      seenActivePlayerIds.add(player.id);
+      return true;
+    });
   const activePlayersById = new Map(activePlayers.map((player) => [player.id, player]));
   const requestedRecipientIds = Array.from(new Set((recipientIds || []).map(normalizeString).filter(Boolean)));
   const invalidRecipientIds = requestedRecipientIds.filter((recipientId) => !activePlayersById.has(recipientId));
@@ -426,6 +432,7 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     : requestedRecipientIds.map((recipientId) => activePlayersById.get(recipientId)).filter(Boolean) as TeamFeeRosterPlayer[];
 
   if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
+  assertTeamFeeRecipientLimit(selectedPlayers.length);
 
   const installments = installmentPlan ? buildTeamFeeInstallmentDraft({
     amount,
