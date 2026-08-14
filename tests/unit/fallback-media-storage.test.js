@@ -53,6 +53,20 @@ function canCreateScopedFallback({ authUid, pathUserId, conversationId = 'team',
     return canAccessChatAttachment({ authUid, conversationId, isTeamAdmin, isTeamParent, isParticipant }) && authUid === pathUserId;
 }
 
+function isAllowedDrillDiagramUpload({ size, contentType }) {
+    return size > 0 &&
+        size <= 20 * 1024 * 1024 &&
+        contentType.startsWith('image/');
+}
+
+function canCreateDrillFallback({ authUid, pathUserId, isTeamAdmin = false, drillId = 'drill-1', size = 1024, contentType = 'image/png' }) {
+    return authUid !== null &&
+        isTeamAdmin &&
+        drillId.length > 0 &&
+        authUid === pathUserId &&
+        isAllowedDrillDiagramUpload({ size, contentType });
+}
+
 function canDeleteChatFallback({ authUid, pathUserId, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
     return authUid !== null &&
         (isTeamAdmin ||
@@ -224,15 +238,23 @@ describe('fallback media paths and Storage rules', () => {
         expect(statSheetFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
         expect(drillFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
+        expect(drillFallbackRules).toContain('allow create: if isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&');
         expect(drillFallbackRules).toContain('drillId.size() > 0');
         expect(drillFallbackRules).toContain('request.auth.uid == userId');
+        expect(drillFallbackRules).toContain('isAllowedDrillDiagramUpload(request.resource.contentType, request.resource.size);');
+        expect(drillFallbackRules).not.toContain('canAccessTeamMedia(teamId) &&\n        drillId.size() > 0');
         expect(drillFallbackRules).toContain('allow delete: if isVerifiedForSensitiveWrite() &&\n        (isTeamOwnerOrAdmin(teamId) || canDeleteOwnTeamScopedUpload(teamId, userId));');
         expect(drillFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
         expect(canAccessTeamMedia({ authUid: 'coach-1', isTeamAdmin: true })).toBe(true);
         expect(canAccessTeamMedia({ authUid: 'outsider-1' })).toBe(false);
-        expect(canCreateScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: true })).toBe(true);
-        expect(canCreateScopedFallback({ authUid: 'outsider-1', pathUserId: 'scorekeeper-1' })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'coach-1', isTeamAdmin: true, size: 20 * 1024 * 1024 })).toBe(true);
+        expect(canCreateDrillFallback({ authUid: 'parent-1', pathUserId: 'parent-1' })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'other-1', isTeamAdmin: true })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'coach-1', isTeamAdmin: true, drillId: '' })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'coach-1', isTeamAdmin: true, size: 0 })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'coach-1', isTeamAdmin: true, contentType: 'text/plain' })).toBe(false);
+        expect(canCreateDrillFallback({ authUid: 'coach-1', pathUserId: 'coach-1', isTeamAdmin: true, size: (20 * 1024 * 1024) + 1 })).toBe(false);
         expect(canDeleteTeamScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: true })).toBe(true);
         expect(canDeleteTeamScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: false })).toBe(false);
         expect(canDeleteTeamScopedFallback({ authUid: 'coach-1', pathUserId: 'scorekeeper-1', isTeamAdmin: true })).toBe(true);

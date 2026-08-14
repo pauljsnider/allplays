@@ -1100,6 +1100,11 @@ export function validateFirebaseRulesCi() {
     assertIncludes(clipFallbackRules, 'request.resource.size > 0', 'Scoped Storage nonempty game clip rules');
     assertIncludes(clipFallbackRules, 'request.resource.size <= 50 * 1024 * 1024', 'Scoped Storage game clip size rules');
     assertIncludes(clipFallbackRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+    assertIncludes(storageRules, 'function isAllowedDrillDiagramUpload(contentType, size)', 'Drill diagram Storage upload validator');
+    assertIncludes(drillFallbackRules, 'allow create: if isVerifiedForSensitiveWrite() &&\n        isTeamOwnerOrAdmin(teamId) &&', 'Drill diagram manager-only create rules');
+    assertIncludes(drillFallbackRules, 'drillId.size() > 0', 'Drill diagram nonempty drill scope');
+    assertIncludes(drillFallbackRules, 'request.auth.uid == userId', 'Drill diagram uploader match rules');
+    assertIncludes(drillFallbackRules, 'isAllowedDrillDiagramUpload(request.resource.contentType, request.resource.size);', 'Drill diagram bounded image rules');
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
