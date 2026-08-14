@@ -557,6 +557,48 @@ describe('React app team fee offline payment service', () => {
         ], expect.any(Object));
     });
 
+    it('preserves the 499-recipient limit for whole-roster creation after deduplication', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        const activePlayers = Array.from({ length: 499 }, (_, index) => ({
+            id: `player-${index + 1}`,
+            name: `Player ${index + 1}`,
+            active: true
+        }));
+        dbMocks.getPlayers.mockResolvedValue([...activePlayers, { ...activePlayers[0], id: '  player-1  ' }]);
+        dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-limit' });
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Program fee',
+            amount: '10.00',
+            dueDate: '2026-07-01',
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).resolves.toEqual({ id: 'batch-limit' });
+
+        expect(dbMocks.createTeamFeeBatch.mock.calls[0][2]).toHaveLength(499);
+    });
+
+    it('rejects an oversized whole roster before delegating to Firestore creation', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue(Array.from({ length: 500 }, (_, index) => ({
+            id: `player-${index + 1}`,
+            name: `Player ${index + 1}`,
+            active: true
+        })));
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Program fee',
+            amount: '10.00',
+            dueDate: '2026-07-01',
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).rejects.toThrow('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.');
+
+        expect(dbMocks.createTeamFeeBatch).not.toHaveBeenCalled();
+    });
+
     it('writes manualPayment and paymentLedger updates to the existing recipient document', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.updateTeamFeeRecipient.mockResolvedValue(undefined);

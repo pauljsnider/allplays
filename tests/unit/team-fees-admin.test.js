@@ -1,8 +1,8 @@
 // tests/unit/team-fees-admin.test.js
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate, buildTeamFeeRecipientRecords, isTeamFeeAdmin } from '../../js/team-fees-admin.js'; // Adjusted path
+import { describe, it, expect, vi } from 'vitest'; // Import Vitest globals
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, renderCreateTeamFeeMode, normalizeTeamFeeDraft, buildCancelRecipientUpdate, buildTeamFeeRecipientRecords, isTeamFeeAdmin } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('does not grant fee administration from a stale profile email', () => {
@@ -27,8 +27,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=4433170')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=443341"></script>');
+        expect(adminSource).toContain("import('./db.js?v=4433171')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=443342"></script>');
     });
 
     it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {
@@ -111,6 +111,60 @@ describe('normalizeTeamFeeDraft', () => {
             collectionMode: 'online_stripe',
             offlinePaymentInstructions: ''
         });
+    });
+
+    it('rejects more than 499 distinct recipients after normalizing duplicates', () => {
+        const recipientIdsAtLimit = Array.from({ length: 499 }, (_, index) => `player-${index + 1}`);
+
+        expect(normalizeTeamFeeDraft({
+            ...simpleDraft,
+            recipientIds: [...recipientIdsAtLimit, '  player-1  ']
+        }).recipientIds).toHaveLength(499);
+
+        expect(() => normalizeTeamFeeDraft({
+            ...simpleDraft,
+            recipientIds: [...recipientIdsAtLimit, 'player-500']
+        })).toThrow('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.');
+    });
+
+    it('renders the oversized error and keeps legacy creation retryable', async () => {
+        const dom = new JSDOM('<div id="root"></div>');
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.window.document;
+        const createTeamFeeBatch = vi.fn();
+
+        try {
+            const container = document.getElementById('root');
+            const players = Array.from({ length: 500 }, (_, index) => ({
+                id: `player-${index + 1}`,
+                name: `Player ${index + 1}`
+            }));
+            await renderCreateTeamFeeMode({
+                container,
+                teamId: 'team-1',
+                team: { name: 'Bears' },
+                user: { uid: 'coach-1' },
+                getPlayers: vi.fn(async () => players),
+                createTeamFeeBatch,
+                listTeamFeeBatches: vi.fn(async () => [])
+            });
+
+            const form = document.getElementById('team-fee-form');
+            form.elements.title.value = 'Large roster dues';
+            form.elements.amount.value = '25.00';
+            form.elements.dueDate.value = '2026-09-01';
+            form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+
+            await vi.waitFor(() => expect(document.getElementById('fee-message').textContent)
+                .toBe('A fee batch can include at most 499 recipients. Split the roster into smaller fee batches and try again.'));
+            expect(form.elements.title.value).toBe('Large roster dues');
+            expect(form.querySelector('button[type="submit"]').disabled).toBe(false);
+            expect(createTeamFeeBatch).not.toHaveBeenCalled();
+            expect(document.querySelector('a[href*="batchId="]')).toBeNull();
+        } finally {
+            if (previousDocument === undefined) delete globalThis.document;
+            else globalThis.document = previousDocument;
+        }
     });
 
     it('threads collection mode into recipient records', () => {

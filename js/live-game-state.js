@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=443346';
+import { escapeHtml } from './utils.js?v=443347';
 import { getDefaultLivePeriod, getGoalSportProfile } from './live-sport-config.js';
 
 const statKeyMap = {
