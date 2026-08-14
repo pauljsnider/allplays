@@ -44,6 +44,8 @@ const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
 const nativeWebAuthBridgeTimeoutMs = 15000;
 const nativeWebAuthBridgeMaxAttempts = 2;
+const nativeWebAuthBridgeRetryBaseMs = 2000;
+const nativeWebAuthBridgeRetryMaxMs = 30000;
 const profileHydrationTimeoutMs = 8000;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
@@ -1142,33 +1144,74 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 }
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
+  const nativeRuntime = isNativeRuntime();
   let lastObservedUid: string | null | undefined;
+  let lastEmissionSource: 'native-fallback' | 'web-sdk' | undefined;
   let disposed = false;
   let webAuthUserObserved = false;
   let fallbackEmitted = false;
   let bridgedUidEmittedBeforeObserver: string | null = null;
   let bootstrapRequest: Promise<void> | null = null;
+  let bridgeRetryTimeoutId: number | undefined;
+  let bridgeRetryAttempt = 0;
 
-  const emit = (user: FirebaseUser | null) => {
+  const emit = (user: FirebaseUser | null, source: 'native-fallback' | 'web-sdk' = 'web-sdk') => {
     if (disposed) return;
     const nextUid = user?.uid ?? null;
-    if (lastObservedUid === nextUid) return;
+    const isFallbackToWebSdkTransition = Boolean(
+      user
+      && lastObservedUid === nextUid
+      && lastEmissionSource === 'native-fallback'
+      && source === 'web-sdk'
+    );
+    if (lastObservedUid === nextUid && !isFallbackToWebSdkTransition) return;
     // When the signed-in account changes (including sign-out), purge any cached
     // app data so the incoming user can never read the previous user's data.
     if (lastObservedUid !== undefined && lastObservedUid !== nextUid) {
       clearCachedUserData();
     }
     lastObservedUid = nextUid;
+    lastEmissionSource = source;
     callback(user);
   };
 
   const emitNativeFallback = (fallbackUser = getNativeAuthFallbackUser()) => {
     if (webAuthUserObserved || fallbackEmitted) return;
     fallbackEmitted = true;
-    emit(fallbackUser);
+    emit(fallbackUser, 'native-fallback');
   };
 
-  const bootstrapNativeWebAuth = () => {
+  const clearBridgeRetry = () => {
+    if (bridgeRetryTimeoutId !== undefined) {
+      window.clearTimeout(bridgeRetryTimeoutId);
+      bridgeRetryTimeoutId = undefined;
+    }
+  };
+
+  function scheduleBridgeRetry() {
+    if (
+      disposed
+      || webAuthUserObserved
+      || bootstrapRequest
+      || bridgeRetryTimeoutId !== undefined
+      || !getNativeAuthFallbackUser()?.uid
+      || (typeof navigator !== 'undefined' && navigator.onLine === false)
+    ) {
+      return;
+    }
+
+    const delayMs = Math.min(
+      nativeWebAuthBridgeRetryBaseMs * (2 ** bridgeRetryAttempt),
+      nativeWebAuthBridgeRetryMaxMs
+    );
+    bridgeRetryAttempt += 1;
+    bridgeRetryTimeoutId = window.setTimeout(() => {
+      bridgeRetryTimeoutId = undefined;
+      bootstrapNativeWebAuth();
+    }, delayMs);
+  }
+
+  function bootstrapNativeWebAuth() {
     const fallbackUser = getNativeAuthFallbackUser();
     if (!fallbackUser?.uid) {
       emitNativeFallback(null);
@@ -1180,27 +1223,45 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
     }
     if (bootstrapRequest) return;
 
+    let shouldRetryBridge = false;
     bootstrapRequest = ensureNativeWebViewAuthSession(fallbackUser.uid)
       .then((bridgedUser) => {
+        clearBridgeRetry();
+        bridgeRetryAttempt = 0;
         // signInWithCustomToken normally reaches the SDK observer first. This
         // keeps bootstrap deterministic in tests and unusual WebView runtimes.
         if (!webAuthUserObserved) {
           const bootstrapUser = bridgedUser || fallbackUser;
           bridgedUidEmittedBeforeObserver = bootstrapUser.uid;
-          emit(bootstrapUser);
+          emit(bootstrapUser, 'web-sdk');
         }
       })
       .catch((error) => {
         logger.warn('Unable to authenticate the WebView Firebase session.', { error });
         emitNativeFallback(fallbackUser);
+        shouldRetryBridge = true;
       })
       .finally(() => {
         bootstrapRequest = null;
+        if (shouldRetryBridge && !webAuthUserObserved) {
+          scheduleBridgeRetry();
+        }
       });
+  }
+
+  const handleOnline = () => {
+    if (disposed || webAuthUserObserved || !getNativeAuthFallbackUser()?.uid) return;
+    clearBridgeRetry();
+    bridgeRetryAttempt = 0;
+    bootstrapNativeWebAuth();
   };
 
+  if (nativeRuntime) {
+    window.addEventListener('online', handleOnline);
+  }
+
   const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
-    if (!isNativeRuntime()) {
+    if (!nativeRuntime) {
       emit(user);
       return;
     }
@@ -1215,6 +1276,9 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
         return;
       }
       webAuthUserObserved = true;
+      fallbackEmitted = false;
+      clearBridgeRetry();
+      bridgeRetryAttempt = 0;
       // signInWithCustomToken may resolve just before Firebase dispatches its
       // observer. The bootstrap path already exposed this exact principal, so
       // suppress the one redundant callback that would otherwise hydrate and
@@ -1235,6 +1299,10 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
 
   return () => {
     disposed = true;
+    clearBridgeRetry();
+    if (nativeRuntime) {
+      window.removeEventListener('online', handleOnline);
+    }
     unsubscribe();
   };
 }

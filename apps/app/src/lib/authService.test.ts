@@ -1376,7 +1376,7 @@ describe('observeFirebaseUser', () => {
       return () => {};
     });
     const callback = vi.fn();
-    observeFirebaseUser(callback);
+    const unsubscribe = observeFirebaseUser(callback);
 
     observer.current?.(null);
 
@@ -1390,10 +1390,12 @@ describe('observeFirebaseUser', () => {
     observer.current?.(authState.currentUser);
 
     expect(callback).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 
   it('does not expose the restored native identity while the online bridge is pending', async () => {
     vi.useFakeTimers();
+    let unsubscribe = () => {};
     try {
       vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
       window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
@@ -1414,7 +1416,7 @@ describe('observeFirebaseUser', () => {
         return () => {};
       });
       const callback = vi.fn();
-      observeFirebaseUser(callback);
+      unsubscribe = observeFirebaseUser(callback);
 
       observer.current?.(null);
       await vi.advanceTimersByTimeAsync(4000);
@@ -1432,35 +1434,113 @@ describe('observeFirebaseUser', () => {
       expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledTimes(1);
       expect(callback).toHaveBeenCalledTimes(1);
     } finally {
+      unsubscribe();
       vi.useRealTimers();
     }
   });
 
-  it('preserves the existing offline native fallback without attempting a network bridge', () => {
+  it('transitions an offline native fallback to the authenticated Web SDK user when connectivity returns', async () => {
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
     const originalOnline = navigator.onLine;
-    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
-    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
-      uid: 'offline-user',
-      email: 'offline@example.com',
-      provider: 'native-plugin'
-    }));
-    const observer: { current?: (user: unknown) => void } = {};
-    authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
-      observer.current = cb;
-      return () => {};
-    });
-    const callback = vi.fn();
-    observeFirebaseUser(callback);
+    let unsubscribe = () => {};
+    try {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+      window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+        uid: 'offline-user',
+        email: 'offline@example.com',
+        provider: 'native-plugin'
+      }));
+      nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+        user: { uid: 'offline-user', email: 'offline@example.com' }
+      });
+      nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'offline-user-id-token' });
+      const observer: { current?: (user: unknown) => void } = {};
+      authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
+        observer.current = cb;
+        return () => {};
+      });
+      const callback = vi.fn();
+      unsubscribe = observeFirebaseUser(callback);
 
-    observer.current?.(null);
+      observer.current?.(null);
 
-    expect(callback).toHaveBeenCalledWith(expect.objectContaining({
-      uid: 'offline-user',
-      isNativeRestSession: true
-    }));
-    expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).not.toHaveBeenCalled();
-    Object.defineProperty(navigator, 'onLine', { configurable: true, value: originalOnline });
+      expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+        uid: 'offline-user',
+        isNativeRestSession: true
+      }));
+      expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).not.toHaveBeenCalled();
+
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+      window.dispatchEvent(new Event('online'));
+
+      await vi.waitFor(() => {
+        expect(callback).toHaveBeenCalledTimes(2);
+      });
+      expect(callback.mock.calls[1][0]).toEqual(expect.objectContaining({ uid: 'offline-user' }));
+      expect(callback.mock.calls[1][0]).not.toHaveProperty('isNativeRestSession', true);
+
+      observer.current?.(authState.currentUser);
+
+      expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).toHaveBeenCalledTimes(1);
+      expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: originalOnline });
+    }
+  });
+
+  it('retries a transient startup failure and transitions the fallback to the Web SDK user once', async () => {
+    vi.useFakeTimers();
+    let unsubscribe = () => {};
+    try {
+      vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+      window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+        uid: 'native-user',
+        email: 'native@example.com',
+        provider: 'native-plugin'
+      }));
+      nativeAuthenticationMocks.getCurrentUser.mockResolvedValue({
+        user: { uid: 'native-user', email: 'native@example.com' }
+      });
+      nativeAuthenticationMocks.getIdToken.mockResolvedValue({ token: 'native-id-token' });
+      nativeCallableMocks.callNativeFirebaseFunctionWithAuth
+        .mockRejectedValueOnce(new Error('Native WebView authentication is temporarily unavailable.'))
+        .mockResolvedValueOnce({ customToken: 'recovered-custom-token' });
+      const observer: { current?: (user: unknown) => void } = {};
+      authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
+        observer.current = cb;
+        return () => {};
+      });
+      const callback = vi.fn();
+      unsubscribe = observeFirebaseUser(callback);
+
+      observer.current?.(null);
+
+      await vi.waitFor(() => {
+        expect(callback).toHaveBeenCalledTimes(1);
+      });
+      expect(callback.mock.calls[0][0]).toEqual(expect.objectContaining({
+        uid: 'native-user',
+        isNativeRestSession: true
+      }));
+
+      await vi.runOnlyPendingTimersAsync();
+      await vi.waitFor(() => {
+        expect(callback).toHaveBeenCalledTimes(2);
+      });
+      expect(callback.mock.calls[1][0]).toEqual(expect.objectContaining({ uid: 'native-user' }));
+      expect(callback.mock.calls[1][0]).not.toHaveProperty('isNativeRestSession', true);
+
+      observer.current?.(authState.currentUser);
+
+      expect(nativeCallableMocks.callNativeFirebaseFunctionWithAuth).toHaveBeenCalledTimes(2);
+      expect(webAuthRuntimeMocks.signInWithCustomToken).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledTimes(2);
+    } finally {
+      unsubscribe();
+      vi.useRealTimers();
+    }
   });
 });
 
