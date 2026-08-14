@@ -43,7 +43,8 @@ const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
 const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
 const nativeAuthObserverTimeoutMs = 4000;
-const nativeWebAuthBridgeTimeoutMs = 3500;
+const nativeWebAuthBridgeTimeoutMs = 15000;
+const nativeWebAuthBridgeMaxAttempts = 2;
 const profileHydrationTimeoutMs = 8000;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
@@ -684,18 +685,28 @@ export async function ensureNativeWebViewAuthSession(expectedUid = getNativeAuth
       throw new Error('Native authentication changed while preparing the WebView session.');
     }
 
-    const result = await callNativeFirebaseFunctionWithAuth<{ customToken?: unknown }>(
-      'createNativeWebAuthToken',
-      {},
-      {
-        projectId: String(auth.app?.options?.projectId || ''),
-        idToken
-      },
-      {
-        timeoutMs: nativeWebAuthBridgeTimeoutMs,
-        errorLabel: 'Native WebView authentication'
+    let result: { customToken?: unknown } | undefined;
+    for (let attempt = 1; attempt <= nativeWebAuthBridgeMaxAttempts; attempt += 1) {
+      try {
+        result = await callNativeFirebaseFunctionWithAuth<{ customToken?: unknown }>(
+          'createNativeWebAuthToken',
+          {},
+          {
+            projectId: String(auth.app?.options?.projectId || ''),
+            idToken
+          },
+          {
+            timeoutMs: nativeWebAuthBridgeTimeoutMs,
+            errorLabel: 'Native WebView authentication'
+          }
+        );
+        break;
+      } catch (error) {
+        if (attempt === nativeWebAuthBridgeMaxAttempts || classifyAuthConnectivity(error) !== 'timeout') {
+          throw error;
+        }
       }
-    );
+    }
     const customToken = typeof result?.customToken === 'string' ? result.customToken.trim() : '';
     if (!customToken) {
       throw new Error('Native WebView authentication response is invalid.');
@@ -1143,6 +1154,7 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
   const emit = (user: FirebaseUser | null) => {
     if (disposed) return;
     const nextUid = user?.uid ?? null;
+    if (lastObservedUid === nextUid) return;
     // When the signed-in account changes (including sign-out), purge any cached
     // app data so the incoming user can never read the previous user's data.
     if (lastObservedUid !== undefined && lastObservedUid !== nextUid) {
