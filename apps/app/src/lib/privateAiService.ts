@@ -7279,10 +7279,7 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
       ? new Set(['set_player_tracking_status'])
       : new Set(['save_team_tracking_item']);
   }
-  if (
-    /\bcreate\s+(?:a\s+)?(?:new\s+)?team\b/.test(text)
-    && !/\bteam\s+(?:admin|administrator|email|fee|invite|invitation|message|tracking)\b/.test(text)
-  ) {
+  if (looksLikePrivateAiCreateTeamRequest(text)) {
     return new Set(['create_team']);
   }
   if (/\b(?:team settings?|team name|team sport|league url|livestream url)\b/.test(text)) {
@@ -7357,6 +7354,21 @@ function normalizePrivateAiIntentText(question: string) {
     .toLowerCase()
     .replace(/^[\s"'“”‘’`()[\]{}<>]+/, '')
     .trim();
+}
+
+function looksLikePrivateAiCreateTeamRequest(text: string) {
+  if (/\bteam\s+(?:admin|administrator|email|fee|invite|invitation|message|tracking)\b/.test(text)) {
+    return false;
+  }
+  const match = text.match(/\bcreate\s+(.{0,80}?)\bteam\b/);
+  if (!match) return false;
+
+  const allowedModifiers = new Set(['a', 'an', 'the', 'new']);
+  getCreateTeamSportOptions().forEach((sport) => {
+    compactText(sport).toLowerCase().match(/[a-z0-9]+/g)?.forEach((word) => allowedModifiers.add(word));
+  });
+  const modifiers = match[1].toLowerCase().match(/[a-z0-9]+/g) || [];
+  return modifiers.every((word) => allowedModifiers.has(word));
 }
 
 function looksLikePrivateAiTeamAdminRequest(text: string) {

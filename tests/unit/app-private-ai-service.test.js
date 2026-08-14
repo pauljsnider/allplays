@@ -6058,6 +6058,37 @@ describe('private AI service', () => {
         expect(confirmed.answer).toBe('Confirmed. Team paul score test created with the Soccer stat template.');
     });
 
+    it.each([
+        'Create a soccer team called Bears.',
+        'Create the team Bears.'
+    ])('recognizes natural team-creation phrasing: %s', async (question) => {
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_team',
+                    args: {
+                        name: 'Bears',
+                        sport: 'soccer'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The Bears team is staged for review. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(authUser, question);
+
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_team',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(teamCreationMocks.createTeamForApp).not.toHaveBeenCalled();
+    });
+
     it('reports team creation separately when its stat template cannot be added', async () => {
         teamCreationMocks.createTeamForApp.mockResolvedValueOnce({
             teamId: 'team-new',
