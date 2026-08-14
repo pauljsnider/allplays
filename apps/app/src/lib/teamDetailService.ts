@@ -338,6 +338,8 @@ export type CreateRosterParentInviteForAppResult = {
   emailError: string | null;
   existingUser: boolean;
   autoLinked: boolean;
+  created: boolean;
+  reused: boolean;
   teamName: string | null;
   playerName: string | null;
 };
@@ -1269,38 +1271,28 @@ export async function createRosterParentInviteForApp(
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  const idempotencyKey = cleanString(options.idempotencyKey);
-  const inviteResult = idempotencyKey
-    ? await inviteParent(
-        normalizedTeamId,
-        normalizedPlayerId,
-        cleanString(player?.number),
-        normalizedEmail,
-        relation,
-        { idempotencyKey }
-      )
-    : await inviteParent(
+  void options;
+  let inviteResult;
+  try {
+    inviteResult = await inviteParent(
         normalizedTeamId,
         normalizedPlayerId,
         cleanString(player?.number),
         normalizedEmail,
         relation
       );
+  } catch (error: any) {
+    const errorCode = cleanString(error?.code).replace(/^functions\//, '');
+    if (errorCode === 'resource-exhausted') {
+      throw new Error('Too many parent invites. Please wait and try again. No email was sent.');
+    }
+    throw error;
+  }
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
-  let emailQueued = false;
-  let emailDeduplicated = false;
-  let emailError: string | null = null;
-  if (normalizedEmail) {
-    try {
-      const queueResult = await queueInviteEmail(code);
-      emailQueued = true;
-      emailDeduplicated = queueResult?.deduplicated === true;
-    } catch (error: any) {
-      emailError = cleanString(error?.message) || 'Invite email could not be queued.';
-      logger.warn('Parent invite was created, but its email could not be queued.', { error });
-    }
-  }
+  const reused = inviteResult?.reused === true;
+  const created = inviteResult?.created !== false && !reused;
+  const emailQueued = Boolean(normalizedEmail && created);
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
@@ -1309,11 +1301,13 @@ export async function createRosterParentInviteForApp(
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
     email: normalizedEmail || null,
     emailQueued,
-    emailDeduplicated,
+    emailDeduplicated: reused,
     emailSent: emailQueued,
-    emailError,
+    emailError: null,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
+    created,
+    reused,
     teamName: inviteResult?.teamName || null,
     playerName: inviteResult?.playerName || null
   };

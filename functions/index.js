@@ -393,6 +393,7 @@ const {
   buildAutoAcceptedParentLink
 } = require('./parent-invite-auto-link-core.cjs');
 const { resolveAuthenticatedFamilyInviteEmail } = require('./family-invite-identity-core.cjs');
+const { createParentInviteHandler } = require('./parent-invite-creation-core.cjs');
 const { createCoParentInviteHandler } = require('./co-parent-invite-core.cjs');
 const { createNativeWebAuthTokenHandler } = require('./native-web-auth-token-core.cjs');
 const {
@@ -4818,6 +4819,21 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
 });
 
 exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(autoAcceptParentInviteHandler);
+
+const parentInviteConfig = functions.config()?.parent_invite || {};
+const createParentInviteCallableHandler = createParentInviteHandler({
+  firestore,
+  Timestamp: admin.firestore.Timestamp,
+  HttpsError: functions.https.HttpsError,
+  rateLimitWindowMs: process.env.PARENT_INVITE_RATE_LIMIT_WINDOW_MS
+    ?? parentInviteConfig.rate_limit_window_ms,
+  senderMaxInvites: process.env.PARENT_INVITE_SENDER_MAX_INVITES
+    ?? parentInviteConfig.sender_max_invites,
+  recipientMaxInvites: process.env.PARENT_INVITE_RECIPIENT_MAX_INVITES
+    ?? parentInviteConfig.recipient_max_invites
+});
+
+exports.createParentInvite = functions.https.onCall(createParentInviteCallableHandler);
 
 const coParentInviteConfig = functions.config()?.co_parent_invite || {};
 const createCoParentInviteCallableHandler = createCoParentInviteHandler({

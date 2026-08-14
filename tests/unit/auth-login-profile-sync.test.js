@@ -12,6 +12,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getRedirectResult: vi.fn(),
     isSignInWithEmailLink: vi.fn(),
     signInWithEmailLink: vi.fn(),
+    limit: vi.fn(),
     updatePassword: vi.fn()
 }));
 
@@ -32,7 +33,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=26', () => firebaseMocks);
-vi.mock('../../js/db.js?v=4433171', () => dbMocks);
+vi.mock('../../js/db.js?v=4433172', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=14', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
