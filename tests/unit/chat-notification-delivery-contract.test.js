@@ -32,7 +32,7 @@ describe('team chat notification delivery contract', () => {
         expect(functionsSource).toContain('exports.notifyConversationChatMessageCreated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyGameUpdated = retryableNotificationFunctions.firestore');
         expect(functionsSource).toContain('exports.notifyFeeAssigned = retryableNotificationFunctions.firestore');
-        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableTeamMediaNotificationFunctions.pubsub');
         expect(functionsSource).toContain('exports.sendFeeUnpaidDueReminders = retryableNotificationFunctions.pubsub');
     });
 
