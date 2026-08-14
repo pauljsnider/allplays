@@ -82,6 +82,7 @@ export default function TeamEmailSheet({
   const [emailLoadingDrafts, setEmailLoadingDrafts] = useState(false);
   const [emailLoadingHistory, setEmailLoadingHistory] = useState(false);
   const [emailLoadingTemplates, setEmailLoadingTemplates] = useState(false);
+  const [postToTeamChat, setPostToTeamChat] = useState(true);
   const [draftNextCursor, setDraftNextCursor] = useState<TeamEmailSavedCursor | null>(null);
   const [templateNextCursor, setTemplateNextCursor] = useState<TeamEmailSavedCursor | null>(null);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
@@ -171,6 +172,7 @@ export default function TeamEmailSheet({
       setTemplateNextCursor(null);
       setEmailStatus(null);
       setEmailHistoryStatus(null);
+      setPostToTeamChat(true);
     }
     void ensureRecipientOptionsLoaded().catch(() => undefined);
     if (loadedForTeamRef.current === teamId) return;
@@ -269,10 +271,19 @@ export default function TeamEmailSheet({
         subject,
         body,
         targetType: emailAudienceMetadata.targetType,
-        recipientIds: emailAudienceMetadata.recipientIds
+        recipientIds: emailAudienceMetadata.recipientIds,
+        postToTeamChat: emailAudienceMetadata.targetType === 'full_team' && postToTeamChat
       });
       emailDispatch(emailComposerActions.clearComposer());
-      setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
+      setPostToTeamChat(true);
+      const recipientCount = Number(result?.recipientCount || 0);
+      const chatResult = result?.chatPostCreated
+        ? ' and posted to team chat.'
+        : '. No team chat post was created.';
+      setEmailStatus({
+        tone: 'success',
+        message: `Queued ${recipientCount} recipient${recipientCount === 1 ? '' : 's'} for backend email delivery${chatResult}`
+      });
       await reloadSentEmailHistory({ suppressErrorStatus: true });
     } catch (sendError: any) {
       setEmailStatus({ tone: 'error', message: sendError?.message || 'Email send failed. Nothing was silently dropped.' });
@@ -307,8 +318,10 @@ export default function TeamEmailSheet({
       audienceSummary={audienceSummary}
       audienceMetadata={emailAudienceMetadata}
       selectedMemberAudience={selectedMemberAudience}
+      postToTeamChat={postToTeamChat}
       onSubjectChange={(subject) => emailDispatch(emailComposerActions.updateSubject(subject))}
       onBodyChange={(body) => emailDispatch(emailComposerActions.updateBody(body))}
+      onPostToTeamChatChange={setPostToTeamChat}
       onTemplateNameChange={(templateName) => emailDispatch(emailComposerActions.updateTemplateName(templateName))}
       onApplyDraft={handleApplyEmailDraft}
       onSaveDraft={handleSaveEmailDraft}
@@ -354,8 +367,10 @@ function TeamEmailSheetView({
   audienceSummary,
   audienceMetadata,
   selectedMemberAudience,
+  postToTeamChat,
   onSubjectChange,
   onBodyChange,
+  onPostToTeamChatChange,
   onTemplateNameChange,
   onApplyDraft,
   onSaveDraft,
@@ -395,8 +410,10 @@ function TeamEmailSheetView({
   audienceSummary: string;
   audienceMetadata: ChatAudienceMetadata;
   selectedMemberAudience: boolean;
+  postToTeamChat: boolean;
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: string) => void;
+  onPostToTeamChatChange: (value: boolean) => void;
   onTemplateNameChange: (value: string) => void;
   onApplyDraft: (draftId: string) => void;
   onSaveDraft: () => void;
@@ -559,7 +576,7 @@ function TeamEmailSheetView({
     <Sheet title="Team Email" onClose={onClose}>
       <form className="space-y-3" onSubmit={onSubmit}>
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
-          Sends one backend roster email job. This is separate from chat posting, and delivery jobs are queued.
+          Queues backend roster email delivery. Full-team email can also publish one durable team chat post.
         </div>
         <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
           <span className="min-w-0">Audience: {audienceSummary}</span>
@@ -607,6 +624,23 @@ function TeamEmailSheetView({
             enterKeyHint="send"
           />
         </label>
+        {audienceMetadata.targetType === 'full_team' ? (
+          <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-800">
+            <input
+              type="checkbox"
+              aria-label="Also post to team chat"
+              checked={postToTeamChat}
+              onChange={(event) => onPostToTeamChatChange(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span>
+              Also post to team chat
+              <span className="mt-0.5 block text-xs font-semibold leading-5 text-gray-500">
+                Publishes the subject and message once in the durable full-team conversation.
+              </span>
+            </span>
+          </label>
+        ) : null}
         <button type="submit" className="primary-button w-full" disabled={!canSendEmail}>
           {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mail className="h-4 w-4" aria-hidden="true" />}
           Send email

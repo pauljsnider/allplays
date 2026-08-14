@@ -54,6 +54,7 @@ vi.mock('@capacitor/core', () => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyChatService.ts', () => dbMocks);
 vi.mock('../../apps/app/src/lib/friendMessageService.ts', () => friendMessageMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileServiceMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
@@ -1499,14 +1500,16 @@ describe('React app chat recipient service', () => {
             subject: ' Practice update ',
             body: ' Bring jerseys ',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: true
         })).resolves.toEqual({ recipientCount: 8, status: 'queued' });
 
         expect(dbMocks.sendTeamEmail).toHaveBeenCalledWith('team-1', {
             subject: 'Practice update',
             body: 'Bring jerseys',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: false
         });
 
         await loadSentTeamEmails('team-1', { limit: 10 });

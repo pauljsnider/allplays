@@ -103,7 +103,11 @@ describe('TeamEmailSheet compose-first workflow', () => {
       nextCursor: null
     });
     chatServiceMocks.loadSentTeamEmails.mockResolvedValue([]);
-    chatServiceMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 1 });
+    chatServiceMocks.sendTeamEmailMessage.mockResolvedValue({
+      recipientCount: 1,
+      chatPostCreated: true,
+      chatMessageId: 'chat-1'
+    });
   });
 
   afterEach(() => cleanup());
@@ -284,23 +288,71 @@ describe('TeamEmailSheet compose-first workflow', () => {
     expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['full team', 'full_team', [], 'full_team', []],
-    ['selected members', 'individuals', ['user:parent-1'], 'individuals', ['user:parent-1']]
-  ] as const)('keeps the %s send payload unchanged', async (_label, selectedRecipientTarget, selectedRecipientIds, targetType, recipientIds) => {
-    renderTeamEmailSheet({ selectedRecipientTarget, selectedRecipientIds });
+  it('defaults full-team email to one combined email and chat broadcast', async () => {
+    renderTeamEmailSheet();
 
     await screen.findByText('Saved drafts');
+    const crossPost = screen.getByRole('checkbox', { name: 'Also post to team chat' });
+    const send = screen.getByRole('button', { name: 'Send email' });
+    expect(crossPost).toBeChecked();
+    expectBefore(crossPost, send);
+
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Schedule change' } });
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Practice starts at six.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
+    fireEvent.click(send);
 
     await waitFor(() => expect(chatServiceMocks.sendTeamEmailMessage).toHaveBeenCalledWith({
       teamId: 'team-1',
       subject: 'Schedule change',
       body: 'Practice starts at six.',
-      targetType,
-      recipientIds
+      targetType: 'full_team',
+      recipientIds: [],
+      postToTeamChat: true
+    }));
+    expect(screen.getByRole('status')).toHaveTextContent('Queued 1 recipient for backend email delivery and posted to team chat.');
+  });
+
+  it('lets a full-team sender opt out of the chat post', async () => {
+    chatServiceMocks.sendTeamEmailMessage.mockResolvedValue({
+      recipientCount: 2,
+      chatPostCreated: false,
+      chatMessageId: null
+    });
+    renderTeamEmailSheet();
+
+    await screen.findByText('Saved drafts');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Also post to team chat' }));
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Schedule change' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Practice starts at six.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
+
+    await waitFor(() => expect(chatServiceMocks.sendTeamEmailMessage).toHaveBeenCalledWith(expect.objectContaining({
+      targetType: 'full_team',
+      recipientIds: [],
+      postToTeamChat: false
+    })));
+    expect(screen.getByRole('status')).toHaveTextContent('Queued 2 recipients for backend email delivery. No team chat post was created.');
+  });
+
+  it('keeps selected-member email private from full-team chat', async () => {
+    renderTeamEmailSheet({
+      selectedRecipientTarget: 'individuals',
+      selectedRecipientIds: ['user:parent-1']
+    });
+
+    await screen.findByText('Saved drafts');
+    expect(screen.queryByRole('checkbox', { name: 'Also post to team chat' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Private update' } });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'For selected parents only.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send email' }));
+
+    await waitFor(() => expect(chatServiceMocks.sendTeamEmailMessage).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      subject: 'Private update',
+      body: 'For selected parents only.',
+      targetType: 'individuals',
+      recipientIds: ['user:parent-1'],
+      postToTeamChat: false
     }));
   });
 

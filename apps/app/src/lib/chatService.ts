@@ -2085,13 +2085,15 @@ export async function sendTeamEmailMessage({
   subject,
   body,
   targetType = 'full_team',
-  recipientIds = []
+  recipientIds = [],
+  postToTeamChat
 }: {
   teamId: string;
   subject: string;
   body: string;
   targetType?: ChatTargetType;
   recipientIds?: string[];
+  postToTeamChat?: boolean;
 }) {
   const trimmedSubject = String(subject || '').trim();
   const trimmedBody = String(body || '').trim();
@@ -2102,12 +2104,23 @@ export async function sendTeamEmailMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
-  return withTimeout(Promise.resolve(sendTeamEmail(teamId, {
+  const payload: {
+    subject: string;
+    body: string;
+    targetType: ChatTargetType;
+    recipientIds: string[];
+    postToTeamChat?: boolean;
+  } = {
     subject: trimmedSubject,
     body: trimmedBody,
     targetType,
     recipientIds: targetType === 'individuals' ? recipientIds : []
-  })), 'Team email send');
+  };
+  if (typeof postToTeamChat === 'boolean') {
+    payload.postToTeamChat = targetType === 'full_team' && postToTeamChat;
+  }
+
+  return withTimeout(Promise.resolve(sendTeamEmail(teamId, payload)), 'Team email send');
 }
 
 export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit?: number } = {}): Promise<SentTeamEmail[]> {

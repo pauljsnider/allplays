@@ -2080,7 +2080,7 @@ describe('React app messages integration', () => {
         const emailDialog = await waitForTeamEmailDialog(container);
 
         expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledWith('team-1', { limit: 25 });
-        expect(container.textContent).toContain('Sends one backend roster email job');
+        expect(container.textContent).toContain('Queues backend roster email delivery');
         expect(container.textContent).toContain('Audience: Coach Jamie (Staff)');
         expect(container.textContent).toContain('Practice plan');
         expect(container.textContent).not.toContain('coach@example.com');
@@ -2096,7 +2096,8 @@ describe('React app messages integration', () => {
             subject: 'Tournament update',
             body: 'Arrive at 8:30.',
             targetType: 'individuals',
-            recipientIds: ['user:coach-1']
+            recipientIds: ['user:coach-1'],
+            postToTeamChat: false
         });
         expect(subjectInput.value).toBe('');
         expect(bodyInput.value).toBe('');
