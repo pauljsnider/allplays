@@ -15599,6 +15599,7 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   if (recipientIds.length > 400) {
     throw new functions.https.HttpsError('invalid-argument', 'Team email is limited to 400 selected recipients.');
   }
+  const postToTeamChat = data?.postToTeamChat === true && targetType === 'full_team';
 
   let attachmentSummary;
   try {
@@ -15631,6 +15632,9 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   const messageRef = firestore.collection(`teams/${teamId}/teamEmails`).doc();
+  const chatMessageRef = postToTeamChat
+    ? firestore.collection(`teams/${teamId}/chatMessages`).doc()
+    : null;
   const mailJobs = recipients.map((recipient) => ({
     ref: firestore.collection('mail').doc(),
     recipient,
@@ -15670,8 +15674,35 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
       status: 'queued',
       jobCount: mailJobs.length,
       jobIds: mailJobs.map((job) => job.ref.id)
-    }
+    },
+    ...(chatMessageRef ? { chatMessageId: chatMessageRef.id } : {})
   };
+  const chatMessagePayload = chatMessageRef ? {
+    clientMessageId: null,
+    text: `${subject}\n\n${body}`,
+    senderId: context.auth.uid,
+    senderName: user.fullName || context.auth.token?.name || null,
+    senderEmail: context.auth.token?.email || null,
+    senderPhotoUrl: user.photoUrl || null,
+    attachments: [],
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: now,
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: null,
+    targetType: 'full_team',
+    recipientIds: [],
+    targetRole: null,
+    conversationId: null,
+    teamEmailMessageId: messageRef.id
+  } : null;
 
   const chunks = [];
   for (let i = 0; i < mailJobs.length; i += 400) {
@@ -15679,6 +15710,9 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
   }
   const firstBatch = firestore.batch();
   firstBatch.set(messageRef, messagePayload);
+  if (chatMessageRef) {
+    firstBatch.set(chatMessageRef, chatMessagePayload);
+  }
   if (draftId) {
     firstBatch.set(firestore.doc(`teams/${teamId}/emailDrafts/${draftId}`), {
       status: 'sent',
@@ -15712,31 +15746,36 @@ exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
   }
 
-  const directRecipientUids = recipients.flatMap((recipient) => (
-    Array.isArray(recipient.userIds) ? recipient.userIds : []
-  ));
-  const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
-  const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
-    .map((uid) => String(uid || '').trim())
-    .filter((uid) => uid && uid !== context.auth.uid)));
-  const inboxResult = await writeNotificationInboxRecords({
-    targets: inboxRecipientUids.map((uid) => ({ uid })),
-    category: 'team_email',
-    title: `Team email: ${subject}`,
-    body: truncateNotificationBody(body),
-    appRoute: buildNotificationAppRoute({
-      category: 'liveChat',
+  let inboxResult = { writeCount: 0, failureCount: 0 };
+  if (!chatMessageRef) {
+    const directRecipientUids = recipients.flatMap((recipient) => (
+      Array.isArray(recipient.userIds) ? recipient.userIds : []
+    ));
+    const emailRecipientUids = await getUserIdsByEmails(recipients.map((recipient) => recipient.email));
+    const inboxRecipientUids = Array.from(new Set([...directRecipientUids, ...emailRecipientUids]
+      .map((uid) => String(uid || '').trim())
+      .filter((uid) => uid && uid !== context.auth.uid)));
+    inboxResult = await writeNotificationInboxRecords({
+      targets: inboxRecipientUids.map((uid) => ({ uid })),
+      category: 'team_email',
+      title: `Team email: ${subject}`,
+      body: truncateNotificationBody(body),
+      appRoute: buildNotificationAppRoute({
+        category: 'liveChat',
+        teamId,
+        conversationId: 'team'
+      }),
       teamId,
       conversationId: 'team'
-    }),
-    teamId,
-    conversationId: 'team'
-  });
+    });
+  }
 
   return {
     messageId: messageRef.id,
     status: 'sent',
     recipientCount: recipients.length,
+    chatPostCreated: Boolean(chatMessageRef),
+    chatMessageId: chatMessageRef?.id || null,
     delivery: messagePayload.delivery,
     inboxWriteCount: inboxResult.writeCount,
     inboxFailureCount: inboxResult.failureCount
