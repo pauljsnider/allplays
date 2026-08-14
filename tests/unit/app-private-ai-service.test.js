@@ -109,6 +109,11 @@ const teamMocks = vi.hoisted(() => ({
     retryRosterParentInviteEmailForApp: vi.fn()
 }));
 
+const teamCreationMocks = vi.hoisted(() => ({
+    createTeamForApp: vi.fn(),
+    getCreateTeamSportOptions: vi.fn()
+}));
+
 const rosterAiMocks = vi.hoisted(() => ({
     buildRosterAiImportCommitPlan: vi.fn(),
     extractPastedRosterCsv: vi.fn(),
@@ -170,6 +175,7 @@ vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamMocks);
+vi.mock('../../apps/app/src/lib/teamCreationService.ts', () => teamCreationMocks);
 vi.mock('../../apps/app/src/lib/rosterAiImport.ts', () => rosterAiMocks);
 vi.mock('../../apps/app/src/lib/playerService.ts', () => playerMocks);
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => toolsMocks);
@@ -495,6 +501,19 @@ beforeEach(async () => {
         emailDeduplicated: false,
         teamName: 'Bears',
         playerName: 'Avery'
+    });
+    teamCreationMocks.getCreateTeamSportOptions.mockReturnValue([
+        'Basketball',
+        'Soccer',
+        'Baseball',
+        'Softball',
+        'Football',
+        'Volleyball'
+    ]);
+    teamCreationMocks.createTeamForApp.mockResolvedValue({
+        teamId: 'team-new',
+        defaultStatConfigCreated: true,
+        defaultStatConfigError: null
     });
     playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValue({
         child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
@@ -5174,6 +5193,7 @@ describe('private AI service', () => {
         ['family share link', 'create_family_share_link'],
         ['access request', 'submit_access_request'],
         ['incentive rule', 'save_player_incentive_rule'],
+        ['team creation', 'create_team'],
         ['team admin invitation', 'invite_team_admin'],
         ['tracking item', 'save_team_tracking_item'],
         ['stat configuration', 'save_stat_configuration'],
@@ -5977,6 +5997,117 @@ describe('private AI service', () => {
         expect(result.toolResults.some((tool) => tool.name === 'get_help')).toBe(false);
     });
 
+    it('stages and confirms a new team with a canonical sport template', async () => {
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_team',
+                    args: {
+                        name: 'paul score test',
+                        sport: 'soccer'
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The new team is staged for review. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const staged = await generatePrivateAiAnswer(
+            authUser,
+            'Create a new team called paul score test with soccer template.'
+        );
+
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('create_team (write)');
+        expect(staged.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_team',
+                ok: true,
+                requiresConfirmation: true
+            })
+        ]);
+        expect(teamCreationMocks.createTeamForApp).not.toHaveBeenCalled();
+        expect(firebaseMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({
+                path: ['users', 'user-1', 'privateAiPendingActions', staged.toolResults[0].confirmationId]
+            }),
+            expect.objectContaining({
+                toolName: 'create_team',
+                payloadScope: 'user',
+                args: {
+                    name: 'paul score test',
+                    sport: 'Soccer',
+                    zip: '',
+                    isPublic: true
+                }
+            })
+        );
+
+        const confirmed = await generatePrivateAiAnswer(
+            authUser,
+            `confirm ${staged.toolResults[0].confirmationId}`
+        );
+
+        expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledTimes(1);
+        expect(teamCreationMocks.createTeamForApp).toHaveBeenCalledWith(authUser, {
+            name: 'paul score test',
+            sport: 'Soccer',
+            zip: '',
+            isPublic: true
+        });
+        expect(confirmed.answer).toBe('Confirmed. Team paul score test created with the Soccer stat template.');
+    });
+
+    it('reports team creation separately when its stat template cannot be added', async () => {
+        teamCreationMocks.createTeamForApp.mockResolvedValueOnce({
+            teamId: 'team-new',
+            defaultStatConfigCreated: false,
+            defaultStatConfigError: 'permission denied'
+        });
+        const { generatePrivateAiAnswer, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const staged = await runPrivateAiTool(authUser, {
+            name: 'create_team',
+            args: {
+                name: 'Template Warning FC',
+                sport: 'Soccer'
+            }
+        });
+
+        const confirmed = await generatePrivateAiAnswer(authUser, `confirm ${staged.confirmationId}`);
+
+        expect(confirmed.toolResults[0]).toMatchObject({
+            name: 'create_team',
+            ok: true,
+            data: {
+                teamId: 'team-new',
+                defaultStatConfigCreated: false,
+                defaultStatConfigError: 'permission denied'
+            }
+        });
+        expect(confirmed.answer).toBe('Confirmed. Team Template Warning FC was created, but its Soccer stat template could not be verified.');
+    });
+
+    it('lets the planner ask for missing write details instead of replacing the question with a staging error', async () => {
+        aiMocks.model.generateContent.mockResolvedValueOnce(modelText(JSON.stringify({
+            answer: 'Which time zone should I use for Saturday at 3 PM?'
+        })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            authUser,
+            'Create a new game for test team for Saturday 3pm.'
+        );
+
+        expect(result).toEqual({
+            answer: 'Which time zone should I use for Saturday at 3 PM?',
+            toolResults: []
+        });
+        expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(1);
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('CURRENT DATE/TIME CONTEXT');
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toContain('Resolve relative dates such as "Saturday"');
+        expect(aiMocks.model.generateContent.mock.calls[0][0]).toMatch(/"timeZone":"[^"]+"/);
+    });
+
     it('does not accept a false write preview without staging the matching action', async () => {
         const coachUser = {
             ...authUser,
@@ -6059,14 +6190,58 @@ describe('private AI service', () => {
             'Create a game for Bears against Failed Write Opponent.'
         );
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change during review because I could not verify management access to the requested team. Use the exact team name or team ID and try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'create_schedule_event',
                 ok: false,
+                failureStage: 'review-preparation',
                 error: expect.stringContaining('Team access lookup failed')
             })
         ]);
+    });
+
+    it('reports proposal persistence separately from review preparation', async () => {
+        const coachUser = {
+            ...authUser,
+            roles: ['coach'],
+            coachOf: ['team-1'],
+            parentPlayerKeys: []
+        };
+        firebaseMocks.runTransaction.mockRejectedValueOnce(new Error('Firestore unavailable'));
+        aiMocks.model.generateContent
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                toolCalls: [{
+                    name: 'create_schedule_event',
+                    args: {
+                        teamId: 'team-1',
+                        eventType: 'game',
+                        input: {
+                            startDate: '2026-08-15T15:00:00-05:00'
+                        }
+                    }
+                }]
+            })))
+            .mockResolvedValueOnce(modelText(JSON.stringify({
+                answer: 'The game is staged. Reply yes to confirm.'
+            })));
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const result = await generatePrivateAiAnswer(
+            coachUser,
+            'Create a game for Bears on August 15, 2026 at 3 PM America/Chicago.'
+        );
+
+        expect(result.answer).toBe('I reviewed that change, but could not save it for confirmation. Nothing was applied. Please try again.');
+        expect(result.toolResults).toEqual([
+            expect.objectContaining({
+                name: 'create_schedule_event',
+                ok: false,
+                failureStage: 'proposal-save',
+                error: expect.stringContaining('Firestore unavailable')
+            })
+        ]);
+        expect(scheduleMocks.createScheduledGameForApp).not.toHaveBeenCalled();
     });
 
     it('does not treat an unrelated staged write as the requested roster action', async () => {
@@ -6097,11 +6272,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, 'Add Alex to the Bears roster.');
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'create_schedule_event',
                 ok: false,
+                failureStage: 'planning',
                 error: expect.stringContaining('does not match the requested operation')
             })
         ]);
@@ -6139,11 +6315,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([
             expect.objectContaining({
                 name: 'apply_roster_import',
                 ok: false,
+                failureStage: 'planning',
                 error: expect.stringContaining('does not match the requested operation')
             })
         ]);
@@ -6221,7 +6398,7 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toEqual([]);
         expect(aiMocks.model.generateContent).toHaveBeenCalledTimes(2);
     });
@@ -6254,11 +6431,12 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, prompt);
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults).toHaveLength(2);
         expect(result.toolResults.every((tool) => (
             tool.name === 'create_schedule_event'
             && tool.ok === false
+            && tool.failureStage === 'planning'
             && tool.error.includes('does not match the requested operation')
         ))).toBe(true);
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
@@ -6285,7 +6463,7 @@ describe('private AI service', () => {
 
         const result = await generatePrivateAiAnswer(coachUser, 'Set the requested thing for Bears.');
 
-        expect(result.answer).toBe('I could not prepare that change because no reviewed action was staged. Please try the request again.');
+        expect(result.answer).toBe('I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.');
         expect(result.toolResults.every((tool) => tool.ok === false)).toBe(true);
         expect(result.toolResults.every((tool) => tool.error.includes('could not be classified safely'))).toBe(true);
         expect(firebaseMocks.setDoc).not.toHaveBeenCalled();

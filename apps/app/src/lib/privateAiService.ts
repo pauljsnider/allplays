@@ -92,6 +92,10 @@ import {
   type RosterImportPlannedOperationForApp
 } from './teamDetailService';
 import {
+  createTeamForApp,
+  getCreateTeamSportOptions
+} from './teamCreationService';
+import {
   buildRosterAiImportCommitPlan,
   extractPastedRosterCsv,
   generateRosterAiImportRows,
@@ -237,9 +241,17 @@ export type PrivateAiToolResult = {
   ok: boolean;
   data?: unknown;
   error?: string;
+  failureStage?: PrivateAiToolFailureStage;
   requiresConfirmation?: boolean;
   confirmationId?: string;
 };
+
+export type PrivateAiToolFailureStage =
+  | 'planning'
+  | 'review-preparation'
+  | 'proposal-save'
+  | 'read'
+  | 'execution';
 
 export type PrivateAiSendResult = {
   userMessage: PrivateAiMessage;
@@ -1763,6 +1775,15 @@ export async function generatePrivateAiAnswer(
 
     if (planner.answer && !planner.toolCalls.length) {
       if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
+        const hasFailedWriteResult = toolResults.some((result) => (
+          !result.ok && getPrivateAiToolDefinition(result.name)?.mode === 'write'
+        ));
+        if (!hasFailedWriteResult && isPrivateAiWriteClarificationAnswer(planner.answer)) {
+          return {
+            answer: clampAnswer(planner.answer),
+            toolResults
+          };
+        }
         plannerInput = `${buildPlannerPrompt({ user, question, history, toolResults, roleCapabilities })}\n` +
           `CORRECTION: Your prior response claimed or described a change without calling a write tool. ` +
           `Do not say a change is prepared, reviewed, staged, confirmed, or completed unless the matching write tool returned that result. ` +
@@ -1788,6 +1809,7 @@ export async function generatePrivateAiAnswer(
     blockedCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
+      failureStage: 'planning',
       error: 'That tool is not allowed for this attachment request.'
     }));
     if (!allowedCalls.length) {
@@ -1815,6 +1837,7 @@ export async function generatePrivateAiAnswer(
     unrelatedWriteCalls.forEach((call) => toolResults.push({
       name: compactText(call.name),
       ok: false,
+      failureStage: 'planning',
       error: getExpectedPrivateAiWriteToolNames(question) === null
         ? 'The requested write operation could not be classified safely.'
         : 'That write tool does not match the requested operation.'
@@ -1847,6 +1870,7 @@ export async function generatePrivateAiAnswer(
           roundResults.push({
             name: compactText(call.name),
             ok: false,
+            failureStage: 'review-preparation',
             error: error?.message || 'Tool failed.'
           });
         }
@@ -1867,7 +1891,7 @@ export async function generatePrivateAiAnswer(
 
   if (imperativeWriteRequest && !hasPrivateAiWriteToolResult(question, toolResults)) {
     return {
-      answer: 'I could not prepare that change because no reviewed action was staged. Please try the request again.',
+      answer: buildPrivateAiWriteFailureAnswer(question, toolResults),
       toolResults
     };
   }
@@ -1913,10 +1937,17 @@ async function runPrivateAiToolInternal(
   const definition = getPrivateAiToolDefinition(name);
   let scheduleImportTimer: ReturnType<typeof startWorkflowTimer> | null = null;
   const isConfirmedWrite = context.confirmedWriteToken === confirmedWriteExecutionToken;
+  let failureStage: PrivateAiToolFailureStage = definition?.mode === 'write' && isConfirmedWrite
+    ? 'execution'
+    : definition?.mode === 'write'
+      ? 'review-preparation'
+      : definition
+        ? 'read'
+        : 'planning';
 
   try {
     if (!definition) {
-      return { name, ok: false, error: `Unsupported tool: ${name}` };
+      return { name, ok: false, failureStage, error: `Unsupported tool: ${name}` };
     }
 
     if (definition.mode === 'write' && !isConfirmedWrite) {
@@ -1933,6 +1964,7 @@ async function runPrivateAiToolInternal(
         : definition.prepare
           ? await definition.prepare(user, args)
           : { args };
+      failureStage = 'proposal-save';
       const pending = await savePrivateAiPendingAction(user, definition, preparedAction.args, context, preparedAction);
       return {
         name,
@@ -1968,6 +2000,7 @@ async function runPrivateAiToolInternal(
     return {
       name,
       ok: false,
+      failureStage,
       error: error?.message || 'Tool failed.'
     };
   }
@@ -1980,6 +2013,26 @@ const privateAiToolDefinitions: PrivateAiToolDefinition[] = [
     mode: 'read',
     description: 'Account profile, roles, notification preferences, linked teams, and linked players.',
     resolve: async (user) => summarizeProfile(user, await getUserProfile(user.uid).catch(() => null))
+  },
+  {
+    name: 'create_team',
+    mode: 'write',
+    domain: 'team-creation',
+    description: 'Create a new team owned by the signed-in user and add its default sport stat template. Args: name/teamName, sport, zip optional, isPublic optional.',
+    prepare: async (_user, args) => prepareCreateTeamAction(args),
+    resolve: async (user, args) => {
+      const result = await createTeamForApp(user, {
+        name: compactText(args.name),
+        sport: compactText(args.sport),
+        zip: compactText(args.zip),
+        isPublic: args.isPublic !== false
+      });
+      return {
+        ...result,
+        teamName: compactText(args.name),
+        sport: compactText(args.sport)
+      };
+    }
   },
   {
     name: 'get_home',
@@ -3229,6 +3282,39 @@ async function requireManagedTeamId(user: AuthUser, args: Record<string, unknown
   const teamId = await resolveAccessibleTeamId(user, args, { requireManager: true });
   if (!teamId) throw new Error('No managed team matched that request or your access changed.');
   return teamId;
+}
+
+function prepareCreateTeamAction(args: Record<string, unknown>) {
+  const name = compactText(args.name || args.teamName);
+  if (!name) throw new Error('Team name is required.');
+
+  const requestedSport = compactText(args.sport || args.sportName);
+  if (!requestedSport) throw new Error('Sport is required.');
+  const sportOptions = getCreateTeamSportOptions();
+  const sport = sportOptions.find((option) => option.toLowerCase() === requestedSport.toLowerCase());
+  if (!sport) {
+    throw new Error(`Choose a supported sport: ${sportOptions.join(', ')}.`);
+  }
+
+  const zip = compactText(args.zip || args.zipCode || args.postalCode);
+  const isPublic = args.isPublic !== false;
+  return {
+    args: {
+      name,
+      sport,
+      zip,
+      isPublic
+    },
+    summary: `Create team | ${name} | Sport: ${sport}`,
+    previewSummary: {
+      domain: 'team-creation',
+      action: 'Create team',
+      name,
+      sport,
+      zip,
+      isPublic
+    }
+  };
 }
 
 async function prepareManagedTeamAction(user: AuthUser, args: Record<string, unknown>, label: string) {
@@ -4618,6 +4704,18 @@ function buildPendingActionSummary(definition: PrivateAiToolDefinition, args: Re
 }
 
 function summarizeExecutedAction(result: PrivateAiToolResult) {
+  if (result.name === 'create_team') {
+    const data = isPlainObject(result.data) ? result.data : {};
+    const teamName = compactText(data.teamName) || 'New team';
+    const sport = compactText(data.sport);
+    if (compactText(data.defaultStatConfigError)) {
+      return `Team ${teamName} was created, but its${sport ? ` ${sport}` : ''} stat template could not be verified.`;
+    }
+    if (data.defaultStatConfigCreated === true) {
+      return `Team ${teamName} created with the${sport ? ` ${sport}` : ''} stat template.`;
+    }
+    return `Team ${teamName} created.`;
+  }
   if (result.name === 'update_rsvp') return 'RSVP updated.';
   if (result.name === 'update_rsvps_for_children') return 'Family RSVPs updated.';
   if (result.name === 'claim_assignment') return 'Assignment claimed.';
@@ -4755,7 +4853,7 @@ function collectPrivateAiRetryArtifacts(results: PrivateAiToolResult[]) {
 
 function summarizeAuditResult(result: unknown) {
   if (!isPlainObject(result)) return result;
-  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'playerId', 'child', 'text', 'target', 'importedCount', 'failedCount']);
+  return pickFields(result, ['event', 'offerId', 'requestId', 'status', 'response', 'updatedChildren', 'tokenId', 'url', 'email', 'role', 'teamId', 'teamName', 'sport', 'defaultStatConfigCreated', 'playerId', 'child', 'text', 'target', 'importedCount', 'failedCount']);
 }
 
 function summarizeRosterPreview(rows: RosterAiImportPreviewRow[]) {
@@ -5404,6 +5502,7 @@ function buildPlannerPrompt({
   toolResults: PrivateAiToolResult[];
   roleCapabilities: PrivateAiRoleCapabilities;
 }) {
+  const temporalContext = getPrivateAiTemporalContext();
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `You may answer from conversation context for general navigation. For account-specific facts, request tools first.\n` +
     `Use only the available tools; never ask for or invent Firestore paths.\n` +
@@ -5414,6 +5513,8 @@ function buildPlannerPrompt({
     `Never claim that no matching schedule event exists unless the tool result says absenceConfirmed is true. If schedule coverage is partial, say the complete schedule could not be verified.\n` +
     `For writes, call the write tool with normalized args. The app will stage it and require user confirmation before execution.\n` +
     `Imperative requests that ask to add, invite, create, update, remove, cancel, or send something are write requests, not help questions. Call the matching write tool instead of get_help.\n` +
+    `Resolve relative dates such as "Saturday" against CURRENT DATE/TIME CONTEXT, choosing the next future occurrence unless the user says otherwise. Use that time zone when the user does not supply one.\n` +
+    `For an imperative write with enough information, call the matching write tool before returning an answer. If a required detail is still ambiguous, return one concise clarification question and do not claim the action was prepared or completed.\n` +
     (roleCapabilities.isTeamManager
       ? `Adding roster players does not require parent or guardian email addresses. If the user asks to add players only, call apply_roster_import with name-only add operations and no familyContacts. Do not ask for contact details or call invite_roster_parent unless the user explicitly asks to invite a parent or guardian.\n`
       : '') +
@@ -5424,10 +5525,50 @@ function buildPlannerPrompt({
     getRoleAuthorizedPrivateAiToolDefinitions(user, roleCapabilities).map((definition) => (
       `- [${definition.domain || inferPrivateAiToolDomain(definition.name)}] ${definition.name} (${definition.mode}): ${definition.description}`
     )).join('\n') + `\n\n` +
+    `CURRENT DATE/TIME CONTEXT:\n${JSON.stringify(temporalContext)}\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user, roleCapabilities))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
     `TOOL RESULTS SO FAR:\n${JSON.stringify(formatToolResultsForPrompt(toolResults))}\n`;
+}
+
+function getPrivateAiTemporalContext() {
+  const now = new Date();
+  let timeZone = 'UTC';
+  try {
+    timeZone = compactText(Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+  } catch {
+    timeZone = 'UTC';
+  }
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+      }).formatToParts(now)
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value])
+    );
+    return {
+      currentDate: `${parts.year}-${parts.month}-${parts.day}`,
+      currentTime: `${parts.hour}:${parts.minute}:${parts.second}`,
+      timeZone,
+      currentInstant: now.toISOString()
+    };
+  } catch {
+    return {
+      currentDate: now.toISOString().slice(0, 10),
+      currentTime: now.toISOString().slice(11, 19),
+      timeZone: 'UTC',
+      currentInstant: now.toISOString()
+    };
+  }
 }
 
 function buildFinalAnswerPrompt({
@@ -5464,6 +5605,7 @@ function formatToolResultsForPrompt(toolResults: PrivateAiToolResult[]) {
     ok: result.ok,
     data: result.data,
     error: result.error,
+    failureStage: result.failureStage,
     requiresConfirmation: result.requiresConfirmation === true
   }));
 }
@@ -6989,6 +7131,62 @@ function looksLikeFunctionalHelpQuestion(question: string) {
   ].some((term) => text.includes(term));
 }
 
+function isPrivateAiWriteClarificationAnswer(answer: string) {
+  const text = compactText(answer);
+  const normalized = text.toLowerCase();
+  if (!normalized) return false;
+  const completionClaim = (
+    /\b(?:i|we|all plays)\s+(?:have\s+|just\s+)?(?:prepared|reviewed|staged|queued|scheduled|created|updated|saved|sent|removed|cancelled|completed|confirmed|applied)\b/.test(normalized)
+    || /\b(?:change|request|game|practice|event|team|invite|message|rsvp|update)\b.{0,80}\b(?:is|was|has been|have been)\s+(?:prepared|reviewed|staged|queued|scheduled|created|updated|saved|sent|removed|cancelled|completed|confirmed|applied)\b/.test(normalized)
+    || /\breply\s+["']?(?:yes|confirm)\b/.test(normalized)
+  );
+  if (completionClaim) return false;
+  return /\?$/.test(text)
+    || /^(?:which|what|when|where|who|please (?:provide|choose|specify|tell)|tell me|could you|can you|i need)\b/.test(normalized)
+    || /\b(?:cannot|can't|could not|couldn't|unable to)\b.{0,120}\b(?:without|until|need|provide|choose|specify)\b/.test(normalized);
+}
+
+function buildPrivateAiWriteFailureAnswer(question: string, toolResults: PrivateAiToolResult[]) {
+  const failedWrite = [...toolResults].reverse().find((result) => (
+    !result.ok
+    && getPrivateAiToolDefinition(result.name)?.mode === 'write'
+    && (
+      result.failureStage === 'planning'
+      || privateAiWriteToolMatchesQuestion(question, result.name)
+    )
+  ));
+  if (failedWrite?.failureStage === 'proposal-save') {
+    return 'I reviewed that change, but could not save it for confirmation. Nothing was applied. Please try again.';
+  }
+  if (failedWrite?.failureStage === 'review-preparation') {
+    return `I could not prepare that change during review because ${getPrivateAiReviewFailureReason(failedWrite.error)}.`;
+  }
+  return 'I could not prepare that change because ALL PLAYS AI did not select a matching reviewed action. Nothing was applied. Please try again.';
+}
+
+function getPrivateAiReviewFailureReason(error: unknown) {
+  const text = compactText(error).toLowerCase();
+  if (/team access|managed team|verify.{0,40}team|matching team/.test(text)) {
+    return 'I could not verify management access to the requested team. Use the exact team name or team ID and try again';
+  }
+  if (/more than one|ambiguous|choose one/.test(text)) {
+    return 'more than one authorized target matched. Choose the exact team, player, or event and try again';
+  }
+  if (/team name is required/.test(text)) {
+    return 'a team name is required. Tell me the exact name and try again';
+  }
+  if (/sport is required/.test(text)) {
+    return 'a sport is required. Tell me which sport template to use and try again';
+  }
+  if (/supported sport/.test(text)) {
+    return 'the requested sport template is not supported. Choose a sport offered by Create Team and try again';
+  }
+  if (/time zone|schedule event time|startdate|\bdate\b|\btime\b/.test(text)) {
+    return 'the requested date, time, or time zone could not be validated. Provide the full date and time zone and try again';
+  }
+  return 'the requested target or details could not be verified. Check the exact names and required fields, then try again';
+}
+
 function looksLikeImperativePrivateAiWriteRequest(question: string) {
   const text = normalizePrivateAiIntentText(question);
   const writeVerb = '(?:add|invite|create|update|change|remove|delete|deactivate|reactivate|cancel|schedule|reschedule|move|send|resend|retry|set|mark|record|assign|claim|release|save|import|complete|submit|request|revoke|retire|toggle|enable|disable|approve|reject|review|close|reopen|offer|post|pay|favorite|unfavorite)';
@@ -7080,6 +7278,12 @@ function getExpectedPrivateAiWriteToolNames(question: string): Set<string> | nul
     return /\b(?:player|athlete|complete|incomplete|mark|set)\b/.test(text)
       ? new Set(['set_player_tracking_status'])
       : new Set(['save_team_tracking_item']);
+  }
+  if (
+    /\bcreate\s+(?:a\s+)?(?:new\s+)?team\b/.test(text)
+    && !/\bteam\s+(?:admin|administrator|email|fee|invite|invitation|message|tracking)\b/.test(text)
+  ) {
+    return new Set(['create_team']);
   }
   if (/\b(?:team settings?|team name|team sport|league url|livestream url)\b/.test(text)) {
     return new Set(['update_team_settings']);
