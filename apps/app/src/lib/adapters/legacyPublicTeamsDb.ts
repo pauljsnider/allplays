@@ -25,3 +25,15 @@ export async function getPublicTeamProfile(teamId: string): Promise<any> {
   const result = await callable({ teamId });
   return result.data?.item || null;
 }
+
+export type PublicTeamGamesProjectionOptions = {
+  from: string;
+  to: string;
+  limit: number;
+};
+
+export async function getPublicTeamGamesProjection(teamId: string, options: PublicTeamGamesProjectionOptions): Promise<any> {
+  const callable = legacyHttpsCallable(legacyFunctions, 'getPublicTeamGamesProjection');
+  const result = await callable({ teamId, ...options });
+  return result.data || null;
+}

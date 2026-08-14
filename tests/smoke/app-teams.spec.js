@@ -37,14 +37,25 @@ async function waitForTeamDetailRoute(page, teamName) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
-    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
+async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2, unauthenticated = false } = {}) {
+    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount, shouldBeUnauthenticated }) => {
         window.__openedPublicUrls = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
         window.__teamRosterPlayerCount = teamRosterPlayerCount;
-    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
+        window.__unauthenticated = shouldBeUnauthenticated;
+        window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'smoke-non-production-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '000000000000',
+                appId: '1:000000000000:web:demoallplayssmoke',
+                storageBucket: 'demo-allplays.appspot.com'
+            }
+        };
+    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount, shouldBeUnauthenticated: unauthenticated });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -52,6 +63,21 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false, rost
             contentType: 'application/javascript',
             body: `
                 export function useAuth() {
+                    if (window.__unauthenticated) {
+                        return {
+                            user: null,
+                            profile: null,
+                            loading: false,
+                            error: null,
+                            roles: [],
+                            isParent: false,
+                            isCoach: false,
+                            isAdmin: false,
+                            isPlatformAdmin: false,
+                            refresh: async () => {},
+                            signOut: async () => {}
+                        };
+                    }
                     const user = {
                         uid: 'user-1',
                         email: 'parent@example.com',
@@ -624,7 +650,34 @@ async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
                         city: 'Atlanta',
                         state: 'GA',
                         zip: '30303',
-                        location: 'Atlanta, GA'
+                        location: 'Atlanta, GA',
+                        leagueUrl: 'https://league.example.test/atlanta-fire',
+                        standingsConfig: {
+                            enabled: true,
+                            rankingMode: 'points',
+                            points: { win: 3, tie: 1, loss: 0 },
+                            maxGoalDiff: null,
+                            tiebreakers: ['point_diff'],
+                            twoTeamTiebreakers: ['head_to_head'],
+                            multiTeamTiebreakers: ['group_head_to_head']
+                        }
+                    };
+                }
+
+                export async function getPublicTeamResults() {
+                    return {
+                        standings: {
+                            enabled: true,
+                            label: 'Points table',
+                            rows: [
+                                { rank: 1, team: 'Atlanta Fire', record: '3-0', points: 9 },
+                                { rank: 2, team: 'Atlanta United 2', record: '2-1', points: 6 }
+                            ],
+                            currentRow: { rank: 1, team: 'Atlanta Fire', record: '3-0', points: 9 }
+                        },
+                        recentResults: [
+                            { id: 'final-1', date: new Date('2026-08-10T18:00:00.000Z'), opponent: 'Atlanta United 2', teamScore: 3, opponentScore: 1, result: 'Win' }
+                        ]
                     };
                 }
             `
@@ -760,10 +813,14 @@ test.describe('mobile My Teams', () => {
     });
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
-        await mockTeamsModules(page, { scenario: 'empty' });
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await mockTeamsModules(page, { scenario: 'empty', unauthenticated: true });
         await mockPublicTeamsBrowseModule(page, { slowSearch: true });
         await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
 
+        const unexpectedPageErrors = () => pageErrors.filter((message) => !message.includes('Installations: Create Installation request failed'));
+        await expect.poll(unexpectedPageErrors).toEqual([]);
         await expect(page.getByRole('heading', { name: 'Discover Public Teams' })).toBeVisible();
         const searchInput = page.getByPlaceholder('Search by team, city, state, or zip');
         await searchInput.fill('atlanta');
@@ -793,10 +850,16 @@ test.describe('mobile My Teams', () => {
         await atlantaFireLink.click();
 
         await expect(page.getByRole('heading', { name: 'Atlanta Fire' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Standings' })).toBeVisible();
+        await expect(page.getByRole('row', { name: /#1 Atlanta Fire 3-0 9/ })).toHaveAttribute('aria-current', 'true');
+        await expect(page.getByText('vs. Atlanta United 2')).toBeVisible();
+        await expect(page.getByText('3 - 1')).toBeVisible();
+        await expect(page.getByText('Win', { exact: true })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Back to team search' })).toHaveAttribute('href', '#/teams/browse');
         await expect(page.getByRole('link', { name: 'Enter a join code' })).toHaveAttribute('href', '#/accept-invite');
-        await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        expect(unexpectedPageErrors()).toEqual([]);
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {

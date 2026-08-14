@@ -2,18 +2,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     discoverPublicTeams: vi.fn(),
+    getPublicTeamGamesProjection: vi.fn(),
     getPublicTeamProfile: vi.fn(),
     getPublicTeamRosterCount: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/adapters/legacyPublicTeamsDb', () => dbMocks);
+const standingsMocks = vi.hoisted(() => ({
+    computeNativeStandings: vi.fn()
+}));
 
-import { getPublicTeamDetail, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
+vi.mock('../../apps/app/src/lib/adapters/legacyPublicTeamsDb', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyPublicStandings', () => standingsMocks);
+
+import { getPublicTeamDetail, getPublicTeamResults, getPublicTeamsByLocation, getPublicTeamsPage, hydratePublicTeamRosterCounts } from '../../apps/app/src/lib/publicTeamsService';
 
 describe('publicTeamsService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.getPublicTeamRosterCount.mockResolvedValue({ count: 0, isCapped: false });
+        standingsMocks.computeNativeStandings.mockReturnValue([]);
     });
 
     it('hydrates public cards from bounded roster counts instead of the empty linked-player array', async () => {
@@ -451,6 +458,16 @@ describe('publicTeamsService', () => {
             city: 'Austin',
             state: 'TX',
             zip: '78701',
+            leagueUrl: 'https://league.example.test/standings',
+            standingsConfig: {
+                enabled: true,
+                rankingMode: 'win_pct',
+                points: { win: 5, tie: 2, loss: -1 },
+                maxGoalDiff: 7,
+                tiebreakers: ['head_to_head', 'point_diff'],
+                twoTeamTiebreakers: ['head_to_head'],
+                multiTeamTiebreakers: ['group_head_to_head', 'point_diff']
+            },
             ownerId: 'private-owner',
             adminEmails: ['private@example.com']
         });
@@ -464,8 +481,166 @@ describe('publicTeamsService', () => {
             city: 'Austin',
             state: 'TX',
             zip: '78701',
-            location: 'Austin, TX'
+            location: 'Austin, TX',
+            leagueUrl: 'https://league.example.test/standings',
+            standingsConfig: {
+                enabled: true,
+                rankingMode: 'win_pct',
+                points: { win: 5, tie: 2, loss: -1 },
+                maxGoalDiff: 7,
+                tiebreakers: ['head_to_head', 'point_diff'],
+                twoTeamTiebreakers: ['head_to_head'],
+                multiTeamTiebreakers: ['group_head_to_head', 'point_diff']
+            }
         });
         expect(dbMocks.getPublicTeamProfile).toHaveBeenCalledWith('team-public-1');
+    });
+
+    it('drops unsafe league links and normalizes malformed standings metadata', async () => {
+        dbMocks.getPublicTeamProfile.mockResolvedValue({
+            id: 'team-public-1',
+            name: 'Austin Bats',
+            leagueUrl: 'javascript:alert(1)',
+            standingsConfig: {
+                enabled: true,
+                rankingMode: 'unexpected',
+                points: { win: 'bad', tie: 1, loss: 0 },
+                maxGoalDiff: -2,
+                tiebreakers: ['head_to_head', '', 42]
+            }
+        });
+
+        await expect(getPublicTeamDetail('team-public-1')).resolves.toEqual(expect.objectContaining({
+            leagueUrl: null,
+            standingsConfig: {
+                enabled: true,
+                rankingMode: 'points',
+                points: { win: null, tie: 1, loss: 0 },
+                maxGoalDiff: null,
+                tiebreakers: ['head_to_head'],
+                twoTeamTiebreakers: [],
+                multiTeamTiebreakers: []
+            }
+        }));
+    });
+
+    it('normalizes only completed public finals into standings and five recent results', async () => {
+        const team = {
+            id: 'team-public-1',
+            name: 'Austin Bats',
+            sport: 'Baseball',
+            description: null,
+            photoUrl: null,
+            city: 'Austin',
+            state: 'TX',
+            zip: '78701',
+            location: 'Austin, TX',
+            leagueUrl: null,
+            standingsConfig: {
+                enabled: true,
+                rankingMode: 'points' as const,
+                points: { win: 4, tie: 2, loss: 0 },
+                maxGoalDiff: 5,
+                tiebreakers: ['point_diff'],
+                twoTeamTiebreakers: ['head_to_head'],
+                multiTeamTiebreakers: ['group_head_to_head']
+            }
+        };
+        const qualifyingGames = Array.from({ length: 6 }, (_, index) => ({
+            id: `final-${index + 1}`,
+            startsAt: `2026-08-${String(index + 1).padStart(2, '0')}T18:00:00.000Z`,
+            opponent: `Opponent ${index + 1}`,
+            isHome: index % 2 === 0,
+            status: 'completed',
+            teamScore: index + 3,
+            opponentScore: index + 1,
+            result: 'loss'
+        }));
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            range: { truncated: false },
+            games: [
+                ...qualifyingGames,
+                { id: 'scheduled', startsAt: '2026-08-10T18:00:00.000Z', opponent: 'Scheduled Team', status: 'scheduled', teamScore: 9, opponentScore: 1 },
+                { id: 'live', startsAt: '2026-08-11T18:00:00.000Z', opponent: 'Live Team', status: 'live', teamScore: 3, opponentScore: 2 },
+                { id: 'practice', type: 'practice', startsAt: '2026-08-12T18:00:00.000Z', opponent: 'Practice Team', status: 'completed', teamScore: 4, opponentScore: 1 },
+                { id: 'private', visibility: 'private', startsAt: '2026-08-13T18:00:00.000Z', opponent: 'Private Team', status: 'completed', teamScore: 4, opponentScore: 1 },
+                { id: 'deleted', deleted: true, startsAt: '2026-08-13T19:00:00.000Z', opponent: 'Deleted Team', status: 'completed', teamScore: 4, opponentScore: 1 },
+                { id: 'missing-score', startsAt: '2026-08-14T18:00:00.000Z', opponent: 'Missing Score', status: 'completed', teamScore: 4, opponentScore: null },
+                { id: 'bad-date', startsAt: 'not-a-date', opponent: 'Bad Date', status: 'completed', teamScore: 4, opponentScore: 1 },
+                { id: 'negative', startsAt: '2026-08-14T18:00:00.000Z', opponent: 'Negative Score', status: 'completed', teamScore: -1, opponentScore: 1 },
+                { id: 'friendly', startsAt: '2026-08-14T17:00:00.000Z', opponent: 'Friendly FC', status: 'completed', teamScore: 2, opponentScore: 2, countsTowardSeasonRecord: false }
+            ]
+        });
+        standingsMocks.computeNativeStandings.mockReturnValue([
+            { rank: 1, team: 'Austin Bats', record: '6-0', points: 24 }
+        ]);
+
+        const result = await getPublicTeamResults(team, new Date('2026-08-14T22:00:00.000Z'));
+
+        expect(dbMocks.getPublicTeamGamesProjection).toHaveBeenCalledWith('team-public-1', {
+            from: '2025-08-14',
+            to: '2026-08-14',
+            limit: 500
+        });
+        expect(standingsMocks.computeNativeStandings).toHaveBeenCalledWith([
+            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 1', homeScore: 3, awayScore: 1, status: 'completed' },
+            { homeTeam: 'Opponent 2', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 4, status: 'completed' },
+            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 3', homeScore: 5, awayScore: 3, status: 'completed' },
+            { homeTeam: 'Opponent 4', awayTeam: 'Austin Bats', homeScore: 4, awayScore: 6, status: 'completed' },
+            { homeTeam: 'Austin Bats', awayTeam: 'Opponent 5', homeScore: 7, awayScore: 5, status: 'completed' },
+            { homeTeam: 'Opponent 6', awayTeam: 'Austin Bats', homeScore: 6, awayScore: 8, status: 'completed' }
+        ], team.standingsConfig);
+        expect(result.standings).toEqual(expect.objectContaining({
+            enabled: true,
+            label: 'Points table',
+            currentRow: { rank: 1, team: 'Austin Bats', record: '6-0', points: 24 }
+        }));
+        expect(result.recentResults).toHaveLength(5);
+        expect(result.recentResults.map((game) => game.opponent)).toEqual([
+            'Friendly FC',
+            'Opponent 6',
+            'Opponent 5',
+            'Opponent 4',
+            'Opponent 3'
+        ]);
+        expect(result.recentResults[0]).toEqual(expect.objectContaining({
+            teamScore: 2,
+            opponentScore: 2,
+            result: 'Tie'
+        }));
+        expect(JSON.stringify(result)).not.toContain('Private Team');
+        expect(JSON.stringify(result)).not.toContain('Deleted Team');
+        expect(JSON.stringify(result)).not.toContain('Practice Team');
+        expect(JSON.stringify(result)).not.toContain('Scheduled Team');
+        expect(JSON.stringify(result)).not.toContain('Live Team');
+    });
+
+    it('rejects truncated projections instead of presenting partial standings', async () => {
+        dbMocks.getPublicTeamGamesProjection.mockResolvedValue({
+            range: { truncated: true },
+            games: [{
+                id: 'partial-final',
+                startsAt: '2026-08-01T18:00:00.000Z',
+                opponent: 'Partial Team',
+                status: 'completed',
+                teamScore: 2,
+                opponentScore: 1
+            }]
+        });
+
+        await expect(getPublicTeamResults({
+            id: 'team-public-1',
+            name: 'Austin Bats',
+            sport: null,
+            description: null,
+            photoUrl: null,
+            city: null,
+            state: null,
+            zip: null,
+            location: null,
+            leagueUrl: null,
+            standingsConfig: null
+        }, new Date('2026-08-14T22:00:00.000Z'))).rejects.toThrow('complete public results');
+        expect(standingsMocks.computeNativeStandings).not.toHaveBeenCalled();
     });
 });

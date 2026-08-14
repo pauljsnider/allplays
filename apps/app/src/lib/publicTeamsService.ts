@@ -1,4 +1,5 @@
-import { discoverPublicTeams, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
+import { discoverPublicTeams, getPublicTeamGamesProjection, getPublicTeamProfile, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
+import { computeNativeStandings } from './adapters/legacyPublicStandings';
 import { type ParentHomeTeam } from './homeLogic';
 
 const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
@@ -90,7 +91,41 @@ export type PublicTeamProfile = {
     state: string | null;
     zip: string | null;
     location: string | null;
+    leagueUrl: string | null;
+    standingsConfig: PublicStandingsConfig | null;
 };
+
+export type PublicStandingsConfig = {
+    enabled: boolean;
+    rankingMode: 'points' | 'win_pct';
+    points: { win: number | null; tie: number | null; loss: number | null } | null;
+    maxGoalDiff: number | null;
+    tiebreakers: string[];
+    twoTeamTiebreakers: string[];
+    multiTeamTiebreakers: string[];
+};
+
+export type PublicTeamRecentResult = {
+    id: string;
+    date: Date;
+    opponent: string;
+    teamScore: number;
+    opponentScore: number;
+    result: 'Win' | 'Loss' | 'Tie';
+};
+
+export type PublicTeamResults = {
+    standings: {
+        enabled: boolean;
+        label: string;
+        rows: Array<Record<string, unknown>>;
+        currentRow: Record<string, unknown> | null;
+    };
+    recentResults: PublicTeamRecentResult[];
+};
+
+const PUBLIC_RESULTS_LIMIT = 5;
+const PUBLIC_RESULTS_PROJECTION_LIMIT = 500;
 
 function normalizePublicTeamSearchText(value: string | null | undefined): string {
     return String(value || '').trim().toLowerCase();
@@ -100,6 +135,96 @@ function teamLocation(team: { city?: string | null; state?: string | null; zip?:
     if (team.city && team.state) return `${team.city}, ${team.state}`;
     if (team.zip) return team.zip;
     return null;
+}
+
+function publicHttpUrl(value: unknown): string | null {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        const url = new URL(value.trim());
+        return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password
+            ? url.toString()
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function finiteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function publicStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+}
+
+function normalizeStandingsConfig(value: unknown): PublicStandingsConfig | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const config = value as Record<string, unknown>;
+    const rawPoints = config.points && typeof config.points === 'object' && !Array.isArray(config.points)
+        ? config.points as Record<string, unknown>
+        : null;
+    const maxGoalDiff = finiteNumber(config.maxGoalDiff);
+    return {
+        enabled: config.enabled === true,
+        rankingMode: config.rankingMode === 'win_pct' ? 'win_pct' : 'points',
+        points: rawPoints ? {
+            win: finiteNumber(rawPoints.win),
+            tie: finiteNumber(rawPoints.tie),
+            loss: finiteNumber(rawPoints.loss)
+        } : null,
+        maxGoalDiff: maxGoalDiff !== null && maxGoalDiff > 0 ? maxGoalDiff : null,
+        tiebreakers: publicStringList(config.tiebreakers),
+        twoTeamTiebreakers: publicStringList(config.twoTeamTiebreakers),
+        multiTeamTiebreakers: publicStringList(config.multiTeamTiebreakers)
+    };
+}
+
+function shiftUtcYear(date: Date, yearOffset: number): Date {
+    const shifted = new Date(date.getTime());
+    const month = shifted.getUTCMonth();
+    const day = shifted.getUTCDate();
+    shifted.setUTCDate(1);
+    shifted.setUTCFullYear(shifted.getUTCFullYear() + yearOffset);
+    shifted.setUTCMonth(month);
+    const lastDay = new Date(Date.UTC(shifted.getUTCFullYear(), month + 1, 0)).getUTCDate();
+    shifted.setUTCDate(Math.min(day, lastDay));
+    return shifted;
+}
+
+type NormalizedPublicFinal = PublicTeamRecentResult & {
+    isHome: boolean;
+    countsTowardSeasonRecord: boolean;
+};
+
+function normalizePublicFinal(value: unknown): NormalizedPublicFinal | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const game = value as Record<string, unknown>;
+    if (game.type && String(game.type).toLowerCase() !== 'game') return null;
+    if (String(game.visibility || '').toLowerCase() === 'private' || game.isPrivate === true || game.private === true || game.deleted === true) return null;
+    if (String(game.status || '').toLowerCase() !== 'completed') return null;
+    if (game.liveStatus && !['completed', 'final'].includes(String(game.liveStatus).toLowerCase())) return null;
+    const teamScore = finiteNumber(game.teamScore);
+    const opponentScore = finiteNumber(game.opponentScore);
+    if (teamScore === null || opponentScore === null || teamScore < 0 || opponentScore < 0) return null;
+    const date = new Date(String(game.startsAt || ''));
+    if (Number.isNaN(date.getTime())) return null;
+    const opponent = String(game.opponent || '').trim();
+    if (!opponent) return null;
+    return {
+        id: String(game.id || ''),
+        date,
+        opponent,
+        isHome: game.isHome !== false,
+        teamScore,
+        opponentScore,
+        result: teamScore > opponentScore ? 'Win' : teamScore < opponentScore ? 'Loss' : 'Tie',
+        countsTowardSeasonRecord: game.countsTowardSeasonRecord !== false
+    };
 }
 
 type PublicTeamSearchResult = {
@@ -248,6 +373,60 @@ export async function getPublicTeamDetail(teamId: string): Promise<PublicTeamPro
         city: team.city ? String(team.city) : null,
         state: team.state ? String(team.state) : null,
         zip: team.zip ? String(team.zip) : null,
-        location: teamLocation(team)
+        location: teamLocation(team),
+        leagueUrl: publicHttpUrl(team.leagueUrl),
+        standingsConfig: normalizeStandingsConfig(team.standingsConfig)
+    };
+}
+
+export async function getPublicTeamResults(team: PublicTeamProfile, now = new Date()): Promise<PublicTeamResults> {
+    const projection = await getPublicTeamGamesProjection(team.id, {
+        from: shiftUtcYear(now, -1).toISOString().slice(0, 10),
+        to: now.toISOString().slice(0, 10),
+        limit: PUBLIC_RESULTS_PROJECTION_LIMIT
+    });
+    if (projection?.range?.truncated === true) {
+        throw new Error('Unable to load complete public results. Please try again.');
+    }
+
+    const finals = (Array.isArray(projection?.games) ? projection.games : [])
+        .map(normalizePublicFinal)
+        .filter((game): game is NormalizedPublicFinal => game !== null);
+    const standingsConfig = team.standingsConfig;
+    const standingsGames = standingsConfig?.enabled
+        ? finals
+            .filter((game) => game.countsTowardSeasonRecord)
+            .map((game) => ({
+                homeTeam: game.isHome ? team.name : game.opponent,
+                awayTeam: game.isHome ? game.opponent : team.name,
+                homeScore: game.isHome ? game.teamScore : game.opponentScore,
+                awayScore: game.isHome ? game.opponentScore : game.teamScore,
+                status: 'completed'
+            }))
+        : [];
+    const rows = standingsConfig?.enabled
+        ? computeNativeStandings(standingsGames, standingsConfig as unknown as Record<string, unknown>)
+        : [];
+
+    return {
+        standings: {
+            enabled: standingsConfig?.enabled === true,
+            label: standingsConfig?.enabled
+                ? (standingsConfig.rankingMode === 'win_pct' ? 'Win percentage' : 'Points table')
+                : (team.leagueUrl ? 'League page configured' : 'No standings configured'),
+            rows,
+            currentRow: rows.find((row) => String(row?.team || '').trim() === team.name) || null
+        },
+        recentResults: finals
+            .sort((left, right) => right.date.getTime() - left.date.getTime() || right.id.localeCompare(left.id))
+            .slice(0, PUBLIC_RESULTS_LIMIT)
+            .map(({ id, date, opponent, teamScore, opponentScore, result }) => ({
+                id,
+                date,
+                opponent,
+                teamScore,
+                opponentScore,
+                result
+            }))
     };
 }
