@@ -119,7 +119,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public canonical Firestor
     });
 
     function authedDb(uid, email = `${uid}@example.com`) {
-        return testEnv.authenticatedContext(uid, { email }).firestore();
+        return testEnv.authenticatedContext(uid, { email, email_verified: true }).firestore();
     }
 
     it('denies anonymous and unrelated reads of public canonical team and game documents', async () => {
