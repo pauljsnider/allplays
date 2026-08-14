@@ -5293,6 +5293,45 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('starts a direct calendar read while stored games and practices are still loading', async () => {
+    let resolveGames: ((value: unknown[]) => void) | undefined;
+    let resolvePractices: ((value: unknown[]) => void) | undefined;
+    let resolveCalendar: ((value: unknown[]) => void) | undefined;
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Team One',
+      calendarUrls: ['https://calendar.example.com/team-1.ics']
+    } as any);
+    vi.mocked(getGames).mockImplementation(() => new Promise((resolve) => {
+      resolveGames = resolve;
+    }) as any);
+    vi.mocked(getPracticeSessions).mockImplementation(() => new Promise((resolve) => {
+      resolvePractices = resolve;
+    }) as any);
+    vi.mocked(fetchAndParseCalendar).mockImplementation(() => new Promise((resolve) => {
+      resolveCalendar = resolve;
+    }) as any);
+
+    const schedule = loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      targetTeamId: 'team-1'
+    });
+
+    await vi.waitFor(() => expect(getGames).toHaveBeenCalledWith('team-1', expect.any(Object)));
+    try {
+      await vi.waitFor(() => {
+        expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
+      });
+    } finally {
+      resolveGames?.([]);
+      resolvePractices?.([]);
+      await vi.waitFor(() => expect(resolveCalendar).toBeTypeOf('function'));
+      resolveCalendar?.([]);
+      await schedule;
+    }
+  });
+
   it('keeps successful teams visible when one team schedule load fails', async () => {
     vi.mocked(getGames).mockImplementation(async (teamId: string) => {
       if (teamId === 'team-2') {
