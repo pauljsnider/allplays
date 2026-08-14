@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=443348';
-import { discoverPublicTeams } from './db.js?v=4433172';
+import { escapeHtml } from './utils.js?v=443349';
+import { discoverPublicTeams } from './db.js?v=4433173';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=44335';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {

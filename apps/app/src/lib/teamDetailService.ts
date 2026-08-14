@@ -1271,16 +1271,18 @@ export async function createRosterParentInviteForApp(
     throw new Error('You do not have permission to invite parents for this team.');
   }
 
-  void options;
   let inviteResult;
   try {
-    inviteResult = await inviteParent(
+    const inviteArgs = [
         normalizedTeamId,
         normalizedPlayerId,
         cleanString(player?.number),
         normalizedEmail,
         relation
-      );
+      ] as const;
+    inviteResult = cleanString(options.idempotencyKey)
+      ? await inviteParent(...inviteArgs, { idempotencyKey: cleanString(options.idempotencyKey) })
+      : await inviteParent(...inviteArgs);
   } catch (error: any) {
     const errorCode = cleanString(error?.code).replace(/^functions\//, '');
     if (errorCode === 'resource-exhausted') {
@@ -1292,7 +1294,7 @@ export async function createRosterParentInviteForApp(
   if (!code) throw new Error('Invite code was not created.');
   const reused = inviteResult?.reused === true;
   const created = inviteResult?.created !== false && !reused;
-  const emailQueued = Boolean(normalizedEmail && created);
+  const emailPending = Boolean(normalizedEmail);
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
@@ -1300,10 +1302,10 @@ export async function createRosterParentInviteForApp(
     inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
     email: normalizedEmail || null,
-    emailQueued,
+    emailQueued: false,
     emailDeduplicated: reused,
-    emailSent: emailQueued,
-    emailError: null,
+    emailSent: false,
+    emailError: emailPending ? 'Email delivery is pending confirmation.' : null,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
     created,

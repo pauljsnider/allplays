@@ -278,7 +278,7 @@ describe('React app team detail model', () => {
         });
     });
 
-    it('emails a coach-created parent invite with the selected relation', async () => {
+    it('reports trigger-backed parent email delivery as pending confirmation', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -297,14 +297,14 @@ describe('React app team detail model', () => {
         expect(queueInviteEmail).not.toHaveBeenCalled();
         expect(result).toMatchObject({
             email: 'parent@example.com',
-            emailQueued: true,
+            emailQueued: false,
             emailDeduplicated: false,
-            emailSent: true,
-            emailError: null
+            emailSent: false,
+            emailError: 'Email delivery is pending confirmation.'
         });
     });
 
-    it('does not queue initial parent email delivery from the client', async () => {
+    it('preserves a retryable state when asynchronous trigger delivery can fail', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -323,9 +323,9 @@ describe('React app team detail model', () => {
         expect(result).toMatchObject({
             code: 'ABCD1234',
             email: 'parent@example.com',
-            emailQueued: true,
-            emailSent: true,
-            emailError: null,
+            emailQueued: false,
+            emailSent: false,
+            emailError: 'Email delivery is pending confirmation.',
             status: 'pending'
         });
     });
@@ -407,9 +407,9 @@ describe('React app team detail model', () => {
             code: 'AUTOLINK',
             status: 'accepted',
             autoLinked: true,
-            emailQueued: true,
-            emailSent: true,
-            emailError: null
+            emailQueued: false,
+            emailSent: false,
+            emailError: 'Email delivery is pending confirmation.'
         });
     });
 
@@ -482,24 +482,26 @@ describe('React app team detail model', () => {
             {
                 playerId: 'player-1',
                 email: 'parent@allplays.ai',
-                status: 'emailed',
-                emailStatus: 'emailed',
+                status: 'code-created',
+                emailStatus: 'retryable',
+                error: 'Email delivery is pending confirmation.',
                 code: 'SIBLING1'
             },
             {
                 playerId: 'player-2',
                 email: 'parent@allplays.ai',
                 status: 'linked',
-                emailStatus: 'emailed',
+                emailStatus: 'retryable',
+                error: 'Email delivery is pending confirmation.',
                 code: 'SIBLING2'
             }
         ]);
         expect(result.invitationSummary).toEqual({
             linked: 1,
-            emailed: 2,
-            retryable: 0,
+            emailed: 0,
+            retryable: 2,
             failed: 0,
-            retryableRecipients: [],
+            retryableRecipients: ['parent@allplays.ai', 'parent@allplays.ai'],
             failedRecipients: []
         });
     });
@@ -553,7 +555,8 @@ describe('React app team detail model', () => {
             'ai_retry1_player_1',
             '14',
             'family@allplays.ai',
-            'Parent'
+            'Parent',
+            { idempotencyKey: 'ai_retry1:invite:ai_retry1_player_1:family@allplays.ai' }
         );
     });
 

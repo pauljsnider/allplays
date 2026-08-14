@@ -32,11 +32,7 @@ function getTimestampMillis(value) {
 function isActiveParentInvite(invite = {}, expected = {}, nowMillis = Date.now()) {
   const status = String(invite.status || 'active').trim().toLowerCase();
   const expiresAtMillis = getTimestampMillis(invite.expiresAt);
-  return String(invite.type || '').trim().toLowerCase() === 'parent_invite'
-    && String(invite.teamId || '').trim() === expected.teamId
-    && String(invite.playerId || '').trim() === expected.playerId
-    && normalizeParentInviteRecipient(invite.email) === expected.email
-    && Boolean(String(invite.code || '').trim())
+  return isMatchingParentInvite(invite, expected)
     && invite.used !== true
     && invite.revoked !== true
     && invite.active !== false
@@ -44,9 +40,28 @@ function isActiveParentInvite(invite = {}, expected = {}, nowMillis = Date.now()
     && (!Number.isFinite(expiresAtMillis) || expiresAtMillis > nowMillis);
 }
 
-function buildParentInviteDocumentId({ teamId, playerId, email }) {
+function isMatchingParentInvite(invite = {}, expected = {}) {
+  return String(invite.type || '').trim().toLowerCase() === 'parent_invite'
+    && String(invite.teamId || '').trim() === expected.teamId
+    && String(invite.playerId || '').trim() === expected.playerId
+    && normalizeParentInviteRecipient(invite.email) === expected.email
+    && Boolean(String(invite.code || '').trim());
+}
+
+function isCompletedParentInvite(invite = {}, expected = {}) {
+  const status = String(invite.status || '').trim().toLowerCase();
+  return isMatchingParentInvite(invite, expected)
+    && invite.revoked !== true
+    && invite.active !== false
+    && (invite.used === true || status === 'accepted');
+}
+
+function buildParentInviteDocumentId({ teamId, playerId, email, idempotencyKey = '' }) {
+  const identity = idempotencyKey
+    ? `operation\n${idempotencyKey}`
+    : `recipient\n${teamId}\n${playerId}\n${email}`;
   return `parent_${crypto.createHash('sha256')
-    .update(`${teamId}\n${playerId}\n${email}`)
+    .update(identity)
     .digest('hex')}`;
 }
 
@@ -115,6 +130,10 @@ function createParentInviteHandler({
     if (relation.length > 80) {
       throw new HttpsError('invalid-argument', 'Parent relation is too long.');
     }
+    const idempotencyKey = String(data.idempotencyKey || '').trim();
+    if (idempotencyKey.length > 256) {
+      throw new HttpsError('invalid-argument', 'Parent invite idempotency key is too long.');
+    }
 
     const prepareSenderReservation = createFirestoreFixedWindowRateLimitReservation({
       firestore,
@@ -135,7 +154,12 @@ function createParentInviteHandler({
     const teamRef = firestore.doc(`teams/${teamId}`);
     const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
     const idempotencyRef = firestore.doc(
-      `teams/${teamId}/inviteIdempotency/${buildParentInviteDocumentId({ teamId, playerId, email })}`
+      `teams/${teamId}/inviteIdempotency/${buildParentInviteDocumentId({
+        teamId,
+        playerId,
+        email,
+        idempotencyKey
+      })}`
     );
     const teamInvitesQuery = firestore.collection('accessCodes')
       .where('teamId', '==', teamId)
@@ -169,9 +193,19 @@ function createParentInviteHandler({
         const existingCode = String(idempotencySnap.data()?.accessCode || '').trim().toUpperCase();
         if (/^[A-Z0-9]{8}$/.test(existingCode)) {
           const candidateSnap = await transaction.get(firestore.doc(`accessCodes/${existingCode}`));
-          if (candidateSnap.exists && isActiveParentInvite(candidateSnap.data() || {}, expected, nowMillis)) {
+          const candidate = candidateSnap.exists ? candidateSnap.data() || {} : {};
+          if (candidateSnap.exists && (
+            isActiveParentInvite(candidate, expected, nowMillis)
+            || (idempotencyKey && isCompletedParentInvite(candidate, expected))
+          )) {
             reusableSnap = candidateSnap;
           }
+        }
+        if (idempotencyKey && !reusableSnap) {
+          throw new HttpsError(
+            'failed-precondition',
+            'The prior parent invite outcome for this operation could not be replayed.'
+          );
         }
       }
       reusableSnap = reusableSnap || inviteQuerySnap.docs.find((snapshot) => (
@@ -183,6 +217,7 @@ function createParentInviteHandler({
           transaction.set(idempotencyRef, {
             accessCode: invite.code,
             type: 'parent_invite',
+            teamId,
             playerId,
             email,
             updatedAt: now
@@ -256,6 +291,7 @@ function createParentInviteHandler({
       transaction.set(idempotencyRef, {
         accessCode: code,
         type: 'parent_invite',
+        teamId,
         playerId,
         email,
         updatedAt: now

@@ -109,6 +109,27 @@ describe('inviteParent protected callable routing', () => {
         expect(result).toMatchObject({ code: 'PARENT12', created: true, reused: false });
     });
 
+    it('forwards an operation idempotency key to the protected callable', async () => {
+        const { inviteParent } = await import('../../js/db.js');
+
+        await inviteParent(
+            'team-1',
+            'player-1',
+            '1',
+            'dad@allplays.ai',
+            'Father',
+            { idempotencyKey: 'bulk-42:invite:player-1:dad@allplays.ai' }
+        );
+
+        expect(createParentInviteCallableMock).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            playerId: 'player-1',
+            email: 'dad@allplays.ai',
+            relation: 'Father',
+            idempotencyKey: 'bulk-42:invite:player-1:dad@allplays.ai'
+        });
+    });
+
     it('returns a created invite when optional auto-linking is denied', async () => {
         const { inviteParent } = await import('../../js/db.js');
         autoAcceptParentInviteCallableMock.mockRejectedValue(permissionDeniedError());

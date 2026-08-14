@@ -767,7 +767,7 @@ export async function uploadStatSheetPhoto(teamId, gameId, file, options = {}) {
         : downloadURL;
 }
 
-import { resolveZip } from './utils.js?v=443348'; // Import resolveZip
+import { resolveZip } from './utils.js?v=443349'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -5513,7 +5513,10 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         teamId: String(teamId || '').trim(),
         playerId: String(playerId || '').trim(),
         email: normalizedParentEmail,
-        relation: String(relation || '').trim() || 'Parent'
+        relation: String(relation || '').trim() || 'Parent',
+        ...(String(options?.idempotencyKey || '').trim()
+            ? { idempotencyKey: String(options.idempotencyKey).trim() }
+            : {})
     });
     const inviteResult = response?.data || response || {};
     const accessCodeId = String(inviteResult.id || inviteResult.code || '').trim().toUpperCase();

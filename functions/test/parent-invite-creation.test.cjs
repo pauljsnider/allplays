@@ -261,6 +261,40 @@ test('normalizes the recipient and reuses one active team, player, and recipient
   assert.equal(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/').length, 2);
 });
 
+test('replays the completed auto-linked outcome for the same operation without quota or mail duplication', async () => {
+  const codes = ['PARENT12', 'PARENT34'];
+  const harness = createHarness({
+    createInviteCode: () => codes.shift(),
+    senderMaxInvites: 1,
+    recipientMaxInvites: 1
+  });
+  const input = inviteInput({ idempotencyKey: 'bulk-42:invite:player-1:parent@example.com' });
+  const first = await harness.handler(input, harness.ownerContext);
+  const accessPath = `accessCodes/${first.code}`;
+  harness.docs.set(accessPath, {
+    ...harness.docs.get(accessPath),
+    used: true,
+    usedBy: 'parent-1',
+    status: 'accepted'
+  });
+  const limitsBeforeRetry = clone(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/'));
+
+  const repeated = await harness.handler(input, harness.ownerContext);
+
+  assert.deepEqual(repeated, {
+    id: first.id,
+    code: first.code,
+    teamName: 'Tigers',
+    playerName: 'Sam',
+    email: 'parent@example.com',
+    created: false,
+    reused: true
+  });
+  assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
+  assert.deepEqual(getDocsWithPrefix(harness.docs, 'parentInviteRateLimits/'), limitsBeforeRetry);
+  assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 0);
+});
+
 test('sender exhaustion creates no access code, mail, or partial recipient reservation', async () => {
   const codes = ['PARENT12', 'PARENT34'];
   const harness = createHarness({
@@ -345,6 +379,31 @@ test('one callable creation triggers one initial mail while reuse and rejection 
   assert.equal(reused.reused, true);
   assert.equal(getDocsWithPrefix(harness.docs, 'accessCodes/').length, 1);
   assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 1);
+});
+
+test('surfaces an asynchronous trigger queue failure after invite creation', async () => {
+  const harness = createHarness();
+  const trigger = createInviteEmailOnCreateHandler({
+    shouldQueueInviteEmail: () => true,
+    autoLinkParentInvite: async () => {},
+    loadLatestInvite: async (snapshot) => snapshot.data(),
+    queueInviteEmail: async () => {
+      throw new Error('mail queue unavailable');
+    }
+  });
+  const created = await harness.handler(inviteInput(), harness.ownerContext);
+  const accessPath = `accessCodes/${created.code}`;
+
+  await assert.rejects(
+    trigger({
+      id: created.code,
+      data: () => clone(harness.docs.get(accessPath))
+    }, { params: { codeId: created.code } }),
+    /mail queue unavailable/
+  );
+
+  assert.equal(created.created, true);
+  assert.equal(getDocsWithPrefix(harness.docs, 'mail/').length, 0);
 });
 
 test('manual share invites remain bounded and reusable without creating mail', async () => {
