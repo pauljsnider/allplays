@@ -6,7 +6,7 @@ import {
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
-  indexedDBLocalPersistence,
+  inMemoryPersistence,
   initializeApp,
   initializePrimaryAppCheck,
   initializeAuth,
@@ -14,10 +14,12 @@ import {
   onAuthStateChanged,
   resolvePrimaryFirebaseConfig,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
   signInWithRedirect,
   signOut,
+  setPersistence,
   updatePassword,
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
@@ -46,25 +48,27 @@ void initializePrimaryAppCheck(app).catch((error) => {
   logger.warn('App Check initialization did not complete cleanly.', { error });
 });
 
-function initializeFirebaseAuth(appInstance: typeof app) {
+async function initializeFirebaseAuth(appInstance: typeof app) {
   if (!isNativeRuntime()) {
-    return getAuth(appInstance);
-  }
-  if (typeof window !== 'undefined' && typeof window.indexedDB?.deleteDatabase !== 'function') {
     return getAuth(appInstance);
   }
 
   try {
     return initializeAuth(appInstance, {
-      persistence: indexedDBLocalPersistence
+      // The native plugin owns durable credentials in Keychain/Keystore. The
+      // WebView SDK receives only a process-local bridge session for Firestore.
+      persistence: inMemoryPersistence
     });
   } catch (error) {
-    logger.warn('Native auth initialization fell back to getAuth.', { error });
-    return getAuth(appInstance);
+    logger.warn('Native auth initialization reused an existing auth instance.', { error });
+    const existingAuth = getAuth(appInstance);
+    await signOut(existingAuth);
+    await setPersistence(existingAuth, inMemoryPersistence);
+    return existingAuth;
   }
 }
 
-export const auth = initializeFirebaseAuth(app);
+export const auth = await initializeFirebaseAuth(app);
 
 export {
   applyActionCode,
@@ -75,6 +79,7 @@ export {
   isSignInWithEmailLink,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
   signInWithRedirect,

@@ -11,6 +11,7 @@ import {
   isSignInWithEmailLink,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
   signInWithRedirect,
@@ -31,6 +32,7 @@ import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
 import { clearAppDataCache } from './appDataCache';
 import { buildFirebaseSdkActionHref } from './appLinks';
 import { mergeOwnedTeamIds } from './teamAccess';
+import { callNativeFirebaseFunctionWithAuth } from './nativeCallable';
 import type { AuthUser, ProfileHydrationStatus, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -41,6 +43,7 @@ const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
 const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
 const nativeAuthObserverTimeoutMs = 4000;
+const nativeWebAuthBridgeTimeoutMs = 3500;
 const profileHydrationTimeoutMs = 8000;
 const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
@@ -120,12 +123,25 @@ let nativePluginUserVerificationRequest: NativePluginUserVerificationRequest | n
 let nativePluginAuthStateListenerRegistration: Promise<void> | null = null;
 let nativePluginTokenGeneration = 0;
 let nativePluginTokenSequence = 0;
+type NativeWebAuthBridgeRequest = {
+  uid: string;
+  generation: number;
+  promise: Promise<FirebaseUser>;
+};
+let nativeWebAuthBridgeGeneration = 0;
+let nativeWebAuthBridgeRequest: NativeWebAuthBridgeRequest | null = null;
+
+function resetNativeWebAuthBridge() {
+  nativeWebAuthBridgeGeneration += 1;
+  nativeWebAuthBridgeRequest = null;
+}
 
 function resetNativePluginTokenBroker() {
   nativePluginTokenGeneration += 1;
   nativePluginTokenCache = null;
   nativePluginTokenRequest = null;
   nativePluginUserVerificationRequest = null;
+  resetNativeWebAuthBridge();
 }
 
 async function ensureNativePluginAuthStateListener() {
@@ -137,8 +153,23 @@ async function ensureNativePluginAuthStateListener() {
   }
 
   const registration = Promise.resolve(
-    FirebaseAuthentication.addListener('authStateChange', () => {
+    FirebaseAuthentication.addListener('authStateChange', (event) => {
       resetNativePluginTokenBroker();
+      const nativeUid = String(event?.user?.uid || '').trim();
+      const storedUid = String(readNativeAuthSession()?.uid || '').trim();
+      if (!nativeUid || (storedUid && storedUid !== nativeUid)) {
+        clearNativeAuthSession();
+        clearCachedUserData();
+        void firebaseSignOut(auth).catch((error) => {
+          logger.warn('Unable to clear WebView authentication after a native auth change.', { error });
+        });
+        return;
+      }
+      if (auth.currentUser?.uid && auth.currentUser.uid !== nativeUid) {
+        void firebaseSignOut(auth).catch((error) => {
+          logger.warn('Unable to clear mismatched WebView authentication.', { error });
+        });
+      }
     })
   ).then(() => undefined).catch((error) => {
     if (nativePluginAuthStateListenerRegistration === registration) {
@@ -621,7 +652,81 @@ export async function getNativeAuthIdToken(forceRefresh = false): Promise<string
 }
 
 export function getNativeAuthUserId(): string | null {
-  return auth.currentUser?.uid || getNativeAuthFallbackUser()?.uid || null;
+  if (isNativeRuntime()) {
+    return getNativeAuthFallbackUser()?.uid || auth.currentUser?.uid || null;
+  }
+  return auth.currentUser?.uid || null;
+}
+
+function normalizeNativeAuthUid(value: unknown) {
+  if (typeof value !== 'string') return '';
+  const uid = value.trim();
+  if (!uid || uid.length > 128 || uid.includes('/')) return '';
+  return uid;
+}
+
+export async function ensureNativeWebViewAuthSession(expectedUid = getNativeAuthUserId()): Promise<FirebaseUser | null> {
+  if (!isNativeRuntime()) return auth.currentUser || null;
+
+  const uid = normalizeNativeAuthUid(expectedUid);
+  if (!uid) return null;
+  if (auth.currentUser?.uid === uid) return auth.currentUser;
+
+  const generation = nativeWebAuthBridgeGeneration;
+  const pendingRequest = nativeWebAuthBridgeRequest;
+  if (pendingRequest?.uid === uid && pendingRequest.generation === generation) {
+    return pendingRequest.promise;
+  }
+
+  const promise = (async () => {
+    const idToken = await getNativeAuthIdToken(true);
+    if (!idToken || generation !== nativeWebAuthBridgeGeneration || getNativeAuthUserId() !== uid) {
+      throw new Error('Native authentication changed while preparing the WebView session.');
+    }
+
+    const result = await callNativeFirebaseFunctionWithAuth<{ customToken?: unknown }>(
+      'createNativeWebAuthToken',
+      {},
+      {
+        projectId: String(auth.app?.options?.projectId || ''),
+        idToken
+      },
+      {
+        timeoutMs: nativeWebAuthBridgeTimeoutMs,
+        errorLabel: 'Native WebView authentication'
+      }
+    );
+    const customToken = typeof result?.customToken === 'string' ? result.customToken.trim() : '';
+    if (!customToken) {
+      throw new Error('Native WebView authentication response is invalid.');
+    }
+    if (generation !== nativeWebAuthBridgeGeneration || getNativeAuthUserId() !== uid) {
+      throw new Error('Native authentication changed before the WebView session was applied.');
+    }
+
+    if (auth.currentUser && auth.currentUser.uid !== uid) {
+      await firebaseSignOut(auth);
+    }
+    const credential = await signInWithCustomToken(auth, customToken) as UserCredential;
+    const bridgedUser = credential?.user;
+    if (
+      !bridgedUser?.uid
+      || bridgedUser.uid !== uid
+      || generation !== nativeWebAuthBridgeGeneration
+      || getNativeAuthUserId() !== uid
+    ) {
+      await firebaseSignOut(auth).catch(() => undefined);
+      throw new Error('Native WebView authentication did not match the current account.');
+    }
+    return bridgedUser;
+  })().finally(() => {
+    if (nativeWebAuthBridgeRequest?.promise === promise) {
+      nativeWebAuthBridgeRequest = null;
+    }
+  });
+
+  nativeWebAuthBridgeRequest = { uid, generation, promise };
+  return promise;
 }
 
 async function getNativeAccessCodeValidationOptions(result: UserCredential) {
@@ -725,6 +830,18 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
     provider: 'native-plugin'
   });
   await clearFirebaseAuthStorageSession();
+  try {
+    await ensureNativeWebViewAuthSession(pluginUser.uid);
+  } catch (error) {
+    clearNativeAuthSession();
+    clearCachedUserData();
+    await Promise.allSettled([
+      FirebaseAuthentication.signOut(),
+      firebaseSignOut(auth)
+    ]);
+    logger.warn('Unable to finish native WebView authentication.', { error });
+    throw new Error('Unable to finish signing in. Check the connection and try again.');
+  }
 
   return {
     uid: pluginUser.uid,
@@ -1017,8 +1134,14 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
   let timeoutId: number | undefined;
   let lastObservedUid: string | null | undefined;
+  let disposed = false;
+  let webAuthUserObserved = false;
+  let fallbackEmitted = false;
+  let bridgedUidEmittedBeforeObserver: string | null = null;
+  let bootstrapRequest: Promise<void> | null = null;
 
   const emit = (user: FirebaseUser | null) => {
+    if (disposed) return;
     const nextUid = user?.uid ?? null;
     // When the signed-in account changes (including sign-out), purge any cached
     // app data so the incoming user can never read the previous user's data.
@@ -1029,31 +1152,97 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
     callback(user);
   };
 
+  const clearFallbackTimer = () => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+    timeoutId = undefined;
+  };
+
+  const emitNativeFallback = (fallbackUser = getNativeAuthFallbackUser()) => {
+    if (webAuthUserObserved || fallbackEmitted) return;
+    fallbackEmitted = true;
+    emit(fallbackUser);
+  };
+
+  const bootstrapNativeWebAuth = () => {
+    const fallbackUser = getNativeAuthFallbackUser();
+    if (!fallbackUser?.uid) {
+      clearFallbackTimer();
+      emitNativeFallback(null);
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      clearFallbackTimer();
+      emitNativeFallback(fallbackUser);
+      return;
+    }
+    if (bootstrapRequest) return;
+
+    bootstrapRequest = ensureNativeWebViewAuthSession(fallbackUser.uid)
+      .then((bridgedUser) => {
+        clearFallbackTimer();
+        // signInWithCustomToken normally reaches the SDK observer first. This
+        // keeps bootstrap deterministic in tests and unusual WebView runtimes.
+        if (!webAuthUserObserved) {
+          const bootstrapUser = bridgedUser || fallbackUser;
+          bridgedUidEmittedBeforeObserver = bootstrapUser.uid;
+          emit(bootstrapUser);
+        }
+      })
+      .catch((error) => {
+        clearFallbackTimer();
+        logger.warn('Unable to authenticate the WebView Firebase session.', { error });
+        emitNativeFallback(fallbackUser);
+      })
+      .finally(() => {
+        bootstrapRequest = null;
+      });
+  };
+
   if (isNativeRuntime()) {
     timeoutId = window.setTimeout(() => {
-      const fallbackUser = getNativeAuthFallbackUser();
-      if (fallbackUser) {
-        emit(fallbackUser);
-      }
+      emitNativeFallback();
     }, nativeAuthObserverTimeoutMs);
   }
 
   const unsubscribe = onAuthStateChanged(auth, (user: FirebaseUser | null) => {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-      timeoutId = undefined;
-    }
-    if (user) {
+    if (!isNativeRuntime()) {
+      clearFallbackTimer();
       emit(user);
       return;
     }
-    emit(isNativeRuntime() ? getNativeAuthFallbackUser() : null);
+
+    const fallbackUser = getNativeAuthFallbackUser();
+    if (user) {
+      if (!fallbackUser?.uid || user.uid !== fallbackUser.uid) {
+        webAuthUserObserved = false;
+        fallbackEmitted = false;
+        bridgedUidEmittedBeforeObserver = null;
+        void firebaseSignOut(auth).finally(bootstrapNativeWebAuth);
+        return;
+      }
+      webAuthUserObserved = true;
+      clearFallbackTimer();
+      // signInWithCustomToken may resolve just before Firebase dispatches its
+      // observer. The bootstrap path already exposed this exact principal, so
+      // suppress the one redundant callback that would otherwise hydrate and
+      // load Home twice on native startup.
+      if (bridgedUidEmittedBeforeObserver === user.uid) {
+        bridgedUidEmittedBeforeObserver = null;
+        return;
+      }
+      emit(user);
+      return;
+    }
+
+    webAuthUserObserved = false;
+    fallbackEmitted = false;
+    bridgedUidEmittedBeforeObserver = null;
+    bootstrapNativeWebAuth();
   });
 
   return () => {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-    }
+    disposed = true;
+    clearFallbackTimer();
     unsubscribe();
   };
 }

@@ -146,6 +146,7 @@
                 "cleanupInviteSignupOnAuthDelete",
                 "confirmParentAccountMerge",
                 "createCoParentInvite",
+                "createNativeWebAuthToken",
                 "previewAccountMerge",
                 "processAccountDeletionRequest",
                 "processPasswordResetEmailRequest",
@@ -174,6 +175,7 @@
                 "functions/test/co-parent-invite-core.test.cjs",
                 "functions/test/failed-invite-signup-cleanup.test.cjs",
                 "functions/test/friend-invite-redemption.test.cjs",
+                "functions/test/native-web-auth-token.test.cjs",
                 "tests/unit/accept-invite-flow.test.js",
                 "tests/unit/mobile-store-legal-pages.test.js",
                 "tests/unit/accept-invite-page.test.js",
@@ -185,7 +187,9 @@
                 "tests/unit/app-auth-profile-capabilities.test.js",
                 "tests/unit/app-profile-service.test.ts",
                 "tests/unit/auth-email-client.test.js",
-                "tests/unit/auth-email-resend-routing.test.js"
+                "tests/unit/auth-email-resend-routing.test.js",
+                "tests/unit/native-web-auth-iam.test.js",
+                "tests/unit/native-webview-firestore-auth-contract.test.js"
             ],
             "integrationTests": [
                 "apps/app/src/pages/AcceptInvite.test.tsx",

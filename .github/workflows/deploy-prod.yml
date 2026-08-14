@@ -1155,6 +1155,15 @@ jobs:
           retry_enabled_inventory_producer_target="functions:indexCertificateLegacySignaturesOnDefaultsWrite"
           retry_enabled_cleanup_compatibility_target="functions:cleanupCertificateSignature"
           retry_enabled_function_targets="functions:indexCertificateLegacySignaturesOnDefaultsWrite,functions:processAccountDeletionRequest,functions:queueParentInviteEmail,functions:reconcileLegacyTeamOwnership,functions:syncLegacyTeamOwnershipOnAuthCreate,functions:syncPublicUserProfileOnUserWrite,functions:syncPublicUserProfilesOnTeamWrite,functions:syncTeamOwnerAccessOnCreate,functions:notifyConversationChatMessageCreated,functions:notifyFeeAssigned,functions:notifyFeeMarkedPaid,functions:notifyGameCreated,functions:notifyGameUpdated,functions:notifyInviteRedeemed,functions:notifyLiveEventCreated,functions:notifyOfficiatingNotificationCreated,functions:notifyOpenOfficiatingSlots,functions:notifyParentMembershipRequestCreated,functions:notifyParentMembershipRequestUpdated,functions:notifyPracticePacketAssigned,functions:notifyPracticePacketCompleted,functions:notifyPublishedCertificateAward,functions:notifyRegistrationStatusChanged,functions:notifyRegistrationSubmitted,functions:notifyRideClaimCreated,functions:notifyRideClaimUpdated,functions:notifyRideOfferCancelled,functions:notifyRideOfferCreated,functions:notifyScheduleImportBatchCompleted,functions:notifyTeamChatMessageCreated,functions:syncTeamNotificationTargetsOnDeviceWrite,functions:syncTeamNotificationTargetsOnPreferenceWrite,functions:processPasswordResetEmailRequest,functions:sweepIneligiblePublicUserProfiles,functions:dispatchDueTeamMediaNotificationBatches,functions:dispatchDuePreEventReminders,functions:queueDueRegistrationFailedPaymentReminders,functions:sendPracticePacketDueTomorrowReminders,functions:sendFeeUnpaidDueReminders"
+          native_web_auth_runtime_service_account="game-flow-c6311@appspot.gserviceaccount.com"
+          native_web_auth_runtime_policy="$RUNNER_TEMP/native-web-auth-runtime-policy.json"
+          gcloud iam service-accounts get-iam-policy \
+            "$native_web_auth_runtime_service_account" \
+            --project game-flow-c6311 \
+            --format=json > "$native_web_auth_runtime_policy"
+          node scripts/verify-native-web-auth-iam.mjs \
+            --policy "$native_web_auth_runtime_policy" \
+            --service-account "$native_web_auth_runtime_service_account"
           # The Rules API compiled this exact compatibility source after the
           # f87957ae2 deployment verified the immutable create response. The
           # service later returned compiler-canonicalized source (including

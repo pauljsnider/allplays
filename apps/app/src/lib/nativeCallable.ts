@@ -1,12 +1,18 @@
 import { CapacitorHttp } from '@capacitor/core';
 
 import { getPrimaryAppCheckHeaders } from './adapters/legacyFirebaseAppCheck';
-import { firebaseAuth, getNativeAuthIdToken } from './authService';
 
 const defaultNativeCallableTimeoutMs = 8000;
 
-function getProjectId() {
-  const projectId = String(firebaseAuth.app?.options?.projectId || '').trim();
+type NativeCallableOptions = { timeoutMs?: number; errorLabel?: string };
+
+type NativeCallableAuth = {
+  projectId: string;
+  idToken: string;
+};
+
+function getProjectId(value: unknown) {
+  const projectId = String(value || '').trim();
   if (!/^[a-z0-9][a-z0-9-]{4,61}[a-z0-9]$/.test(projectId)) {
     throw new Error('Firebase project ID is missing or invalid.');
   }
@@ -39,12 +45,28 @@ function getCallablePayload(value: unknown): Record<string, unknown> {
 export async function callNativeFirebaseFunction<T = unknown>(
   functionName: string,
   data: Record<string, unknown>,
-  options: { timeoutMs?: number; errorLabel?: string } = {}
+  options: NativeCallableOptions = {}
 ): Promise<T> {
-  const projectId = getProjectId();
+  // Keep the authenticated transport reusable during auth bootstrap without a
+  // static authService cycle. Normal callers still use the current native token.
+  const { firebaseAuth, getNativeAuthIdToken } = await import('./authService');
+  const idToken = await getNativeAuthIdToken(true);
+  return callNativeFirebaseFunctionWithAuth<T>(functionName, data, {
+    projectId: String(firebaseAuth.app?.options?.projectId || ''),
+    idToken: String(idToken || '')
+  }, options);
+}
+
+export async function callNativeFirebaseFunctionWithAuth<T = unknown>(
+  functionName: string,
+  data: Record<string, unknown>,
+  auth: NativeCallableAuth,
+  options: NativeCallableOptions = {}
+): Promise<T> {
+  const projectId = getProjectId(auth.projectId);
   const normalizedFunctionName = getFunctionName(functionName);
-  const token = await getNativeAuthIdToken(true);
-  if (!token) throw new Error('Native auth token is unavailable.');
+  const idToken = String(auth.idToken || '').trim();
+  if (!idToken) throw new Error('Native auth token is unavailable.');
   const requestUrl = `https://us-central1-${projectId}.cloudfunctions.net/${normalizedFunctionName}`;
   const timeoutMs = Number.isFinite(options.timeoutMs) && Number(options.timeoutMs) > 0
     ? Math.floor(Number(options.timeoutMs))
@@ -52,7 +74,7 @@ export async function callNativeFirebaseFunction<T = unknown>(
   const response = await CapacitorHttp.post({
     url: requestUrl,
     headers: await getPrimaryAppCheckHeaders({
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${idToken}`,
       'Content-Type': 'application/json'
     }, requestUrl) as Record<string, string>,
     data: { data },

@@ -1605,8 +1605,13 @@ export function subscribeToTeamChatMessages(
   let unsubscribe: (() => void) | null = null;
   let pollTimer: number | undefined;
   let lastNativeMessageRevision: string | null = null;
+  let pollingStarted = false;
 
   const startPollingFallback = async () => {
+    if (cancelled || pollingStarted) return;
+    pollingStarted = true;
+    unsubscribe?.();
+    unsubscribe = null;
     const load = async () => {
       if (cancelled) return;
       try {
@@ -1635,19 +1640,26 @@ export function subscribeToTeamChatMessages(
     }
   };
 
+  const handleListenerError = (error: Error) => {
+    if (isNativeRuntime()) {
+      // Listener authorization failures arrive asynchronously. Keep realtime
+      // delivery when the in-memory bridge is healthy, and reuse the existing
+      // authenticated REST poller if the WebView listener cannot start.
+      void startPollingFallback();
+    } else {
+      onError?.(error);
+    }
+  };
+
   try {
     unsubscribe = subscribeToChatMessages(teamId, { limit: 50, conversationId }, (messages: ChatMessage[], oldestDoc: unknown | null) => {
       if (!cancelled) {
         const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, oldestDoc);
       }
-    }, onError);
+    }, handleListenerError);
   } catch (error: any) {
-    if (!isNativeRuntime()) {
-      onError?.(error);
-    } else {
-      void startPollingFallback();
-    }
+    handleListenerError(error);
   }
 
   return {

@@ -16,7 +16,7 @@ vi.mock('@capacitor/core', () => ({ CapacitorHttp: { post: httpMocks.post } }));
 vi.mock('./authService', () => authMocks);
 vi.mock('./adapters/legacyFirebaseAppCheck', () => appCheckMocks);
 
-import { callNativeFirebaseFunction } from './nativeCallable';
+import { callNativeFirebaseFunction, callNativeFirebaseFunctionWithAuth } from './nativeCallable';
 
 describe('native callable transport', () => {
   beforeEach(() => {
@@ -39,6 +39,24 @@ describe('native callable transport', () => {
       connectTimeout: 8000,
       readTimeout: 8000
     });
+  });
+
+  it('reuses the same transport during native auth bootstrap without importing auth recursively', async () => {
+    httpMocks.post.mockResolvedValue({ status: 200, data: { result: { customToken: 'web-custom-token' } } });
+
+    await expect(callNativeFirebaseFunctionWithAuth(
+      'createNativeWebAuthToken',
+      {},
+      { projectId: 'demo-project', idToken: 'bootstrap-native-token' },
+      { timeoutMs: 3500, errorLabel: 'Native WebView authentication' }
+    )).resolves.toEqual({ customToken: 'web-custom-token' });
+
+    expect(authMocks.getNativeAuthIdToken).not.toHaveBeenCalled();
+    expect(httpMocks.post).toHaveBeenCalledWith(expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer bootstrap-native-token' }),
+      connectTimeout: 3500,
+      readTimeout: 3500
+    }));
   });
 
   it('fails closed for invalid names, missing tokens, and malformed responses', async () => {
