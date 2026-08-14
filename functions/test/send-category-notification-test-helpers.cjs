@@ -121,6 +121,7 @@ function buildNotificationTestEnv({
     deferNotificationInboxOperations = false,
     transactionErrors = [],
     transactionPostCommitErrors = [],
+    initialDocs = {},
     nowMillis = Date.parse('2026-06-28T12:00:00.000Z'),
     nowMillisProvider = null
 } = {}) {
@@ -140,6 +141,7 @@ function buildNotificationTestEnv({
     const feeRecipientDocGetPaths = [];
     const getAllCalls = [];
     const docStore = new Map();
+    const teamMediaQueryLog = [];
     const rejectedInboxUids = new Set(rejectedNotificationInboxUids);
     let activeNotificationInboxPipelines = 0;
     let peakNotificationInboxPipelines = 0;
@@ -326,6 +328,10 @@ function buildNotificationTestEnv({
         docStore.set(path, clone(value));
     }
 
+    Object.entries(initialDocs || {}).forEach(([path, value]) => {
+        writeStoredDoc(path, value);
+    });
+
     function mergeStoredDoc(path, value) {
         const current = clone(docStore.get(path) || {});
         const incoming = clone(value) || {};
@@ -497,6 +503,82 @@ function buildNotificationTestEnv({
     }
 
     function collection(path) {
+        if (path === 'teamMediaNotificationBatches') {
+            const getBatchDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
+            const makeBatchQuery = ({ filters = [], order = null, cursor = null, limitCount = null } = {}) => ({
+                where(field, op, value) {
+                    return makeBatchQuery({
+                        filters: [...filters, { field, op, value }],
+                        order,
+                        cursor,
+                        limitCount
+                    });
+                },
+                orderBy(field, direction = 'asc') {
+                    return makeBatchQuery({
+                        filters,
+                        order: { field, direction },
+                        cursor,
+                        limitCount
+                    });
+                },
+                startAfter(nextCursor) {
+                    return makeBatchQuery({ filters, order, cursor: nextCursor, limitCount });
+                },
+                limit(nextLimitCount) {
+                    return makeBatchQuery({ filters, order, cursor, limitCount: nextLimitCount });
+                },
+                async get() {
+                    let docs = getBatchDocs().filter((docSnap) => {
+                        const data = docSnap.data() || {};
+                        return filters.every((filter) => matchesQueryFilter(data, filter));
+                    });
+                    if (order) {
+                        docs.sort((left, right) => {
+                            const leftMillis = comparableMillis(left.data()?.[order.field]);
+                            const rightMillis = comparableMillis(right.data()?.[order.field]);
+                            const fieldComparison = leftMillis - rightMillis;
+                            const idComparison = left.id.localeCompare(right.id);
+                            const comparison = fieldComparison || idComparison;
+                            return order.direction === 'desc' ? -comparison : comparison;
+                        });
+                    }
+                    if (cursor) {
+                        docs = docs.filter((docSnap) => {
+                            if (!order) return docSnap.id.localeCompare(cursor.id) > 0;
+                            const docMillis = comparableMillis(docSnap.data()?.[order.field]);
+                            const cursorMillis = comparableMillis(cursor.data()?.[order.field]);
+                            const fieldComparison = docMillis - cursorMillis;
+                            const comparison = fieldComparison || docSnap.id.localeCompare(cursor.id);
+                            return order.direction === 'desc' ? comparison < 0 : comparison > 0;
+                        });
+                    }
+                    if (Number.isFinite(limitCount)) {
+                        docs = docs.slice(0, limitCount);
+                    }
+                    teamMediaQueryLog.push({
+                        filters: clone(filters),
+                        order: clone(order),
+                        cursorId: cursor?.id || null,
+                        limit: limitCount,
+                        resultIds: docs.map((docSnap) => docSnap.id)
+                    });
+                    return makeQuerySnapshot(docs);
+                }
+            });
+            return makeBatchQuery();
+        }
+
         if (path === 'users') {
             return {
                 where(field, op, value) {
@@ -571,6 +653,20 @@ function buildNotificationTestEnv({
                         data: entry.data,
                         exists: true
                     })));
+                }
+            };
+        }
+
+        if (/^teams\/[^/]+\/notificationRecipients$/.test(path)) {
+            return {
+                where() {
+                    return { get: async () => makeQuerySnapshot([]) };
+                },
+                limit() {
+                    return { get: async () => makeQuerySnapshot([]) };
+                },
+                async get() {
+                    return makeQuerySnapshot([]);
                 }
             };
         }
@@ -1002,6 +1098,7 @@ function buildNotificationTestEnv({
         messagingCalls,
         feeRecipientDocGetPaths,
         getAllCalls,
+        teamMediaQueryLog,
         get activeNotificationInboxPipelines() {
             return activeNotificationInboxPipelines;
         },
@@ -1013,6 +1110,9 @@ function buildNotificationTestEnv({
             return Array.from(docStore.keys())
                 .filter((docPath) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
                 .length;
+        },
+        getStoredDoc(path) {
+            return clone(docStore.get(path));
         },
         adminStub,
         firestoreState,

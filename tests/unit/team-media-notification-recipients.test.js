@@ -132,7 +132,8 @@ describe('team media notification recipients', () => {
     it('registers batched team media push notification queue and dispatcher functions', () => {
         expect(functionsSource).toContain('exports.queueTeamMediaNotificationBatch = functions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/mediaItems/{itemId}')");
-        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = retryableTeamMediaNotificationFunctions.pubsub');
+        expect(functionsSource).toContain('timeoutSeconds: 540');
         expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
