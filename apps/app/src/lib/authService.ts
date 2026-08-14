@@ -109,8 +109,15 @@ type NativePluginTokenRequest = {
   sequence: number;
   promise: Promise<string>;
 };
+type NativePluginUserVerificationRequest = {
+  uid: string;
+  generation: number;
+  promise: Promise<void>;
+};
 let nativePluginTokenCache: NativePluginTokenCache | null = null;
 let nativePluginTokenRequest: NativePluginTokenRequest | null = null;
+let nativePluginUserVerificationRequest: NativePluginUserVerificationRequest | null = null;
+let nativePluginAuthStateListenerRegistration: Promise<void> | null = null;
 let nativePluginTokenGeneration = 0;
 let nativePluginTokenSequence = 0;
 
@@ -118,6 +125,63 @@ function resetNativePluginTokenBroker() {
   nativePluginTokenGeneration += 1;
   nativePluginTokenCache = null;
   nativePluginTokenRequest = null;
+  nativePluginUserVerificationRequest = null;
+}
+
+async function ensureNativePluginAuthStateListener() {
+  if (nativePluginAuthStateListenerRegistration) {
+    return nativePluginAuthStateListenerRegistration;
+  }
+  if (typeof FirebaseAuthentication.addListener !== 'function') {
+    return;
+  }
+
+  const registration = Promise.resolve(
+    FirebaseAuthentication.addListener('authStateChange', () => {
+      resetNativePluginTokenBroker();
+    })
+  ).then(() => undefined).catch((error) => {
+    if (nativePluginAuthStateListenerRegistration === registration) {
+      nativePluginAuthStateListenerRegistration = null;
+    }
+    logger.warn('Unable to observe native Firebase auth state.', { error });
+  });
+  nativePluginAuthStateListenerRegistration = registration;
+  return registration;
+}
+
+async function verifyNativePluginUser(expectedUid: string) {
+  const generation = nativePluginTokenGeneration;
+  const pendingVerification = nativePluginUserVerificationRequest;
+  if (pendingVerification?.uid === expectedUid && pendingVerification.generation === generation) {
+    return pendingVerification.promise;
+  }
+
+  const promise = FirebaseAuthentication.getCurrentUser().then((result) => {
+    if (generation !== nativePluginTokenGeneration) {
+      throw new Error('Native Firebase auth session changed while verifying the current user.');
+    }
+    const currentUid = String(result?.user?.uid || '').trim();
+    if (!currentUid) {
+      resetNativePluginTokenBroker();
+      throw new Error('Native Firebase auth has no signed-in user.');
+    }
+    if (currentUid !== expectedUid) {
+      resetNativePluginTokenBroker();
+      throw new Error('Native Firebase auth session does not match the saved app session.');
+    }
+  }).catch((error) => {
+    if (generation === nativePluginTokenGeneration) {
+      resetNativePluginTokenBroker();
+    }
+    throw error;
+  }).finally(() => {
+    if (nativePluginUserVerificationRequest?.promise === promise) {
+      nativePluginUserVerificationRequest = null;
+    }
+  });
+  nativePluginUserVerificationRequest = { uid: expectedUid, generation, promise };
+  return promise;
 }
 
 type NativeRestLookupUser = {
@@ -440,6 +504,8 @@ async function getNativePluginToken(forceRefresh = false, expectedUid = '') {
   if (!uid) {
     throw new Error('Native Firebase auth has no signed-in user.');
   }
+  await ensureNativePluginAuthStateListener();
+  await verifyNativePluginUser(uid);
   const now = Date.now();
   const cachedToken = nativePluginTokenCache;
   if (!forceRefresh && cachedToken && cachedToken.uid === uid && cachedToken.expiresAt > now) {
@@ -456,12 +522,18 @@ async function getNativePluginToken(forceRefresh = false, expectedUid = '') {
 
   const generation = nativePluginTokenGeneration;
   const sequence = ++nativePluginTokenSequence;
-  const promise = FirebaseAuthentication.getIdToken({ forceRefresh }).then((result) => {
+  const promise = FirebaseAuthentication.getIdToken({ forceRefresh }).then(async (result) => {
     if (generation !== nativePluginTokenGeneration) {
       throw new Error('Native Firebase auth session changed while loading a token.');
     }
     if (!result?.token) {
       throw new Error('Native Firebase auth did not return an ID token.');
+    }
+    // The plugin returns the current native user's token without a UID claim in
+    // its response. Re-check the native principal before labeling or caching it.
+    await verifyNativePluginUser(uid);
+    if (generation !== nativePluginTokenGeneration) {
+      throw new Error('Native Firebase auth session changed while loading a token.');
     }
     if (sequence === nativePluginTokenSequence) {
       nativePluginTokenCache = {
