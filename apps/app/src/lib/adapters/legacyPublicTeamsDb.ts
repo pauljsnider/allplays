@@ -59,6 +59,8 @@ export type PublicLeagueStandingsGame = {
   startsAt?: unknown;
   homeTeam?: unknown;
   awayTeam?: unknown;
+  homeTeamId?: unknown;
+  awayTeamId?: unknown;
   homeScore?: unknown;
   awayScore?: unknown;
   status?: unknown;

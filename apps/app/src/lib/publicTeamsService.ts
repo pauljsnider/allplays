@@ -241,12 +241,23 @@ function normalizePublicFinal(value: unknown): NormalizedPublicFinal | null {
 function normalizePublicLeagueFinal(value: PublicLeagueStandingsGame): Record<string, unknown> | null {
     const homeTeam = typeof value.homeTeam === 'string' ? value.homeTeam.trim() : '';
     const awayTeam = typeof value.awayTeam === 'string' ? value.awayTeam.trim() : '';
+    const homeTeamId = typeof value.homeTeamId === 'string' ? value.homeTeamId.trim() : '';
+    const awayTeamId = typeof value.awayTeamId === 'string' ? value.awayTeamId.trim() : '';
     const homeScore = finiteNumber(value.homeScore);
     const awayScore = finiteNumber(value.awayScore);
     const startsAt = new Date(String(value.startsAt || ''));
     if (String(value.status || '').toLowerCase() !== 'completed' || value.countsTowardSeasonRecord === false) return null;
     if (!homeTeam || !awayTeam || homeScore === null || awayScore === null || homeScore < 0 || awayScore < 0 || Number.isNaN(startsAt.getTime())) return null;
-    return { homeTeam, awayTeam, homeScore, awayScore, status: 'completed', startsAt: startsAt.toISOString() };
+    return {
+        homeTeam: homeTeamId || homeTeam,
+        awayTeam: awayTeamId || awayTeam,
+        homeTeamName: homeTeam,
+        awayTeamName: awayTeam,
+        homeScore,
+        awayScore,
+        status: 'completed',
+        startsAt: startsAt.toISOString()
+    };
 }
 
 function hasCompletePublicStandingsConfig(config: PublicStandingsConfig | null): config is PublicStandingsConfig & {
@@ -448,9 +459,19 @@ export async function getPublicTeamResults(team: PublicTeamProfile, now = new Da
             const date = String(game.startsAt).slice(0, 10);
             return date >= String(standingsConfig?.seasonStart) && date <= String(standingsConfig?.seasonEnd);
         });
-    const rows = standingsConfig?.enabled && standingsProjection
+    const keyedRows = standingsConfig?.enabled && standingsProjection
         ? computeNativeStandings(standingsGames, standingsConfig as unknown as Record<string, unknown>)
         : [];
+    const teamNamesByKey = new Map<string, string>();
+    standingsGames.forEach((game) => {
+        teamNamesByKey.set(String(game.homeTeam), String(game.homeTeamName));
+        teamNamesByKey.set(String(game.awayTeam), String(game.awayTeamName));
+    });
+    const currentRowIndex = keyedRows.findIndex((row) => String(row?.team || '').trim() === team.id);
+    const rows = keyedRows.map((row) => ({
+        ...row,
+        team: teamNamesByKey.get(String(row?.team || '')) || row?.team
+    }));
 
     return {
         standings: {
@@ -459,7 +480,9 @@ export async function getPublicTeamResults(team: PublicTeamProfile, now = new Da
                 ? (standingsConfig.rankingMode === 'win_pct' ? 'Win percentage' : 'Points table')
                 : (team.leagueUrl ? 'League page configured' : 'No standings configured'),
             rows,
-            currentRow: rows.find((row) => String(row?.team || '').trim() === team.name) || null
+            currentRow: currentRowIndex >= 0
+                ? rows[currentRowIndex]
+                : rows.find((row) => String(row?.team || '').trim() === team.name) || null
         },
         recentResults: finals
             .sort((left, right) => right.date.getTime() - left.date.getTime() || right.id.localeCompare(left.id))

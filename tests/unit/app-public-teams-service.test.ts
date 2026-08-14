@@ -587,11 +587,11 @@ describe('publicTeamsService', () => {
             range: { from: '2026-07-15', to: '2026-11-30', truncated: false },
             seasonLabel: 'Fall 2026',
             games: [
-                { id: 'bats-owls', startsAt: '2026-08-01T18:00:00.000Z', homeTeam: 'Austin Bats', awayTeam: 'Owls', homeScore: 3, awayScore: 1, status: 'completed', countsTowardSeasonRecord: true },
-                { id: 'foxes-bats', startsAt: '2026-08-08T18:00:00.000Z', homeTeam: 'Foxes', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 4, status: 'completed', countsTowardSeasonRecord: true },
-                { id: 'owls-foxes', startsAt: '2026-08-12T18:00:00.000Z', homeTeam: 'Owls', awayTeam: 'Foxes', homeScore: 5, awayScore: 0, status: 'completed', countsTowardSeasonRecord: true },
-                { id: 'prior-season', startsAt: '2026-06-30T18:00:00.000Z', homeTeam: 'Owls', awayTeam: 'Foxes', homeScore: 0, awayScore: 9, status: 'completed', countsTowardSeasonRecord: true },
-                { id: 'exhibition', startsAt: '2026-08-20T18:00:00.000Z', homeTeam: 'Foxes', awayTeam: 'Owls', homeScore: 9, awayScore: 0, status: 'completed', countsTowardSeasonRecord: false }
+                { id: 'bats-owls', startsAt: '2026-08-01T18:00:00.000Z', homeTeamId: 'team-public-1', awayTeamId: 'team-owls', homeTeam: 'Austin Bats', awayTeam: 'United', homeScore: 3, awayScore: 1, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'foxes-bats', startsAt: '2026-08-08T18:00:00.000Z', homeTeamId: 'team-foxes', awayTeamId: 'team-public-1', homeTeam: 'United', awayTeam: 'Austin Bats', homeScore: 2, awayScore: 4, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'owls-foxes', startsAt: '2026-08-12T18:00:00.000Z', homeTeamId: 'team-owls', awayTeamId: 'team-foxes', homeTeam: 'United', awayTeam: 'United', homeScore: 5, awayScore: 0, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'prior-season', startsAt: '2026-06-30T18:00:00.000Z', homeTeamId: 'team-owls', awayTeamId: 'team-foxes', homeTeam: 'United', awayTeam: 'United', homeScore: 0, awayScore: 9, status: 'completed', countsTowardSeasonRecord: true },
+                { id: 'exhibition', startsAt: '2026-08-20T18:00:00.000Z', homeTeamId: 'team-foxes', awayTeamId: 'team-owls', homeTeam: 'United', awayTeam: 'United', homeScore: 9, awayScore: 0, status: 'completed', countsTowardSeasonRecord: false }
             ]
         });
 
@@ -610,8 +610,8 @@ describe('publicTeamsService', () => {
         }));
         expect(result.standings.rows.map((row) => [row.rank, row.team, row.record, row.points])).toEqual([
             [1, 'Austin Bats', '2-0', 8],
-            [2, 'Owls', '1-1', 4],
-            [3, 'Foxes', '0-2', 0]
+            [2, 'United', '1-1', 4],
+            [3, 'United', '0-2', 0]
         ]);
         expect(result.recentResults).toHaveLength(5);
         expect(result.recentResults.map((game) => game.opponent)).toEqual([

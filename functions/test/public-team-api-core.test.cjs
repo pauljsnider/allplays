@@ -332,6 +332,7 @@ test('games omit private/deleted/non-game events and remove imported assignment 
         type: 'game',
         date: '2026-08-02T20:00:00Z',
         opponent: 'Tigers',
+        opponentTeamId: 'team-tigers',
         location: 'Swope Soccer Village\n(Arrival Time: 2:30 PM)\nAssignments: Snacks - Parent Name',
         isHome: false,
         status: 'completed',
@@ -383,6 +384,7 @@ test('games omit private/deleted/non-game events and remove imported assignment 
   assert.equal(response.games[1].location, 'Swope Soccer Village');
   assert.equal(response.games[1].teamScore, 3);
   assert.equal(response.games[1].opponentScore, 1);
+  assert.equal(response.games[1].opponentTeamId, 'team-tigers');
   assert.equal(response.games[1].result, 'win');
   assert.equal(response.games[1].summary, 'A strong finish.');
   assert.deepEqual(response.games[1].tournament, {
@@ -414,6 +416,12 @@ test('games omit private/deleted/non-game events and remove imported assignment 
   assert.equal(json.includes('"weight"'), false);
   assert.equal(json.includes('Parent Name'), false);
   assert.equal(json.includes('rsvpSummary'), false);
+  assert.equal(serializePublicGame({
+    id: 'invalid-opponent-id',
+    date: '2026-08-03T20:00:00Z',
+    opponent: 'Tigers',
+    opponentTeamId: 'private/path'
+  }).opponentTeamId, undefined);
 });
 
 test('opponent stats allow explicitly public custom definitions and reject private definitions', () => {

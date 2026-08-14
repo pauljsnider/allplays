@@ -415,6 +415,7 @@ function serializePublicGame(game = {}, options = {}) {
   const opponentTeamPhoto = publicHttpUrl(game?.opponentTeamPhoto);
   const statSheetPhotoUrl = publicHttpUrl(game?.statSheetPhotoUrl);
   const id = compactText(game?.id || game?.gameId, game?.isSharedGame === true ? 1000 : 128);
+  const opponentTeamId = normalizeTeamId(game?.opponentTeamId);
   return {
     id,
     startsAt: startsAt.toISOString(),
@@ -431,6 +432,7 @@ function serializePublicGame(game = {}, options = {}) {
     countsTowardSeasonRecord: game?.countsTowardSeasonRecord !== false,
     summary: nullableText(game?.summary || game?.publicSummary, 2000),
     videoUrl: publicHttpUrl(game?.videoUrl),
+    ...(opponentTeamId ? { opponentTeamId } : {}),
     ...(tournament ? { tournament } : {}),
     ...(Object.keys(opponentStats).length ? { opponentStats } : {}),
     ...(teamName ? { teamName } : {}),

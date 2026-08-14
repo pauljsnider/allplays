@@ -8111,20 +8111,29 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
   }
 
   const seasonLabel = String(config.seasonLabel || '').trim();
-  const leagueTeamNames = new Set(leagueTeams.map((leagueTeam) => String(leagueTeam?.name || '').trim()).filter(Boolean));
+  const leagueTeamIdSet = new Set(leagueTeamIds);
+  const leagueTeamNamesById = new Map(leagueTeamIds.map((leagueTeamId, index) => [
+    leagueTeamId,
+    String(leagueTeams[index]?.name || '').trim()
+  ]));
   const leagueGamesByKey = new Map();
   gamesByTeam.forEach((games, teamIndex) => {
+    const sourceTeamId = leagueTeamIds[teamIndex];
     const sourceTeamName = String(leagueTeams[teamIndex]?.name || '').trim();
     games.forEach((game) => {
       const projection = serializePublicGame(game);
-      if (!projection || (seasonLabel && projection.seasonLabel !== seasonLabel)) return;
-      const opponent = String(projection.opponent || '').trim();
-      if (!sourceTeamName || !opponent || !leagueTeamNames.has(opponent)) return;
+      const opponentTeamId = normalizeTeamId(projection?.opponentTeamId);
+      if (!projection || !sourceTeamName || !opponentTeamId || !leagueTeamIdSet.has(opponentTeamId)) return;
+      if (projection.startsAt < range.fromDate.toISOString() || projection.startsAt > range.toDate.toISOString()) return;
+      const opponentTeamName = leagueTeamNamesById.get(opponentTeamId);
+      if (!opponentTeamName) return;
       const leagueGame = {
         id: projection.id,
         startsAt: projection.startsAt,
-        homeTeam: projection.isHome ? sourceTeamName : opponent,
-        awayTeam: projection.isHome ? opponent : sourceTeamName,
+        homeTeamId: projection.isHome ? sourceTeamId : opponentTeamId,
+        awayTeamId: projection.isHome ? opponentTeamId : sourceTeamId,
+        homeTeam: projection.isHome ? sourceTeamName : opponentTeamName,
+        awayTeam: projection.isHome ? opponentTeamName : sourceTeamName,
         homeScore: projection.isHome ? projection.teamScore : projection.opponentScore,
         awayScore: projection.isHome ? projection.opponentScore : projection.teamScore,
         status: projection.status,
@@ -8133,8 +8142,8 @@ async function getConfiguredPublicLeagueStandings(teamId, team = {}) {
       const sharedScheduleId = String(game.sharedScheduleId || '').trim();
       const fallbackKey = [
         leagueGame.startsAt,
-        leagueGame.homeTeam,
-        leagueGame.awayTeam,
+        leagueGame.homeTeamId,
+        leagueGame.awayTeamId,
         leagueGame.homeScore,
         leagueGame.awayScore
       ].join('|');

@@ -6,6 +6,7 @@ const {
   getPublicOpponentStatKeys,
   normalizeTeamId,
   isPublicProjectionItemAfterCursor,
+  parsePublicGamesQuery,
   serializePublicGame
 } = require('../public-team-api-core.cjs');
 
@@ -37,6 +38,46 @@ function loadPublicTeamDataAccess(firestore) {
     isPublicProjectionItemAfterCursor,
     serializePublicGame
   );
+}
+
+function loadConfiguredPublicLeagueStandings({ teamsById, gamesByTeamId }) {
+  const helperStart = source.indexOf('async function getConfiguredPublicLeagueStandings');
+  const helperEnd = source.indexOf('function decodePublicSharedGamePath', helperStart);
+  const implementation = [
+    source.slice(helperStart, helperEnd),
+    'return getConfiguredPublicLeagueStandings;'
+  ].join('\n');
+  const getStrictPublicTeam = async (teamId) => teamsById.get(teamId) || null;
+  const getPublicTeamGames = async (teamId, range) => {
+    getPublicTeamGames.ranges.push({ teamId, from: range.from, to: range.to, limit: range.limit });
+    return gamesByTeamId.get(teamId) || [];
+  };
+  getPublicTeamGames.ranges = [];
+  const helper = new Function(
+    'MAX_CALLABLE_DISCOVERY_CONCURRENCY',
+    'getPublicTeamGames',
+    'getStrictPublicTeam',
+    'normalizeTeamId',
+    'parsePublicGamesQuery',
+    'runWithConcurrencyLimit',
+    'serializePublicGame',
+    'throwOpportunityError',
+    implementation
+  )(
+    4,
+    getPublicTeamGames,
+    getStrictPublicTeam,
+    normalizeTeamId,
+    parsePublicGamesQuery,
+    async (items, _limit, mapper) => Promise.all(items.map(mapper)),
+    serializePublicGame,
+    (code, message) => {
+      const error = new Error(message);
+      error.code = code;
+      throw error;
+    }
+  );
+  return { helper, getPublicTeamGames };
 }
 
 function makeQuerySnapshot(docs) {
@@ -172,6 +213,95 @@ test('public league standings require an explicit season and bounded public team
   assert.match(standingsSource, /runWithConcurrencyLimit/);
   assert.match(standingsSource, /getPublicTeamGames\(leagueTeamId, range\)/);
   assert.match(standingsSource, /exports\.getPublicLeagueStandingsProjection/);
+});
+
+test('public league standings aggregate by team ID, keep season labels display-only, and deduplicate schedules', async () => {
+  const teamsById = new Map([
+    ['team-a', { id: 'team-a', name: 'United', isPublic: true }],
+    ['team-b', { id: 'team-b', name: 'United', isPublic: true }],
+    ['team-c', { id: 'team-c', name: 'Owls', isPublic: true }]
+  ]);
+  const mirroredStart = '2026-08-10T18:00:00.000Z';
+  const gamesByTeamId = new Map([
+    ['team-a', [
+      { id: 'a-v-b', date: mirroredStart, opponent: 'United', opponentTeamId: 'team-b', isHome: true, status: 'completed', homeScore: 3, awayScore: 1 },
+      { id: 'same-name-outsider', date: '2026-08-11T18:00:00.000Z', opponent: 'United', opponentTeamId: 'outside-team', status: 'completed', homeScore: 8, awayScore: 0 },
+      { id: 'before-season', date: '2026-07-14T23:59:59.999Z', opponent: 'Owls', opponentTeamId: 'team-c', status: 'completed', homeScore: 2, awayScore: 0 }
+    ]],
+    ['team-b', [
+      { id: 'b-v-a', date: mirroredStart, opponent: 'United', opponentTeamId: 'team-a', isHome: false, seasonLabel: 'Different label', status: 'completed', homeScore: 3, awayScore: 1 }
+    ]],
+    ['team-c', [
+      { id: 'c-v-a', date: '2026-11-30T23:59:59.999Z', opponent: 'United', opponentTeamId: 'team-a', isHome: true, status: 'completed', homeScore: 2, awayScore: 2 },
+      { id: 'after-season', date: '2026-12-01T00:00:00.000Z', opponent: 'United', opponentTeamId: 'team-a', status: 'completed', homeScore: 1, awayScore: 0 }
+    ]]
+  ]);
+  const { helper, getPublicTeamGames } = loadConfiguredPublicLeagueStandings({ teamsById, gamesByTeamId });
+
+  const result = await helper('team-a', {
+    standingsConfig: {
+      enabled: true,
+      seasonLabel: 'Fall 2026',
+      seasonStart: '2026-07-15',
+      seasonEnd: '2026-11-30',
+      leagueTeamIds: ['team-a', 'team-b', 'team-c']
+    }
+  });
+
+  assert.equal(result.seasonLabel, 'Fall 2026');
+  assert.deepEqual(result.range, { from: '2026-07-15', to: '2026-11-30', truncated: false });
+  assert.equal(result.games.length, 2);
+  assert.deepEqual(result.games.map((game) => [game.homeTeamId, game.awayTeamId]), [
+    ['team-a', 'team-b'],
+    ['team-c', 'team-a']
+  ]);
+  assert.equal(result.games[0].homeTeam, 'United');
+  assert.equal(result.games[0].awayTeam, 'United');
+  assert.deepEqual(getPublicTeamGames.ranges, ['team-a', 'team-b', 'team-c'].map((teamId) => ({
+    teamId,
+    from: '2026-07-15',
+    to: '2026-11-30',
+    limit: 500
+  })));
+});
+
+test('public league standings reject private configured teams and truncated schedules', async () => {
+  const config = {
+    enabled: true,
+    seasonStart: '2026-07-15',
+    seasonEnd: '2026-11-30',
+    leagueTeamIds: ['team-a', 'team-b']
+  };
+  const publicTeam = { id: 'team-a', name: 'United', isPublic: true };
+  const privateConfigured = loadConfiguredPublicLeagueStandings({
+    teamsById: new Map([['team-a', publicTeam]]),
+    gamesByTeamId: new Map()
+  });
+  await assert.rejects(
+    privateConfigured.helper('team-a', { standingsConfig: config }),
+    (error) => error.code === 'failed-precondition' && /every configured league team to be public/.test(error.message)
+  );
+
+  const tooManyGames = Array.from({ length: 501 }, (_, index) => ({
+    id: `game-${index}`,
+    date: new Date(Date.UTC(2026, 7, 1, 0, index)).toISOString(),
+    opponent: 'United',
+    opponentTeamId: 'team-b',
+    status: 'completed',
+    homeScore: 1,
+    awayScore: 0
+  }));
+  const truncated = loadConfiguredPublicLeagueStandings({
+    teamsById: new Map([
+      ['team-a', publicTeam],
+      ['team-b', { id: 'team-b', name: 'United', isPublic: true }]
+    ]),
+    gamesByTeamId: new Map([['team-a', tooManyGames], ['team-b', []]])
+  });
+  await assert.rejects(
+    truncated.helper('team-a', { standingsConfig: config }),
+    (error) => error.code === 'resource-exhausted' && /schedule limit exceeded/.test(error.message)
+  );
 });
 
 test('public roster handler bounds its player scan before filtering sensitive documents', () => {
